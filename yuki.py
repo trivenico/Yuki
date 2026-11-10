@@ -333,7 +333,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 if password != confirm:
                     return "Passwords did not match; administrator was not created."
                 auth.bootstrap_admin(username, password)
-            password = getpass("Password: ")
+            else:
+                password = getpass("Password: ")
             issued = auth.authenticate(username, password)
             _CLI_SESSION_TOKEN = issued.token
             write_audit_event("auth:" + action, "completed")
