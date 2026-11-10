@@ -15,7 +15,7 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.permissions = {
             "owner": {
                 "agent_memory:write", "agent_memory:read",
-                "agent_memory:share", "agent_memory:delete",
+                "agent_memory:share", "agent_memory:delete", "agent_memory:retire",
             }
         }
         authorize = lambda actor, action, _agent: action in self.permissions.get(actor, set())
@@ -95,6 +95,33 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         result = self.retriever.retrieve(
             actor_id="owner", agent_id="research", query="deployment query"
         )
+        self.assertEqual(result, [])
+        self.assertEqual(self.index.stats(actor_id="owner")["vector_count"], 0)
+
+    def test_lifecycle_transition_during_embedding_cannot_return_or_recache_terminal_memory(self):
+        memory = self.add_memory("A staged deployment uses a gradual rollout.")
+        transitioned = False
+
+        def embed_with_concurrent_retirement(text):
+            nonlocal transitioned
+            if text == memory["content"] and not transitioned:
+                transitioned = True
+                self.store.transition_lifecycle(
+                    actor_id="owner", agent_id="research",
+                    memory_id=memory["memory_id"], status="retired",
+                    reason="Owner retired during embedding",
+                )
+            return self.vectors[text]
+
+        retriever = AgentMemoryRetriever(
+            self.store, embed=embed_with_concurrent_retirement,
+            embedding_index=self.index,
+        )
+        result = retriever.retrieve(
+            actor_id="owner", agent_id="research", query="deployment query"
+        )
+
+        self.assertTrue(transitioned)
         self.assertEqual(result, [])
         self.assertEqual(self.index.stats(actor_id="owner")["vector_count"], 0)
 

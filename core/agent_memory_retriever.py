@@ -129,6 +129,29 @@ class AgentMemoryRetriever:
         for item, vector in zip(missing, missing_vectors):
             vectors[item["memory_id"]] = vector
 
+        # Embedding work is deliberately outside the memory-store transaction.
+        # Re-read the authoritative candidate set after it completes so a
+        # lifecycle transition, expiry, correction, or permission change that
+        # raced with embedding cannot leak the stale candidate into results.
+        current_memories = self.memory_store.list_memories(
+            actor_id=actor_id, agent_id=agent_id, limit=100,
+            include_shared=include_shared,
+        )
+        if verified_only:
+            current_memories = [item for item in current_memories if item["verified"]]
+        current_by_id = {item["memory_id"]: item for item in current_memories}
+        stale_ids = [item["memory_id"] for item in memories
+                     if item["memory_id"] not in current_by_id]
+        if self.embedding_index is not None:
+            for memory_id in stale_ids:
+                self.embedding_index.delete_memory(
+                    actor_id=actor_id, memory_id=memory_id,
+                )
+        memories = [current_by_id[item["memory_id"]] for item in memories
+                    if item["memory_id"] in current_by_id]
+        if not memories:
+            return []
+
         now = datetime.now(timezone.utc)
         ranked = []
         for item in memories:
