@@ -13,6 +13,9 @@ from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.agent_memory import AgentMemoryStore
 from evaluation.agent_experience import AgentExperienceStore
+from evaluation.agent_evaluator import AgentEvaluator
+from evaluation.agent_review_queue import AgentEvaluationReviewQueue
+from evaluation.agent_learning_pipeline import AgentLearningPipeline
 
 
 class FakeProvider:
@@ -139,6 +142,64 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(worker.last_experience_error_code, "experience_recording_failed")
+
+    def test_worker_submits_completed_outcome_to_human_learning_review(self):
+        task_id = self.create_task()
+        db = str(Path(self.tmp.name) / "learning.sqlite3")
+        queue = AgentEvaluationReviewQueue(
+            db, authorize=lambda actor, action, _agent: actor == "alice" and action in {
+                "agent_evaluation:enqueue", "agent_evaluation:read", "agent_evaluation:review"
+            },
+        )
+        pipeline = AgentLearningPipeline(AgentEvaluator(), queue)
+        signals = {name: 1.0 for name in (
+            "correctness", "evidence_quality", "instruction_compliance",
+            "completeness", "efficiency",
+        )}
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="learning-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "review complete"},
+            learning_pipeline=pipeline, learning_actor_id="alice",
+            outcome_assessor=lambda task: {
+                "signals": signals,
+                "evidence_refs": [f"workflow-task:{task.task_id}", "test-run:verified-1"],
+            },
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "succeeded")
+        self.assertIsNone(worker.last_learning_error_code)
+        pending = queue.list_pending(actor_id="alice")
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["task_id"], task_id)
+        self.assertEqual(pending[0]["status"], "pending")
+        self.assertFalse(pending[0]["memory_written"])
+
+    def test_learning_assessor_failure_does_not_change_task_outcome(self):
+        task_id = self.create_task()
+        queue = AgentEvaluationReviewQueue(
+            str(Path(self.tmp.name) / "learning-failure.sqlite3"),
+            authorize=lambda _actor, _action, _agent: True,
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="learning-failure-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "review complete"},
+            learning_pipeline=AgentLearningPipeline(AgentEvaluator(), queue),
+            learning_actor_id="alice",
+            outcome_assessor=lambda _task: (_ for _ in ()).throw(RuntimeError("assessor unavailable")),
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(worker.last_learning_error_code, "learning_evaluation_failed")
+        self.assertEqual(worker.last_learning_error_type, "RuntimeError")
+        self.assertEqual(queue.list_pending(actor_id="alice"), [])
+
+    def test_learning_configuration_requires_pipeline_actor_and_assessor(self):
+        with self.assertRaisesRegex(ValueError, "supplied together"):
+            SpecialistTaskWorker(
+                self.runtime, worker_id="learning-invalid", service_actor_id="worker-service",
+                handlers={"code-review": lambda _: "ok"}, learning_actor_id="alice",
+            )
 
     def test_memory_configuration_must_be_supplied_as_a_pair(self):
         with self.assertRaises(ValueError):
