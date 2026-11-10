@@ -6,6 +6,7 @@ from typing import Iterable, Optional
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
 from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+from yuki_security import write_audit_event
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
 from skills.catalog import SkillCatalog
@@ -112,6 +113,7 @@ class YukiCoreAgent:
             name,
             argument,
             approvals=self.invocation_approvals,
+            audit=write_audit_event,
             expected_skill=skill,
         )
         return AgentResponse(
