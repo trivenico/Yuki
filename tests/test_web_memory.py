@@ -61,7 +61,7 @@ class WebMemoryBootstrapTests(unittest.TestCase):
         saved = store.remember(
             actor_id=owner.user_id, agent_id="yuki",
             content="The owner prefers concise responses.",
-            source="owner supplied", category="preference",
+            source="owner supplied", category="semantic",
         )
         self.assertEqual(saved["actor_id"], owner.user_id)
         self.assertEqual(
