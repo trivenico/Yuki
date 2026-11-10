@@ -63,11 +63,13 @@ class AuthenticatedCapabilityApprovalService:
         goal_id = task.get("goal_id")
         if not isinstance(goal_id, str) or not goal_id:
             raise PermissionError("task has no valid goal provenance")
+        # Reject stale task state before checking goal eligibility. Both checks
+        # remain mandatory; ordering keeps the task's terminal state explicit.
+        if task.get("state") != "queued":
+            raise PermissionError("only queued tasks can request approval")
         goal = self.task_engine.get_goal(goal_id)
         if goal.get("owner_id") != user_id or goal.get("state") != "active":
             raise PermissionError("task goal is not owned by the authenticated principal")
-        if task.get("state") != "queued":
-            raise PermissionError("only queued tasks can request approval")
         if task.get("task_type") != "skill.invoke" or task.get("max_attempts") != 1:
             raise PermissionError("task is not an eligible single-attempt skill invocation")
         payload = task.get("payload")
