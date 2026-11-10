@@ -147,6 +147,33 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.service.request_approval("requester-session", claimed["id"])
 
+    def test_approval_rechecks_task_state_after_request(self):
+        request_id = self.service.request_approval("requester-session", self.task["id"])
+        claimed = self.engine.claim("worker-1", owner_id="alice")
+        self.assertEqual(claimed["id"], self.task["id"])
+        delivered = []
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway, task_engine=self.engine,
+            skill_registry=FakeRegistry(),
+            deliver_credential=lambda rid, token: delivered.append(token),
+        )
+        with self.assertRaisesRegex(PermissionError, "only queued tasks"):
+            service.approve_pending("approver-session", request_id)
+        self.assertEqual(delivered, [])
+
+    def test_approval_rechecks_goal_state_after_request(self):
+        request_id = self.service.request_approval("requester-session", self.task["id"])
+        self.engine.set_goal_state(self.goal_id, "paused")
+        delivered = []
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway, task_engine=self.engine,
+            skill_registry=FakeRegistry(),
+            deliver_credential=lambda rid, token: delivered.append(token),
+        )
+        with self.assertRaisesRegex(PermissionError, "goal is not owned"):
+            service.approve_pending("approver-session", request_id)
+        self.assertEqual(delivered, [])
+
     def test_cannot_request_for_task_with_untrusted_skill_or_payload(self):
         class EmptyRegistry:
             def get(self, name):
