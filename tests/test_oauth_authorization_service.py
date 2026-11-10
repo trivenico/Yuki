@@ -47,9 +47,21 @@ class Transport:
         }
 
 
+class IdentityVerifier:
+    def __init__(self, subject="provider-subject-1"):
+        self.subject = subject
+        self.calls = []
+    def verify(self, *, access_token):
+        self.calls.append(access_token)
+        if self.subject != "provider-subject-1":
+            raise RuntimeError("account mismatch")
+        return {"subject": self.subject}
+
+
 class OAuthAuthorizationServiceTests(unittest.TestCase):
     def setUp(self):
         self.transactions, self.vault, self.transport = Transactions(), Vault(), Transport()
+        self.identity = IdentityVerifier()
         self.service = OAuthAuthorizationService(
             transaction_store=self.transactions, credential_vault=self.vault,
             transport=self.transport, provider_id="upwork", account_id="owner-account",
@@ -58,7 +70,7 @@ class OAuthAuthorizationServiceTests(unittest.TestCase):
             allowed_authorization_hosts={"auth.example.com"},
             redirect_uri="https://yuki.example/oauth/callback",
             issuer="https://auth.example.com", resource="https://api.example.com",
-            scopes=["read"],
+            scopes=["read"], identity_verifier=self.identity,
         )
 
     def test_begin_and_complete_binds_owner_and_persists_validated_grant(self):
@@ -107,6 +119,24 @@ class OAuthAuthorizationServiceTests(unittest.TestCase):
             self.service.complete(owner_id="owner-1", session_id="session-1", callback_url=callback)
         self.assertNotIn("secret authorization code", str(caught.exception))
         self.assertEqual(self.transport.calls, [])
+
+
+    def test_provider_identity_is_verified_before_credential_persistence(self):
+        started = self.service.begin(owner_id="owner-1", session_id="session-1")
+        state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
+        callback = "https://yuki.example/oauth/callback?code=x&state=" + state
+        self.service.complete(owner_id="owner-1", session_id="session-1", callback_url=callback)
+        self.assertEqual(self.identity.calls, ["access-token-123"])
+        self.assertEqual(len(self.vault.grants), 1)
+
+    def test_provider_identity_mismatch_prevents_credential_persistence(self):
+        self.service._identity_verifier = IdentityVerifier(subject="attacker-account")
+        started = self.service.begin(owner_id="owner-1", session_id="session-1")
+        state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
+        callback = "https://yuki.example/oauth/callback?code=x&state=" + state
+        with self.assertRaisesRegex(OAuthAuthorizationServiceError, "authorization_exchange_failed"):
+            self.service.complete(owner_id="owner-1", session_id="session-1", callback_url=callback)
+        self.assertEqual(self.vault.grants, [])
 
 
 if __name__ == "__main__":
