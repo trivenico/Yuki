@@ -121,6 +121,23 @@ class OAuthAuthorizationServiceTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [])
 
 
+    def test_requires_and_checks_issuer_when_metadata_advertises_support(self):
+        self.service._require_response_issuer = True
+        started = self.service.begin(owner_id="owner-1", session_id="session-1")
+        state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
+        without_issuer = "https://yuki.example/oauth/callback?code=code&state=" + state
+        with self.assertRaises(OAuthAuthorizationServiceError):
+            self.service.complete(
+                owner_id="owner-1", session_id="session-1", callback_url=without_issuer,
+            )
+        self.assertEqual(self.transport.calls, [])
+        with_issuer = without_issuer + "&iss=https://auth.example.com"
+        result = self.service.complete(
+            owner_id="owner-1", session_id="session-1", callback_url=with_issuer,
+        )
+        self.assertEqual(result["provider_id"], "upwork")
+        self.assertEqual(len(self.vault.grants), 1)
+
     def test_provider_identity_is_verified_before_credential_persistence(self):
         started = self.service.begin(owner_id="owner-1", session_id="session-1")
         state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
