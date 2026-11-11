@@ -29,7 +29,6 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
             "device_id": self.credential.device.device_id,
             "endpoint": "https://192.168.1.25:8765",
             "capabilities": [DeviceCapability.STATUS.value, DeviceCapability.NOTIFY.value,
-                             DeviceCapability.CALL_START.value, DeviceCapability.CALL_ACCEPT.value,
                              DeviceCapability.DEVICE_LOCK.value],
             "owner_confirmed": True,
         }
