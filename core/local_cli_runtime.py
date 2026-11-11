@@ -43,7 +43,7 @@ def build_local_conversation_runtime(
     *,
     provider_factory: Callable[..., Any] = create_provider,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
-    owner_id_factory: Callable[[], str] = load_or_create_local_owner_id,
+    owner_id_factory: Callable[[], str] | None = None,
 ) -> LocalConversationRuntime:
     """Build the installed CLI's persistent chat service with fail-closed tools."""
     if not isinstance(config, dict):
@@ -64,7 +64,7 @@ def build_local_conversation_runtime(
     )
     store = store_factory(config)
     try:
-        owner_id = owner_id_factory()
+        owner_id = (owner_id_factory() if owner_id_factory is not None else\n                    load_or_create_local_owner_id(config.get("workspace")))
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
             raise ValueError("local owner identity is invalid.")
         return LocalConversationRuntime(
