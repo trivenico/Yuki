@@ -6,6 +6,7 @@ from typing import Any, Callable
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
+from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
@@ -14,6 +15,7 @@ from core.conversation_store_factory import create_conversation_store
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
+from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 
 
 class ConversationRuntime:
@@ -61,6 +63,8 @@ def build_conversation_runtime(
     device_pairing: DevicePairingService | None = None,
     inference_jobs: InferenceJobService | None = None,
     income_opportunities: SQLiteIncomeOpportunityStore | None = None,
+    oauth_connections: SQLiteOAuthConnectionRegistry | None = None,
+    oauth_disconnect_service_for_provider: Callable[[str], Any] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the configured conversation runtime.
 
@@ -79,6 +83,12 @@ def build_conversation_runtime(
         income_opportunities, SQLiteIncomeOpportunityStore
     ):
         raise TypeError("income_opportunities must be a SQLiteIncomeOpportunityStore")
+    if oauth_connections is not None and not isinstance(
+        oauth_connections, SQLiteOAuthConnectionRegistry
+    ):
+        raise TypeError("oauth_connections must be a SQLiteOAuthConnectionRegistry")
+    if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
+        raise ValueError("oauth_connections and disconnect service resolver must be configured together")
     store = create_conversation_store(config)
     try:
         service = ConversationService(store, agent_loop)
@@ -90,6 +100,11 @@ def build_conversation_runtime(
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:
             app = AuthenticatedIncomeOpportunityAPI(app, auth_service, income_opportunities)
+        if oauth_connections is not None:
+            app = AuthenticatedOAuthConnectionAPI(
+                app, auth_service, oauth_connections,
+                oauth_disconnect_service_for_provider,
+            )
         return ConversationRuntime(app, store)
     except Exception:
         close = getattr(store, "close", None)
