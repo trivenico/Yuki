@@ -83,13 +83,31 @@ class AuthenticatedOAuthAuthorizationAPI:
             if (not isinstance(result, dict)
                     or result.get("provider_id") != provider_id
                     or not isinstance(result.get("account_id"), str)
-                    or not isinstance(result.get("scopes"), (tuple, list))):
+                    or not isinstance(result.get("scopes"), (tuple, list))
+                    or type(result.get("credential_version")) is not int
+                    or result["credential_version"] < 1):
                 return await self._respond(send, 502, {"error": "authorization_completion_failed"})
-            record = await asyncio.to_thread(
-                self.registry.register, owner_id=user.user_id,
-                provider_id=result["provider_id"], account_id=result["account_id"],
-                scopes=tuple(result["scopes"]),
-            )
+            try:
+                record = await asyncio.to_thread(
+                    self.registry.register, owner_id=user.user_id,
+                    provider_id=result["provider_id"], account_id=result["account_id"],
+                    scopes=tuple(result["scopes"]),
+                )
+            except Exception:
+                compensate = getattr(service, "discard_unregistered_grant", None)
+                if not callable(compensate):
+                    return await self._respond(send, 503, {"error": "connection_registration_failed"})
+                try:
+                    rolled_back = await asyncio.to_thread(
+                        compensate, owner_id=user.user_id,
+                        account_id=result["account_id"],
+                        credential_version=result["credential_version"],
+                    )
+                except Exception:
+                    rolled_back = False
+                if not rolled_back:
+                    return await self._respond(send, 503, {"error": "connection_recovery_required"})
+                return await self._respond(send, 503, {"error": "connection_registration_failed"})
             return await self._respond(send, 200, {
                 "connected": True, "provider_id": record.provider_id,
                 "account_id": record.account_id, "scopes": list(record.scopes),
