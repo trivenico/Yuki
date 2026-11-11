@@ -73,14 +73,12 @@ class CapabilityManifestTests(unittest.TestCase):
         expected = {
             "provider-runtime", "conversation-api", "companion-foundation",
             "cli-assistant", "model-registry-evaluation", "paired-device-inference",
-            "lan-call-sessions", "income-opportunity-pipeline",
+            "income-opportunity-pipeline",
             "native-desktop-application", "end-to-end-voice",
         }
         self.assertTrue(expected.issubset(contracts))
         self.assertEqual(contracts["native-desktop-application"].status, "planned")
         self.assertEqual(contracts["income-opportunity-pipeline"].status, "experimental")
-        self.assertEqual(contracts["lan-call-sessions"].status, "experimental")
-        self.assertTrue(any("WebRTC" in item for item in contracts["lan-call-sessions"].limitations))
         self.assertTrue(any("No live platform adapter" in item
                             for item in contracts["income-opportunity-pipeline"].limitations))
         self.assertTrue(any("not prove a persistent companion loop" in item

@@ -6,7 +6,7 @@
 
 ## Executive decision
 
-**Yuki is not production-ready as a complete personal AI product.** It has substantial reusable foundations: authenticated conversation APIs, real provider adapters, a bounded agent loop, durable task and approval infrastructure, local memory, OAuth/MCP components, device pairing/inference, income-opportunity tracking, and LAN call-session state. The remaining work is primarily end-to-end integration, product surfaces, deployment/recovery, security assurance, and acceptance evidence—not simply adding more agent names.
+**Yuki is not production-ready as a complete personal AI product.** It has substantial reusable foundations: authenticated conversation APIs, real provider adapters, a bounded agent loop, durable task and approval infrastructure, local memory, OAuth/MCP components, device pairing/inference, and income-opportunity tracking. The remaining work is primarily end-to-end integration, product surfaces, deployment/recovery, security assurance, and acceptance evidence—not simply adding more agent names.
 
 Do not describe a subsystem as production-ready merely because its module, API, phase document, or unit tests exist. Track each capability separately as implemented, integrated, verified on target platforms, operationally deployable, and released.
 
@@ -14,8 +14,6 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 
 - The recursive `main` tree contained 631 entries, including 140 documentation files and 163 Python test files. These are inventory counts, not coverage or quality scores.
 - There are 23 GitHub Actions workflow files. The main quality workflow currently runs Python 3.11 on Ubuntu, Windows, and macOS, with dependency installation, `pip check`, compilation, and unittest discovery. The dependency-manifest audit is separate. The presence of a workflow is not proof that every security, packaging, release, or operational gate exists.
-- PR #708 (LAN call session state) is merged into the audited base.
-- PR #709 (authenticated LAN call invitation API and atomic audit) is open and draft. Its exact head `38bebb056cc8ef39f02049c54db51befa41888a8` had 45/45 check-runs successful at audit time. It is not merged; this result does not verify real devices, owner-UI consent, notifications, or media transport.
 - The repository contains no desktop-specific implementation, desktop framework project, or native desktop packaging manifest in the audited tree. Existing web chat and Textual terminal/dashboard code are not a desktop application.
 - No `pyproject.toml`, `setup.py`, `setup.cfg`, or other Python package/console-entrypoint manifest was found in the audited tree. The CLI is source-run, not yet a versioned installable distribution.
 - The phase ledger was last reconciled on 2026-11-02 and explicitly retains unknown historical phase serials and open blockers. It needs a current reconciliation before it can serve as a reliable release ledger.
@@ -33,7 +31,7 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 | Models and inference | Model/provider registries, Ollama and remote device inference, model discovery/evaluation modules, capability metadata and worker leases | Establish whether “Yuki models” means model routing/hosting or proprietary model training. No evidence of a trained proprietary foundation model. Add reproducible benchmark datasets, task-specific quality/safety evals, hardware profiling, model artifact provenance/license checks, quantization/upgrade rollback, resource admission, and provider fallback acceptance |
 | Memory and knowledge | Local lexical memory, opt-in embedding retrieval, knowledge index/graph, conversation persistence and Postgres adapter | Unified user-facing inspect/export/delete/retention and backup lifecycle; schema-versioned migrations; corruption recovery; encryption/key rotation; restore drills; retention enforcement; retrieval relevance/privacy evaluations; clear local/cloud data boundaries |
 | Device pairing and inference | Owner-bound pairing, device inventory/revocation, authenticated inference API, local worker and lease foundations | Device agent installation/update/attestation; heartbeats; network transport; reconnect/offline queue; request replay protection; per-command audit/idempotency; revocation races; multi-OS and real hardware tests |
-| LAN control and calls | Typed endpoint/capability registry; PR #708 session state merged; PR #709 authenticated invitation API and audit checks green but draft | Secure authenticated transport and request signing; real owner-UI confirmation (not merely trusting `confirm: true`); notification delivery; mDNS/DNS-SD discovery UX; device agents; WebRTC signaling and DTLS-SRTP media; TURN/LAN policy; incoming-call UI; explicit mic/camera permissions; mute/end; real-device/network-isolation tests |
+| Local-network device control | Typed endpoint/capability registry and owner-bound pairing/inference foundations | Secure authenticated command transport and request signing; mDNS/DNS-SD discovery UX; installable device agents; explicit capability grants; per-command audit/idempotency; real-device/network-isolation tests |
 | Online earning | Owner-scoped opportunity lifecycle, authenticated API, read-only discovery boundary, Upwork policy research | No live platform adapter or verified revenue path. Complete provider-specific OAuth/approval and terms/region checks; implement official API/MCP adapters only; owner selects opportunities; draft-first proposals/messages; approval for submission/spend; reconcile actual platform earnings with evidence; never promise earnings |
 | OAuth / MCP / integrations | PKCE, OAuth/OIDC validation, encrypted credential vault primitives, provider registry, MCP transport/runtime and policy foundations | Reconcile open draft PRs (#701, #694, #678, #666 at audit snapshot); complete lifecycle end-to-end per provider; token revocation/rotation and OS-key storage acceptance; tool inventory review; exact schema pinning; ambiguous-write reconciliation; connector-specific integration tests and owner UX |
 | Defensive security tools | Explicit scope, approvals, sandbox/recon/IDS foundations; dry-run firewall | No live firewall mutation until durable expiry/rollback/restart recovery and privileged OS acceptance; strengthen isolation and output bounds; test DNS/redirect/private-address paths; separate security lab from general assistant permissions; independent security review |
@@ -48,7 +46,7 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 1. Verify repository visibility and inspect the complete Git history for secrets/private data; rotate any exposed credentials. The prior personal-use audit reported the repository as public, but visibility was not re-verified as part of this source-tree pass.
 2. Define and test an encrypted backup/restore path. The prior production baseline did not find a verified encrypted backup implementation or restore proof. A backup script or encrypted drive recommendation is not application-level encrypted backup.
 3. Establish one threat model covering local files, browser/API sessions, OAuth credentials, MCP servers, paired devices, local network control, agent workers and model-supplied tool requests.
-4. Ensure every consequential action is authorized immediately before dispatch and bound to actor, exact target, arguments, expiry and idempotency key. Owner authentication alone is not equivalent to informed confirmation for a call, message, purchase, proposal, device action or deployment.
+4. Ensure every consequential action is authorized immediately before dispatch and bound to actor, exact target, arguments, expiry and idempotency key. Owner authentication alone is not equivalent to informed confirmation for a message, purchase, proposal, device action or deployment.
 5. Complete security review of worker recovery, credential revocation, execution fencing, OAuth token lifecycle and cross-device revocation races.
 
 ### P1 — Product completeness
@@ -56,7 +54,7 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 6. Deliver a shared application service layer consumed by CLI, web and desktop rather than separate partial runtimes.
 7. Integrate companion, memory, voice and durable scheduling into that service with explicit consent and reliable lifecycle handling.
 8. Build the native desktop application and package the CLI; neither can be inferred from a web UI or source launcher.
-9. Complete real-device transport and WebRTC before claiming LAN control/calling.
+9. Complete authenticated real-device command transport before claiming LAN device control.
 10. Build at least one compliant, live earning integration end-to-end before describing online earning as operational.
 
 ### P2 — Operational maturity
@@ -76,13 +74,12 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 
 ## Recommended execution order
 
-1. **Close and verify the LAN call API slice:** review PR #709 consent semantics and audit integrity; require exact-head checks; merge only after human-confirmation provenance is real and the PR is reviewed. Then implement notification transport.
 2. **Create a single product capability/readiness contract:** implemented/configured/available/tested/deployed/released states, consumed by doctor, CLI, web and future desktop.
 3. **Consolidate the shared application runtime:** one provider, conversation, memory, tool policy, approvals, task, event and lifecycle composition.
 4. **Complete the security/recovery baseline:** threat model, data inventory, encrypted backup/restore, migrations, worker fencing, credential revocation, audit and recovery tests.
 5. **Ship CLI packaging and native desktop shell:** signed artifacts, updates, diagnostics, accessibility and clean install/upgrade/uninstall tests.
 6. **Complete companion and voice end-to-end:** persistent reminders, memory controls, STT → conversation → TTS, interruption, permissions and device matrix.
-7. **Complete local-network device agents and WebRTC:** pairing/discovery, authenticated command transport, notification, signaling, media and real-device security acceptance.
+7. **Complete local-network device agents:** pairing/discovery, authenticated command transport, capability grants, audit and real-device security acceptance.
 8. **Activate compliant income integrations:** begin with one officially supported platform, read-only first, owner-directed choices, draft-first actions and actual earnings reconciliation.
 9. **Scale specialist agents only after evaluations:** add agents based on benchmarked task quality, reliability, latency, privacy and cost—not a target count.
 10. **Release only after operational gates:** signed release artifacts, migration/backup/restore, monitoring, rollback, security review and supported-platform acceptance.
@@ -96,7 +93,7 @@ A release candidate must have all of the following evidence on the same tagged b
 - No unauthorized tool/device/network/financial action in the security regression suite.
 - Credential storage, rotation, revocation, encrypted backup and restore verified.
 - Desktop app and CLI installable artifacts signed and reproducible.
-- Device control/calls tested on real enrolled devices, including revocation and consent races, before those features are advertised as supported.
+- Local device control tested on real enrolled devices, including revocation and authorization races, before it is advertised as supported.
 - Observability, incident response, data deletion and recovery runbooks exercised.
 - All required CI/security gates green on the exact release commit; unresolved P0s closed; independent security review recorded.
 - Documentation and UI accurately state which integrations and capabilities are actually enabled.
