@@ -158,7 +158,8 @@ class MCPToolPolicyRegistry:
             if len(encoded) > _MAX_ARGUMENT_BYTES:
                 return False
             try:
-                if current_revision() != self.revision:
+                live_revision = current_revision()
+                if type(live_revision) is not int or live_revision != self.revision:
                     return False
             except Exception:
                 return False
