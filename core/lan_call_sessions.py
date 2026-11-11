@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
+import json
 import secrets
 import sqlite3
 
@@ -104,6 +106,16 @@ class LANCallSessionStore:
             """)
             db.execute("""CREATE INDEX IF NOT EXISTS idx_lan_call_notifications_recipient
                 ON lan_call_notifications(recipient_device_id, acknowledged_at, expires_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS lan_call_audit (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                session_hash TEXT NOT NULL,
+                owner_hash TEXT NOT NULL,
+                actor_device_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                previous_hash TEXT NOT NULL,
+                event_hash TEXT NOT NULL
+            )""")
         self._pairing = pairing_service
 
     def _connect(self):
@@ -112,6 +124,82 @@ class LANCallSessionStore:
         db.execute("PRAGMA busy_timeout=5000")
         db.execute("PRAGMA foreign_keys=ON")
         return _SQLiteConnection(db)
+
+    @staticmethod
+    def _append_audit(db, event_type, session_hash, owner_id, actor_device_id):
+        """Append a tamper-evident event inside the state-change transaction."""
+        created_at = _stamp(_now())
+        owner_hash = _digest(owner_id)
+        actor_hash = _digest(actor_device_id)
+        previous = db.execute(
+            "SELECT event_hash FROM lan_call_audit ORDER BY event_id DESC LIMIT 1"
+        ).fetchone()
+        previous_hash = previous[0] if previous else "0" * 64
+        payload = {
+            "event_type": event_type,
+            "session_hash": session_hash,
+            "owner_hash": owner_hash,
+            "actor_device_hash": actor_hash,
+            "created_at": created_at,
+            "previous_hash": previous_hash,
+        }
+        event_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        db.execute("""INSERT INTO lan_call_audit
+            (event_type,session_hash,owner_hash,actor_device_hash,created_at,previous_hash,event_hash)
+            VALUES(?,?,?,?,?,?,?)""",
+            (event_type, session_hash, owner_hash, actor_hash, created_at, previous_hash, event_hash))
+
+    def _expire_owner_invites(self, db, owner_id, actor_device_id, now,
+                              recipient_device_id=None):
+        stamp = _stamp(now)
+        query = """SELECT session_hash FROM lan_call_sessions
+                   WHERE owner_id=? AND status='ringing' AND expires_at<=?"""
+        args = [owner_id, stamp]
+        if recipient_device_id is not None:
+            query += " AND recipient_device_id=?"
+            args.append(recipient_device_id)
+        rows = db.execute(query, args).fetchall()
+        if not rows:
+            return
+        update = """UPDATE lan_call_sessions SET status='expired',ended_at=?
+                    WHERE owner_id=? AND status='ringing' AND expires_at<=?"""
+        update_args = [stamp, owner_id, stamp]
+        if recipient_device_id is not None:
+            update += " AND recipient_device_id=?"
+            update_args.append(recipient_device_id)
+        db.execute(update, update_args)
+        for row in rows:
+            self._append_audit(
+                db, "expired", row["session_hash"], owner_id, actor_device_id
+            )
+
+    def verify_audit_chain(self):
+        """Verify the append-only hash chain; detects tampering but is not external anchoring."""
+        with self._connect() as db:
+            rows = db.execute("""SELECT event_type,session_hash,owner_hash,
+                actor_device_hash,created_at,previous_hash,event_hash
+                FROM lan_call_audit ORDER BY event_id""").fetchall()
+        previous_hash = "0" * 64
+        for row in rows:
+            if not hmac.compare_digest(row["previous_hash"], previous_hash):
+                return False
+            payload = {
+                "event_type": row["event_type"],
+                "session_hash": row["session_hash"],
+                "owner_hash": row["owner_hash"],
+                "actor_device_hash": row["actor_device_hash"],
+                "created_at": row["created_at"],
+                "previous_hash": row["previous_hash"],
+            }
+            expected = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            if not hmac.compare_digest(expected, row["event_hash"]):
+                return False
+            previous_hash = row["event_hash"]
+        return True
 
     @staticmethod
     def _session(row, session_id):
