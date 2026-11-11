@@ -6,6 +6,16 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+
+## Native Yuki brain and learning lab
+
+Yuki's product direction is a local-first, independent AI companion and agentic assistant. Its identity, intelligence orchestration, memory, knowledge, guarded tools, specialist agents and learning lifecycle belong to Yuki. Local models are the default target; external model APIs are optional and must never be a silent fallback. Hugging Face is used for reviewed model and dataset discovery, reproducible fine-tuning and evaluation—not automatic trust or activation.
+
+- [Native Yuki brain architecture and roadmap](docs/NATIVE_YUKI_BRAIN_ARCHITECTURE.md)
+- [Yuki Learning Lab: Hugging Face training pipeline](docs/YUKI_LEARNING_LAB_HUGGINGFACE.md)
+
+The existing Ollama provider, Hugging Face discovery/evaluation tools and memory components are foundations, not proof that Yuki is already a self-trained foundation model. Training, artifact promotion and local-only acceptance gates remain future implementation work.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
