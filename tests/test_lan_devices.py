@@ -27,7 +27,7 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
         values = {
             "owner_id": "owner",
             "device_id": self.credential.device.device_id,
-            "endpoint": "http://192.168.1.25:8765",
+            "endpoint": "https://192.168.1.25:8765",
             "capabilities": [DeviceCapability.STATUS.value, DeviceCapability.NOTIFY.value,
                              DeviceCapability.CALL_START.value, DeviceCapability.CALL_ACCEPT.value,
                              DeviceCapability.DEVICE_LOCK.value],
@@ -40,7 +40,7 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
         with self.assertRaises(LocalDeviceDenied):
             self.registry.register_endpoint(
                 owner_id="other", device_id=self.credential.device.device_id,
-                endpoint="http://192.168.1.25:8765", capabilities=[],
+                endpoint="https://192.168.1.25:8765", capabilities=[],
                 owner_confirmed=True,
             )
         with self.assertRaises(LocalDeviceDenied):
@@ -50,9 +50,9 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
         with self.assertRaises(LocalDeviceDenied):
             self.register(owner_confirmed=False)
         for endpoint in (
-            "http://example.com:8765", "http://8.8.8.8:8765",
-            "http://127.0.0.1:8765", "http://0.0.0.0:8765", "http://224.0.0.1:8765",
-            "http://192.168.1.25:8765/path", "http://user:pass@192.168.1.25",
+            "http://192.168.1.25:8765", "https://example.com:8765", "https://8.8.8.8:8765",
+            "https://127.0.0.1:8765", "https://0.0.0.0:8765", "https://224.0.0.1:8765",
+            "https://192.168.1.25:8765/path", "https://user:pass@192.168.1.25",
             "https://192.168.1.25?token=secret",
         ):
             with self.subTest(endpoint=endpoint):
@@ -60,8 +60,8 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
                     self.register(endpoint=endpoint)
 
     def test_ipv6_private_endpoint_is_normalized(self):
-        endpoint = self.register(endpoint="http://[fd00::25]:8765")
-        self.assertEqual(endpoint.endpoint, "http://[fd00::25]:8765")
+        endpoint = self.register(endpoint="https://[fd00::25]:8765")
+        self.assertEqual(endpoint.endpoint, "https://[fd00::25]:8765")
 
     def test_supported_capabilities_only_and_revision_compare_and_swap(self):
         first = self.register()
@@ -126,7 +126,7 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
             )
         listed = self.registry.list_devices(owner_id="owner")
         self.assertEqual(len(listed), 1)
-        self.assertEqual(listed[0].endpoint, "http://192.168.1.25:8765")
+        self.assertEqual(listed[0].endpoint, "https://192.168.1.25:8765")
 
 
 if __name__ == "__main__":
