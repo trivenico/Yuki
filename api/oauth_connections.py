@@ -16,8 +16,6 @@ class AuthenticatedOAuthConnectionAPI:
 
     def __init__(self, app, auth_service, registry: SQLiteOAuthConnectionRegistry,
                  disconnect_service_for_provider):
-        if not isinstance(registry, SQLiteOAuthConnectionRegistry):
-            raise TypeError("registry must be a SQLiteOAuthConnectionRegistry")
         if not callable(disconnect_service_for_provider):
             raise TypeError("trusted disconnect service resolver is required")
         self.app = app
