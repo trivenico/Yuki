@@ -81,7 +81,9 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(contracts["income-opportunity-pipeline"].status, "experimental")
         self.assertTrue(any("No live platform adapter" in item
                             for item in contracts["income-opportunity-pipeline"].limitations))
-        self.assertTrue(any("not prove a persistent companion loop" in item
+        self.assertTrue(any("No background scheduler" in item
+                            for item in contracts["companion-foundation"].limitations))
+        self.assertTrue(any("not encrypted" in item
                             for item in contracts["companion-foundation"].limitations))
 
     def test_all_product_contract_evidence_paths_exist(self):
