@@ -4,7 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
+from core.device_pairing import DevicePairingService
+from core.inference_jobs import InferenceJobService
 from core.sqlite_file_security import (
     SQLitePathSecurityError,
     prepare_private_sqlite_path,
@@ -49,6 +52,21 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         os.link(target, alias)
         with self.assertRaises(SQLitePathSecurityError):
             prepare_private_sqlite_path(alias)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
+    def test_auth_database_is_owner_only(self):
+        path = self.root / "auth.sqlite3"
+        path.write_bytes(b"")
+        path.chmod(0o644)
+        BuiltInAuthService(path)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
+    def test_device_and_inference_shared_database_is_owner_only(self):
+        path = self.root / "devices.sqlite3"
+        pairing = DevicePairingService(path)
+        InferenceJobService(path, pairing)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_directory_is_rejected_as_database_file(self):
         directory = self.root / "database.sqlite3"
