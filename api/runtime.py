@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
+from api.relationship_settings import AuthenticatedRelationshipSettingsAPI
 from api.inference import AuthenticatedInferenceAPI
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
@@ -74,6 +75,7 @@ def build_conversation_runtime(
     oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
+    relationship_settings_store_for_owner: Callable[[str], Any] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -105,6 +107,8 @@ def build_conversation_runtime(
             prepared_oauth_provider_registry.authorization_service_for_provider
         )
         oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
+    if relationship_settings_store_for_owner is not None and not callable(relationship_settings_store_for_owner):
+        raise TypeError("relationship_settings_store_for_owner must be callable")
     if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if mcp_runtime is not None and oauth_connections is None:
@@ -146,6 +150,10 @@ def build_conversation_runtime(
         if mcp_runtime is not None:
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
+            )
+        if relationship_settings_store_for_owner is not None:
+            app = AuthenticatedRelationshipSettingsAPI(
+                app, auth_service, relationship_settings_store_for_owner,
             )
         return ConversationRuntime(app, application)
     except Exception:
