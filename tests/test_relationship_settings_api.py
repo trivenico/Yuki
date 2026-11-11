@@ -98,7 +98,7 @@ class AuthenticatedRelationshipSettingsAPITests(unittest.TestCase):
             "PUT", self.payload(mode="romantic", adult_confirmed=False), self.owner_one.token
         )
         self.assertEqual((status, body["error"]), (400, "invalid_request"))
-        self.assertEqual(self.stores["owner-one"].load(), RelationshipModeSettings())
+        self.assertEqual(self.stores[self.owner_one.user.user_id].load(), RelationshipModeSettings())
 
     def test_rejects_malformed_payloads_and_missing_quiet_hours(self):
         for payload in [
