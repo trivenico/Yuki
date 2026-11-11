@@ -79,6 +79,51 @@ class OAuthMCPConnectionManager:
             account_id=account_id,
         )
 
+    def create_policy_client(
+        self, *, owner_id: str, account_id: str, endpoint: str,
+        allowed_hosts, policy_registry, granted_scopes,
+        owner_approval, audit, current_revision, timeout: float = 10,
+    ):
+        """Create an MCP client whose execution gate is a trusted policy snapshot.
+
+        The manager supplies the provider binding. Enabled tool names are
+        derived from the exact account policy; risk checks and fresh owner
+        confirmation are enforced by the registry's per-call approver.
+        """
+        from core.mcp_tool_policy import MCPToolPolicyRegistry
+
+        if not isinstance(policy_registry, MCPToolPolicyRegistry):
+            raise OAuthMCPConnectionError("trusted_tool_policy_registry_required")
+        try:
+            scope_values = tuple(sorted(granted_scopes)) if isinstance(
+                granted_scopes, (set, frozenset)
+            ) else tuple(granted_scopes)
+            approver = policy_registry.build_approver(
+                owner_id=owner_id,
+                provider_id=self._provider_id,
+                account_id=account_id,
+                granted_scopes=scope_values,
+                owner_approval=owner_approval,
+                audit=audit,
+                current_revision=current_revision,
+            )
+            allowed_tools = policy_registry.tool_names(
+                provider_id=self._provider_id,
+                account_id=account_id,
+            )
+        except Exception:
+            raise OAuthMCPConnectionError("trusted_tool_policy_invalid") from None
+        return self.create_client(
+            owner_id=owner_id,
+            account_id=account_id,
+            endpoint=endpoint,
+            allowed_hosts=allowed_hosts,
+            allowed_tools=allowed_tools,
+            approver=approver,
+            required_scopes=scope_values,
+            timeout=timeout,
+        )
+
     def create_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, allowed_tools, approver,

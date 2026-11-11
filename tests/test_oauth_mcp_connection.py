@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from core.oauth_mcp_connection import OAuthMCPConnectionError, OAuthMCPConnectionManager
+from core.mcp_tool_policy import MCPToolPolicy, MCPToolPolicyRegistry, MCPToolRisk
 
 
 class FakeRefresh:
@@ -67,6 +68,59 @@ class OAuthMCPConnectionTests(unittest.TestCase):
         }
         args.update(overrides)
         return self.manager.create_client(**args)
+
+    def test_policy_client_derives_allowlist_and_uses_risk_approver(self):
+        policy = MCPToolPolicy(
+            "owner", "provider", "account", "read_profile",
+            MCPToolRisk.READ_ONLY, ("read",), 1,
+        )
+        registry = MCPToolPolicyRegistry(
+            owner_id="owner", policies=(policy,), revision=4,
+        )
+        audit = []
+        manager = OAuthMCPConnectionManager(
+            provider_id="provider", credential_vault=self.vault,
+            refresh_service=self.refresh, client_factory=CapturingClient,
+        )
+        client = manager.create_policy_client(
+            owner_id="owner", account_id="account",
+            endpoint="https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+            policy_registry=registry, granted_scopes=("read",),
+            owner_approval=lambda _request: True, audit=audit.append,
+            current_revision=lambda: registry.revision,
+        )
+        self.assertEqual(client.kwargs["allowed_tools"], ("read_profile",))
+        self.assertTrue(client.kwargs["approver"]("read_profile", {"id": "1"}))
+        self.assertFalse(client.kwargs["approver"]("unknown_tool", {}))
+        self.assertEqual([event["event"] for event in audit],
+                         ["requested", "authorized_read_only"])
+
+    def test_policy_client_rejects_untrusted_registry_type(self):
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "trusted_tool_policy_registry_required"):
+            self.manager.create_policy_client(
+                owner_id="owner", account_id="account",
+                endpoint="https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+                policy_registry=object(), granted_scopes=("read",),
+                owner_approval=lambda _request: True, audit=lambda _event: None,
+                current_revision=lambda: 1,
+            )
+
+    def test_policy_client_rejects_invalid_granted_scopes_cleanly(self):
+        policy = MCPToolPolicy(
+            "owner", "provider", "account", "read_profile",
+            MCPToolRisk.READ_ONLY, ("read",), 1,
+        )
+        registry = MCPToolPolicyRegistry(
+            owner_id="owner", policies=(policy,), revision=4,
+        )
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "trusted_tool_policy_invalid"):
+            self.manager.create_policy_client(
+                owner_id="owner", account_id="account",
+                endpoint="https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+                policy_registry=registry, granted_scopes=None,
+                owner_approval=lambda _request: True, audit=lambda _event: None,
+                current_revision=lambda: 4,
+            )
 
     def test_token_is_resolved_lazily_and_scoped_to_authenticated_owner(self):
         client = self.client()
