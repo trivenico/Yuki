@@ -213,7 +213,13 @@ class LANCallSessionStore:
                 (_stamp(now), device.device_id, _stamp(now)))
             rows = db.execute("""SELECT * FROM lan_call_sessions
                 WHERE recipient_device_id=? AND owner_id=? AND status='ringing'
-                  AND expires_at>? ORDER BY created_at ASC""",
+                  AND expires_at>? AND EXISTS (
+                    SELECT 1 FROM paired_devices caller
+                    WHERE caller.device_id=lan_call_sessions.caller_device_id
+                      AND caller.owner_id=lan_call_sessions.owner_id
+                      AND caller.revoked_at IS NULL
+                  )
+                ORDER BY created_at ASC""",
                 (device.device_id, device.owner_id, _stamp(now))).fetchall()
             return [{
                 "session_id": row["session_hash"],
@@ -236,6 +242,14 @@ class LANCallSessionStore:
                              (_session_digest(session_id),)).fetchone()
             if row is None or row["owner_id"] != device.owner_id:
                 raise CallSessionDenied("call_session_not_found")
+            if required_role == "recipient" and target_status == "accepted":
+                caller_active = db.execute(
+                    """SELECT 1 FROM paired_devices
+                       WHERE owner_id=? AND device_id=? AND revoked_at IS NULL""",
+                    (row["owner_id"], row["caller_device_id"]),
+                ).fetchone()
+                if caller_active is None:
+                    raise CallSessionDenied("caller_device_inactive")
             participant = row["caller_device_id"] if required_role == "caller" else row["recipient_device_id"]
             if participant != device.device_id:
                 raise CallSessionDenied("call_participant_required")
