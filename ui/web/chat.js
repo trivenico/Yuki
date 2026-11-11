@@ -281,12 +281,91 @@
       try { await openConversation(state.active); } catch (_) {}
     } finally { state.abort = null; state.requestId = null; setBusy(false); $("message-input").focus(); }
   };
+
+  const loadPairedDevices = async () => {
+    const caller = $("call-caller"), recipient = $("call-recipient");
+    if (!caller || !recipient || !state.user) return;
+    $("call-status").textContent = "Loading paired devices…";
+    try {
+      const data = await api("/v1/devices");
+      const devices = data.devices || [];
+      const fill = (select, placeholder) => {
+        select.replaceChildren();
+        const first = document.createElement("option");
+        first.value = ""; first.textContent = placeholder; select.append(first);
+        devices.forEach((device) => {
+          const option = document.createElement("option");
+          option.value = device.device_id;
+          option.textContent = device.name + " · " + device.device_id;
+          select.append(option);
+        });
+      };
+      fill(caller, "Choose calling device");
+      fill(recipient, "Choose recipient device");
+      $("call-status").textContent = devices.length < 2
+        ? "Pair at least two active devices to place a LAN call."
+        : devices.length + " active paired devices available. Calls remain pending until the recipient accepts.";
+    } catch (error) {
+      $("call-status").textContent = "Unable to load paired devices: " + error.message;
+    }
+  };
+  $("call-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const callerId = $("call-caller").value;
+    const recipientId = $("call-recipient").value;
+    const passwordInput = $("call-password");
+    const password = passwordInput.value;
+    const devices = [...$("call-caller").options, ...$("call-recipient").options];
+    const callerName = [...$("call-caller").selectedOptions][0]?.textContent || callerId;
+    const recipientName = [...$("call-recipient").selectedOptions][0]?.textContent || recipientId;
+    if (!callerId || !recipientId || callerId === recipientId || !password) {
+      $("call-status").textContent = "Choose two different paired devices and enter your password.";
+      return;
+    }
+    const intent = "Place a LAN call from:\n" + callerName + "\n\nTo:\n" + recipientName +
+      "\n\nThe recipient must separately accept. No microphone or camera will be activated by this invitation.";
+    if (!window.confirm(intent + "\n\nDo you want to authorize this exact invitation?")) return;
+    const submit = $("call-submit");
+    submit.disabled = true;
+    $("call-status").textContent = "Re-authenticating and creating the one-time invitation…";
+    let confirmationToken = null;
+    try {
+      const challenge = await api("/v1/devices/calls/confirmation-challenges", {
+        method: "POST",
+        body: JSON.stringify({
+          password,
+          caller_device_id: callerId,
+          recipient_device_id: recipientId
+        })
+      });
+      confirmationToken = challenge.confirmation_token;
+      const created = await api("/v1/devices/calls", {
+        method: "POST",
+        body: JSON.stringify({
+          caller_device_id: callerId,
+          recipient_device_id: recipientId,
+          confirmation_token: confirmationToken
+        })
+      });
+      $("call-status").textContent = "Invitation created. Status: " + created.session.status +
+        ". The recipient device must accept before a call can proceed.";
+      toast("LAN call invitation sent.");
+    } catch (error) {
+      $("call-status").textContent = "Call invitation not created: " + error.message;
+    } finally {
+      confirmationToken = null;
+      passwordInput.value = "";
+      submit.disabled = false;
+    }
+  });
+  $("refresh-devices").addEventListener("click", () => loadPairedDevices());
+
   $("login-form").addEventListener("submit", async (event) => {
     event.preventDefault(); $("login-error").textContent = "";
     try {
       const data = await api("/v1/auth/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) });
       state.token = data.access_token; state.user = data.user; sessionStorage.setItem("yuki_token", state.token);
-      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
+      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadIntegrations(); await loadPairedDevices(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (error) { $("login-error").textContent = error.message === "invalid_credentials" ? "Incorrect username or password." : error.message; }
   });
