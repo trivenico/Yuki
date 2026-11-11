@@ -167,6 +167,37 @@ class RemoteCallClient:
             raise RuntimeError("invalid_call_notification_ack")
         return body["acknowledged"]
 
+    def get_call(self, session_id: str) -> dict:
+        """Read current participant-visible state before retrying an ambiguous action."""
+        if not isinstance(session_id, str) or not _SESSION_HANDLE.fullmatch(session_id):
+            raise ValueError("invalid_call_invitation_handle")
+        body = self._request("GET", f"/v1/devices/calls/{session_id}")
+        session = body.get("session")
+        expected = {
+            "session_id", "caller_device_id", "recipient_device_id", "status",
+            "created_at", "expires_at", "accepted_at", "ended_at",
+        }
+        if not isinstance(session, dict) or set(session) != expected:
+            raise RuntimeError("invalid_call_state_response")
+        if session.get("session_id") != session_id:
+            raise RuntimeError("call_state_session_mismatch")
+        if not all(isinstance(session[key], str) and _DEVICE_ID.fullmatch(session[key])
+                   for key in ("caller_device_id", "recipient_device_id")):
+            raise RuntimeError("invalid_call_state_response")
+        if session.get("status") not in {
+            "ringing", "accepted", "rejected", "ended", "expired", "cancelled"
+        }:
+            raise RuntimeError("invalid_call_state_response")
+        for key in ("created_at", "expires_at"):
+            if not isinstance(session.get(key), str) or not 0 < len(session[key]) <= 64:
+                raise RuntimeError("invalid_call_state_response")
+        for key in ("accepted_at", "ended_at"):
+            if session[key] is not None and (
+                not isinstance(session[key], str) or len(session[key]) > 64
+            ):
+                raise RuntimeError("invalid_call_state_response")
+        return session
+
     def _respond(self, session_id: str, action: str) -> dict:
         if not isinstance(session_id, str) or not _SESSION_HANDLE.fullmatch(session_id):
             raise ValueError("invalid_call_invitation_handle")
