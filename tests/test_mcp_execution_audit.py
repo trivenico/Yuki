@@ -26,7 +26,7 @@ class FakeTransport:
 class MCPExecutionAuditTests(unittest.TestCase):
     def _client(self, log, transport, approver=True):
         events = MCPExecutionAudit(log, owner_id="owner", provider_id="provider",
-                                   account_id="account", tool_name="publish")
+                                   account_id="account")
         return MCPHTTPClient("https://mcp.example/mcp", allowed_hosts=("mcp.example",),
             allowed_tools=("publish",), approver=lambda _n, _a: approver,
             execution_audit=events, http_transport=transport)
