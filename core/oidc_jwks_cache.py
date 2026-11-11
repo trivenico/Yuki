@@ -43,6 +43,16 @@ class OIDCJWKSCache:
         self._last_fetch = {}
         self._lock = threading.RLock()
 
+    def invalidate(self, jwks_uri: str | None = None) -> None:
+        """Explicitly discard one issuer's keys or the entire bounded cache."""
+        with self._lock:
+            if jwks_uri is None:
+                self._entries.clear()
+                self._last_fetch.clear()
+            else:
+                self._entries.pop(jwks_uri, None)
+                self._last_fetch.pop(jwks_uri, None)
+
     def get(self, jwks_uri: str, *, force_refresh: bool = False) -> dict:
         if not isinstance(jwks_uri, str) or not jwks_uri or len(jwks_uri) > 2048:
             raise OIDCJWKSCacheError("oidc_jwks_uri_invalid")
