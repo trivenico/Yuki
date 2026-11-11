@@ -87,6 +87,27 @@ class CompanionApplicationRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
 
+    def test_reminder_notification_outbox_requires_explicit_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = build_companion_application_runtime(
+                {"workspace": str(root)}, agent_loop=_loop(),
+                store_factory=lambda config: ConversationStore(root / "conversations.sqlite3"),
+            )
+            try:
+                reminder = runtime.reminders.add(
+                    "Deliver safely", datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+                claims = runtime.reminders.claim_due_notifications()
+                self.assertEqual(len(claims), 1)
+                self.assertEqual(claims[0]["payload"]["id"], reminder["id"])
+                self.assertFalse(runtime.reminders.list()[0]["delivered"])
+                self.assertTrue(runtime.reminders.complete_notification(claims[0]))
+                self.assertTrue(runtime.reminders.list()[0]["delivered"])
+                self.assertFalse(runtime.reminders.complete_notification(claims[0]))
+            finally:
+                runtime.close()
+
     def test_rejects_invalid_memory_configuration_before_database_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
