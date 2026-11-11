@@ -1,6 +1,7 @@
 """Security and lifecycle tests for LAN call invitations (no media transport)."""
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from unittest.mock import patch
 from pathlib import Path
@@ -107,6 +108,20 @@ class LANCallSessionStoreTests(unittest.TestCase):
         self.assertEqual(expired.status, "expired")
         self.assertEqual(self.calls.get(session_id=invite.session_id,
                                         device_token=self.caller.token).status, "expired")
+
+    def test_concurrent_acceptance_has_exactly_one_winner(self):
+        invite = self._invite()
+        def accept():
+            try:
+                return self.calls.accept(session_id=invite.session_id,
+                                          recipient_token=self.recipient.token).status
+            except CallSessionDenied:
+                return "denied"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: accept(), range(2)))
+        self.assertCountEqual(outcomes, ["accepted", "denied"])
+        self.assertEqual(self.calls.get(session_id=invite.session_id,
+                                        device_token=self.caller.token).status, "accepted")
 
 
 if __name__ == "__main__":
