@@ -88,6 +88,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
             policy_registry=registry, granted_scopes=("read",),
             owner_approval=lambda _request: True, audit=audit.append,
             current_revision=lambda: registry.revision,
+            execution_audit=lambda _event: None,
         )
         self.assertEqual(client.kwargs["allowed_tools"], ("read_profile",))
         self.assertTrue(client.kwargs["approver"]("read_profile", {"id": "1"}))
@@ -103,6 +104,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
                 policy_registry=object(), granted_scopes=("read",),
                 owner_approval=lambda _request: True, audit=lambda _event: None,
                 current_revision=lambda: 1,
+                execution_audit=lambda _event: None,
             )
 
     def test_policy_client_rejects_invalid_granted_scopes_cleanly(self):
@@ -120,6 +122,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
                 policy_registry=registry, granted_scopes=None,
                 owner_approval=lambda _request: True, audit=lambda _event: None,
                 current_revision=lambda: 4,
+                execution_audit=lambda _event: None,
             )
 
     def test_token_is_resolved_lazily_and_scoped_to_authenticated_owner(self):
