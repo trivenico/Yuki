@@ -88,7 +88,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
             policy_registry=registry, granted_scopes=("read",),
             owner_approval=lambda _request: True, audit=audit.append,
         )
-        self.assertEqual(client.kwargs["allowed_tools"], frozenset({"read_profile"}))
+        self.assertEqual(client.kwargs["allowed_tools"], ("read_profile",))
         self.assertTrue(client.kwargs["approver"]("read_profile", {"id": "1"}))
         self.assertFalse(client.kwargs["approver"]("unknown_tool", {}))
         self.assertEqual([event["event"] for event in audit],
