@@ -39,7 +39,7 @@ class AuthenticatedRelationshipSettingsAPITests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def request(self, method, payload=None, token=None, path="/v1/companion/relationship-settings"):
+    def request(self, method, payload=None, token=None, path="/v1/companion/relationship-settings", content_type=True):
         async def run():
             body = json.dumps(payload).encode() if payload is not None else b""
             consumed = False
@@ -55,6 +55,8 @@ class AuthenticatedRelationshipSettingsAPITests(unittest.TestCase):
             headers = []
             if token:
                 headers.append((b"authorization", f"Bearer {token}".encode()))
+            if payload is not None and content_type:
+                headers.append((b"content-type", b"application/json"))
             await self.app({"type": "http", "method": method, "path": path, "headers": headers}, receive, send)
             return sent[0]["status"], json.loads(sent[1]["body"])
         return asyncio.run(run())
@@ -88,6 +90,13 @@ class AuthenticatedRelationshipSettingsAPITests(unittest.TestCase):
         status, body = self.request("DELETE", token=self.owner_one.token)
         self.assertEqual((status, body["reset"]), (200, True))
         self.assertEqual(body["settings"]["mode"], "off")
+
+    def test_put_requires_json_content_type_before_resolving_storage(self):
+        status, body = self.request(
+            "PUT", self.payload(), self.owner_one.token, content_type=False
+        )
+        self.assertEqual((status, body["error"]), (415, "unsupported_media_type"))
+        self.assertEqual(self.stores, {})
 
     def test_rejects_owner_override_unknown_fields_and_invalid_consent(self):
         payload = self.payload()
