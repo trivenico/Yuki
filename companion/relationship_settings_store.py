@@ -6,11 +6,12 @@ not schedule check-ins, inject prompts, or grant capabilities.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import sqlite3
-from typing import Any
+from typing import Any, Iterator
 
 from companion.relationship_mode import (
     AffectionLevel,
@@ -42,14 +43,18 @@ class RelationshipSettingsStore:
             except OSError as exc:
                 raise RuntimeError("Could not secure relationship settings permissions.") from exc
 
-    def _connect(self):
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         if self.database_path.is_symlink():
             raise RuntimeError("relationship settings database must not be a symlink.")
         db = sqlite3.connect(str(self.database_path), timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=10000")
-        db.execute("PRAGMA foreign_keys=ON")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=10000")
+            db.execute("PRAGMA foreign_keys=ON")
+            yield db
+        finally:
+            db.close()
 
     def _initialize(self) -> None:
         with self._connect() as db:
