@@ -107,6 +107,15 @@ class MCPToolPolicyRegistry:
     def get(self, *, provider_id: str, account_id: str, tool_name: str):
         return self._policies.get((provider_id, account_id, tool_name))
 
+    def tool_names(self, *, provider_id: str, account_id: str) -> tuple[str, ...]:
+        """Return only enabled names for this exact provider/account binding."""
+        return tuple(sorted(
+            policy.tool_name for policy in self._policies.values()
+            if policy.provider_id == provider_id
+            and policy.account_id == account_id
+            and policy.enabled
+        ))
+
     @property
     def policy_count(self):
         return len(self._policies)
