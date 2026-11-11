@@ -82,7 +82,7 @@ class OAuthMCPConnectionManager:
     def create_policy_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, policy_registry, granted_scopes,
-        owner_approval, audit, current_revision, timeout: float = 10,
+        owner_approval, audit, current_revision, execution_audit, timeout: float = 10,
     ):
         """Create an MCP client whose execution gate is a trusted policy snapshot.
 
@@ -94,6 +94,8 @@ class OAuthMCPConnectionManager:
 
         if not isinstance(policy_registry, MCPToolPolicyRegistry):
             raise OAuthMCPConnectionError("trusted_tool_policy_registry_required")
+        if not callable(execution_audit):
+            raise OAuthMCPConnectionError("durable_execution_audit_required")
         try:
             scope_values = tuple(sorted(granted_scopes)) if isinstance(
                 granted_scopes, (set, frozenset)
@@ -113,6 +115,16 @@ class OAuthMCPConnectionManager:
             )
         except Exception:
             raise OAuthMCPConnectionError("trusted_tool_policy_invalid") from None
+        def bound_execution_audit(event):
+            if not isinstance(event, dict):
+                raise ValueError("mcp_execution_audit_event_invalid")
+            execution_audit({
+                **event,
+                "owner_id": owner_id,
+                "provider_id": self._provider_id,
+                "account_id": account_id,
+            })
+
         return self.create_client(
             owner_id=owner_id,
             account_id=account_id,
@@ -121,13 +133,14 @@ class OAuthMCPConnectionManager:
             allowed_tools=allowed_tools,
             approver=approver,
             required_scopes=scope_values,
+            execution_audit=bound_execution_audit,
             timeout=timeout,
         )
 
     def create_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, allowed_tools, approver,
-        required_scopes=(), timeout: float = 10,
+        required_scopes=(), execution_audit=None, timeout: float = 10,
     ):
         """Create a client whose private token callback refreshes just-in-time.
 
@@ -190,6 +203,7 @@ class OAuthMCPConnectionManager:
                 allowed_tools=allowed_tools,
                 approver=approver,
                 access_token_provider=access_token_provider,
+                execution_audit=execution_audit,
                 timeout=timeout,
             )
         except OAuthMCPConnectionError:

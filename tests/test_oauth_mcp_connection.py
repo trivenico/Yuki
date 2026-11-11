@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 from core.oauth_mcp_connection import OAuthMCPConnectionError, OAuthMCPConnectionManager
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolPolicyRegistry, MCPToolRisk
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.mcp_tool_execution_audit import MCPToolExecutionAuditor
 
 
 class FakeRefresh:
@@ -88,6 +90,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
             policy_registry=registry, granted_scopes=("read",),
             owner_approval=lambda _request: True, audit=audit.append,
             current_revision=lambda: registry.revision,
+            execution_audit=lambda _event: None,
         )
         self.assertEqual(client.kwargs["allowed_tools"], ("read_profile",))
         self.assertTrue(client.kwargs["approver"]("read_profile", {"id": "1"}))
@@ -103,6 +106,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
                 policy_registry=object(), granted_scopes=("read",),
                 owner_approval=lambda _request: True, audit=lambda _event: None,
                 current_revision=lambda: 1,
+                execution_audit=lambda _event: None,
             )
 
     def test_policy_client_rejects_invalid_granted_scopes_cleanly(self):
@@ -120,6 +124,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
                 policy_registry=registry, granted_scopes=None,
                 owner_approval=lambda _request: True, audit=lambda _event: None,
                 current_revision=lambda: 4,
+                execution_audit=lambda _event: None,
             )
 
     def test_token_is_resolved_lazily_and_scoped_to_authenticated_owner(self):
@@ -190,6 +195,46 @@ class OAuthMCPConnectionTests(unittest.TestCase):
     def test_invalid_owner_is_rejected_before_client_construction(self):
         with self.assertRaisesRegex(OAuthMCPConnectionError, "authenticated_owner_invalid"):
             self.client(owner_id="../other")
+
+
+    def test_policy_client_binds_shared_audit_to_authenticated_identity(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            log = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            auditor = MCPToolExecutionAuditor(
+                log, owner_id="owner", provider_id="provider", account_id="account"
+            )
+            policy = MCPToolPolicy(
+                "owner", "provider", "account", "read_profile",
+                MCPToolRisk.READ_ONLY, ("read",), 1,
+            )
+            registry = MCPToolPolicyRegistry(
+                owner_id="owner", policies=(policy,), revision=4,
+            )
+            client = self.manager.create_policy_client(
+                owner_id="owner", account_id="account",
+                endpoint="https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+                policy_registry=registry, granted_scopes=("read",),
+                owner_approval=lambda _request: True, audit=auditor,
+                current_revision=lambda: 4, execution_audit=auditor,
+            )
+            execution_id = "d" * 32
+            self.assertTrue(client.kwargs["approver"]("read_profile", {}, execution_id))
+            client.kwargs["execution_audit"]({
+                "event": "execution_started", "execution_id": execution_id,
+                "tool_name": "read_profile",
+            })
+            client.kwargs["execution_audit"]({
+                "event": "executed", "execution_id": execution_id,
+                "tool_name": "read_profile",
+            })
+            events = list(reversed(log.list_events()))
+            self.assertEqual(
+                [event["event_type"] for event in events],
+                ["requested", "approved", "execution_started", "executed"],
+            )
+            self.assertTrue(log.verify_chain())
 
 
 if __name__ == "__main__":

@@ -72,5 +72,94 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
             MCPHTTPClient("https://attacker.example/rpc", allowed_hosts={"mcp.example.com"})
 
 
+    def test_execution_lifecycle_records_started_then_confirmed_success(self):
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}')
+        ])
+        events = []
+        approvals = []
+        def approver(name, arguments, execution_id):
+            approvals.append((name, arguments, execution_id))
+            return True
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc", allowed_hosts={"mcp.example.com"},
+            allowed_tools={"write_note"}, approver=approver,
+            execution_audit=events.append, http_transport=transport,
+        )
+        result = client.call_tool("write_note", {"text": "private payload"})
+        self.assertTrue(result["untrusted"])
+        self.assertEqual([event["event"] for event in events],
+                         ["execution_started", "executed"])
+        self.assertEqual(events[0]["execution_id"], events[1]["execution_id"])
+        self.assertEqual(approvals[0][2], events[0]["execution_id"])
+        self.assertNotIn("private payload", str(events))
+
+    def test_transport_failure_after_start_is_outcome_unknown_and_not_retried(self):
+        from core.mcp_client import MCPExecutionOutcomeUnknown
+        transport = FakeTransport([MCPPinnedTransportError("private transport detail")])
+        events = []
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc", allowed_hosts={"mcp.example.com"},
+            allowed_tools={"write_note"},
+            approver=lambda _name, _arguments, _execution_id: True,
+            execution_audit=events.append, http_transport=transport,
+        )
+        with self.assertRaisesRegex(MCPExecutionOutcomeUnknown, "do not retry"):
+            client.call_tool("write_note", {"text": "private"})
+        self.assertEqual([event["event"] for event in events],
+                         ["execution_started", "outcome_unknown"])
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_execution_start_audit_failure_prevents_remote_dispatch(self):
+        def broken(_event):
+            raise RuntimeError("audit unavailable")
+        transport = FakeTransport([])
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc", allowed_hosts={"mcp.example.com"},
+            allowed_tools={"write_note"},
+            approver=lambda _name, _arguments, _execution_id: True,
+            execution_audit=broken, http_transport=transport,
+        )
+        with self.assertRaisesRegex(MCPError, "was not dispatched"):
+            client.call_tool("write_note", {})
+        self.assertEqual(transport.calls, [])
+
+    def test_terminal_audit_failure_is_reported_as_unknown_without_retry(self):
+        from core.mcp_client import MCPExecutionOutcomeUnknown
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{}}')
+        ])
+        def broken(event):
+            if event["event"] == "executed":
+                raise RuntimeError("audit unavailable")
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc", allowed_hosts={"mcp.example.com"},
+            allowed_tools={"write_note"},
+            approver=lambda _name, _arguments, _execution_id: True,
+            execution_audit=broken, http_transport=transport,
+        )
+        with self.assertRaisesRegex(MCPExecutionOutcomeUnknown, "do not retry"):
+            client.call_tool("write_note", {})
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_remote_tool_error_response_is_a_confirmed_failure(self):
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"isError":true,"content":[]}}')
+        ])
+        events = []
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc", allowed_hosts={"mcp.example.com"},
+            allowed_tools={"write_note"},
+            approver=lambda _name, _arguments, _execution_id: True,
+            execution_audit=events.append, http_transport=transport,
+        )
+        client.call_tool("write_note", {})
+        self.assertEqual([event["event"] for event in events],
+                         ["execution_started", "execution_failed"])
+
+
 if __name__ == "__main__":
     unittest.main()
