@@ -184,6 +184,7 @@ class ConversationStore:
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
         generation_request_id: str | None = None,
+        generation_lease_token: str | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -209,6 +210,15 @@ class ConversationStore:
                     raise ConversationNotFound("conversation not found.")
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
+                if role == "assistant" and idempotency_key.strip().startswith("assistant:"):
+                    lease = db.execute(
+                        "SELECT lease_token FROM conversation_generation_leases WHERE conversation_id=? AND owner_id=?",
+                        (conversation_id, owner),
+                    ).fetchone()
+                    if lease is not None and lease["lease_token"] != generation_lease_token:
+                        raise ConversationConflict("generation lease fencing rejected stale assistant write.")
+                    if generation_lease_token is not None and (lease is None or lease["lease_token"] != generation_lease_token):
+                        raise ConversationConflict("generation lease fencing rejected stale assistant write.")
                 previous = db.execute(
                     """SELECT * FROM conversation_messages
                        WHERE conversation_id=? AND idempotency_key=?""",
@@ -316,11 +326,15 @@ class ConversationStore:
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
                 current = db.execute(
-                    "SELECT expires_at FROM conversation_generation_leases WHERE conversation_id=?",
+                    "SELECT lease_token FROM conversation_generation_leases WHERE conversation_id=?",
                     (conversation_id,),
                 ).fetchone()
-                if current is not None and current["expires_at"] > now:
-                    raise ConversationConflict("another generation is already active for this conversation.")
+                # Expiry is diagnostic, not proof of process termination. Never
+                # steal an existing lease automatically: a paused worker could
+                # resume and race the replacement holder without end-to-end
+                # fencing on every side effect and persistence commit.
+                if current is not None:
+                    raise ConversationConflict("another generation lease still requires release or supervised recovery.")
                 db.execute(
                     """INSERT INTO conversation_generation_leases
                        (conversation_id, owner_id, lease_token, expires_at) VALUES (?, ?, ?, ?)
@@ -351,7 +365,7 @@ class ConversationStore:
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        checkpoint: dict[str, Any],
+        checkpoint: dict[str, Any], lease_token: str | None = None,
     ) -> bool:
         """Persist a bounded, non-sensitive execution checkpoint for recovery."""
         owner = self._owner(owner_id)
@@ -367,14 +381,23 @@ class ConversationStore:
             cursor = db.execute(
                 """UPDATE conversation_generation_runs
                    SET checkpoint=?, updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (encoded, self._now(), owner, conversation_id, request_id.strip()),
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                     AND ((? IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=? AND l.lease_token=?
+                     )) OR (? IS NULL AND NOT EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=?
+                     )))""",
+                (encoded, self._now(), owner, conversation_id, request_id.strip(),
+                 lease_token, conversation_id, owner, lease_token,
+                 lease_token, conversation_id, owner),
             )
             return cursor.rowcount == 1
 
     def finish_generation(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        status: str,
+        status: str, lease_token: str | None = None,
     ) -> bool:
         owner = self._owner(owner_id)
         if status not in {"completed", "interrupted", "failed", "cancelled"}:
@@ -384,8 +407,17 @@ class ConversationStore:
             cursor = db.execute(
                 """UPDATE conversation_generation_runs
                    SET status=?, updated_at=?, finished_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (status, now, now, owner, conversation_id, request_id.strip()),
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                     AND ((? IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=? AND l.lease_token=?
+                     )) OR (? IS NULL AND NOT EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=?
+                     )))""",
+                (status, now, now, owner, conversation_id, request_id.strip(),
+                 lease_token, conversation_id, owner, lease_token,
+                 lease_token, conversation_id, owner),
             )
             return cursor.rowcount == 1
 
@@ -415,6 +447,45 @@ class ConversationStore:
             "status": row["status"], "checkpoint": json.loads(row["checkpoint"]),
             "started_at": row["started_at"], "updated_at": row["updated_at"],
         } for row in rows]
+
+    def delete_conversation(self, *, owner_id: str, conversation_id: str) -> bool:
+        """Permanently delete one owner's conversation and all FK-owned records.
+
+        The owner predicate is part of the write transaction. Foreign-key
+        cascades remove messages, generation runs and generation leases.
+        """
+        owner = self._owner(owner_id)
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id must be non-empty text.")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT 1 FROM conversations WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                raise ConversationNotFound("conversation not found.")
+            # A lease is a cross-process execution guard. Do not rely on its
+            # wall-clock expiry to prove a worker has stopped: a slow or paused
+            # worker may still resume. Fail closed until the lease holder releases
+            # it or a separately audited recovery/fencing procedure is available.
+            lease = db.execute(
+                "SELECT 1 FROM conversation_generation_leases WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            ).fetchone()
+            if lease is not None:
+                db.rollback()
+                raise ConversationConflict("generation_active")
+            cursor = db.execute(
+                "DELETE FROM conversations WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            )
+            if cursor.rowcount != 1:
+                db.rollback()
+                raise ConversationConflict("conversation changed during deletion.")
+            db.commit()
+            return True
 
     def archive_conversation(self, *, owner_id: str, conversation_id: str) -> dict[str, Any]:
         owner = self._owner(owner_id)
