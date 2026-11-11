@@ -416,6 +416,34 @@ class ConversationStore:
             "started_at": row["started_at"], "updated_at": row["updated_at"],
         } for row in rows]
 
+    def delete_conversation(self, *, owner_id: str, conversation_id: str) -> bool:
+        """Permanently delete one owner's conversation and all FK-owned records.
+
+        The owner predicate is part of the write transaction. Foreign-key
+        cascades remove messages, generation runs and generation leases.
+        """
+        owner = self._owner(owner_id)
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id must be non-empty text.")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT 1 FROM conversations WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                raise ConversationNotFound("conversation not found.")
+            cursor = db.execute(
+                "DELETE FROM conversations WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            )
+            if cursor.rowcount != 1:
+                db.rollback()
+                raise ConversationConflict("conversation changed during deletion.")
+            db.commit()
+            return True
+
     def archive_conversation(self, *, owner_id: str, conversation_id: str) -> dict[str, Any]:
         owner = self._owner(owner_id)
         with self._connect() as db:
