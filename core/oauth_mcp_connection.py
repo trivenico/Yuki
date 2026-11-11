@@ -94,6 +94,8 @@ class OAuthMCPConnectionManager:
 
         if not isinstance(policy_registry, MCPToolPolicyRegistry):
             raise OAuthMCPConnectionError("trusted_tool_policy_registry_required")
+        if not callable(execution_audit):
+            raise OAuthMCPConnectionError("durable_execution_audit_required")
         try:
             scope_values = tuple(sorted(granted_scopes)) if isinstance(
                 granted_scopes, (set, frozenset)
@@ -113,6 +115,16 @@ class OAuthMCPConnectionManager:
             )
         except Exception:
             raise OAuthMCPConnectionError("trusted_tool_policy_invalid") from None
+        def bound_execution_audit(event):
+            if not isinstance(event, dict):
+                raise ValueError("mcp_execution_audit_event_invalid")
+            execution_audit({
+                "owner_id": owner_id,
+                "provider_id": self._provider_id,
+                "account_id": account_id,
+                **event,
+            })
+
         return self.create_client(
             owner_id=owner_id,
             account_id=account_id,
@@ -121,7 +133,7 @@ class OAuthMCPConnectionManager:
             allowed_tools=allowed_tools,
             approver=approver,
             required_scopes=scope_values,
-            execution_audit=execution_audit,
+            execution_audit=bound_execution_audit,
             timeout=timeout,
         )
 
