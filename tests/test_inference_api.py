@@ -210,6 +210,35 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual((status, accepted["session"]["status"]), (200, "accepted"))
 
 
+    def test_owner_call_history_is_scoped_bounded_and_uses_opaque_handles(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        status, challenge = self.request(
+            "POST", "/v1/devices/calls/confirmation-challenges", {
+                "password": "a-secure-owner-password",
+                "caller_device_id": caller["device"]["device_id"],
+                "recipient_device_id": recipient["device"]["device_id"],
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        status, created = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller["device"]["device_id"],
+            "recipient_device_id": recipient["device"]["device_id"],
+            "confirmation_token": challenge["confirmation_token"],
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+
+        status, history = self.request("GET", "/v1/devices/calls", token=self.owner_one.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(history["sessions"]), 1)
+        self.assertEqual(history["sessions"][0]["session_id"], created["session"]["session_id"])
+        self.assertEqual(history["sessions"][0]["status"], "ringing")
+
+        status, other_history = self.request("GET", "/v1/devices/calls", token=self.owner_two.token)
+        self.assertEqual((status, other_history["sessions"]), (200, []))
+        status, body = self.request("GET", "/v1/devices/calls", token=caller["device_token"])
+        self.assertEqual((status, body["error"]), (401, "authentication_required"))
+
     def test_owner_can_cancel_only_their_ringing_call_invitation(self):
         caller = self._pair_device()
         recipient = self._pair_device()
