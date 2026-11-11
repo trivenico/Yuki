@@ -5,13 +5,13 @@ it inside the owner's private workspace and protect backups separately.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import sqlite3
 from typing import Any
-from uuid import uuid4
 
 
 class CompanionStateStore:
@@ -36,14 +36,18 @@ class CompanionStateStore:
         except OSError as exc:
             raise RuntimeError("Could not secure companion database permissions.") from exc
 
+    @contextmanager
     def _connect(self):
         if self.database_path.is_symlink():
             raise RuntimeError("companion database path must not be a symlink.")
         db = sqlite3.connect(str(self.database_path), timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=10000")
-        db.execute("PRAGMA foreign_keys=ON")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=10000")
+            db.execute("PRAGMA foreign_keys=ON")
+            yield db
+        finally:
+            db.close()
 
     def _initialize(self):
         with self._connect() as db:
@@ -81,7 +85,13 @@ class CompanionStateStore:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _decode(self, row):
+    @staticmethod
+    def _check_kind(kind: str):
+        if kind not in CompanionStateStore.MAX_RECORDS:
+            raise ValueError("unsupported companion record kind.")
+
+    @staticmethod
+    def _decode(row):
         item = json.loads(row["payload"])
         if not isinstance(item, dict):
             raise RuntimeError("Companion state record is corrupt.")
@@ -230,8 +240,3 @@ class CompanionStateStore:
             )
             db.commit()
         return len(raw)
-
-    @staticmethod
-    def _check_kind(kind: str):
-        if kind not in CompanionStateStore.MAX_RECORDS:
-            raise ValueError("unsupported companion record kind.")
