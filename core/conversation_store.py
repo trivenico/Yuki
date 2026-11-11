@@ -184,6 +184,7 @@ class ConversationStore:
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
         generation_request_id: str | None = None,
+        generation_lease_token: str | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -209,6 +210,15 @@ class ConversationStore:
                     raise ConversationNotFound("conversation not found.")
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
+                if role == "assistant" and idempotency_key.strip().startswith("assistant:"):
+                    lease = db.execute(
+                        "SELECT lease_token FROM conversation_generation_leases WHERE conversation_id=? AND owner_id=?",
+                        (conversation_id, owner),
+                    ).fetchone()
+                    if lease is not None and lease["lease_token"] != generation_lease_token:
+                        raise ConversationConflict("generation lease fencing rejected stale assistant write.")
+                    if generation_lease_token is not None and (lease is None or lease["lease_token"] != generation_lease_token):
+                        raise ConversationConflict("generation lease fencing rejected stale assistant write.")
                 previous = db.execute(
                     """SELECT * FROM conversation_messages
                        WHERE conversation_id=? AND idempotency_key=?""",
@@ -355,7 +365,7 @@ class ConversationStore:
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        checkpoint: dict[str, Any],
+        checkpoint: dict[str, Any], lease_token: str | None = None,
     ) -> bool:
         """Persist a bounded, non-sensitive execution checkpoint for recovery."""
         owner = self._owner(owner_id)
@@ -371,14 +381,23 @@ class ConversationStore:
             cursor = db.execute(
                 """UPDATE conversation_generation_runs
                    SET checkpoint=?, updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (encoded, self._now(), owner, conversation_id, request_id.strip()),
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                     AND ((? IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=? AND l.lease_token=?
+                     )) OR (? IS NULL AND NOT EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=?
+                     )))""",
+                (encoded, self._now(), owner, conversation_id, request_id.strip(),
+                 lease_token, conversation_id, owner, lease_token,
+                 lease_token, conversation_id, owner),
             )
             return cursor.rowcount == 1
 
     def finish_generation(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        status: str,
+        status: str, lease_token: str | None = None,
     ) -> bool:
         owner = self._owner(owner_id)
         if status not in {"completed", "interrupted", "failed", "cancelled"}:
@@ -388,8 +407,17 @@ class ConversationStore:
             cursor = db.execute(
                 """UPDATE conversation_generation_runs
                    SET status=?, updated_at=?, finished_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (status, now, now, owner, conversation_id, request_id.strip()),
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                     AND ((? IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=? AND l.lease_token=?
+                     )) OR (? IS NULL AND NOT EXISTS (
+                         SELECT 1 FROM conversation_generation_leases l
+                         WHERE l.conversation_id=? AND l.owner_id=?
+                     )))""",
+                (status, now, now, owner, conversation_id, request_id.strip(),
+                 lease_token, conversation_id, owner, lease_token,
+                 lease_token, conversation_id, owner),
             )
             return cursor.rowcount == 1
 
