@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from typing import Any
@@ -316,8 +317,14 @@ class AuthenticatedInferenceAPI:
 
     @staticmethod
     def _call(session):
+        # Never return the original random session secret. A SHA-256 digest is
+        # the opaque handle used consistently by recipient inbox and owner API.
+        raw_id = session.session_id
+        handle = (raw_id if isinstance(raw_id, str) and len(raw_id) == 64
+                  and all(ch in "0123456789abcdef" for ch in raw_id)
+                  else hashlib.sha256(raw_id.encode("ascii")).hexdigest())
         return {
-            "session_id": session.session_id,
+            "session_id": handle,
             "caller_device_id": session.caller_device_id,
             "recipient_device_id": session.recipient_device_id,
             "status": session.status,
