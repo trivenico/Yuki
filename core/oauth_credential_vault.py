@@ -11,6 +11,8 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 import re
 import sqlite3
 import time
@@ -70,8 +72,7 @@ class SQLiteOAuthCredentialVault:
             raise ValueError("hmac_key must contain at least 32 bytes")
         if not callable(clock):
             raise ValueError("clock must be callable")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         self._cipher = cipher
         self._hmac_key = bytes(hmac_key)
         self._clock = clock
