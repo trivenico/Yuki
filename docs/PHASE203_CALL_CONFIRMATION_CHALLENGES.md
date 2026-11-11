@@ -28,6 +28,7 @@ The API deliberately rejects the former `confirm: true` request shape.
 - SQLite `BEGIN IMMEDIATE` and conditional update enforce single-use behavior under concurrent/replayed requests.
 - At most ten outstanding challenges per owner; expired and consumed rows are cleaned up on issuance.
 - Device bearer credentials cannot invoke owner endpoints; owner sessions cannot invoke recipient device actions.
+- The recipient inbox filters invitations whose caller device has since been revoked, and acceptance rechecks caller-device activity inside the call-state transaction.
 
 ## Remaining production gates
 
