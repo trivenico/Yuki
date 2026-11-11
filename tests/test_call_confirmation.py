@@ -72,6 +72,26 @@ class SQLiteCallConfirmationStoreTests(unittest.TestCase):
         with self.assertRaises(CallConfirmationDenied):
             self.consume(token)
 
+
+    def test_concurrent_consumption_has_exactly_one_winner(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        token, _ = self.issue()
+        barrier = Barrier(8)
+
+        def consume_once():
+            barrier.wait()
+            try:
+                self.consume(token)
+                return True
+            except CallConfirmationDenied:
+                return False
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outcomes = list(pool.map(lambda _: consume_once(), range(8)))
+        self.assertEqual(sum(outcomes), 1)
+
     def test_expired_challenge_is_rejected(self):
         token, _ = self.issue()
         self.now += timedelta(seconds=31)
