@@ -316,11 +316,15 @@ class ConversationStore:
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
                 current = db.execute(
-                    "SELECT expires_at FROM conversation_generation_leases WHERE conversation_id=?",
+                    "SELECT lease_token FROM conversation_generation_leases WHERE conversation_id=?",
                     (conversation_id,),
                 ).fetchone()
-                if current is not None and current["expires_at"] > now:
-                    raise ConversationConflict("another generation is already active for this conversation.")
+                # Expiry is diagnostic, not proof of process termination. Never
+                # steal an existing lease automatically: a paused worker could
+                # resume and race the replacement holder without end-to-end
+                # fencing on every side effect and persistence commit.
+                if current is not None:
+                    raise ConversationConflict("another generation lease still requires release or supervised recovery.")
                 db.execute(
                     """INSERT INTO conversation_generation_leases
                        (conversation_id, owner_id, lease_token, expires_at) VALUES (?, ?, ?, ?)
