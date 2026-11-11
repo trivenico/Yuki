@@ -45,6 +45,36 @@ class PairedDeviceCallInboxTests(unittest.TestCase):
         self.client.reject.assert_not_called()
         self.assertEqual(result["ignored"], 1)
 
+    def test_foreground_watch_does_not_reprompt_same_ignored_invitation(self):
+        prompts = []
+        sleeps = []
+
+        def prompt(message):
+            prompts.append(message)
+            return "i"
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            if len(sleeps) == 2:
+                raise KeyboardInterrupt()
+
+        inbox = PairedDeviceCallInbox(
+            self.client, prompt=prompt, output=self.output.append
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            inbox.run_forever(poll_interval_seconds=2, sleep=sleep)
+
+        self.assertEqual(self.client.list_incoming.call_count, 2)
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(sleeps, [2, 2])
+
+    def test_foreground_watch_rejects_unsafe_poll_interval(self):
+        inbox = self.inbox("i")
+        for interval in (0, 31, True, 1.5):
+            with self.subTest(interval=interval):
+                with self.assertRaises(ValueError):
+                    inbox.run_forever(poll_interval_seconds=interval, sleep=lambda _: None)
+
     def test_empty_inbox_is_safe(self):
         self.client.list_incoming.return_value = []
         result = self.inbox("a").run_once()
