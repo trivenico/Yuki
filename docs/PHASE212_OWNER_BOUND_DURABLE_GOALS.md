@@ -9,7 +9,8 @@ Implemented as a foundational persistence boundary. This phase is not a complete
 - Added nullable `goals.owner_id` with an additive SQLite migration.
 - Added `create_owned_goal(owner_id)`; owner identifiers are bounded, trimmed strings.
 - Added `submit_for_owner(owner_id, ...)`; the goal-owner comparison is performed inside the same `BEGIN IMMEDIATE` transaction that checks task idempotency and inserts the task.
-- Added owner-scoped goal/task projections, task/event listing, goal-state mutation and task cancellation.
+- Added owner-scoped goal/task projections and task/event listing.
+- Goal-state changes and task cancellation now apply the owner predicate inside the same `BEGIN IMMEDIATE` transaction as the mutation; wrappers do not rely on a separate authorization read followed by a later write.
 - Cross-owner access returns the same not-found result as missing records to avoid disclosing resource existence.
 - Goal ownership is immutable through the engine API.
 - Legacy goals migrate as explicitly unowned (`owner_id IS NULL`) and are not exposed by owner-scoped methods. They are not silently assigned to the first caller.
@@ -28,11 +29,11 @@ The migration adds one nullable column; existing goal and task records remain in
 ## Security and correctness limits
 
 - SQLite is a single-host persistence engine, not distributed consensus.
-- Owner-scoped wrappers currently guard local service access; the authenticated task API and its routes are not implemented here.
+- Owner-scoped methods guard local service access; the authenticated task API and its routes are not implemented here.
 - Worker claim, recovery and approval credential resolution are not yet joined to owner identity.
 - Legacy unscoped engine methods can bypass owner checks if exposed directly to untrusted callers; callers must keep the engine behind the trusted service boundary.
 - No remote side-effect fencing, KMS credential encryption, or provider commit idempotency is added by this phase.
 
 ## Acceptance coverage
 
-Regression tests cover cross-owner goal/task/event access, task submission and mutation denial, legacy unowned records, identity validation, and persistence across engine restart. Repository CI is the test authority; no local test execution is claimed.
+Regression tests cover cross-owner goal/task/event access, task submission and mutation denial (including direct verification of the transaction-bound owner predicate), legacy unowned records, identity validation, and persistence across engine restart. Repository CI is the test authority; no local test execution is claimed.
