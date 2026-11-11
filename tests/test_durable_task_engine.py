@@ -489,3 +489,84 @@ class DurableTaskEngineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_owner_bound_goals_isolate_goal_task_and_event_access(self):
+        alice_goal = self.engine.create_owned_goal("owner-alice")
+        bob_goal = self.engine.create_owned_goal("owner-bob")
+        alice_task = self.engine.submit_for_owner(
+            "owner-alice", alice_goal, "work", {"private": "alice"},
+            idempotency_key="alice-task",
+        )
+        bob_task = self.engine.submit_for_owner(
+            "owner-bob", bob_goal, "work", {"private": "bob"},
+            idempotency_key="bob-task",
+        )
+        self.assertEqual(self.engine.get_goal_for_owner("owner-alice", alice_goal)["owner_id"], "owner-alice")
+        self.assertEqual(self.engine.get_task_for_owner("owner-alice", alice_task["id"])["payload"]["private"], "alice")
+        for operation in (
+            lambda: self.engine.get_goal_for_owner("owner-bob", alice_goal),
+            lambda: self.engine.get_task_for_owner("owner-bob", alice_task["id"]),
+            lambda: self.engine.list_tasks_for_owner("owner-bob", alice_goal),
+            lambda: self.engine.list_events_for_owner("owner-bob", alice_goal),
+            lambda: self.engine.set_goal_state_for_owner("owner-bob", alice_goal, "paused"),
+            lambda: self.engine.cancel_task_for_owner("owner-bob", alice_task["id"]),
+            lambda: self.engine.submit_for_owner("owner-bob", alice_goal, "work", {}, idempotency_key="cross-owner"),
+        ):
+            with self.assertRaises(TaskNotFound):
+                operation()
+        self.assertEqual(self.engine.get_task(bob_task["id"])["payload"]["private"], "bob")
+        self.assertEqual(self.engine.get_goal(alice_goal)["state"], "active")
+
+    def test_legacy_unowned_goals_are_not_visible_through_owner_scoped_api(self):
+        legacy_goal = self.engine.create_goal()
+        self.assertIsNone(self.engine.get_goal(legacy_goal)["owner_id"])
+        with self.assertRaises(TaskNotFound):
+            self.engine.get_goal_for_owner("owner-alice", legacy_goal)
+        with self.assertRaises(TaskNotFound):
+            self.engine.submit_for_owner(
+                "owner-alice", legacy_goal, "work", {}, idempotency_key="legacy"
+            )
+
+    def test_owner_identity_is_validated_and_persisted_across_restart(self):
+        for invalid in ("", " owner ", "x" * 257, None, 1):
+            with self.subTest(owner=invalid):
+                with self.assertRaises(ValueError):
+                    self.engine.create_owned_goal(invalid)
+        goal = self.engine.create_owned_goal("owner-persistent")
+        restarted = DurableTaskEngine(self.db)
+        self.assertEqual(
+            restarted.get_goal_for_owner("owner-persistent", goal)["owner_id"],
+            "owner-persistent",
+        )
+        with self.assertRaises(TaskNotFound):
+            restarted.get_goal_for_owner("owner-other", goal)
+
+    def test_existing_database_gets_owner_identity_migration_without_claiming_legacy_rows(self):
+        legacy_db = Path(self.tmp.name) / "legacy-owner.sqlite"
+        conn = sqlite3.connect(legacy_db)
+        try:
+            conn.executescript("""
+                CREATE TABLE goals(
+                    id TEXT PRIMARY KEY, state TEXT NOT NULL,
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL
+                );
+                INSERT INTO goals VALUES('old-goal','active',1,1);
+                CREATE TABLE tasks(
+                    id TEXT PRIMARY KEY, goal_id TEXT NOT NULL,
+                    task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
+                    state TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
+                    available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL,
+                    last_error TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                    UNIQUE(goal_id,idempotency_key)
+                );
+            """)
+        finally:
+            conn.close()
+        migrated = DurableTaskEngine(legacy_db)
+        self.assertIsNone(migrated.get_goal("old-goal")["owner_id"])
+        with self.assertRaises(TaskNotFound):
+            migrated.get_goal_for_owner("owner-new", "old-goal")
+        new_goal = migrated.create_owned_goal("owner-new")
+        self.assertEqual(migrated.get_goal_for_owner("owner-new", new_goal)["owner_id"], "owner-new")
