@@ -52,6 +52,43 @@ class RemoteCallClientTests(unittest.TestCase):
         self.assertEqual(opener.request.get_header("Authorization"), "Bearer " + "d" * 32)
         self.assertTrue(opener.request.full_url.endswith("/v1/devices/calls/incoming"))
 
+    def test_notification_inbox_validates_and_returns_opaque_alerts(self):
+        notification = {
+            "notification_id": "b" * 64,
+            "session_id": self.handle,
+            "caller_device_id": "dev_caller",
+            "recipient_device_id": "dev_recipient",
+            "event_type": "incoming_call",
+            "created_at": "2026-11-11T12:00:00+00:00",
+            "expires_at": "2026-11-11T12:01:30+00:00",
+        }
+        body = {"delivery": "at_least_once_polling", "notifications": [notification]}
+        opener = FakeOpener(json.dumps(body).encode())
+        with patch("urllib.request.build_opener", return_value=opener):
+            alerts = self.client.list_notifications()
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].session_id, self.handle)
+        self.assertTrue(opener.request.full_url.endswith("/v1/devices/calls/notifications/inbox"))
+        self.assertEqual(opener.request.get_method(), "GET")
+
+    def test_notification_acknowledgement_is_authenticated_post(self):
+        notification_id = "b" * 64
+        opener = FakeOpener(b'{"acknowledged":true}')
+        with patch("urllib.request.build_opener", return_value=opener):
+            self.assertTrue(self.client.acknowledge_notification(notification_id))
+        self.assertEqual(opener.request.get_method(), "POST")
+        self.assertTrue(opener.request.full_url.endswith(
+            f"/v1/devices/calls/notifications/{notification_id}/ack"
+        ))
+
+    def test_rejects_malformed_notification(self):
+        bad = {"delivery": "at_least_once_polling", "notifications": [{
+            "notification_id": "raw-secret",
+        }]}
+        with patch("urllib.request.build_opener", return_value=FakeOpener(json.dumps(bad).encode())):
+            with self.assertRaises(RuntimeError):
+                self.client.list_notifications()
+
     def test_accept_and_reject_are_explicit_post_actions(self):
         for action, status in (("accept", "accepted"), ("reject", "rejected")):
             opener = FakeOpener(json.dumps({"session": {
