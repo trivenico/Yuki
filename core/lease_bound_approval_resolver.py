@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
-from core.guarded_skill_runtime import SkillPolicyContext
 
 
 class LeaseBoundApprovalResolver:
@@ -23,7 +22,7 @@ class LeaseBoundApprovalResolver:
         engine: Any,
         *,
         worker_id: str,
-        resolver: Callable[[SkillPolicyContext, str], str | None],
+        resolver: Callable[[Any, str], str | None],
     ) -> None:
         if not callable(getattr(engine, "validate_lease", None)):
             raise TypeError("engine must provide validate_lease(task_id, worker_id, lease_token)")
@@ -57,7 +56,7 @@ class LeaseBoundApprovalResolver:
 
     def resolve(
         self,
-        context: SkillPolicyContext,
+        context: Any,
         skill_name: str,
         *,
         lease_token: str,
@@ -67,12 +66,19 @@ class LeaseBoundApprovalResolver:
         A lease loss during lookup burns the one-shot credential but never
         releases it to a stale worker. The owner must issue a fresh approval.
         """
-        if not isinstance(context, SkillPolicyContext):
+        # Avoid coupling this adapter to a concrete policy-context class: the
+        # broker and worker layers own provenance construction. At this boundary
+        # require a bounded task identifier before consulting the lease engine.
+        try:
+            task_id = context.task_id
+        except Exception:
+            raise PermissionError("trusted task provenance is required") from None
+        if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
             raise PermissionError("trusted task provenance is required")
         if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
             raise ValueError("skill_name is invalid")
         self._validate_claim_token(lease_token)
-        if not self._claim_is_current(context.task_id, lease_token):
+        if not self._claim_is_current(task_id, lease_token):
             raise PermissionError("durable task claim is no longer current")
 
         credential = self.resolver(context, skill_name)
