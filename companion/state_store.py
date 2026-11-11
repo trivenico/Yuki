@@ -208,7 +208,7 @@ class CompanionStateStore:
         """Import a legacy JSON array once; never delete or rewrite the source."""
         self._check_kind(kind)
         source_path = Path(source).expanduser()
-        source_name = f"{kind}:{source_path.name}"
+        source_name = f"{kind}:{source_path.resolve()}"
         with self._connect() as db:
             marker = db.execute(
                 "SELECT 1 FROM companion_migrations WHERE owner_id=? AND source_name=?",
@@ -235,7 +235,9 @@ class CompanionStateStore:
                 raise RuntimeError("Legacy identity record is invalid.")
             if kind == "reminder":
                 try:
-                    datetime.fromisoformat(item["due_at"])
+                    due_at = datetime.fromisoformat(item["due_at"])
+                    if due_at.tzinfo is None or due_at.utcoffset() is None:
+                        raise ValueError("reminder timestamp must be timezone-aware")
                 except (KeyError, TypeError, ValueError) as exc:
                     raise RuntimeError("Legacy reminder record is invalid.") from exc
         with self._connect() as db:
