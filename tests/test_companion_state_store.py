@@ -57,6 +57,74 @@ class CompanionStateStoreTests(unittest.TestCase):
         self.assertEqual(sum(len(result) for result in results), 1)
         self.assertTrue(first.list_records("reminder")[0]["delivered"])
 
+    def _add_due_reminder(self, store, reminder_id="reminder-outbox"):
+        now = datetime.now(timezone.utc)
+        store.add_record("reminder", {
+            "id": reminder_id, "text": "deliver me",
+            "due_at": (now - timedelta(seconds=1)).isoformat(),
+            "delivered": False,
+        })
+        return now
+
+    def test_outbox_enqueue_is_idempotent_and_delivery_marks_reminder(self):
+        store = CompanionStateStore(self.database, owner_id="owner")
+        now = self._add_due_reminder(store)
+        self.assertEqual(store.enqueue_due_reminders(now), 1)
+        self.assertEqual(store.enqueue_due_reminders(now), 0)
+        self.assertFalse(store.list_records("reminder")[0]["delivered"])
+        claimed = store.claim_outbox(now)
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0]["idempotency_key"], claimed[0]["event_id"])
+        self.assertTrue(store.complete_outbox(claimed[0]["event_id"], claimed[0]["lease_token"], now))
+        self.assertTrue(store.list_records("reminder")[0]["delivered"])
+        self.assertEqual(store.list_outbox()[0]["status"], "delivered")
+
+    def test_outbox_claim_is_exclusive_across_store_instances(self):
+        first = CompanionStateStore(self.database, owner_id="owner")
+        second = CompanionStateStore(self.database, owner_id="owner")
+        now = self._add_due_reminder(first)
+        first.enqueue_due_reminders(now)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda store: store.claim_outbox(now), (first, second)))
+        self.assertEqual(sum(len(result) for result in results), 1)
+
+    def test_outbox_expired_lease_is_recovered_and_old_token_is_fenced(self):
+        store = CompanionStateStore(self.database, owner_id="owner")
+        now = self._add_due_reminder(store)
+        store.enqueue_due_reminders(now)
+        first = store.claim_outbox(now, lease_seconds=5)[0]
+        later = now + timedelta(seconds=6)
+        second = store.claim_outbox(later, lease_seconds=5)[0]
+        self.assertNotEqual(first["lease_token"], second["lease_token"])
+        self.assertFalse(store.complete_outbox(first["event_id"], first["lease_token"], later))
+        self.assertTrue(store.complete_outbox(second["event_id"], second["lease_token"], later))
+
+    def test_outbox_failure_retries_then_becomes_terminal(self):
+        store = CompanionStateStore(self.database, owner_id="owner")
+        now = self._add_due_reminder(store)
+        store.enqueue_due_reminders(now)
+        first = store.claim_outbox(now)[0]
+        self.assertTrue(store.fail_outbox(first["event_id"], first["lease_token"], now,
+                                          error="temporary", retry_after_seconds=5, max_attempts=2))
+        self.assertEqual(store.claim_outbox(now), [])
+        second = store.claim_outbox(now + timedelta(seconds=6))[0]
+        self.assertTrue(store.fail_outbox(second["event_id"], second["lease_token"],
+                                          now + timedelta(seconds=6), error="permanent",
+                                          max_attempts=2))
+        self.assertEqual(store.list_outbox()[0]["status"], "failed")
+        self.assertEqual(store.claim_outbox(now + timedelta(days=1)), [])
+
+    def test_outbox_is_owner_scoped_and_rejects_invalid_bounds(self):
+        first = CompanionStateStore(self.database, owner_id="owner-a")
+        second = CompanionStateStore(self.database, owner_id="owner-b")
+        now = self._add_due_reminder(first)
+        first.enqueue_due_reminders(now)
+        self.assertEqual(second.list_outbox(), [])
+        with self.assertRaises(ValueError):
+            first.claim_outbox(now, lease_seconds=1)
+        with self.assertRaises(ValueError):
+            first.claim_outbox(now, limit=101)
+
     def test_rejects_database_symlink(self):
         target = self.root / "target.sqlite3"
         target.touch()
