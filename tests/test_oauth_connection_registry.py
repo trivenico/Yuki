@@ -40,6 +40,12 @@ class OAuthConnectionRegistryTests(unittest.TestCase):
         self.assertEqual(updated.scopes, ("write",))
         self.assertEqual(len(self.registry.list_for_owner(owner_id="o")), 1)
 
+    def test_creates_missing_database_parent_directory(self):
+        nested = str(Path(self.temp.name) / "nested" / "registry.sqlite3")
+        registry = SQLiteOAuthConnectionRegistry(nested, clock=lambda: 1234)
+        self.assertTrue(Path(nested).parent.is_dir())
+        self.assertEqual(registry.list_for_owner(owner_id="owner"), [])
+
     def test_rejects_invalid_identifiers_and_scopes(self):
         with self.assertRaises(ValueError):
             self.registry.register(owner_id="../other", provider_id="p", account_id="a", scopes=())
