@@ -4,19 +4,27 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from automation.workflow_store import WorkflowRunStore
+from core.approval_audit import SQLiteApprovalAuditLog
 from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.device_pairing import DevicePairingService
 from core.inference_jobs import InferenceJobService
-from core.oauth_credential_vault import SQLiteOAuthCredentialVault
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
-from automation.workflow_store import WorkflowRunStore
-from core.approval_audit import SQLiteApprovalAuditLog
+from core.oauth_credential_vault import SQLiteOAuthCredentialVault
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.sqlite_file_security import (
     SQLitePathSecurityError,
     prepare_private_sqlite_path,
 )
+
+
+class _TestCipher:
+    def encrypt(self, plaintext, *, associated_data):
+        return "test-key", plaintext
+
+    def decrypt(self, key_id, ciphertext, *, associated_data):
+        return ciphertext
 
 
 class SQLiteFileSecurityTests(unittest.TestCase):
@@ -58,6 +66,12 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         with self.assertRaises(SQLitePathSecurityError):
             prepare_private_sqlite_path(alias)
 
+    def test_directory_is_rejected_as_database_file(self):
+        directory = self.root / "database.sqlite3"
+        directory.mkdir()
+        with self.assertRaises(SQLitePathSecurityError):
+            prepare_private_sqlite_path(directory)
+
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
     def test_auth_database_is_owner_only(self):
         path = self.root / "auth.sqlite3"
@@ -89,21 +103,6 @@ class SQLiteFileSecurityTests(unittest.TestCase):
                 path = self.root / filename
                 construct(path)
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-
-
-class _TestCipher:
-    def encrypt(self, plaintext, *, associated_data):
-        return "test-key", plaintext
-
-    def decrypt(self, key_id, ciphertext, *, associated_data):
-        return ciphertext
-
-
-    def test_directory_is_rejected_as_database_file(self):
-        directory = self.root / "database.sqlite3"
-        directory.mkdir()
-        with self.assertRaises(SQLitePathSecurityError):
-            prepare_private_sqlite_path(directory)
 
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
     def test_conversation_wal_and_shared_memory_files_are_owner_only(self):
