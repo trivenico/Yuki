@@ -23,10 +23,8 @@ _SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
 class OAuthMCPConnectionManager:
     """Build restricted MCP clients backed by one trusted OAuth provider."""
 
-    def __init__(
-        self, *, provider_id: str, credential_vault, refresh_service,
-        client_factory: Callable = MCPHTTPClient,
-    ):
+    def __init__(self, *, provider_id: str, credential_vault, refresh_service,
+                 client_factory: Callable = MCPHTTPClient):
         if not isinstance(provider_id, str) or not _IDENTIFIER.fullmatch(provider_id):
             raise ValueError("provider_id is invalid")
         if not callable(getattr(credential_vault, "get", None)):
@@ -35,10 +33,8 @@ class OAuthMCPConnectionManager:
             raise TypeError("an OAuth refresh service is required")
         if not callable(client_factory):
             raise TypeError("an MCP client factory is required")
-        self._provider_id = provider_id
-        self._vault = credential_vault
-        self._refresh = refresh_service
-        self._client_factory = client_factory
+        self._provider_id, self._vault = provider_id, credential_vault
+        self._refresh, self._client_factory = refresh_service, client_factory
 
     @staticmethod
     def _scopes(values) -> frozenset[str]:
@@ -50,92 +46,54 @@ class OAuthMCPConnectionManager:
             raise ValueError("required_scopes contains duplicate scopes")
         return frozenset(values)
 
-    def discover_tools(
-        self, *, owner_id: str, account_id: str, endpoint: str,
-        allowed_hosts, required_scopes=(), timeout: float = 10,
-    ):
-        """Discover tools through a manager-bound, deny-all MCP client.
-
-        The provider ID comes from this manager; owner and account IDs must
-        originate from authenticated host state. The returned snapshot is
-        metadata only and cannot execute tools.
-        """
+    def discover_tools(self, *, owner_id: str, account_id: str, endpoint: str,
+                       allowed_hosts, required_scopes=(), timeout: float = 10):
+        """Discover metadata through a manager-bound deny-all MCP client."""
         from core.mcp_tool_discovery import discover_mcp_tools
-
         client = self.create_client(
-            owner_id=owner_id,
-            account_id=account_id,
-            endpoint=endpoint,
-            allowed_hosts=allowed_hosts,
-            allowed_tools=(),
+            owner_id=owner_id, account_id=account_id, endpoint=endpoint,
+            allowed_hosts=allowed_hosts, allowed_tools=(),
             approver=lambda _name, _arguments: False,
-            required_scopes=required_scopes,
-            timeout=timeout,
+            required_scopes=required_scopes, timeout=timeout,
         )
-        return discover_mcp_tools(
-            client,
-            owner_id=owner_id,
-            provider_id=self._provider_id,
-            account_id=account_id,
-        )
+        return discover_mcp_tools(client, owner_id=owner_id,
+                                  provider_id=self._provider_id, account_id=account_id)
 
-    def create_policy_client(
-        self, *, owner_id: str, account_id: str, endpoint: str,
-        allowed_hosts, policy_registry, granted_scopes,
-        owner_approval, audit, current_revision, timeout: float = 10,
-    ):
-        """Create an MCP client whose execution gate is a trusted policy snapshot.
-
-        The manager supplies the provider binding. Enabled tool names are
-        derived from the exact account policy; risk checks and fresh owner
-        confirmation are enforced by the registry's per-call approver.
-        """
+    def create_policy_client(self, *, owner_id: str, account_id: str, endpoint: str,
+                             allowed_hosts, policy_registry, granted_scopes,
+                             owner_approval, audit, current_revision,
+                             execution_audit=None, timeout: float = 10):
+        """Build a policy-bound client; lifecycle audit is required for execution."""
         from core.mcp_tool_policy import MCPToolPolicyRegistry
-
         if not isinstance(policy_registry, MCPToolPolicyRegistry):
             raise OAuthMCPConnectionError("trusted_tool_policy_registry_required")
+        if not callable(execution_audit):
+            raise OAuthMCPConnectionError("mcp_execution_audit_required")
         try:
             scope_values = tuple(sorted(granted_scopes)) if isinstance(
                 granted_scopes, (set, frozenset)
             ) else tuple(granted_scopes)
             approver = policy_registry.build_approver(
-                owner_id=owner_id,
-                provider_id=self._provider_id,
-                account_id=account_id,
-                granted_scopes=scope_values,
-                owner_approval=owner_approval,
-                audit=audit,
-                current_revision=current_revision,
+                owner_id=owner_id, provider_id=self._provider_id, account_id=account_id,
+                granted_scopes=scope_values, owner_approval=owner_approval,
+                audit=audit, current_revision=current_revision,
             )
             allowed_tools = policy_registry.tool_names(
-                provider_id=self._provider_id,
-                account_id=account_id,
+                provider_id=self._provider_id, account_id=account_id,
             )
         except Exception:
             raise OAuthMCPConnectionError("trusted_tool_policy_invalid") from None
         return self.create_client(
-            owner_id=owner_id,
-            account_id=account_id,
-            endpoint=endpoint,
-            allowed_hosts=allowed_hosts,
-            allowed_tools=allowed_tools,
-            approver=approver,
-            required_scopes=scope_values,
-            timeout=timeout,
+            owner_id=owner_id, account_id=account_id, endpoint=endpoint,
+            allowed_hosts=allowed_hosts, allowed_tools=allowed_tools,
+            approver=approver, required_scopes=scope_values,
+            execution_audit=execution_audit, timeout=timeout,
         )
 
-    def create_client(
-        self, *, owner_id: str, account_id: str, endpoint: str,
-        allowed_hosts, allowed_tools, approver,
-        required_scopes=(), timeout: float = 10,
-    ):
-        """Create a client whose private token callback refreshes just-in-time.
-
-        owner_id must come from the authenticated host session, never model input.
-        The endpoint, host/tool allow-lists and approval callback are trusted host
-        configuration. The caller remains responsible for authorizing each
-        owner-visible operation before exposing the client to an agent.
-        """
+    def create_client(self, *, owner_id: str, account_id: str, endpoint: str,
+                      allowed_hosts, allowed_tools, approver, required_scopes=(),
+                      execution_audit=None, timeout: float = 10):
+        """Create a client with a private just-in-time OAuth token callback."""
         if not isinstance(owner_id, str) or not _IDENTIFIER.fullmatch(owner_id):
             raise OAuthMCPConnectionError("authenticated_owner_invalid")
         if not isinstance(account_id, str) or not _IDENTIFIER.fullmatch(account_id):
@@ -145,30 +103,22 @@ class OAuthMCPConnectionManager:
             raise OAuthMCPConnectionError("explicit_tool_approver_required")
         if not isinstance(allowed_tools, (set, frozenset, tuple, list)):
             raise OAuthMCPConnectionError("explicit_tool_allowlist_required")
-        # An empty allow-list is an explicit deny-all policy. It permits
-        # initialize/tools-list discovery while call_tool rejects every tool.
         if any(not isinstance(name, str) or not name or len(name) > 128 for name in allowed_tools):
             raise OAuthMCPConnectionError("invalid_tool_allowlist")
+        if execution_audit is not None and not callable(execution_audit):
+            raise OAuthMCPConnectionError("mcp_execution_audit_invalid")
 
         def access_token_provider() -> str:
-            # A refresh timeout is ambiguous; the refresh service deliberately
-            # performs no retry. Credentials remain inside this closure.
             try:
-                status = self._refresh.refresh_if_needed(
-                    owner_id=owner_id, account_id=account_id,
-                )
-                if (not isinstance(status, dict)
-                        or status.get("provider_id") != self._provider_id
+                status = self._refresh.refresh_if_needed(owner_id=owner_id, account_id=account_id)
+                if (not isinstance(status, dict) or status.get("provider_id") != self._provider_id
                         or status.get("account_id") != account_id):
                     raise OAuthMCPConnectionError("credential_context_mismatch")
                 granted = status.get("scopes")
                 if not isinstance(granted, (tuple, list)) or not scopes.issubset(set(granted)):
                     raise OAuthMCPConnectionError("required_oauth_scope_missing")
-                credential = self._vault.get(
-                    owner_id=owner_id,
-                    provider_id=self._provider_id,
-                    account_id=account_id,
-                )
+                credential = self._vault.get(owner_id=owner_id, provider_id=self._provider_id,
+                                             account_id=account_id)
                 if (credential is None or credential.owner_id != owner_id
                         or credential.provider_id != self._provider_id
                         or credential.account_id != account_id
@@ -185,12 +135,9 @@ class OAuthMCPConnectionManager:
 
         try:
             return self._client_factory(
-                endpoint,
-                allowed_hosts=allowed_hosts,
-                allowed_tools=allowed_tools,
-                approver=approver,
-                access_token_provider=access_token_provider,
-                timeout=timeout,
+                endpoint, allowed_hosts=allowed_hosts, allowed_tools=allowed_tools,
+                approver=approver, access_token_provider=access_token_provider,
+                execution_audit=execution_audit, timeout=timeout,
             )
         except OAuthMCPConnectionError:
             raise
