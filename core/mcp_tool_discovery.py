@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import re
 from types import MappingProxyType
 
@@ -51,7 +52,11 @@ def _bounded_json(value, *, depth=0, budget=None):
     budget[0] += 1
     if budget[0] > _MAX_SCHEMA_ITEMS or depth > _MAX_SCHEMA_DEPTH:
         raise MCPToolDiscoveryError("tool_schema_exceeds_limits")
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise MCPToolDiscoveryError("tool_schema_invalid")
         return value
     if isinstance(value, str):
         if len(value) > 2048:
@@ -69,6 +74,15 @@ def _bounded_json(value, *, depth=0, budget=None):
             result[key] = _bounded_json(item, depth=depth + 1, budget=budget)
         return result
     raise MCPToolDiscoveryError("tool_schema_invalid")
+
+
+def _freeze_json(value):
+    """Recursively freeze validated JSON so snapshots cannot be mutated."""
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
 
 
 def discover_mcp_tools(client, *, owner_id: str, provider_id: str, account_id: str):
@@ -119,8 +133,7 @@ def discover_mcp_tools(client, *, owner_id: str, provider_id: str, account_id: s
         # Scan metadata for visibility, but never treat a clean scan as trust.
         scan_untrusted_text(description + " " + encoded.decode("utf-8"))
         tools.append(DiscoveredMCPTool(
-            name=name, description=description, input_schema=MappingProxyType(schema)
-            if isinstance(schema, dict) else tuple(schema) if isinstance(schema, list) else schema,
+            name=name, description=description, input_schema=_freeze_json(schema),
         ))
         seen.add(name)
 
