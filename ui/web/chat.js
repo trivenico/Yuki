@@ -408,7 +408,7 @@
       const identity = await api("/v1/auth/me"); state.user = identity.user;
       const data = await api("/v1/conversations"); state.conversations = data.conversations || [];
       showChat(); $("account-label").textContent = state.user.username;
-      await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
+      await loadProviderStatus(); await loadIntegrations(); await loadPairedDevices(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (_) { signOut(false); }
   };
