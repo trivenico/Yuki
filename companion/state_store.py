@@ -101,14 +101,18 @@ class CompanionStateStore:
         self._check_kind(kind)
         if limit is not None and (type(limit) is not int or not 1 <= limit <= self.MAX_RECORDS[kind]):
             raise ValueError("limit is outside the supported range.")
-        query = "SELECT payload FROM companion_records WHERE owner_id=? AND kind=? ORDER BY created_at, record_id"
+        query = "SELECT payload,delivered_at FROM companion_records WHERE owner_id=? AND kind=? ORDER BY created_at, record_id"
         params: tuple[Any, ...] = (self.owner_id, kind)
         if limit is not None:
             query += " LIMIT ?"
             params += (limit,)
         with self._connect() as db:
             rows = db.execute(query, params).fetchall()
-        return [self._decode(row) for row in rows]
+        items = [self._decode(row) for row in rows]
+        if kind == "reminder":
+            for item, row in zip(items, rows):
+                item["delivered"] = row["delivered_at"] is not None
+        return items
 
     def add_record(self, kind: str, item: dict[str, Any]) -> dict[str, Any]:
         self._check_kind(kind)
