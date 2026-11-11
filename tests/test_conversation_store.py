@@ -185,6 +185,36 @@ class ConversationStoreTests(unittest.TestCase):
             owner_id=self.owner, conversation_id=conversation_id,
         ), [])
 
+    def test_delete_is_blocked_by_shared_database_generation_lease(self):
+        conversation_id = self.conversation["conversation_id"]
+        # Separate store instances model separate API processes sharing the DB.
+        worker_store = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+        worker_store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-process-lease", ttl_seconds=5,
+        )
+        with self.assertRaises(ConversationConflict):
+            self.store.delete_conversation(
+                owner_id=self.owner, conversation_id=conversation_id,
+            )
+        # Expiry is deliberately not treated as proof that the worker stopped.
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        with self.assertRaises(ConversationConflict):
+            self.store.delete_conversation(
+                owner_id=self.owner, conversation_id=conversation_id,
+            )
+        self.assertTrue(worker_store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-process-lease",
+        ))
+        self.assertTrue(self.store.delete_conversation(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ))
+
     def test_delete_conversation_is_owner_scoped_and_idempotency_is_not_ambiguous(self):
         conversation_id = self.conversation["conversation_id"]
         with self.assertRaises(ConversationNotFound):
