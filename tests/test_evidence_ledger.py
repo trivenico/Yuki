@@ -49,6 +49,21 @@ class EvidenceLedgerTests(unittest.TestCase):
         self.assertEqual(verified["status"], "verified")
         self.assertEqual({e["freshness"] for e in verified["evidence"]}, {"current"})
 
+    def test_stale_evidence_is_visible_and_blocks_verification(self):
+        claim = self.ledger.create_claim("A claim with stale evidence.")
+        self.ledger.add_evidence(claim["id"], source_id="source-a", chunk_id="a1")
+        self.ledger.add_evidence(claim["id"], source_id="source-b", chunk_id="b1")
+        resolver = lambda source, chunk: source != "source-b"
+        result = self.ledger.get_claim(claim["id"], source_is_current=resolver)
+        self.assertEqual(
+            {item["freshness"] for item in result["evidence"]}, {"current", "stale"}
+        )
+        with self.assertRaisesRegex(ValueError, "current source chunks"):
+            self.ledger.review_claim(
+                claim["id"], reviewer_id="owner", decision="verified",
+                source_is_current=resolver,
+            )
+
     def test_refuting_evidence_blocks_verification(self):
         claim = self.ledger.create_claim("A disputed claim.")
         self.ledger.add_evidence(claim["id"], source_id="source-a", chunk_id="a1")
