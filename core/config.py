@@ -2,6 +2,7 @@
 import ipaddress
 import os
 import re
+import shutil
 from pathlib import Path
 from urllib.parse import urlsplit
 import yaml
@@ -67,6 +68,18 @@ def _mcp_servers(raw):
 
 def load_config(path=None):
     selected_config_path = Path(path) if path else resolve_config_path()
+    if path is None and not selected_config_path.exists():
+        # Wheels carry a non-secret default template. Create the user's first
+        # config atomically without overwriting a file created by another process.
+        template = Path(__file__).with_name("default_config.yaml")
+        try:
+            selected_config_path.parent.mkdir(parents=True, exist_ok=True)
+            with selected_config_path.open("x", encoding="utf-8") as target:
+                target.write(template.read_text(encoding="utf-8"))
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise RuntimeError("Cannot initialize Yuki's user configuration.") from exc
     try:
         raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {}
     except OSError as exc:
