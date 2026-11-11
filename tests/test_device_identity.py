@@ -6,7 +6,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from core.device_identity import DeviceIdentityError, DeviceIdentityRegistry
+from core.device_identity import DeviceIdentityError, DeviceIdentityRegistry, _DOMAIN, _KEY_DOMAIN
 from core.device_pairing import DevicePairingService
 
 
@@ -51,6 +51,10 @@ class DeviceIdentityRegistryTests(unittest.TestCase):
             self.credential.token, challenge.challenge_id, challenge.nonce,
             _b64(private.sign(self._transcript(challenge))),
         )
+
+    def test_versioned_domain_separators_are_nul_terminated(self):
+        self.assertTrue(_DOMAIN.endswith(b"\\x00"))
+        self.assertTrue(_KEY_DOMAIN.endswith(b"\\x00"))
 
     def test_owner_approval_and_device_ownership_are_required(self):
         _, public = self._key()
