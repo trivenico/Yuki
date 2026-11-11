@@ -33,8 +33,11 @@ class YukiCliTests(unittest.TestCase):
             def __init__(self, api_url, token):
                 events.append(("client", api_url, token))
 
-            def list_incoming(self):
+            def list_notifications(self):
                 return []
+
+            def acknowledge_notification(self, notification_id):
+                return True
 
             def accept(self, session_id):
                 raise AssertionError("empty inbox must not accept")
