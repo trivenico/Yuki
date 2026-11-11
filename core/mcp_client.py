@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from urllib.parse import urlsplit
 
 from core.mcp_pinned_transport import MCPPinnedTransportError, PinnedMCPHTTPTransport
@@ -10,6 +11,11 @@ from core.prompt_guard import scan_untrusted_text
 
 
 class MCPError(RuntimeError):
+    pass
+
+
+class MCPExecutionOutcomeUnknown(MCPError):
+    """Remote dispatch may have completed; callers must not blindly retry."""
     pass
 
 
@@ -21,11 +27,15 @@ class MCPHTTPClient:
     def __init__(
         self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
         access_token_provider=None, timeout=10, http_transport=None,
+        execution_audit=None,
     ):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
         self.approver = approver
+        if execution_audit is not None and not callable(execution_audit):
+            raise TypeError("MCP execution audit callback must be callable.")
+        self.execution_audit = execution_audit
         if access_token_provider is not None and not callable(access_token_provider):
             raise TypeError("MCP access token provider must be callable.")
         self._access_token_provider = access_token_provider
@@ -142,9 +152,47 @@ class MCPHTTPClient:
             raise MCPError("MCP tool arguments must be JSON-serializable.") from None
         if len(encoded_arguments) > 64000:
             raise MCPError("MCP tool arguments exceed the 64 KB limit.")
-        if self.approver is None or self.approver(name, arguments) is not True:
+        execution_id = uuid.uuid4().hex
+        if self.approver is None:
+            approved = False
+        elif self.execution_audit is not None:
+            approved = self.approver(name, arguments, execution_id) is True
+        else:
+            approved = self.approver(name, arguments) is True
+        if not approved:
             raise MCPError("MCP tool call was not explicitly approved.")
-        result = self._rpc("tools/call", {"name": name, "arguments": arguments})
+
+        lifecycle = {"execution_id": execution_id, "tool_name": name}
+        if self.execution_audit is not None:
+            try:
+                self.execution_audit({**lifecycle, "event": "execution_started"})
+            except Exception:
+                # No remote request is attempted unless its start event is durable.
+                raise MCPError("MCP execution audit is unavailable; tool was not dispatched.") from None
+
+        try:
+            result = self._rpc("tools/call", {"name": name, "arguments": arguments})
+        except Exception:
+            if self.execution_audit is not None:
+                try:
+                    self.execution_audit({**lifecycle, "event": "outcome_unknown"})
+                except Exception:
+                    raise MCPExecutionOutcomeUnknown(
+                        "MCP remote outcome is unknown and audit persistence failed; do not retry this action."
+                    ) from None
+            raise MCPExecutionOutcomeUnknown(
+                "MCP remote outcome is unknown after dispatch; inspect provider state before any retry."
+            ) from None
+
+        if self.execution_audit is not None:
+            event = "execution_failed" if isinstance(result, dict) and result.get("isError") is True else "executed"
+            try:
+                self.execution_audit({**lifecycle, "event": event})
+            except Exception:
+                raise MCPExecutionOutcomeUnknown(
+                    "MCP returned a response but its outcome could not be durably audited; do not retry this action."
+                ) from None
+
         serialized = json.dumps(result, ensure_ascii=False)
         scan = scan_untrusted_text(serialized)
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}
