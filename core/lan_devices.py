@@ -126,7 +126,7 @@ class LocalNetworkDeviceRegistry:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=5000")
         connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+        return _SQLiteConnection(connection)
 
     @staticmethod
     def _identity(owner_id, device_id):
@@ -261,3 +261,23 @@ class LocalNetworkDeviceRegistry:
                 DELETE FROM lan_device_endpoints WHERE owner_id=? AND device_id=?
             """, (owner_id, device_id)).rowcount
             return changed == 1
+
+
+class _SQLiteConnection:
+    """Commit/rollback and always close a registry connection (including on Windows)."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
+        finally:
+            self.connection.close()
+        return False
