@@ -74,7 +74,7 @@ class ProviderRegistryTests(unittest.TestCase):
 
     def test_presentation_rejects_control_characters(self):
         with self.assertRaisesRegex(ValueError, "display_name"):
-            OAuthProviderPresentation("Sample\\nInjected")
+            OAuthProviderPresentation("Sample\nInjected")
 
 
 if __name__ == "__main__":
