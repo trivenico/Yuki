@@ -54,6 +54,8 @@ class AuthenticatedMCPManagementAPI:
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
             provider_id, account_id, resource = match.groups()
+            if not self.mcp_runtime.has_provider(provider_id):
+                return await self._respond(send, 404, {"error": "provider_not_configured"})
             connection = await asyncio.to_thread(
                 self.oauth_registry.get, owner_id=user.user_id,
                 provider_id=provider_id, account_id=account_id,
