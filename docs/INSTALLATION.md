@@ -17,7 +17,7 @@ yuki ask "Hello, Yuki"
 yuki chat
 ```
 
-The first installed invocation creates a non-secret user configuration from the packaged defaults. Configuration is stored in the OS user config directory; runtime data is stored in the OS user data directory. Set `YUKI_CONFIG` or `YUKI_HOME` to override those locations. API keys remain environment variables or OS-managed secrets.
+The first installed invocation creates a non-secret user configuration from the packaged defaults. Configuration is stored in the OS user config directory; runtime data is stored in the OS user data directory. Set `YUKI_CONFIG` or `YUKI_HOME` to override those locations. API keys remain environment variables or OS-managed secrets. `yuki chat` stores conversations in the configured local SQLite workspace and reopens the most recent conversation on the next run. Use `/new`, `/list`, `/use ID`, and `/history` inside chat. The CLI stores a private local owner-scope identifier; it is not a network login credential. CLI tool execution remains disabled, and chat requires a provider that supports Yuki structured agent conversations (currently OpenAI-compatible or Ollama).
 
 For a full source checkout and contributor test environment:
 
