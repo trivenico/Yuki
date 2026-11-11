@@ -281,11 +281,12 @@ class LANCallSessionStore:
                   _stamp(now))).rowcount
             if changed:
                 return True
-            exists = db.execute("""
-                SELECT 1 FROM lan_call_notifications
+            existing = db.execute("""
+                SELECT acknowledged_at,expires_at FROM lan_call_notifications
                 WHERE notification_hash=? AND recipient_device_id=? AND owner_id=?
             """, (notification_id, device.device_id, device.owner_id)).fetchone()
-            return False if exists is None else False
+            # Idempotent retry: an already acknowledged alert remains success.
+            return bool(existing is not None and existing["acknowledged_at"] is not None)
 
     def list_for_owner(self, *, owner_id: str, limit: int = 50) -> list[CallSession]:
         """Return a bounded, newest-first history for the authenticated owner."""
