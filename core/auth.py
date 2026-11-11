@@ -15,6 +15,8 @@ import re
 import secrets
 import sqlite3
 
+from core.sqlite_file_security import prepare_private_sqlite_path
+
 _MIN_ITERATIONS = 100_000
 _DEFAULT_ITERATIONS = 600_000
 _MAX_PASSWORD_LENGTH = 1024
