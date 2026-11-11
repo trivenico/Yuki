@@ -122,8 +122,8 @@ class DurableSkillWorkerTests(unittest.TestCase):
         class RaisingRuntime:
             def invoke(self, _skill_name, _argument, *, execution_guard=None):
                 if execution_guard is not None and execution_guard() is not True:
-                raise RuntimeError("execution lease lost")
-            raise RuntimeError("secret token should not be persisted")
+                    raise RuntimeError("execution lease lost")
+                raise RuntimeError("secret token should not be persisted")
 
         task = self.submit("read_demo", "raises", key="worker-exception")
         worker = DurableSkillWorker(
@@ -155,7 +155,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
         release = threading.Event()
 
         class SlowRuntime:
-            def invoke(self, _skill_name, _argument):
+            def invoke(self, _skill_name, _argument, *, execution_guard=None):
                 started.set()
                 if not release.wait(timeout=8):
                     raise RuntimeError("test invocation timed out")
