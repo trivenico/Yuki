@@ -48,6 +48,26 @@ class PairedDeviceCallInboxTests(unittest.TestCase):
         self.client.acknowledge_notification.assert_not_called()
         self.assertEqual(result["ignored"], 1)
 
+    def test_ambiguous_accept_is_reconciled_without_replaying_action(self):
+        self.client.accept.side_effect = RuntimeError("response lost")
+        self.client.get_call.return_value = {"status": "accepted"}
+        result = self.inbox("a").run_once()
+        self.client.accept.assert_called_once_with(self.notification.session_id)
+        self.client.get_call.assert_called_once_with(self.notification.session_id)
+        self.client.acknowledge_notification.assert_called_once_with(
+            self.notification.notification_id
+        )
+        self.assertEqual(result["accepted"], 1)
+
+    def test_ambiguous_action_still_ringing_is_not_blindly_retried(self):
+        self.client.accept.side_effect = RuntimeError("response lost")
+        self.client.get_call.return_value = {"status": "ringing"}
+        with self.assertRaisesRegex(RuntimeError, "response lost"):
+            self.inbox("a").run_once()
+        self.client.accept.assert_called_once_with(self.notification.session_id)
+        self.client.get_call.assert_called_once_with(self.notification.session_id)
+        self.client.acknowledge_notification.assert_not_called()
+
     def test_ack_failure_is_not_reported_as_success(self):
         self.client.acknowledge_notification.return_value = False
         with self.assertRaisesRegex(RuntimeError, "acknowledgement_failed"):
