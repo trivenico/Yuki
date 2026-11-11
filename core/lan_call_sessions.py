@@ -193,6 +193,29 @@ class LANCallSessionStore:
                              (_digest(session_id),)).fetchone()
             return self._session(row, session_id)
 
+
+    def list_incoming(self, *, device_token: str) -> list[dict]:
+        """Return unexpired invitations for the authenticated recipient."""
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            device = self._authenticate(db, device_token)
+            db.execute("""UPDATE lan_call_sessions SET status='expired', ended_at=?
+                WHERE recipient_device_id=? AND status='ringing' AND expires_at<=?""",
+                (_stamp(now), device.device_id, _stamp(now)))
+            rows = db.execute("""SELECT * FROM lan_call_sessions
+                WHERE recipient_device_id=? AND owner_id=? AND status='ringing'
+                  AND expires_at>? ORDER BY created_at ASC""",
+                (device.device_id, device.owner_id, _stamp(now))).fetchall()
+            return [{
+                "session_id": row["session_hash"],
+                "caller_device_id": row["caller_device_id"],
+                "recipient_device_id": row["recipient_device_id"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "expires_at": row["expires_at"],
+            } for row in rows]
+
     def _transition(self, *, session_id, device_token, allowed_statuses, target_status,
                     required_role, set_accepted=False):
         if not isinstance(session_id, str) or not 32 <= len(session_id) <= 128:
