@@ -31,6 +31,22 @@
       <aside class="sidebar">
         <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
         <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+        <section class="call-panel" aria-labelledby="call-heading">
+          <div class="integration-heading">
+            <span id="call-heading" class="section-label">LOCAL CALLS</span>
+            <button id="refresh-devices" class="quiet-button" type="button">Refresh</button>
+          </div>
+          <form id="call-form" class="call-form">
+            <label for="call-caller">Calling from</label>
+            <select id="call-caller" required><option value="">Load paired devices…</option></select>
+            <label for="call-recipient">Call device</label>
+            <select id="call-recipient" required><option value="">Select recipient…</option></select>
+            <label for="call-password">Confirm with your Yuki password</label>
+            <input id="call-password" type="password" autocomplete="current-password" required>
+            <button id="call-submit" class="integration-action" type="submit">Review and place call</button>
+            <p id="call-status" class="integration-empty" role="status" aria-live="polite">Calls require both devices to be paired to this account.</p>
+          </form>
+        </section>
         <section class="integration-panel" aria-labelledby="integration-heading">
           <div class="integration-heading">
             <span id="integration-heading" class="section-label">INTEGRATIONS</span>
