@@ -49,11 +49,12 @@ class ApprovedSkillRuntime:
             raise ValueError("Cannot approve an invocation for an unregistered skill.")
         self.invocation_approvals.approve(skill_name, argument)
 
-    def invoke(self, skill_name: str, argument: str = "") -> SkillInvocationResult:
+    def invoke(self, skill_name: str, argument: str = "", *, execution_guard=None) -> SkillInvocationResult:
         return invoke_registered_skill(
             self.registry,
             skill_name,
             argument,
             approvals=self.invocation_approvals,
             audit=self.audit,
+            execution_guard=execution_guard,
         )
