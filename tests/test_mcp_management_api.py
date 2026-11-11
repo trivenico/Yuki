@@ -211,6 +211,18 @@ class MCPManagementAPITests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(body["error"], "stale_policy_revision")
 
+
+    def test_boolean_revision_is_not_accepted_as_integer(self):
+        payload = json.dumps({
+            "enabled": True, "expected_revision": True, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
+
     def test_audit_failure_prevents_policy_mutation(self):
         class BrokenAudit:
             def append(self, **_kwargs):
