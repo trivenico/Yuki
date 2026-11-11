@@ -42,6 +42,14 @@ def _digest(value):
     return hashlib.sha256(value.encode("ascii")).hexdigest()
 
 
+def _session_digest(value):
+    if not isinstance(value, str) or not 32 <= len(value) <= 128:
+        raise CallSessionError("session_id_invalid")
+    if len(value) == 64 and all(ch in "0123456789abcdef" for ch in value):
+        return value
+    return _digest(value)
+
+
 class LANCallSessionStore:
     """Persist call invitation/consent state for two already-paired devices.
 
@@ -141,7 +149,7 @@ class LANCallSessionStore:
                 (session_hash,owner_id,caller_device_id,recipient_device_id,status,
                  created_at,expires_at)
                 VALUES(?,?,?,?,?,?,?)
-            """, (_digest(session_id), caller.owner_id, caller.device_id,
+            """, (_session_digest(session_id), caller.owner_id, caller.device_id,
                   recipient_device_id, "ringing", _stamp(now), _stamp(expires)))
             row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                              (_digest(session_id),)).fetchone()
