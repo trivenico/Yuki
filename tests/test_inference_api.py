@@ -166,6 +166,10 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             recipient["device_token"],
         )
         self.assertEqual((status, accepted["session"]["status"]), (200, "accepted"))
+        direct_caller_view = self.app.calls.get(
+            session_id=caller_session_id, device_token=caller["device_token"]
+        )
+        self.assertEqual(direct_caller_view.status, "accepted")
         status, caller_view = self.request(
             "GET", f"/v1/devices/calls/{caller_session_id}", token=caller["device_token"]
         )
