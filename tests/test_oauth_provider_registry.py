@@ -1,6 +1,6 @@
 import unittest
-from types import SimpleNamespace
 
+from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from core.oauth_provider_registry import (
     OAuthProviderPresentation,
     PreparedOAuthProviderRegistry,
@@ -13,13 +13,13 @@ class Service:
 
 
 def prepared(provider_id="sample"):
-    return SimpleNamespace(
+    return PreparedOAuthProvider(
         provider_id=provider_id,
         issuer="https://auth.example.com",
         resource="https://api.example.com/mcp",
-        client_id="secret-ish-public-client-id",
+        client_id="public-client-id",
         registration_method="dynamic_client_registration",
-        redirect_uri="https://yuki.example.com/oauth/callback/sample",
+        redirect_uri=f"https://yuki.example.com/oauth/callback/{provider_id}",
         scopes=("jobs.read",),
         authorization_service=Service(),
     )
@@ -68,13 +68,13 @@ class ProviderRegistryTests(unittest.TestCase):
             {"sample": prepared()},
             {"sample": OAuthProviderPresentation("Sample")},
         )
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(TypeError):
             registry._services["other"] = Service()
         self.assertIsNone(registry.authorization_service_for_provider("../sample"))
 
     def test_presentation_rejects_control_characters(self):
         with self.assertRaisesRegex(ValueError, "display_name"):
-            OAuthProviderPresentation("Sample\nInjected")
+            OAuthProviderPresentation("Sample\\nInjected")
 
 
 if __name__ == "__main__":
