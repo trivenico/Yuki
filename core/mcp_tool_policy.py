@@ -152,7 +152,7 @@ class MCPToolPolicyRegistry:
                 return False
             if execution_id is None:
                 execution_id = uuid.uuid4().hex
-            if not isinstance(execution_id, str) or not re.fullmatch(r\"[0-9a-f]{32}\", execution_id):
+            if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
                 return False
             try:
                 encoded = json.dumps(
