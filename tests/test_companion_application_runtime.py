@@ -29,6 +29,16 @@ class CompanionApplicationRuntimeTests(unittest.TestCase):
             try:
                 self.assertTrue(runtime.owner_id.startswith("local-"))
                 self.assertIsNotNone(runtime.conversations)
+                conversation = runtime.conversations.create(owner_id=runtime.owner_id)
+                reply = runtime.conversations.reply(
+                    owner_id=runtime.owner_id,
+                    conversation_id=conversation["conversation_id"],
+                    user_text="Hello Yuki",
+                    request_id="companion-runtime-request",
+                    expected_version=conversation["version"],
+                    tools=[],
+                )
+                self.assertEqual(reply["answer"], "hello")
                 self.assertEqual(runtime.persona.name, "Yuki")
                 self.assertEqual(runtime.emotion.tone, "neutral")
                 self.assertFalse(runtime.memory_enabled)
