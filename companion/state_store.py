@@ -191,19 +191,34 @@ class CompanionStateStore:
         if not isinstance(record_id, str) or not record_id.strip():
             return False
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if kind == "reminder":
+                # A reminder's outbox row contains a second copy of its text.
+                # Delete it in the same transaction so deleted reminders cannot
+                # be delivered later by a pending or expired worker claim.
+                db.execute(
+                    "DELETE FROM companion_outbox WHERE owner_id=? AND reminder_id=?",
+                    (self.owner_id, record_id),
+                )
             cursor = db.execute(
                 "DELETE FROM companion_records WHERE owner_id=? AND kind=? AND record_id=?",
                 (self.owner_id, kind, record_id),
             )
+            db.commit()
             return cursor.rowcount == 1
 
     def clear_records(self, kind: str) -> int:
         self._check_kind(kind)
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if kind == "reminder":
+                # Keep reminder deletion and outbox payload cleanup atomic.
+                db.execute("DELETE FROM companion_outbox WHERE owner_id=?", (self.owner_id,))
             cursor = db.execute(
                 "DELETE FROM companion_records WHERE owner_id=? AND kind=?",
                 (self.owner_id, kind),
             )
+            db.commit()
             return cursor.rowcount
 
     def claim_due_reminders(self, now: datetime) -> list[dict[str, Any]]:
