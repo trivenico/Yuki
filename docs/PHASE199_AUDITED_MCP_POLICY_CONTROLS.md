@@ -15,9 +15,12 @@ route, provider onboarding, or a remote-metadata-to-policy conversion path.
 - `DELETE /v1/integrations/mcp/{provider_id}/{account_id}/policies/{tool_name}`
   - JSON body: `{"expected_revision":1,"confirm":true}`
 
-Both operations require a valid owner session and an OAuth connection belonging
-to that owner/provider/account. The owner is derived from the session, never
-from request data. Request bodies are bounded, must be JSON objects, reject
+Both operations require a valid owner session. Enabling additionally requires a
+configured provider and an OAuth connection belonging to that owner/provider/
+account. Disabling and removal deliberately do not require an active provider
+or OAuth connection, so an owner can revoke stale permissions after disconnect
+or provider retirement. The owner is derived from the session, never from
+request data. Request bodies are bounded, must be JSON objects, reject
 duplicate keys, and accept only the exact documented fields.
 
 ## Trusted risk boundary
