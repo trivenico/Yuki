@@ -24,6 +24,8 @@ class DurableTaskEngineTests(unittest.TestCase):
         complete = engine.complete
         fail = engine.fail
         reject = engine.reject
+        engine._strict_complete = complete
+        engine._strict_heartbeat = heartbeat
         def claim_with_token(worker_id, **kwargs):
             task = claim(worker_id, **kwargs)
             if task is not None:
@@ -474,11 +476,11 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = self.engine.submit(self.goal, "work", {}, idempotency_key="claim-token-required")
         claimed = self.engine.claim("token-required-worker")
         with self.assertRaises(TypeError):
-            self.engine.complete(task["id"], "token-required-worker", {})
+            self.engine._strict_complete(task["id"], "token-required-worker", {})
         with self.assertRaises(TypeError):
-            self.engine.heartbeat(task["id"], "token-required-worker")
+            self.engine._strict_heartbeat(task["id"], "token-required-worker")
         self.assertEqual(
-            self.engine.complete(task["id"], "token-required-worker", {}, lease_token=claimed["lease_token"])["state"],
+            self.engine._strict_complete(task["id"], "token-required-worker", {}, lease_token=claimed["lease_token"])["state"],
             "succeeded",
         )
 
