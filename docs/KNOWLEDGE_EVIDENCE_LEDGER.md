@@ -1,22 +1,46 @@
-# Knowledge Intelligence: Evidence Ledger
+# Knowledge Evidence Ledger
 
-## Objective
+## Scope
 
-Introduce a durable, source-grounded claim workflow without treating model-extracted statements as verified facts. This is a knowledge subsystem workstream, not a declaration of a new serial phase; the project phase ledger still requires historical reconciliation.
+The evidence ledger stores owner-scoped claim proposals, source/chunk references,
+explicit review decisions, freshness checks and review history. It does not
+replace the existing personal memory store, lexical memory search or knowledge
+graph. It is a provenance and verification layer to be integrated behind those
+systems.
 
-## Implementation
+## Trust and verification rules
 
-- `knowledge/evidence_ledger.py`: SQLite claims, source chunk evidence, explicit reviews and status transitions.
-- `tests/test_evidence_ledger.py`: persistence, provenance, two-source gate, conflicting evidence, reopen and stale-ID tests.
-- `knowledge/__init__.py`: public API export.
-- `docs/KNOWLEDGE_ENGINE.md`: operational and trust limitations.
+- New claims always start as `proposed`.
+- Evidence references canonical source and chunk IDs, stance (supports/refutes),
+  and optional character offsets. Source text is not copied into this ledger.
+- Verification requires supporting evidence from at least two distinct source
+  IDs, no recorded refuting evidence, and a caller-supplied resolver confirming
+  every supporting chunk is current.
+- Two source IDs do not prove source independence or truth. A verified status
+  means a trusted reviewer accepted the configured evidence threshold.
+- Reviewer authentication and authorization are responsibilities of the
+  authenticated application layer. Model-generated content must not call review
+  operations directly.
+- Rejected or verified claims require an explicit reviewer-driven reopen before
+  evidence can change. Review history is append-only until the claim is
+  deliberately forgotten.
+- Forgetting a claim cascades to its evidence and review events. It does not
+  delete source artifacts, vector chunks, graph nodes, summaries, caches or
+  backups; integration must coordinate those systems' own deletion workflows.
 
-## Trust model
+## Storage and limits
 
-Claim creation is always a proposal. Verification requires an explicit trusted caller review, two distinct canonical source IDs and no recorded refuting evidence. This is a workflow threshold, not a truth guarantee or proof of source independence. Reviewer authentication is outside this module. Model-generated content must never invoke review operations directly.
+The SQLite database is owner-scoped, uses transactional writes, WAL, busy
+timeouts and POSIX mode 0600. The database is not encrypted at rest. Deployments
+must protect the parent directory, backups and any source index separately.
+Evidence and review payloads are bounded; source IDs and chunk IDs are references,
+not trusted display content.
 
-Evidence stores chunk/source identifiers rather than permanent source text snapshots. Claim reads expose whether each evidence chunk is still current and include canonical content only while it resolves. Source deletion or re-indexing can invalidate evidence; stale evidence is visible and blocks verification.
+## Integration sequence
 
-## Acceptance
-
-The new test module covers seven cases. GitHub CI on the exact branch head and independent security review are required before merge or workstream completion.
+1. Connect canonical source IDs to the ingestion/indexer lifecycle.
+2. Invalidate or mark evidence stale on source deletion/re-indexing.
+3. Expose claim creation/evidence reads to model workflows as proposals only.
+4. Expose review/reopen/forget only through authenticated owner-authorized APIs.
+5. Add retrieval and synthesis evaluation before using verified claims in
+   generated answers.
