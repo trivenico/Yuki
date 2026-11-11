@@ -139,6 +139,10 @@ class AuthenticatedInferenceAPI:
                     return await self._respond(send, 403, {"error": "call_action_denied"})
                 except CallSessionError:
                     return await self._respond(send, 400, {"error": "invalid_call_request"})
+                except Exception as exc:
+                    return await self._respond(send, 500, {
+                        "error": "internal_error", "diagnostic": type(exc).__name__,
+                    })
 
             user = await self._user(scope)
             if user is None:
