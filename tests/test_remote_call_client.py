@@ -103,6 +103,26 @@ class RemoteCallClientTests(unittest.TestCase):
                 f"/v1/devices/calls/{self.handle}/{action}"
             ))
 
+    def test_get_call_reads_authoritative_terminal_state(self):
+        session = {
+            "session_id": self.handle,
+            "caller_device_id": "dev_caller",
+            "recipient_device_id": "dev_recipient",
+            "status": "accepted",
+            "created_at": "2026-11-11T12:00:00+00:00",
+            "expires_at": "2026-11-11T12:01:30+00:00",
+            "accepted_at": "2026-11-11T12:00:10+00:00",
+            "ended_at": None,
+        }
+        opener = FakeOpener(json.dumps({"session": session}).encode())
+        with patch("urllib.request.build_opener", return_value=opener):
+            result = self.client.get_call(self.handle)
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(opener.request.get_method(), "GET")
+        self.assertTrue(opener.request.full_url.endswith(
+            f"/v1/devices/calls/{self.handle}"
+        ))
+
     def test_rejects_invalid_inbox_and_duplicate_handles(self):
         invalid = dict(self.invitation, status="accepted")
         with patch("urllib.request.build_opener", return_value=FakeOpener(
