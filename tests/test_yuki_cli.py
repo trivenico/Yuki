@@ -35,6 +35,12 @@ class YukiCliTests(unittest.TestCase):
             def list_incoming(self):
                 return []
 
+            def accept(self, session_id):
+                raise AssertionError("empty inbox must not accept")
+
+            def reject(self, session_id):
+                raise AssertionError("empty inbox must not reject")
+
         output = []
         code = run_cli(
             ["calls-inbox", "--api-url", "https://yuki.example"],
