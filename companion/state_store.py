@@ -194,8 +194,9 @@ class CompanionStateStore:
             db.execute("BEGIN IMMEDIATE")
             if kind == "reminder":
                 # A reminder's outbox row contains a second copy of its text.
-                # Delete it in the same transaction so deleted reminders cannot
-                # be delivered later by a pending or expired worker claim.
+                # Delete it in the same transaction so pending/expired work
+                # cannot be claimed again. A worker already holding a claim may
+                # have begun delivery; its completion is fenced below.
                 db.execute(
                     "DELETE FROM companion_outbox WHERE owner_id=? AND reminder_id=?",
                     (self.owner_id, record_id),
