@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-import secrets
 import sqlite3
 from typing import Callable
 from uuid import uuid4
