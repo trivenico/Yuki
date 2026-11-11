@@ -84,8 +84,8 @@ class SQLiteFileSecurityTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
     def test_device_and_inference_shared_database_is_owner_only(self):
         path = self.root / "devices.sqlite3"
-        pairing = DevicePairingService(path)
-        InferenceJobService(path, pairing)
+        pairing = DevicePairingService(str(path))
+        InferenceJobService(str(path), pairing)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
@@ -103,7 +103,7 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         for filename, construct in constructors:
             with self.subTest(filename=filename):
                 path = self.root / filename
-                construct(path)
+                construct(str(path))
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
