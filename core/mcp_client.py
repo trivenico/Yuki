@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from urllib.parse import urlsplit
 
 from core.mcp_pinned_transport import MCPPinnedTransportError, PinnedMCPHTTPTransport
@@ -13,15 +14,18 @@ class MCPError(RuntimeError):
     pass
 
 
+class MCPRemoteError(MCPError):
+    """The remote server returned an explicit JSON-RPC error response."""
+
+
 class MCPHTTPClient:
     MAX_RESPONSE_BYTES = 1_000_000
     PROTOCOL_VERSION = "2025-03-26"
     _BEARER_TOKEN = re.compile(r"^[A-Za-z0-9._~+/-]+=*$")
 
-    def __init__(
-        self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
-        access_token_provider=None, timeout=10, http_transport=None,
-    ):
+    def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
+                 access_token_provider=None, timeout=10, http_transport=None,
+                 execution_audit=None):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
@@ -29,12 +33,13 @@ class MCPHTTPClient:
         if access_token_provider is not None and not callable(access_token_provider):
             raise TypeError("MCP access token provider must be callable.")
         self._access_token_provider = access_token_provider
+        if execution_audit is not None and not callable(execution_audit):
+            raise TypeError("MCP execution audit must be callable.")
+        self._execution_audit = execution_audit
         self.timeout = timeout
         if http_transport is not None and not callable(getattr(http_transport, "post_json", None)):
             raise TypeError("MCP HTTP transport must provide post_json.")
-        self._http = http_transport or PinnedMCPHTTPTransport(
-            allowed_hosts=self.allowed_hosts, timeout=timeout,
-        )
+        self._http = http_transport or PinnedMCPHTTPTransport(allowed_hosts=self.allowed_hosts, timeout=timeout)
         self.session_id = None
         self._initialized = False
         self._request_id = 0
@@ -82,9 +87,7 @@ class MCPHTTPClient:
         if self._initialized:
             headers["MCP-Protocol-Version"] = self.PROTOCOL_VERSION
         try:
-            status, response_headers, body = self._http.post_json(
-                self.endpoint, payload=payload, headers=headers,
-            )
+            status, response_headers, body = self._http.post_json(self.endpoint, payload=payload, headers=headers)
         except MCPPinnedTransportError:
             raise MCPError("MCP server was unreachable or rejected the request.") from None
         self.session_id = response_headers.get("mcp-session-id", self.session_id)
@@ -102,13 +105,12 @@ class MCPHTTPClient:
         if not notification and result.get("id") != self._request_id:
             raise MCPError("MCP server returned a mismatched response identifier.")
         if "error" in result:
-            raise MCPError("MCP server returned a JSON-RPC error.")
+            raise MCPRemoteError("MCP server returned a JSON-RPC error.")
         return result.get("result")
 
     def initialize(self):
         result = self._rpc("initialize", {
-            "protocolVersion": self.PROTOCOL_VERSION,
-            "capabilities": {},
+            "protocolVersion": self.PROTOCOL_VERSION, "capabilities": {},
             "clientInfo": {"name": "Yuki", "version": "0.1"},
         })
         if not isinstance(result, dict):
@@ -131,20 +133,51 @@ class MCPHTTPClient:
                          "input_schema": tool.get("inputSchema", {})})
         return safe
 
+    def _record_execution(self, event, invocation_id):
+        if self._execution_audit is not None:
+            self._execution_audit(event, invocation_id)
+
     def call_tool(self, name, arguments):
         if not isinstance(name, str) or name not in self.allowed_tools:
             raise MCPError("MCP tool is not explicitly allow-listed.")
         if not isinstance(arguments, dict):
             raise MCPError("MCP tool arguments must be an object.")
         try:
-            encoded_arguments = json.dumps(arguments, ensure_ascii=False).encode("utf-8")
-        except (TypeError, ValueError):
+            encoded_arguments = json.dumps(arguments, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError):
             raise MCPError("MCP tool arguments must be JSON-serializable.") from None
         if len(encoded_arguments) > 64000:
             raise MCPError("MCP tool arguments exceed the 64 KB limit.")
         if self.approver is None or self.approver(name, arguments) is not True:
             raise MCPError("MCP tool call was not explicitly approved.")
-        result = self._rpc("tools/call", {"name": name, "arguments": arguments})
+
+        invocation_id = uuid.uuid4().hex
+        try:
+            self._record_execution("execution_started", invocation_id)
+        except Exception:
+            raise MCPError("MCP execution audit is unavailable; call was not dispatched.") from None
+
+        try:
+            result = self._rpc("tools/call", {"name": name, "arguments": arguments})
+        except MCPRemoteError:
+            try:
+                self._record_execution("execution_failed", invocation_id)
+            except Exception:
+                pass
+            raise
+        except Exception:
+            try:
+                self._record_execution("outcome_unknown", invocation_id)
+            except Exception:
+                pass
+            raise
+
+        event = "execution_failed" if isinstance(result, dict) and result.get("isError") is True else "executed"
+        try:
+            self._record_execution(event, invocation_id)
+        except Exception:
+            raise MCPError("MCP result received but durable audit confirmation failed.") from None
+
         serialized = json.dumps(result, ensure_ascii=False)
         scan = scan_untrusted_text(serialized)
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}
