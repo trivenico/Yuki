@@ -74,25 +74,28 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
         with self.assertRaises(LocalDeviceError):
             self.register(expected_revision=1)
 
-    def test_owner_confirmation_required_for_lock_and_call(self):
+    def test_owner_confirmation_required_for_device_lock(self):
         self.register()
         with self.assertRaises(LocalDeviceDenied):
             self.registry.authorize(
                 owner_id="owner", device_id=self.credential.device.device_id,
                 capability=DeviceCapability.DEVICE_LOCK,
             )
-        with self.assertRaises(LocalDeviceDenied):
-            self.registry.authorize(
-                owner_id="owner", device_id=self.credential.device.device_id,
-                capability=DeviceCapability.CALL_START, owner_confirmed=True,
-            )
         grant = self.registry.authorize(
             owner_id="owner", device_id=self.credential.device.device_id,
-            capability=DeviceCapability.CALL_START, owner_confirmed=True,
-            recipient_accepted=True,
+            capability=DeviceCapability.DEVICE_LOCK, owner_confirmed=True,
         )
-        self.assertEqual(grant.capability, DeviceCapability.CALL_START)
-        self.assertTrue(grant.recipient_accepted)
+        self.assertEqual(grant.capability, DeviceCapability.DEVICE_LOCK)
+
+    def test_call_capabilities_are_not_supported(self):
+        self.register()
+        for capability in ("call.start", "call.accept", "call.end"):
+            with self.subTest(capability=capability):
+                with self.assertRaises(LocalDeviceDenied):
+                    self.registry.authorize(
+                        owner_id="owner", device_id=self.credential.device.device_id,
+                        capability=capability, owner_confirmed=True,
+                    )
 
     def test_ungranted_capability_and_unknown_command_are_denied(self):
         self.register(capabilities=[DeviceCapability.STATUS.value])
