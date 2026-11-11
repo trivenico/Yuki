@@ -1,0 +1,112 @@
+import unittest
+from types import SimpleNamespace
+
+from core.oauth_mcp_connection import OAuthMCPConnectionError, OAuthMCPConnectionManager
+
+
+class FakeRefresh:
+    def __init__(self, status=None, error=None):
+        self.status = status or {
+            "provider_id": "provider", "account_id": "account",
+            "scopes": ("read",), "refreshed": False,
+        }
+        self.error = error
+        self.calls = []
+
+    def refresh_if_needed(self, *, owner_id, account_id):
+        self.calls.append((owner_id, account_id))
+        if self.error:
+            raise self.error
+        return self.status
+
+
+class FakeVault:
+    def __init__(self, credential=None):
+        self.credential = credential
+        self.calls = []
+
+    def get(self, *, owner_id, provider_id, account_id):
+        self.calls.append((owner_id, provider_id, account_id))
+        return self.credential
+
+
+class CapturingClient:
+    def __init__(self, endpoint, **kwargs):
+        self.endpoint = endpoint
+        self.kwargs = kwargs
+
+
+class OAuthMCPConnectionTests(unittest.TestCase):
+    def setUp(self):
+        self.credential = SimpleNamespace(
+            owner_id="owner", provider_id="provider", account_id="account",
+            access_token="secret-access-token", scopes=("read",),
+        )
+        self.vault = FakeVault(self.credential)
+        self.refresh = FakeRefresh()
+        self.manager = OAuthMCPConnectionManager(
+            provider_id="provider", credential_vault=self.vault,
+            refresh_service=self.refresh, client_factory=CapturingClient,
+        )
+
+    def client(self, **overrides):
+        args = {
+            "owner_id": "owner", "account_id": "account",
+            "endpoint": "https://mcp.example/rpc",
+            "allowed_hosts": {"mcp.example"}, "allowed_tools": {"read_document"},
+            "approver": lambda _name, _arguments: True,
+            "required_scopes": ("read",),
+        }
+        args.update(overrides)
+        return self.manager.create_client(**args)
+
+    def test_token_is_resolved_lazily_and_scoped_to_authenticated_owner(self):
+        client = self.client()
+        self.assertEqual(self.refresh.calls, [])
+        provider = client.kwargs["access_token_provider"]
+        self.assertEqual(provider(), "secret-access-token")
+        self.assertEqual(self.refresh.calls, [("owner", "account")])
+        self.assertEqual(self.vault.calls, [("owner", "provider", "account")])
+
+    def test_required_scopes_are_enforced_before_token_is_returned(self):
+        client = self.client(required_scopes=("write",))
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "required_oauth_scope_missing"):
+            client.kwargs["access_token_provider"]()
+        self.assertEqual(self.vault.calls, [])
+
+    def test_provider_and_account_context_mismatch_fails_closed(self):
+        self.refresh.status = {
+            "provider_id": "other", "account_id": "account", "scopes": ("read",),
+        }
+        client = self.client()
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "credential_context_mismatch"):
+            client.kwargs["access_token_provider"]()
+        self.assertEqual(self.vault.calls, [])
+
+    def test_missing_credential_fails_closed(self):
+        self.vault.credential = None
+        client = self.client()
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "credential_not_available"):
+            client.kwargs["access_token_provider"]()
+
+    def test_refresh_failure_is_not_retried_or_leaked(self):
+        self.refresh.error = RuntimeError("sensitive transport details")
+        client = self.client()
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "credential_not_available") as raised:
+            client.kwargs["access_token_provider"]()
+        self.assertNotIn("sensitive", str(raised.exception))
+        self.assertEqual(len(self.refresh.calls), 1)
+
+    def test_requires_explicit_tool_approver_and_allowlist(self):
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "explicit_tool_approver_required"):
+            self.client(approver=None)
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "explicit_tool_allowlist_required"):
+            self.client(allowed_tools=[])
+
+    def test_invalid_owner_is_rejected_before_client_construction(self):
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "authenticated_owner_invalid"):
+            self.client(owner_id="../other")
+
+
+if __name__ == "__main__":
+    unittest.main()
