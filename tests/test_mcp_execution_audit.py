@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.approval_audit import MCPExecutionAudit, SQLiteApprovalAuditLog
+from core.approval_audit import MCPExecutionAudit, MCPToolPolicyAudit, SQLiteApprovalAuditLog
 from core.mcp_client import MCPError, MCPHTTPClient
 
 
@@ -76,6 +76,22 @@ class MCPExecutionAuditTests(unittest.TestCase):
         with self.assertRaises(MCPError):
             client.call_tool("publish", {})
         self.assertEqual(transport.calls, 0)
+
+    def test_policy_decisions_use_shared_hash_chained_audit_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            policy_audit = MCPToolPolicyAudit(log)
+            for event in ("requested", "owner_approved", "authorized_read_only", "denied"):
+                policy_audit({
+                    "event": event, "owner_id": "owner", "provider_id": "provider",
+                    "account_id": "account", "tool_name": "publish",
+                    "arguments": {"secret": "never persist"},
+                })
+            self.assertEqual([e["event_type"] for e in reversed(log.list_events())],
+                             ["requested", "approved", "approved", "denied"])
+            self.assertTrue(log.verify_chain())
+            with open(log.database_path, "rb") as handle:
+                self.assertNotIn(b"never persist", handle.read())
 
     def test_approval_denial_does_not_create_execution_events(self):
         transport, events = FakeTransport(), []
