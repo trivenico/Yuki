@@ -365,7 +365,7 @@ class CompanionStateStore:
             terminal = row["attempts"] >= max_attempts
             next_status = "failed" if terminal else "pending"
             available = current.isoformat() if terminal else (
-                current + __import__("datetime").timedelta(seconds=retry_after_seconds)
+                current + timedelta(seconds=retry_after_seconds)
             ).isoformat()
             db.execute(
                 """UPDATE companion_outbox SET status=?,available_at=?,last_error=?,
