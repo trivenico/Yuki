@@ -211,7 +211,6 @@ class AuthenticatedInferenceAPI:
                         self.calls.invite_as_owner, owner_id=user.user_id,
                         caller_device_id=payload["caller_device_id"],
                         recipient_device_id=payload["recipient_device_id"],
-                        owner_confirmed=True,
                     )
                 except CallConfirmationDenied:
                     return await self._respond(send, 403, {"error": "confirmation_required_or_expired"})
