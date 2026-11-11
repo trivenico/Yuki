@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import re
+import uuid
 from types import MappingProxyType
 
 
@@ -144,10 +145,14 @@ class MCPToolPolicyRegistry:
         if not callable(owner_approval) or not callable(audit) or not callable(current_revision):
             raise MCPToolPolicyError("owner_approval_audit_and_revision_required")
 
-        def approve(tool_name, arguments):
+        def approve(tool_name, arguments, execution_id=None):
             if not isinstance(tool_name, str) or not _TOOL_NAME.fullmatch(tool_name):
                 return False
             if not isinstance(arguments, dict):
+                return False
+            if execution_id is None:
+                execution_id = uuid.uuid4().hex
+            if not isinstance(execution_id, str) or not re.fullmatch(r\"[0-9a-f]{32}\", execution_id):
                 return False
             try:
                 encoded = json.dumps(
@@ -179,6 +184,7 @@ class MCPToolPolicyRegistry:
                 "risk": policy.risk.value,
                 "policy_version": policy.version,
                 "registry_revision": self.revision,
+                "execution_id": execution_id,
             }
             try:
                 audit({**base, "event": "requested"})
