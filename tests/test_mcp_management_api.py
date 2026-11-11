@@ -250,10 +250,6 @@ class MCPManagementAPITests(unittest.TestCase):
             ), expected_revision=1,
         )
         self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
-        self.oauth.register(
-            owner_id="owner", provider_id="provider", account_id="account",
-            scopes=("profile:basic",),
-        )
         self.runtime._trusted_tool_definitions = {}
         payload = json.dumps({
             "enabled": False, "expected_revision": 2, "confirm": True,
@@ -276,6 +272,7 @@ class MCPManagementAPITests(unittest.TestCase):
                 required_scopes=("profile:read",), version=1, enabled=True,
             ), expected_revision=1,
         )
+        self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
         payload = json.dumps({"expected_revision": 2, "confirm": True}).encode()
         status, body = self.request(
             "DELETE", "/v1/integrations/mcp/provider/account/policies/read_profile",
