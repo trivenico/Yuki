@@ -316,11 +316,15 @@ class ConversationStore:
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
                 current = db.execute(
-                    "SELECT expires_at FROM conversation_generation_leases WHERE conversation_id=?",
+                    "SELECT lease_token FROM conversation_generation_leases WHERE conversation_id=?",
                     (conversation_id,),
                 ).fetchone()
-                if current is not None and current["expires_at"] > now:
-                    raise ConversationConflict("another generation is already active for this conversation.")
+                # Expiry is diagnostic, not proof of process termination. Never
+                # steal an existing lease automatically: a paused worker could
+                # resume and race the replacement holder without end-to-end
+                # fencing on every side effect and persistence commit.
+                if current is not None:
+                    raise ConversationConflict("another generation lease still requires release or supervised recovery.")
                 db.execute(
                     """INSERT INTO conversation_generation_leases
                        (conversation_id, owner_id, lease_token, expires_at) VALUES (?, ?, ?, ?)
@@ -415,6 +419,45 @@ class ConversationStore:
             "status": row["status"], "checkpoint": json.loads(row["checkpoint"]),
             "started_at": row["started_at"], "updated_at": row["updated_at"],
         } for row in rows]
+
+    def delete_conversation(self, *, owner_id: str, conversation_id: str) -> bool:
+        """Permanently delete one owner's conversation and all FK-owned records.
+
+        The owner predicate is part of the write transaction. Foreign-key
+        cascades remove messages, generation runs and generation leases.
+        """
+        owner = self._owner(owner_id)
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id must be non-empty text.")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT 1 FROM conversations WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                raise ConversationNotFound("conversation not found.")
+            # A lease is a cross-process execution guard. Do not rely on its
+            # wall-clock expiry to prove a worker has stopped: a slow or paused
+            # worker may still resume. Fail closed until the lease holder releases
+            # it or a separately audited recovery/fencing procedure is available.
+            lease = db.execute(
+                "SELECT 1 FROM conversation_generation_leases WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            ).fetchone()
+            if lease is not None:
+                db.rollback()
+                raise ConversationConflict("generation_active")
+            cursor = db.execute(
+                "DELETE FROM conversations WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            )
+            if cursor.rowcount != 1:
+                db.rollback()
+                raise ConversationConflict("conversation changed during deletion.")
+            db.commit()
+            return True
 
     def archive_conversation(self, *, owner_id: str, conversation_id: str) -> dict[str, Any]:
         owner = self._owner(owner_id)

@@ -163,6 +163,81 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id="checkpoint-1", checkpoint={"payload": "x" * 5000},
             )
 
+    def test_delete_conversation_cascades_messages_and_generation_runs(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="Delete all of this", idempotency_key="delete-1",
+            expected_version=0, generation_request_id="delete-1",
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id, lease_token="lease-delete",
+        )
+        # A live lease is a hard deletion barrier, not something deletion
+        # should cascade away while a worker may still be executing.
+        with self.assertRaises(ConversationConflict):
+            self.store.delete_conversation(
+                owner_id=self.owner, conversation_id=conversation_id,
+            )
+        self.assertTrue(self.store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id, lease_token="lease-delete",
+        ))
+        self.assertTrue(self.store.delete_conversation(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ))
+        with self.assertRaises(ConversationNotFound):
+            self.store.get_conversation(owner_id=self.owner, conversation_id=conversation_id)
+        with self.assertRaises(ConversationNotFound):
+            self.store.list_messages(owner_id=self.owner, conversation_id=conversation_id)
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ), [])
+
+    def test_delete_is_blocked_by_shared_database_generation_lease(self):
+        conversation_id = self.conversation["conversation_id"]
+        # Separate store instances model separate API processes sharing the DB.
+        worker_store = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+        worker_store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-process-lease", ttl_seconds=5,
+        )
+        with self.assertRaises(ConversationConflict):
+            self.store.delete_conversation(
+                owner_id=self.owner, conversation_id=conversation_id,
+            )
+        # Expiry is deliberately not treated as proof that the worker stopped.
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        with self.assertRaises(ConversationConflict):
+            self.store.delete_conversation(
+                owner_id=self.owner, conversation_id=conversation_id,
+            )
+        with self.assertRaises(ConversationConflict):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker", ttl_seconds=30,
+            )
+        self.assertTrue(worker_store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-process-lease",
+        ))
+        self.assertTrue(self.store.delete_conversation(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ))
+
+    def test_delete_conversation_is_owner_scoped_and_idempotency_is_not_ambiguous(self):
+        conversation_id = self.conversation["conversation_id"]
+        with self.assertRaises(ConversationNotFound):
+            self.store.delete_conversation(owner_id=self.other_owner, conversation_id=conversation_id)
+        self.assertIsNotNone(self.store.get_conversation(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ))
+        with self.assertRaises(ValueError):
+            self.store.delete_conversation(owner_id=self.owner, conversation_id="  ")
+
     def test_generation_records_are_owner_scoped(self):
         self.store.append_message(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
