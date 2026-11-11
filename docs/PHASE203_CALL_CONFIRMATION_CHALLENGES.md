@@ -13,7 +13,7 @@ The repository now includes an owner-facing browser flow in `ui/web`: it lists p
 3. The owner enters the account password. The server revalidates the active session and password, then verifies both devices are active and owned by that account.
 4. The server returns a random challenge bound to the owner, current session, caller device, and recipient device.
 5. The UI immediately submits the exact device pair and challenge token. The invitation endpoint atomically consumes the token before persisting the invitation; a failed or replayed token cannot create a second call. The password field is cleared after the operation.
-6. The recipient device must separately accept the invitation. `automation/remote_call_client.py` provides an authenticated HTTPS inbox client, and `automation/call_inbox.py` provides a foreground-only terminal prompt with explicit accept/decline/ignore choices. The owner UI does not impersonate the recipient device. The CLI supports `yuki calls-inbox --api-url https://your-yuki-server --watch` for a foreground watcher (three-second polling by default; `--poll-interval 1..30` adjusts it). The watcher remembers invitations already presented during that process and never auto-accepts. It is not a push-notification service or background daemon.
+6. The recipient device must separately accept the invitation. `automation/remote_call_client.py` provides an authenticated HTTPS inbox client, and `automation/call_inbox.py` consumes the durable notification inbox and provides a foreground-only terminal prompt with explicit accept/decline/ignore choices. Accept/decline is completed before the alert is acknowledged; ignored alerts remain pending and are deduplicated for the lifetime of the watcher process. The owner UI does not impersonate the recipient device. The CLI supports `yuki calls-inbox --api-url https://your-yuki-server --watch` for a foreground watcher (three-second polling by default; `--poll-interval 1..30` adjusts it). The watcher remembers notification IDs already presented during that process and never auto-accepts. It is not a push-notification service or background daemon.
 
 The API deliberately rejects the former `confirm: true` request shape. The authenticated owner can inspect a bounded newest-first history with `GET /v1/devices/calls` (up to 50 entries); this projection contains only opaque digest handles and call metadata, never bearer credentials or the original random session secret. The authenticated owner may also cancel a still-ringing invitation with `POST /v1/devices/calls/{opaque_session_handle}/cancel`; cancellation is owner-scoped, cannot cancel an accepted call, and immediately removes the invite from the recipient inbox. The opaque handle is the 64-character SHA-256 session digest returned by the API, not the original random session secret.
 
@@ -34,7 +34,7 @@ The API deliberately rejects the former `confirm: true` request shape. The authe
 
 - Harden the owner UI for production deployment: accessibility and browser compatibility tests, CSP and dependency review, XSS regression tests, and end-to-end owner/device tests. A confirmation dialog is a human-facing safeguard, not cryptographic proof of a trusted gesture.
 - Add transport-level protections appropriate to the deployment (TLS, origin controls/CSRF where cookie sessions are used, rate limits, secret redaction).
-- Add notification delivery and authenticated WebRTC signaling/media only after invitation consent is complete.
+- Add OS-level notification adapters and authenticated WebRTC signaling/media only after invitation consent is complete.
 - Test real devices, reconnects, cancellation, notification delivery, and media permission prompts. No WebRTC, push notification, microphone or camera capability is implied by this API.
 
 
@@ -59,3 +59,13 @@ separate authenticated action; no media device is activated.
 This does not yet provide background delivery, OS notifications, lease-based
 worker dispatch, guaranteed exactly-once display, or WebRTC. The foreground CLI
 watcher remains the current polling client.
+
+
+The paired-device CLI client now polls the durable notification endpoint rather
+than the legacy invitation listing endpoint. It acknowledges an alert only
+after an explicit accept or decline has succeeded. If the user ignores an alert,
+it remains unacknowledged and can be presented again after the process restarts.
+A failed acknowledgement is surfaced rather than reported as a successful
+delivery; accepting/declining may already have changed the call state, so the
+client must inspect current call state before retrying an action after an
+ambiguous network failure.
