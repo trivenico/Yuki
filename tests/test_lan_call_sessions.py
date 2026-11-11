@@ -1,4 +1,5 @@
 """Security and lifecycle tests for LAN call invitations (no media transport)."""
+import hashlib
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -157,9 +158,9 @@ class LANCallSessionStoreTests(unittest.TestCase):
         self.assertEqual(len(notifications), 1)
         event = notifications[0]
         self.assertEqual(event["event_type"], "incoming_call")
-        self.assertEqual(event["session_id"], self.calls.get(
-            session_id=invite.session_id, device_token=self.caller.token
-        ).session_id)
+        self.assertEqual(
+            event["session_id"], hashlib.sha256(invite.session_id.encode("ascii")).hexdigest()
+        )
         self.assertEqual(len(event["notification_id"]), 64)
         self.assertNotIn(invite.session_id, repr(event))
         self.assertEqual(self.calls.list_notifications(device_token=self.other.token), [])
