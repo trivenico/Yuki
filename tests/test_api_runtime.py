@@ -4,6 +4,8 @@ from pathlib import Path
 
 from api.runtime import build_conversation_runtime
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
+from api.relationship_settings import AuthenticatedRelationshipSettingsAPI
+from companion.relationship_settings_store import RelationshipSettingsStore
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
@@ -185,6 +187,37 @@ class ConversationRuntimeTests(unittest.TestCase):
                 build_conversation_runtime(
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=object(), agent_loop=_loop(),
+                )
+
+
+    def test_runtime_mounts_relationship_settings_api_only_when_resolver_supplied(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            calls = []
+            def resolver(owner_id):
+                calls.append(owner_id)
+                return RelationshipSettingsStore(
+                    root / f"relationship-{owner_id}.sqlite", owner_id=owner_id,
+                )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                relationship_settings_store_for_owner=resolver,
+            )
+            self.assertIsInstance(runtime.app, AuthenticatedRelationshipSettingsAPI)
+            self.assertEqual(calls, [])
+            self.assertTrue(callable(runtime.app.store_for_owner))
+            runtime.close()
+
+    def test_runtime_rejects_invalid_relationship_store_resolver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "must be callable"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    relationship_settings_store_for_owner=object(),
                 )
 
 
