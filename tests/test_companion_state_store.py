@@ -80,6 +80,25 @@ class CompanionStateStoreTests(unittest.TestCase):
         self.assertTrue(store.list_records("reminder")[0]["delivered"])
         self.assertEqual(store.list_outbox()[0]["status"], "delivered")
 
+    def test_deleting_reminder_also_removes_queued_and_leased_payloads(self):
+        store = CompanionStateStore(self.database, owner_id="owner")
+        now = self._add_due_reminder(store, "delete-me")
+        store.enqueue_due_reminders(now)
+        claim = store.claim_outbox(now)[0]
+        self.assertTrue(store.delete_record("reminder", "delete-me"))
+        self.assertEqual(store.list_records("reminder"), [])
+        self.assertEqual(store.list_outbox(), [])
+        # A worker holding the former lease can no longer complete it.
+        self.assertFalse(store.complete_outbox(claim["event_id"], claim["lease_token"], now))
+
+    def test_clearing_reminders_also_clears_outbox_payloads(self):
+        store = CompanionStateStore(self.database, owner_id="owner")
+        now = self._add_due_reminder(store, "clear-me")
+        store.enqueue_due_reminders(now)
+        self.assertEqual(store.clear_records("reminder"), 1)
+        self.assertEqual(store.list_records("reminder"), [])
+        self.assertEqual(store.list_outbox(), [])
+
     def test_outbox_claim_is_exclusive_across_store_instances(self):
         first = CompanionStateStore(self.database, owner_id="owner")
         second = CompanionStateStore(self.database, owner_id="owner")
