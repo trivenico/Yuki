@@ -568,5 +568,43 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(migrated.get_goal_for_owner("owner-new", new_goal)["owner_id"], "owner-new")
 
 
+    def test_owner_scoped_mutations_check_identity_inside_mutation_transaction(self):
+        alice_goal = self.engine.create_owned_goal("owner-alice-atomic")
+        bob_goal = self.engine.create_owned_goal("owner-bob-atomic")
+        alice_task = self.engine.submit_for_owner(
+            "owner-alice-atomic", alice_goal, "work", {},
+            idempotency_key="alice-atomic-task",
+        )
+
+        # Exercise the owner-aware mutation entry points directly. They must
+        # carry the identity predicate into the same BEGIN IMMEDIATE
+        # transaction as the state change, rather than relying on a prior read.
+        with self.assertRaises(TaskNotFound):
+            self.engine.set_goal_state(
+                alice_goal, "paused", owner_id="owner-bob-atomic"
+            )
+        with self.assertRaises(TaskNotFound):
+            self.engine.cancel_task(
+                alice_task["id"], owner_id="owner-bob-atomic"
+            )
+        self.assertEqual(self.engine.get_goal(alice_goal)["state"], "active")
+        self.assertEqual(self.engine.get_task(alice_task["id"])["state"], "queued")
+        self.assertEqual(self.engine.get_goal(bob_goal)["state"], "active")
+
+    def test_owner_scoped_mutation_rejects_unowned_legacy_records(self):
+        legacy_goal = self.engine.create_goal()
+        task = self.engine.submit(
+            legacy_goal, "work", {}, idempotency_key="legacy-owner-mutation"
+        )
+        with self.assertRaises(TaskNotFound):
+            self.engine.set_goal_state(
+                legacy_goal, "paused", owner_id="owner-new"
+            )
+        with self.assertRaises(TaskNotFound):
+            self.engine.cancel_task(task["id"], owner_id="owner-new")
+        self.assertEqual(self.engine.get_goal(legacy_goal)["state"], "active")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "queued")
+
+
 if __name__ == "__main__":
     unittest.main()
