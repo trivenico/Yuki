@@ -172,6 +172,19 @@ class LANCallSessionStoreTests(unittest.TestCase):
             notification_id=event["notification_id"], device_token=self.recipient.token
         ))
 
+    def test_expired_notifications_are_pruned_when_recipient_polls(self):
+        self._invite()
+        future = lan_call_sessions._now() + timedelta(seconds=31)
+        with patch("core.lan_call_sessions._now", return_value=future):
+            self.assertEqual(
+                self.calls.list_notifications(device_token=self.recipient.token), []
+            )
+        with self.calls._connect() as db:
+            remaining = db.execute(
+                "SELECT COUNT(*) FROM lan_call_notifications"
+            ).fetchone()[0]
+        self.assertEqual(remaining, 0)
+
     def test_notification_is_suppressed_after_invite_cancellation_or_caller_revocation(self):
         invite = self.calls.invite_as_owner(
             owner_id="owner",
