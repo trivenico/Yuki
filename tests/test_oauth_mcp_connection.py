@@ -105,6 +105,23 @@ class OAuthMCPConnectionTests(unittest.TestCase):
                 current_revision=lambda: 1,
             )
 
+    def test_policy_client_rejects_invalid_granted_scopes_cleanly(self):
+        policy = MCPToolPolicy(
+            "owner", "provider", "account", "read_profile",
+            MCPToolRisk.READ_ONLY, ("read",), 1,
+        )
+        registry = MCPToolPolicyRegistry(
+            owner_id="owner", policies=(policy,), revision=4,
+        )
+        with self.assertRaisesRegex(OAuthMCPConnectionError, "trusted_tool_policy_invalid"):
+            self.manager.create_policy_client(
+                owner_id="owner", account_id="account",
+                endpoint="https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+                policy_registry=registry, granted_scopes=None,
+                owner_approval=lambda _request: True, audit=lambda _event: None,
+                current_revision=lambda: 4,
+            )
+
     def test_token_is_resolved_lazily_and_scoped_to_authenticated_owner(self):
         client = self.client()
         self.assertEqual(self.refresh.calls, [])
