@@ -177,6 +177,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
                 "SELECT event_type FROM lan_call_audit ORDER BY event_id"
             ).fetchall()
         self.assertEqual([row["event_type"] for row in events], ["invited", "accepted"])
+        self.assertTrue(self.app.calls.verify_audit_chain())
 
     def test_device_bearer_cannot_authenticate_owner_endpoints(self):
         paired = self._pair_device()
