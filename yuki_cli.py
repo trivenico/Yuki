@@ -6,11 +6,14 @@ execute tools; task execution remains in the guarded interactive runtime.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.readiness import build_readiness_report
+from automation.call_inbox import PairedDeviceCallInbox
+from automation.remote_call_client import RemoteCallClient
 from providers.factory import create_provider
 
 
@@ -25,6 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+
+    calls = sub.add_parser("calls-inbox", help="Review incoming calls for a paired device")
+    calls.add_argument("--api-url", required=True, help="Yuki API base URL (HTTPS; loopback HTTP allowed)")
     return parser
 
 
@@ -55,6 +61,8 @@ def run_cli(
     readiness_builder: Callable = build_readiness_report,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
+    secret_input_fn: Callable[[str], str] = getpass.getpass,
+    call_client_factory: Callable = RemoteCallClient,
 ) -> int:
     args = build_parser().parse_args(argv)
 
@@ -62,6 +70,23 @@ def run_cli(
         report = readiness_builder().to_dict()
         _write_json(report, output_fn)
         return 0
+
+    if args.command == "calls-inbox":
+        try:
+            device_token = secret_input_fn("Paired-device token (input hidden): ")
+            if not isinstance(device_token, str) or not 20 <= len(device_token) <= 256:
+                output_fn("Yuki call inbox: a valid paired-device credential is required.")
+                return 2
+            client = call_client_factory(args.api_url, device_token)
+            inbox = PairedDeviceCallInbox(client, prompt=input_fn, output=output_fn)
+            _write_json(inbox.run_once(), output_fn)
+            return 0
+        except (EOFError, KeyboardInterrupt):
+            output_fn("")
+            return 130
+        except Exception as exc:
+            output_fn(f"Yuki call inbox failed ({type(exc).__name__}).")
+            return 4
 
     try:
         config = config_loader()
