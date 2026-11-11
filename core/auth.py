@@ -211,6 +211,73 @@ class BuiltInAuthService:
             """, (digest, now)).fetchone()
             return self._user(row) if row else None
 
+
+    def verify_session_password(self, token, password):
+        """Re-authenticate the owner for a sensitive action without issuing a new session.
+
+        The existing bearer session must still be active. Failures use the same
+        account lockout counter as login and return one generic authentication error.
+        """
+        valid_token = isinstance(token, str) and 20 <= len(token) <= 256
+        valid_password = isinstance(password, str) and 0 < len(password) <= _MAX_PASSWORD_LENGTH
+        if not valid_token or not valid_password:
+            hashlib.pbkdf2_hmac(
+                "sha256", b"invalid", b"yuki-auth-dummy-salt", self.password_iterations
+            )
+            raise AuthenticationError("Re-authentication failed.")
+
+        now = _utcnow()
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        invalid = False
+        user = None
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT u.*, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at
+                FROM auth_sessions s JOIN auth_users u ON u.user_id=s.user_id
+                WHERE s.token_hash=?
+            """, (token_hash,)).fetchone()
+            session_active = bool(
+                row and row["session_revoked_at"] is None
+                and row["session_expires_at"] > _timestamp(now) and not row["disabled"]
+            )
+            if not session_active:
+                hashlib.pbkdf2_hmac(
+                    "sha256", password.encode("utf-8"),
+                    b"yuki-auth-dummy-salt", self.password_iterations
+                )
+                invalid = True
+            else:
+                locked = False
+                if row["locked_until"]:
+                    try:
+                        locked = datetime.fromisoformat(row["locked_until"]) > now
+                    except ValueError:
+                        locked = False
+                candidate = hashlib.pbkdf2_hmac(
+                    "sha256", password.encode("utf-8"),
+                    row["password_salt"], row["password_iterations"]
+                )
+                if locked or not hmac.compare_digest(candidate, row["password_hash"]):
+                    failures = row["failed_logins"] + 1
+                    locked_until = (
+                        _timestamp(now + timedelta(seconds=self.lockout_seconds))
+                        if failures >= self.max_failed_logins else None
+                    )
+                    db.execute(
+                        "UPDATE auth_users SET failed_logins=?,locked_until=? WHERE user_id=?",
+                        (failures, locked_until, row["user_id"])
+                    )
+                    invalid = True
+                else:
+                    db.execute(
+                        "UPDATE auth_users SET failed_logins=0,locked_until=NULL WHERE user_id=?",
+                        (row["user_id"],)
+                    )
+                    user = self._user(row)
+        if invalid or user is None:
+            raise AuthenticationError("Re-authentication failed.")
+        return user
+
     def revoke_session(self, token):
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             return False
