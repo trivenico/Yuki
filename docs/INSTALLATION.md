@@ -5,15 +5,29 @@
 - Python 3.10+ and PyYAML.
 - For real AI responses, configure an OpenAI API key in your process environment. The mock provider is test-only and is no longer offered by the runtime provider registry.
 
-## Basic install
+## Install from a source checkout
+
+Python 3.10+ is required. The project now declares a stable `yuki` console command:
+
+```sh
+python -m pip install .
+yuki doctor
+yuki provider-status
+yuki ask "Hello, Yuki"
+yuki chat
+```
+
+The first installed invocation creates a non-secret user configuration from the packaged defaults. Configuration is stored in the OS user config directory; runtime data is stored in the OS user data directory. Set `YUKI_CONFIG` or `YUKI_HOME` to override those locations. API keys remain environment variables or OS-managed secrets.
+
+For a full source checkout and contributor test environment:
 
 ```sh
 python -m pip install -r requirements.txt
+python -m pip install .
 python -m unittest discover -s tests -v
-python main.py
 ```
 
-Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\python.exe main.py`. macOS/Linux users can use `sh install_unix.sh`.
+The Windows and macOS/Linux installer scripts create a virtual environment, install the declared dependencies and project package, then run the test suite. Use `run_yuki_windows.bat` or `./run_yuki_unix.sh` to start the installed CLI.
 
 ## Real AI provider (OpenAI)
 
