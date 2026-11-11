@@ -95,7 +95,7 @@ def build_mcp_oauth_authorization_service(
     account_id = _trusted_identifier(config.account_id, "account_id")
     resource = _trusted_https_uri(config.resource, "resource")
     redirect_uri = _trusted_https_uri(config.redirect_uri, "redirect_uri")
-    if config.application_type not in {"web", "native"}:
+    if not isinstance(config.application_type, str) or config.application_type not in {"web", "native"}:
         raise MCPOAuthProviderConfigurationError("invalid_application_type")
     metadata_hosts = _trusted_hosts(config.metadata_hosts, "metadata_hosts")
     registration_hosts = _trusted_hosts(config.registration_hosts, "registration_hosts")
@@ -117,6 +117,10 @@ def build_mcp_oauth_authorization_service(
         _trusted_identifier(config.preregistered_client_id, "preregistered_client_id")
     if config.cimd_document_uri is not None:
         _trusted_https_uri(config.cimd_document_uri, "cimd_document_uri")
+    if (not isinstance(config.client_name, str) or not config.client_name.strip()
+            or len(config.client_name) > 100
+            or any(ord(char) < 0x20 or ord(char) == 0x7f for char in config.client_name)):
+        raise MCPOAuthProviderConfigurationError("invalid_client_name")
 
     discovery = TrustedMCPOAuthDiscovery(
         transport=transport, allowed_metadata_hosts=metadata_hosts,
