@@ -92,6 +92,10 @@ class MCPRuntimeService:
         self._policies = policy_store
         self._audit = audit_log
 
+    def has_provider(self, provider_id: str) -> bool:
+        """Report whether a provider exists in trusted host configuration."""
+        return isinstance(provider_id, str) and provider_id in self._managers
+
     def discover_tools(self, *, owner_id: str, provider_id: str, account_id: str, granted_scopes):
         """Perform inert, owner-bound discovery using only host-configured endpoints."""
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256:
