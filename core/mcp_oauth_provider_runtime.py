@@ -29,6 +29,7 @@ class MCPOAuthProviderConfig:
     application_type: str
     metadata_hosts: tuple[str, ...]
     registration_hosts: tuple[str, ...]
+    authorization_hosts: tuple[str, ...]
     redirect_hosts: tuple[str, ...]
     expected_issuer: str | None = None
     preregistered_client_id: str | None = None
@@ -98,6 +99,7 @@ def build_mcp_oauth_authorization_service(
         raise MCPOAuthProviderConfigurationError("invalid_application_type")
     metadata_hosts = _trusted_hosts(config.metadata_hosts, "metadata_hosts")
     registration_hosts = _trusted_hosts(config.registration_hosts, "registration_hosts")
+    authorization_hosts = _trusted_hosts(config.authorization_hosts, "authorization_hosts")
     redirect_hosts = _trusted_hosts(config.redirect_hosts, "redirect_hosts")
     redirect_host = (urlsplit(redirect_uri).hostname or "").lower().rstrip(".")
     if redirect_host not in redirect_hosts:
@@ -147,7 +149,7 @@ def build_mcp_oauth_authorization_service(
         client_id=client.client_id,
         authorization_endpoint=result.authorization_server_metadata.authorization_endpoint,
         token_endpoint=result.authorization_server_metadata.token_endpoint,
-        allowed_authorization_hosts=metadata_hosts,
+        allowed_authorization_hosts=authorization_hosts,
         redirect_uri=redirect_uri,
         issuer=result.authorization_server_metadata.issuer,
         resource=resource,
