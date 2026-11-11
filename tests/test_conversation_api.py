@@ -114,6 +114,48 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
+    def test_conversation_delete_is_serialized_against_real_nonstream_generation(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_model(**kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("test model timed out")
+            return {"text": "finished", "tool_calls": {"tool_calls": []}}
+
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+        self.app.conversations.agent_loop = AgentExecutionLoop(slow_model, protocol)
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        conversation_id = conversation["conversation_id"]
+        result = {}
+        worker = threading.Thread(
+            target=lambda: result.setdefault("reply", self.request(
+                "POST", f"/v1/conversations/{conversation_id}/messages",
+                {"content": "in flight", "request_id": "in-flight", "expected_version": 0},
+                self.issued.token,
+            )),
+            daemon=True,
+        )
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2), "generation did not enter model")
+            status, data, _ = self.request(
+                "DELETE", f"/v1/conversations/{conversation_id}", token=self.issued.token,
+            )
+            self.assertEqual(status, 409)
+            self.assertEqual(data, {"error": "generation_active"})
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive(), "generation worker did not finish")
+        self.assertEqual(result["reply"][0], 200)
+        status, data, _ = self.request(
+            "DELETE", f"/v1/conversations/{conversation_id}", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data, {"deleted": True})
+
     def test_conversation_delete_does_not_disclose_or_delete_other_owner_data(self):
         other = self.app.conversations.create(owner_id="another-owner")
         conversation_id = other["conversation_id"]
