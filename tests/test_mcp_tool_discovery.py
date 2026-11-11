@@ -81,6 +81,26 @@ class MCPToolDiscoveryTests(unittest.TestCase):
                 client, owner_id="owner", provider_id="provider", account_id="account",
             )
 
+    def test_nested_schema_is_immutable(self):
+        client = FakeClient([{
+            "name": "read", "description": "", 
+            "input_schema": {"properties": {"id": {"type": "string"}}},
+        }])
+        result = discover_mcp_tools(
+            client, owner_id="owner", provider_id="provider", account_id="account",
+        )
+        with self.assertRaises(TypeError):
+            result.tools[0].input_schema["properties"]["id"]["type"] = "integer"
+
+    def test_non_finite_schema_numbers_are_rejected(self):
+        client = FakeClient([{
+            "name": "read", "description": "", "input_schema": {"minimum": float("nan")},
+        }])
+        with self.assertRaisesRegex(MCPToolDiscoveryError, "schema_invalid"):
+            discover_mcp_tools(
+                client, owner_id="owner", provider_id="provider", account_id="account",
+            )
+
     def test_remote_errors_are_sanitized(self):
         class Broken(FakeClient):
             def list_tools(self):
