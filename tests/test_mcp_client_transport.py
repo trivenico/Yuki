@@ -56,6 +56,17 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
             client._rpc("initialize", {})
         self.assertNotIn("private detail", str(caught.exception))
 
+    def test_empty_allowlist_allows_discovery_but_denies_every_tool_call(self):
+        transport = FakeTransport([])
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc", allowed_hosts={"mcp.example.com"},
+            allowed_tools=(), approver=lambda _name, _arguments: True,
+            http_transport=transport,
+        )
+        with self.assertRaisesRegex(MCPError, "not explicitly allow-listed"):
+            client.call_tool("read_profile", {})
+        self.assertEqual(transport.calls, [])
+
     def test_rejects_endpoint_not_on_allow_list(self):
         with self.assertRaises(MCPError):
             MCPHTTPClient("https://attacker.example/rpc", allowed_hosts={"mcp.example.com"})
