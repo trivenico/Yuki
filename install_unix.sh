@@ -34,11 +34,12 @@ fi
 
 echo "[2/4] Updating pip..."
 if ! .venv/bin/python -m pip install --upgrade pip; then
-  echo "WARNING: pip upgrade failed; continuing because Yuki has no third-party dependencies."
+  echo "WARNING: pip upgrade failed; continuing with the existing pip version."
 fi
 
-echo "[3/4] Checking declared dependencies..."
+echo "[3/4] Installing declared dependencies and Yuki CLI..."
 .venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install .
 
 echo "[4/4] Running Yuki test suite..."
 .venv/bin/python -m unittest discover -s tests -v

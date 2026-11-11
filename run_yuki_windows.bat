@@ -1,10 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if not exist ".venv\Scripts\python.exe" (
+if not exist ".venv\Scripts\yuki.exe" (
   echo Yuki's virtual environment is missing.
   echo Run install_windows.bat first.
   exit /b 1
 )
-".venv\Scripts\python.exe" yuki.py
+".venv\Scripts\yuki.exe" chat
 endlocal
