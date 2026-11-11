@@ -83,7 +83,7 @@ class EvidenceLedgerTests(unittest.TestCase):
             claim["id"], reviewer_id="owner", decision="rejected", rationale="Insufficient support."
         )
         self.assertEqual(rejected["status"], "rejected")
-        with self.assertRaisesRegex(ValueError, "must be proposed"):
+        with self.assertRaisesRegex(ValueError, "reopen the claim"):
             self.ledger.add_evidence(claim["id"], source_id="s1", chunk_id="c1")
         reopened = self.ledger.reopen_claim(claim["id"], reviewer_id="owner", rationale="New evidence.")
         self.assertEqual(reopened["status"], "proposed")
