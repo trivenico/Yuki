@@ -40,7 +40,8 @@ class DurableSkillWorker:
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
 
-    def _invoke_with_lease_heartbeat(self, task_id: str, skill_name: str, argument: str):
+    def _invoke_with_lease_heartbeat(self, task_id: str, lease_token: str, skill_name: str, argument: str):
+        self._lease_token = lease_token
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
 
@@ -50,6 +51,7 @@ class DurableSkillWorker:
                     self.engine.heartbeat(
                         task_id,
                         self.worker_id,
+                        lease_token=self._lease_token,
                         lease_seconds=self.lease_seconds,
                     )
                 except Exception as error:
@@ -78,11 +80,14 @@ class DurableSkillWorker:
             return {"state": "idle", "status": "no_task"}
 
         task_id = task["id"]
+        lease_token = task.get("lease_token")
+        if not isinstance(lease_token, str) or len(lease_token) < 32:
+            raise RuntimeError("durable task claim did not provide a valid fencing token")
         # Side-effecting skill calls must not be automatically retried after an
         # ambiguous failure. Require the submitter to set max_attempts=1.
         if task.get("task_type") != "skill.invoke":
             rejected = self.engine.reject(
-                task_id, self.worker_id, "unsupported_task_type"
+                task_id, self.worker_id, "unsupported_task_type", lease_token=lease_token
             )
             return {
                 "task_id": task_id,
@@ -91,7 +96,7 @@ class DurableSkillWorker:
             }
         if task.get("max_attempts") != 1:
             rejected = self.engine.reject(
-                task_id, self.worker_id, "unsafe_retry_policy"
+                task_id, self.worker_id, "unsafe_retry_policy", lease_token=lease_token
             )
             return {
                 "task_id": task_id,
@@ -110,7 +115,7 @@ class DurableSkillWorker:
             or len(payload["argument"]) > 20000
         ):
             rejected = self.engine.reject(
-                task_id, self.worker_id, "invalid_payload"
+                task_id, self.worker_id, "invalid_payload", lease_token=lease_token
             )
             return {
                 "task_id": task_id,
@@ -121,7 +126,7 @@ class DurableSkillWorker:
         skill_name = payload["skill_name"]
         argument = payload["argument"]
         try:
-            result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument)
+            result = self._invoke_with_lease_heartbeat(task_id, lease_token, skill_name, argument)
             if result.ok:
                 # Persist only status metadata, never skill output which may
                 # contain private data or credentials.
@@ -133,6 +138,7 @@ class DurableSkillWorker:
                         "status": result.status,
                         "skill_name": skill_name,
                     },
+                    lease_token=lease_token,
                 )
                 return {
                     "task_id": task_id,
@@ -146,6 +152,7 @@ class DurableSkillWorker:
                 self.worker_id,
                 result.status or "skill invocation failed",
                 retry_delay_seconds=0,
+                lease_token=lease_token,
             )
             return {
                 "task_id": task_id,
