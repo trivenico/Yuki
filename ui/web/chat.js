@@ -80,6 +80,123 @@
       if (select) select.hidden = true;
     }
   };
+  const loadIntegrations = async () => {
+    const list = $("integration-list");
+    if (!list || !state.user) return;
+    list.replaceChildren();
+    try {
+      const [catalog, connected] = await Promise.all([
+        api("/v1/integrations/oauth/providers"),
+        api("/v1/integrations/oauth/connections")
+      ]);
+      const records = connected.connections || [];
+      const providers = catalog.providers || [];
+      const heading = document.createElement("p");
+      heading.className = "integration-subheading";
+      heading.textContent = "CONNECTED";
+      list.append(heading);
+      if (!records.length) {
+        const empty = document.createElement("p");
+        empty.className = "integration-empty";
+        empty.textContent = "No services connected.";
+        list.append(empty);
+      }
+      records.forEach((record) => {
+        const row = document.createElement("div");
+        row.className = "integration-row";
+        const detail = document.createElement("div");
+        detail.className = "integration-detail";
+        const name = document.createElement("strong");
+        name.textContent = record.provider_id;
+        const scopes = document.createElement("span");
+        scopes.textContent = (record.scopes || []).join(", ") || "No scopes reported";
+        detail.append(name, scopes);
+        const disconnect = document.createElement("button");
+        disconnect.className = "integration-action danger-action";
+        disconnect.type = "button";
+        disconnect.textContent = "Disconnect";
+        disconnect.addEventListener("click", async () => {
+          if (!window.confirm("Disconnect " + record.provider_id + "? This removes its saved Yuki credentials.")) return;
+          disconnect.disabled = true;
+          try {
+            await api("/v1/integrations/oauth/connections/" +
+              encodeURIComponent(record.provider_id) + "/" + encodeURIComponent(record.account_id),
+              { method: "DELETE" });
+            toast(record.provider_id + " disconnected.");
+            await loadIntegrations();
+          } catch (error) { toast(error.message); disconnect.disabled = false; }
+        });
+        row.append(detail, disconnect);
+        list.append(row);
+      });
+      const available = providers.filter((item) => item.available === true);
+      if (available.length) {
+        const heading2 = document.createElement("p");
+        heading2.className = "integration-subheading";
+        heading2.textContent = "AVAILABLE";
+        list.append(heading2);
+      }
+      available.forEach((provider) => {
+        if (records.some((record) => record.provider_id === provider.provider_id)) return;
+        const row = document.createElement("div");
+        row.className = "integration-row";
+        const detail = document.createElement("div");
+        detail.className = "integration-detail";
+        const name = document.createElement("strong");
+        name.textContent = provider.display_name || provider.provider_id;
+        const description = document.createElement("span");
+        description.textContent = provider.description || "Owner-controlled connection";
+        detail.append(name, description);
+        const connect = document.createElement("button");
+        connect.className = "integration-action";
+        connect.type = "button";
+        connect.textContent = "Connect";
+        connect.addEventListener("click", async () => {
+          connect.disabled = true;
+          try {
+            const result = await api("/v1/integrations/oauth/providers/" +
+              encodeURIComponent(provider.provider_id) + "/authorize",
+              { method: "POST", body: "{}" });
+            const target = new URL(result.authorization_url);
+            if (target.protocol !== "https:") throw new Error("Provider authorization URL must use HTTPS.");
+            window.location.assign(target.href);
+          } catch (error) { toast(error.message); connect.disabled = false; }
+        });
+        row.append(detail, connect);
+        list.append(row);
+      });
+      if (!records.length && !available.length) {
+        const empty = document.createElement("p");
+        empty.className = "integration-empty";
+        empty.textContent = "No OAuth providers are configured by the Yuki host.";
+        list.append(empty);
+      }
+    } catch (error) {
+      const message = document.createElement("p");
+      message.className = "integration-empty";
+      message.textContent = "Integrations unavailable: " + error.message;
+      list.append(message);
+    }
+  };
+  const handleOAuthCallback = async () => {
+    const params = new URLSearchParams(window.location.search);
+    const provider = params.get("yuki_oauth_provider");
+    if (!provider || !state.token) return false;
+    const callbackUrl = window.location.href;
+    params.delete("yuki_oauth_provider");
+    const clean = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
+    window.history.replaceState({}, document.title, clean);
+    try {
+      await api("/v1/integrations/oauth/providers/" + encodeURIComponent(provider) + "/callback", {
+        method: "POST", body: JSON.stringify({ callback_url: callbackUrl })
+      });
+      toast(provider + " connected successfully.");
+      await loadIntegrations();
+    } catch (error) {
+      toast("OAuth connection failed: " + error.message);
+    }
+    return true;
+  };
   const loadConversations = async () => {
     const data = await api("/v1/conversations");
     state.conversations = data.conversations || [];
@@ -160,7 +277,7 @@
     try {
       const data = await api("/v1/auth/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) });
       state.token = data.access_token; state.user = data.user; sessionStorage.setItem("yuki_token", state.token);
-      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadConversations();
+      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (error) { $("login-error").textContent = error.message === "invalid_credentials" ? "Incorrect username or password." : error.message; }
   });
@@ -186,6 +303,7 @@
     } finally { select.disabled = false; }
   });
   $("new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
+  $("refresh-integrations").addEventListener("click", () => loadIntegrations());
   $("logout").addEventListener("click", async () => { try { await api("/v1/auth/logout", { method: "POST", body: "{}" }); } catch (_) {} signOut(); });
   $("composer").addEventListener("submit", (event) => { event.preventDefault(); sendMessage($("message-input").value).catch((error) => toast(error.message)); });
   $("cancel-button").addEventListener("click", async () => {
@@ -202,7 +320,7 @@
       const identity = await api("/v1/auth/me"); state.user = identity.user;
       const data = await api("/v1/conversations"); state.conversations = data.conversations || [];
       showChat(); $("account-label").textContent = state.user.username;
-      await loadProviderStatus(); await loadConversations();
+      await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (_) { signOut(false); }
   };
