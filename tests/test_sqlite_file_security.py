@@ -10,6 +10,7 @@ from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.device_pairing import DevicePairingService
 from core.inference_jobs import InferenceJobService
+from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
 from core.oauth_credential_vault import SQLiteOAuthCredentialVault
 from core.pending_approvals import SQLitePendingApprovalStore
@@ -97,6 +98,7 @@ class SQLiteFileSecurityTests(unittest.TestCase):
             ("workflow.sqlite3", WorkflowRunStore),
             ("approval-audit.sqlite3", SQLiteApprovalAuditLog),
             ("pending-approvals.sqlite3", SQLitePendingApprovalStore),
+            ("income.sqlite3", SQLiteIncomeOpportunityStore),
         )
         for filename, construct in constructors:
             with self.subTest(filename=filename):
