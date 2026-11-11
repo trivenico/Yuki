@@ -17,6 +17,7 @@ from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
+from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 
 
 class ConversationRuntime:
@@ -68,6 +69,7 @@ def build_conversation_runtime(
     oauth_disconnect_service_for_provider: Callable[[str], Any] | None = None,
     oauth_authorization_service_for_provider: Callable[[str], Any] | None = None,
     oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
+    prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the configured conversation runtime.
 
@@ -90,6 +92,15 @@ def build_conversation_runtime(
         oauth_connections, SQLiteOAuthConnectionRegistry
     ):
         raise TypeError("oauth_connections must be a SQLiteOAuthConnectionRegistry")
+    if prepared_oauth_provider_registry is not None:
+        if not isinstance(prepared_oauth_provider_registry, PreparedOAuthProviderRegistry):
+            raise TypeError("prepared_oauth_provider_registry must be a PreparedOAuthProviderRegistry")
+        if oauth_authorization_service_for_provider is not None or oauth_provider_catalog is not None:
+            raise ValueError("prepared OAuth registry cannot be combined with explicit OAuth resolver or catalog")
+        oauth_authorization_service_for_provider = (
+            prepared_oauth_provider_registry.authorization_service_for_provider
+        )
+        oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
         raise ValueError("oauth_connections and disconnect service resolver must be configured together")
     if oauth_authorization_service_for_provider is not None and oauth_connections is None:
