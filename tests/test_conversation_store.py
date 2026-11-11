@@ -163,17 +163,25 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id="checkpoint-1", checkpoint={"payload": "x" * 5000},
             )
 
-    def test_delete_conversation_cascades_messages_runs_and_leases(self):
+    def test_delete_conversation_cascades_messages_and_generation_runs(self):
         conversation_id = self.conversation["conversation_id"]
         self.store.append_message(
             owner_id=self.owner, conversation_id=conversation_id,
             role="user", content="Delete all of this", idempotency_key="delete-1",
             expected_version=0, generation_request_id="delete-1",
         )
-        lease = self.store.acquire_generation_lease(
+        self.store.acquire_generation_lease(
             owner_id=self.owner, conversation_id=conversation_id, lease_token="lease-delete",
         )
-        self.assertTrue(lease)
+        # A live lease is a hard deletion barrier, not something deletion
+        # should cascade away while a worker may still be executing.
+        with self.assertRaises(ConversationConflict):
+            self.store.delete_conversation(
+                owner_id=self.owner, conversation_id=conversation_id,
+            )
+        self.assertTrue(self.store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id, lease_token="lease-delete",
+        ))
         self.assertTrue(self.store.delete_conversation(
             owner_id=self.owner, conversation_id=conversation_id,
         ))
