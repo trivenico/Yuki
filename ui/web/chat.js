@@ -179,8 +179,10 @@
     }
   };
   const handleOAuthCallback = async () => {
-    const match = window.location.pathname.match(/^\\/oauth\\/callback\\/([A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127})$/);
-    const provider = match ? match[1] : null;
+    const segments = window.location.pathname.split("/");
+    const provider = segments.length === 4 && segments[1] === "oauth" &&
+      segments[2] === "callback" && /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$/.test(segments[3])
+      ? segments[3] : null;
     if (!provider) return false;
     const callbackUrl = window.location.href;
     window.history.replaceState({}, document.title, "/" + window.location.hash);
