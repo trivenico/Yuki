@@ -14,7 +14,7 @@ import re
 import time
 from typing import Callable
 
-from core.oidc_jwks_cache import OIDCJWKSCache
+from core.oidc_jwks_cache import OIDCJWKSCache, OIDCJWKSCacheError
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
@@ -173,6 +173,11 @@ class OIDCIdentityTokenVerifier:
             raise OIDCIdentityTokenError("oidc_header_parameter_unsupported")
         try:
             jwks = self._jwks_cache.get(self._jwks_uri)
+        except OIDCJWKSCacheError as exc:
+            code = str(exc)
+            if code.endswith("_invalid"):
+                raise OIDCIdentityTokenError("oidc_jwks_invalid") from None
+            raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
         except Exception:
             raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
         keys = jwks.get("keys") if isinstance(jwks, dict) else None
@@ -184,6 +189,11 @@ class OIDCIdentityTokenVerifier:
             # refresh; never accept an unknown key or fall back to stale keys.
             try:
                 jwks = self._jwks_cache.get(self._jwks_uri, force_refresh=True)
+            except OIDCJWKSCacheError as exc:
+                code = str(exc)
+                if code.endswith("_invalid"):
+                    raise OIDCIdentityTokenError("oidc_jwks_invalid") from None
+                raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
             except Exception:
                 raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
             keys = jwks.get("keys") if isinstance(jwks, dict) else None
