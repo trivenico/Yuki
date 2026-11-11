@@ -45,6 +45,31 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         values.update(overrides)
         return self.store.create(**values)
 
+    def test_existing_transaction_schema_is_migrated_for_oidc_nonce(self):
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("DROP TABLE oauth_transactions")
+            db.execute("""CREATE TABLE oauth_transactions (
+                state_digest TEXT PRIMARY KEY, owner_digest TEXT NOT NULL,
+                session_digest TEXT NOT NULL, verifier_ciphertext BLOB NOT NULL,
+                redirect_uri TEXT NOT NULL, issuer TEXT NOT NULL, resource TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, consumed_at INTEGER
+            )""")
+        migrated = self._store()
+        with closing(sqlite3.connect(self.path)) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(oauth_transactions)")}
+        self.assertIn("oidc_nonce_ciphertext", columns)
+        migrated.create(
+            state="legacy-schema-state-123", code_verifier="verifier",
+            owner_id="owner", session_id="session",
+            redirect_uri="https://yuki.example/callback",
+            issuer="https://login.example", resource="https://mcp.example",
+            oidc_nonce="nonce-value-1234567890",
+        )
+        result = migrated.consume(
+            state="legacy-schema-state-123", owner_id="owner", session_id="session"
+        )
+        self.assertEqual(result.oidc_nonce, "nonce-value-1234567890")
+
     def test_round_trip_and_persistence_across_restart(self):
         expires = self._create()
         restarted = self._store()
@@ -56,6 +81,25 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         self.assertEqual(result.issuer, "https://login.example")
         self.assertEqual(result.resource, "https://mcp.example/mcp")
         self.assertEqual(result.expires_at, expires)
+
+    def test_oidc_nonce_is_encrypted_and_bound_to_consumed_transaction(self):
+        nonce = "oidc-nonce-value-1234567890"
+        self._create(oidc_nonce=nonce)
+        with closing(sqlite3.connect(self.path)) as db:
+            row = db.execute("SELECT oidc_nonce_ciphertext FROM oauth_transactions").fetchone()
+        self.assertIsNotNone(row[0])
+        self.assertNotIn(nonce.encode("utf-8"), bytes(row[0]))
+        result = self.store.consume(
+            state="state-random-123", owner_id="owner-123", session_id="session-456"
+        )
+        self.assertEqual(result.oidc_nonce, nonce)
+
+    def test_legacy_transaction_without_oidc_nonce_remains_compatible(self):
+        self._create()
+        result = self.store.consume(
+            state="state-random-123", owner_id="owner-123", session_id="session-456"
+        )
+        self.assertIsNone(result.oidc_nonce)
 
     def test_sensitive_values_are_not_stored_in_plaintext(self):
         self._create()

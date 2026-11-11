@@ -22,6 +22,7 @@ class OAuthTransaction:
     issuer: str
     resource: str
     expires_at: int
+    oidc_nonce: str | None = None
 
 
 class SQLiteOAuthTransactionStore:
@@ -47,8 +48,12 @@ class SQLiteOAuthTransactionStore:
                 state_digest TEXT PRIMARY KEY, owner_digest TEXT NOT NULL,
                 session_digest TEXT NOT NULL, verifier_ciphertext BLOB NOT NULL,
                 redirect_uri TEXT NOT NULL, issuer TEXT NOT NULL, resource TEXT NOT NULL,
-                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, consumed_at INTEGER
+                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, consumed_at INTEGER,
+                oidc_nonce_ciphertext BLOB
             )""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(oauth_transactions)")}
+            if "oidc_nonce_ciphertext" not in columns:
+                db.execute("ALTER TABLE oauth_transactions ADD COLUMN oidc_nonce_ciphertext BLOB")
             db.execute("CREATE INDEX IF NOT EXISTS idx_oauth_transactions_expiry ON oauth_transactions(expires_at, consumed_at)")
 
     def _digest(self, label: str, value: str) -> str:
@@ -70,7 +75,8 @@ class SQLiteOAuthTransactionStore:
             db.close()
 
     def create(self, *, state: str, code_verifier: str, owner_id: str, session_id: str,
-               redirect_uri: str, issuer: str, resource: str, ttl_seconds: int = 600) -> int:
+               redirect_uri: str, issuer: str, resource: str, ttl_seconds: int = 600,
+               oidc_nonce: str | None = None) -> int:
         state = self._bounded(state, label="state", maximum=256)
         verifier = self._bounded(code_verifier, label="code_verifier", maximum=128)
         owner = self._bounded(owner_id, label="owner", maximum=256)
@@ -78,6 +84,17 @@ class SQLiteOAuthTransactionStore:
         redirect = self._bounded(redirect_uri, label="redirect_uri", maximum=2048)
         issuer_value = self._bounded(issuer, label="issuer", maximum=2048)
         resource_value = self._bounded(resource, label="resource", maximum=2048)
+        nonce_ciphertext = None
+        if oidc_nonce is not None:
+            nonce = self._bounded(oidc_nonce, label="oidc_nonce", maximum=512)
+            if len(nonce) < 16:
+                raise OAuthTransactionError("invalid_oidc_nonce")
+            try:
+                nonce_ciphertext = self._encrypt(nonce.encode("utf-8"))
+            except Exception:
+                raise OAuthTransactionError("oidc_nonce_encryption_failed") from None
+            if not isinstance(nonce_ciphertext, bytes) or not nonce_ciphertext or len(nonce_ciphertext) > 16384:
+                raise OAuthTransactionError("invalid_encrypted_oidc_nonce")
         if type(ttl_seconds) is not int or not 60 <= ttl_seconds <= self.max_ttl_seconds:
             raise OAuthTransactionError("invalid_transaction_ttl")
         try:
@@ -93,11 +110,13 @@ class SQLiteOAuthTransactionStore:
                 try:
                     db.execute("""INSERT INTO oauth_transactions
                         (state_digest, owner_digest, session_digest, verifier_ciphertext,
-                         redirect_uri, issuer, resource, created_at, expires_at, consumed_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                         redirect_uri, issuer, resource, created_at, expires_at, consumed_at,
+                         oidc_nonce_ciphertext)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
                         (self._digest("state", state), self._digest("owner", owner),
                          self._digest("session", session), sqlite3.Binary(encrypted),
-                         redirect, issuer_value, resource_value, now, now + ttl_seconds))
+                         redirect, issuer_value, resource_value, now, now + ttl_seconds,
+                         sqlite3.Binary(nonce_ciphertext) if nonce_ciphertext is not None else None))
                     db.execute("COMMIT")
                 except Exception:
                     db.execute("ROLLBACK")
@@ -118,11 +137,11 @@ class SQLiteOAuthTransactionStore:
             db.execute("BEGIN IMMEDIATE")
             try:
                 row = db.execute("""SELECT owner_digest, session_digest, verifier_ciphertext,
-                    redirect_uri, issuer, resource, expires_at, consumed_at
+                    redirect_uri, issuer, resource, expires_at, consumed_at, oidc_nonce_ciphertext
                     FROM oauth_transactions WHERE state_digest = ?""", (state_digest,)).fetchone()
                 if row is None:
                     raise OAuthTransactionError("transaction_not_found")
-                stored_owner, stored_session, ciphertext, redirect, issuer, resource, expires, consumed = row
+                stored_owner, stored_session, ciphertext, redirect, issuer, resource, expires, consumed, nonce_ciphertext = row
                 if not hmac.compare_digest(stored_owner, owner_digest):
                     raise OAuthTransactionError("transaction_owner_mismatch")
                 if not hmac.compare_digest(stored_session, session_digest):
@@ -153,7 +172,15 @@ class SQLiteOAuthTransactionStore:
             raise OAuthTransactionError("verifier_decryption_failed") from None
         if not verifier or len(verifier) > 128:
             raise OAuthTransactionError("invalid_decrypted_verifier")
-        return OAuthTransaction(state, verifier, redirect, issuer, resource, expires)
+        nonce_value = None
+        if nonce_ciphertext is not None:
+            try:
+                nonce_value = self._decrypt(bytes(nonce_ciphertext)).decode("utf-8")
+            except Exception:
+                raise OAuthTransactionError("oidc_nonce_decryption_failed") from None
+            if not 16 <= len(nonce_value) <= 512:
+                raise OAuthTransactionError("invalid_decrypted_oidc_nonce")
+        return OAuthTransaction(state, verifier, redirect, issuer, resource, expires, nonce_value)
 
     def purge_expired(self, *, retention_seconds: int = 86400) -> int:
         if type(retention_seconds) is not int or not 0 <= retention_seconds <= 604800:

@@ -19,7 +19,7 @@ class OAuthTokenResponseError(ValueError):
 _TOKEN = re.compile(r"^[A-Za-z0-9._~+/-]{1,8192}={0,}$")
 _SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
 _ALLOWED_FIELDS = frozenset({
-    "access_token", "token_type", "expires_in", "refresh_token", "scope",
+    "access_token", "token_type", "expires_in", "refresh_token", "scope", "id_token",
 })
 
 
@@ -30,6 +30,7 @@ class OAuthTokenGrant:
     expires_at: int
     granted_scopes: tuple[str, ...]
     refresh_token: str | None = field(default=None, repr=False)
+    id_token: str | None = field(default=None, repr=False)
     issuer: str = ""
     resource: str = ""
 
@@ -90,6 +91,12 @@ def validate_oauth_token_response(
         raise OAuthTokenResponseError("invalid_token_lifetime")
 
     refresh_token = _opaque_token(document.get("refresh_token"), label="refresh_token", required=False)
+    id_token = document.get("id_token")
+    if id_token is not None and (
+        not isinstance(id_token, str) or not 1 <= len(id_token) <= 32768
+        or not re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", id_token)
+    ):
+        raise OAuthTokenResponseError("invalid_id_token")
     raw_scope = document.get("scope")
     granted = tuple(requested) if raw_scope is None else _scopes(raw_scope, label="granted_scopes")
     if not set(granted).issubset(set(requested)):
@@ -104,6 +111,7 @@ def validate_oauth_token_response(
         expires_at=now + expires_in,
         granted_scopes=granted,
         refresh_token=refresh_token,
+        id_token=id_token,
         issuer=expected_issuer,
         resource=expected_resource,
     )
