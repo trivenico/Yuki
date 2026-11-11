@@ -26,6 +26,15 @@ class CompanionStateStoreTests(unittest.TestCase):
         self.assertEqual(first.list_records("memory")[0]["text"], "private")
         self.assertEqual(second.list_records("memory"), [])
 
+    def test_duplicate_record_id_is_rejected_without_overwriting(self):
+        store = CompanionStateStore(self.database, owner_id="owner")
+        store.add_record("memory", {"id": "stable", "text": "original"})
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            store.add_record("memory", {"id": "stable", "text": "replacement"})
+        self.assertEqual(store.list_records("memory")[0]["text"], "original")
+        with self.assertRaisesRegex(ValueError, "non-empty id"):
+            store.add_record("memory", {"id": "   ", "text": "invalid"})
+
     def test_legacy_json_import_is_once_only_and_non_destructive(self):
         legacy = self.root / "memory.json"
         original = [{"id": "legacy-1", "created_at": "2026-01-01T00:00:00+00:00",
