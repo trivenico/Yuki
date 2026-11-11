@@ -32,7 +32,6 @@ class MCPToolExecutionAuditorTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 raw = handle.read()
             self.assertNotIn(b"must-not-persist", raw)
-            self.assertNotIn(b"submit_proposal", raw) if False else None
 
     def test_identity_mismatch_and_unknown_event_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
