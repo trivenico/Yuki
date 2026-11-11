@@ -171,6 +171,27 @@ class YukiConversationAPI:
                 return await self._respond(send, 201, conversation)
 
 
+            delete_match = re.fullmatch(r"/v1/conversations/([^/]+)", path)
+            if delete_match and method == "DELETE":
+                conversation_id = delete_match.group(1)
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                # Serialize deletion against both streaming and non-streaming
+                # generations. Never delete beneath an executing model/tool loop.
+                with self._active_lock:
+                    active = any(
+                        key[0] == user.user_id and key[1] == conversation_id
+                        for key in self._active_generations
+                    )
+                    if active:
+                        return await self._respond(send, 409, {"error": "generation_active"})
+                    await asyncio.to_thread(
+                        self.conversations.store.delete_conversation,
+                        owner_id=user.user_id,
+                        conversation_id=conversation_id,
+                    )
+                return await self._respond(send, 200, {"deleted": True})
+
             cancel_match = re.fullmatch(r"/v1/conversations/([^/]+)/messages/cancel", path)
             if cancel_match and method == "POST":
                 conversation_id = cancel_match.group(1)
@@ -230,27 +251,42 @@ class YukiConversationAPI:
                 return await self._respond(send, 200, {"messages": messages})
 
             if match and method == "POST":
+                conversation_id = match.group(1)
                 payload = await self._body(receive)
                 required = {"content", "request_id", "expected_version"}
                 if set(payload) != required:
                     return await self._respond(send, 400, {"error": "invalid_request"})
-                if not isinstance(payload["content"], str) or not isinstance(payload["request_id"], str):
-                    return await self._respond(send, 400, {"error": "invalid_request"})
-                if type(payload["expected_version"]) is not int:
+                if (not isinstance(payload["content"], str)
+                        or not isinstance(payload["request_id"], str)
+                        or not payload["request_id"].strip()
+                        or len(payload["request_id"]) > 160
+                        or type(payload["expected_version"]) is not int):
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 tools = self.tools_for_user(user)
                 if not isinstance(tools, list) or len(tools) > 32:
                     return await self._respond(send, 500, {"error": "tool_configuration_error"})
-                result = await asyncio.to_thread(
-                    self.conversations.reply,
-                    owner_id=user.user_id,
-                    conversation_id=match.group(1),
-                    user_text=payload["content"],
-                    request_id=payload["request_id"],
-                    expected_version=payload["expected_version"],
-                    tools=tools,
-                )
-                return await self._respond(send, 200, result)
+                active_key = (user.user_id, conversation_id, payload["request_id"])
+                with self._active_lock:
+                    if any(key[0] == user.user_id and key[1] == conversation_id
+                           for key in self._active_generations):
+                        return await self._respond(send, 409, {"error": "generation_already_active"})
+                    cancellation = threading.Event()
+                    self._active_generations[active_key] = cancellation
+                try:
+                    result = await asyncio.to_thread(
+                        self.conversations.reply,
+                        owner_id=user.user_id,
+                        conversation_id=conversation_id,
+                        user_text=payload["content"],
+                        request_id=payload["request_id"],
+                        expected_version=payload["expected_version"],
+                        tools=tools,
+                        cancellation_requested=cancellation.is_set,
+                    )
+                    return await self._respond(send, 200, result)
+                finally:
+                    with self._active_lock:
+                        self._active_generations.pop(active_key, None)
 
             return await self._respond(send, 404, {"error": "not_found"})
         except ConversationNotFound:
