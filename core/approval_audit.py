@@ -10,7 +10,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-_ALLOWED_EVENTS = frozenset({"requested", "approved", "denied", "executed", "execution_failed"})
+_ALLOWED_EVENTS = frozenset({"requested", "approved", "denied", "execution_started", "executed", "execution_failed", "outcome_unknown"})
 _ZERO_HASH = "0" * 64
 
 
