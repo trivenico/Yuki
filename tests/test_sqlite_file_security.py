@@ -10,7 +10,7 @@ from core.device_pairing import DevicePairingService
 from core.inference_jobs import InferenceJobService
 from core.oauth_credential_vault import SQLiteOAuthCredentialVault
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
-from automation.workflow_store import SQLiteWorkflowStore
+from automation.workflow_store import WorkflowRunStore
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.sqlite_file_security import (
@@ -80,7 +80,7 @@ class SQLiteFileSecurityTests(unittest.TestCase):
                 p, cipher=_TestCipher(), hmac_key=b"k" * 32
             )),
             ("mcp.sqlite3", SQLiteMCPToolPolicyStore),
-            ("workflow.sqlite3", SQLiteWorkflowStore),
+            ("workflow.sqlite3", WorkflowRunStore),
             ("approval-audit.sqlite3", SQLiteApprovalAuditLog),
             ("pending-approvals.sqlite3", SQLitePendingApprovalStore),
         )
