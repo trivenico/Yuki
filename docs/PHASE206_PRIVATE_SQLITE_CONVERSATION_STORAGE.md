@@ -16,16 +16,18 @@ running as the same OS account.
 - Require a regular file with a single hard link; reject symlinks and hard-linked
   database files rather than changing permissions on an aliased target.
 - On POSIX, set the database file mode to `0600` for new and pre-existing files.
-- Apply the helper to `ConversationStore`, which persists private conversation
-  content. WAL and shared-memory sidecars inherit the secured database file
+- Apply the helper to `ConversationStore` and `BuiltInAuthService`.
+- Apply it to `DevicePairingService` and `InferenceJobService`, which intentionally
+  share one SQLite database for pairing credentials and inference jobs. WAL and shared-memory sidecars inherit the secured database file
   permissions on supported SQLite/OS combinations and are covered by tests
   when the sidecars are present.
 
 ## Security boundaries and limitations
 
-- This phase hardens the conversation SQLite file only. Other SQLite stores,
-  including authentication, income, device pairing, inference, OAuth and
-  workflow stores, require separate inventory and adoption.
+- This phase now hardens the conversation, authentication, paired-device and
+  inference SQLite databases. Other SQLite stores, including income, OAuth,
+  workflow, approval audit, pending approvals and MCP policy stores, still
+  require separate inventory and adoption.
 - POSIX mode `0600` is not encryption and does not protect data from the same
   OS user, root, malware running as the owner, or an untrusted backup process.
 - Windows ACL enforcement is not implemented here. The Windows user profile
@@ -45,6 +47,8 @@ running as the same OS account.
 - Symlink and hard-link rejection.
 - Reject a directory as a database file.
 - Verify conversation database mode and WAL/SHM sidecar modes when present.
+- Verify pre-existing permissive authentication DBs are tightened and the
+  shared device-pairing/inference DB is protected.
 - POSIX-only permission assertions are skipped on platforms without equivalent
   mode semantics.
 
