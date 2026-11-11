@@ -147,6 +147,52 @@ class LANCallSessionStore:
                              (_digest(session_id),)).fetchone()
             return self._session(row, session_id)
 
+
+    def invite_as_owner(self, *, owner_id: str, caller_device_id: str,
+                        recipient_device_id: str) -> CallSession:
+        """Create an invitation after the owner API has consumed its one-time consent.
+
+        Both devices must be active and belong to the authenticated owner. This
+        method intentionally accepts no caller-supplied consent boolean.
+        """
+        for value, field in ((owner_id, "owner_id"),
+                             (caller_device_id, "caller_device_id"),
+                             (recipient_device_id, "recipient_device_id")):
+            if not isinstance(value, str) or not value or len(value) > 128 or value.strip() != value:
+                raise CallSessionError(f"{field}_invalid")
+        if caller_device_id == recipient_device_id:
+            raise CallSessionError("cannot_call_same_device")
+        session_id = secrets.token_urlsafe(32)
+        now = _now()
+        expires = now + timedelta(seconds=self.invitation_ttl_seconds)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            devices = db.execute("""
+                SELECT device_id FROM paired_devices
+                WHERE owner_id=? AND revoked_at IS NULL
+                  AND device_id IN (?,?)
+            """, (owner_id, caller_device_id, recipient_device_id)).fetchall()
+            if len(devices) != 2:
+                raise CallSessionDenied("active_same_owner_devices_required")
+            db.execute("""UPDATE lan_call_sessions SET status='expired', ended_at=?
+                WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
+                (_stamp(now), owner_id, _stamp(now)))
+            active = db.execute("""SELECT COUNT(*) FROM lan_call_sessions
+                WHERE owner_id=? AND status='ringing' AND expires_at>?""",
+                (owner_id, _stamp(now))).fetchone()[0]
+            if active >= 10:
+                raise CallSessionDenied("active_invitation_limit")
+            db.execute("""
+                INSERT INTO lan_call_sessions
+                (session_hash,owner_id,caller_device_id,recipient_device_id,status,
+                 created_at,expires_at)
+                VALUES(?,?,?,?,?,?,?)
+            """, (_digest(session_id), owner_id, caller_device_id,
+                  recipient_device_id, "ringing", _stamp(now), _stamp(expires)))
+            row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
+                             (_digest(session_id),)).fetchone()
+            return self._session(row, session_id)
+
     def _transition(self, *, session_id, device_token, allowed_statuses, target_status,
                     required_role, set_accepted=False):
         if not isinstance(session_id, str) or not 32 <= len(session_id) <= 128:
