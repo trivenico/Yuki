@@ -48,6 +48,53 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         with self.assertRaises(AuthenticationError):
             self.auth.authenticate("alice.user", "A sufficiently long password 3!")
 
+    def test_expired_lockout_starts_a_fresh_failed_login_window(self):
+        self.auth.create_account("alice.user", "A sufficiently long password 3!")
+        for _ in range(3):
+            with self.assertRaises(AuthenticationError):
+                self.auth.authenticate("alice.user", "wrong password")
+
+        with self.auth._connect() as db:
+            db.execute(
+                "UPDATE auth_users SET locked_until=? WHERE username=?",
+                ("2000-01-01T00:00:00+00:00", "alice.user"),
+            )
+
+        # The first typo after expiry must count as attempt one, not lock
+        # the user out again using the previous window's maximum counter.
+        with self.assertRaises(AuthenticationError):
+            self.auth.authenticate("alice.user", "wrong password")
+        with self.auth._connect() as db:
+            row = db.execute(
+                "SELECT failed_logins, locked_until FROM auth_users WHERE username=?",
+                ("alice.user",),
+            ).fetchone()
+        self.assertEqual(row["failed_logins"], 1)
+        self.assertIsNone(row["locked_until"])
+
+        # A correct password remains usable after the one failed post-expiry attempt.
+        session = self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+        self.assertEqual(self.auth.resolve_session(session.token).username, "alice.user")
+
+    def test_expired_lockout_counter_reaches_threshold_again_normally(self):
+        self.auth.create_account("alice.user", "A sufficiently long password 3!")
+        with self.auth._connect() as db:
+            db.execute(
+                "UPDATE auth_users SET failed_logins=?, locked_until=? WHERE username=?",
+                (3, "2000-01-01T00:00:00+00:00", "alice.user"),
+            )
+
+        for _ in range(3):
+            with self.assertRaises(AuthenticationError):
+                self.auth.authenticate("alice.user", "wrong password")
+        with self.auth._connect() as db:
+            row = db.execute(
+                "SELECT failed_logins, locked_until FROM auth_users WHERE username=?",
+                ("alice.user",),
+            ).fetchone()
+        self.assertEqual(row["failed_logins"], 3)
+        self.assertIsNotNone(row["locked_until"])
+
     def test_disabled_account_sessions_are_rejected(self):
         user = self.auth.create_account("alice.user", "A sufficiently long password 3!")
         session = self.auth.authenticate("alice.user", "A sufficiently long password 3!")

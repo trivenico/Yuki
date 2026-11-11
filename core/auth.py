@@ -176,13 +176,23 @@ class BuiltInAuthService:
                     try:
                         locked = datetime.fromisoformat(row["locked_until"]) > now
                     except ValueError:
+                        # A malformed persisted deadline cannot keep an account locked forever.
                         locked = False
+                expired_lockout = bool(row["locked_until"]) and not locked
+                if expired_lockout:
+                    # Start a fresh failure window after the lockout expires. Without
+                    # resetting the counter, the next typo would immediately relock
+                    # the account because failed_logins is still at the threshold.
+                    db.execute(
+                        "UPDATE auth_users SET failed_logins=0,locked_until=NULL WHERE user_id=?",
+                        (row["user_id"],),
+                    )
                 if locked:
                     invalid = True
                 else:
                     candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), row["password_salt"], row["password_iterations"])
                     if not hmac.compare_digest(candidate, row["password_hash"]):
-                        failures = row["failed_logins"] + 1
+                        failures = (0 if expired_lockout else row["failed_logins"]) + 1
                         locked_until = _timestamp(now + timedelta(seconds=self.lockout_seconds)) if failures >= self.max_failed_logins else None
                         # Do not raise inside this transaction: that would roll back the lockout counter.
                         db.execute("UPDATE auth_users SET failed_logins=?,locked_until=? WHERE user_id=?", (failures, locked_until, row["user_id"]))
