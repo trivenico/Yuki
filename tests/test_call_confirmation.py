@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -51,7 +52,7 @@ class SQLiteCallConfirmationStoreTests(unittest.TestCase):
         token, expires = self.issue()
         self.assertTrue(token)
         self.assertEqual(expires, (self.now + timedelta(seconds=30)).isoformat())
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db:
             stored = db.execute(
                 "SELECT token_hash, session_hash FROM call_confirmation_challenges"
             ).fetchone()
