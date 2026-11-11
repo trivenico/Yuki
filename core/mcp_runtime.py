@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
 
 from core.approval_audit import MCPExecutionAudit, MCPToolPolicyAudit, SQLiteApprovalAuditLog
-from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
+from core.mcp_tool_policy_store import MCPToolPolicyConflict, SQLiteMCPToolPolicyStore
 from core.oauth_mcp_connection import OAuthMCPConnectionManager
 
 
@@ -189,7 +189,6 @@ class MCPRuntimeService:
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
         )
         if type(expected_revision) is not int or expected_revision != registry.revision:
-            from core.mcp_tool_policy_store import MCPToolPolicyConflict
             raise MCPToolPolicyConflict("stale_policy_revision")
         previous = registry.get(
             provider_id=provider_id, account_id=account_id, tool_name=tool_name,
@@ -221,7 +220,6 @@ class MCPRuntimeService:
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
         )
         if type(expected_revision) is not int or expected_revision != registry.revision:
-            from core.mcp_tool_policy_store import MCPToolPolicyConflict
             raise MCPToolPolicyConflict("stale_policy_revision")
         if registry.get(provider_id=provider_id, account_id=account_id, tool_name=tool_name) is None:
             raise ValueError("policy_not_found")
