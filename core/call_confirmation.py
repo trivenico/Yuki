@@ -8,6 +8,7 @@ allowed to issue a challenge.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -75,11 +76,19 @@ class SQLiteCallConfirmationStore:
                 ON call_confirmation_challenges(owner_id, expires_at)
             """)
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
-        return db
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def issue(
         self,
