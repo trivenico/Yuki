@@ -78,7 +78,7 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         path = self.root / "auth.sqlite3"
         path.write_bytes(b"")
         path.chmod(0o644)
-        BuiltInAuthService(path)
+        BuiltInAuthService(str(path))
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
@@ -92,7 +92,7 @@ class SQLiteFileSecurityTests(unittest.TestCase):
     def test_sensitive_store_databases_are_owner_only(self):
         constructors = (
             ("oauth.sqlite3", lambda p: SQLiteOAuthCredentialVault(
-                p, cipher=_TestCipher(), hmac_key=b"k" * 32
+                str(p), cipher=_TestCipher(), hmac_key=b"k" * 32
             )),
             ("mcp.sqlite3", SQLiteMCPToolPolicyStore),
             ("workflow.sqlite3", WorkflowRunStore),
