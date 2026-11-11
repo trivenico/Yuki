@@ -195,7 +195,9 @@ class MCPRuntimeService:
         registry = self._policies.load_registry(
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
         )
-        if type(expected_revision) is not int or expected_revision != registry.revision:
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("invalid_expected_revision")
+        if expected_revision != registry.revision:
             raise MCPToolPolicyConflict("stale_policy_revision")
         previous = registry.get(
             provider_id=provider_id, account_id=account_id, tool_name=tool_name,
