@@ -31,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     calls = sub.add_parser("calls-inbox", help="Review incoming calls for a paired device")
     calls.add_argument("--api-url", required=True, help="Yuki API base URL (HTTPS; loopback HTTP allowed)")
+    calls.add_argument("--watch", action="store_true", help="Watch for incoming calls in the foreground")
+    calls.add_argument("--poll-interval", type=int, default=3, help="Watch interval in seconds (1-30)")
     return parser
 
 
@@ -79,6 +81,12 @@ def run_cli(
                 return 2
             client = call_client_factory(args.api_url, device_token)
             inbox = PairedDeviceCallInbox(client, prompt=input_fn, output=output_fn)
+            if args.watch:
+                inbox.run_forever(poll_interval_seconds=args.poll_interval)
+                return 0
+            if args.poll_interval != 3:
+                output_fn("--poll-interval is only valid with --watch.")
+                return 2
             _write_json(inbox.run_once(), output_fn)
             return 0
         except (EOFError, KeyboardInterrupt):
