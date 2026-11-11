@@ -117,6 +117,37 @@ class AuthenticatedInferenceAPI:
                 return await self._respond(send, 404, {"error": "not_found"})
 
 
+            notification_inbox = path == "/v1/devices/calls/notifications/inbox" and method == "GET"
+            notification_ack = re.fullmatch(
+                r"/v1/devices/calls/notifications/([0-9a-f]{64})/ack", path
+            ) if method == "POST" else None
+            if notification_inbox or notification_ack:
+                device_token = self._bearer(scope)
+                if device_token is None:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                try:
+                    if notification_inbox:
+                        notifications = await asyncio.to_thread(
+                            self.calls.list_notifications, device_token=device_token, limit=50
+                        )
+                        return await self._respond(send, 200, {
+                            "notifications": notifications,
+                            "delivery": "at_least_once_polling",
+                        })
+                    payload = await self._body(receive)
+                    if payload:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    acknowledged = await asyncio.to_thread(
+                        self.calls.acknowledge_notification,
+                        notification_id=notification_ack.group(1),
+                        device_token=device_token,
+                    )
+                    return await self._respond(send, 200, {"acknowledged": acknowledged})
+                except CallSessionDenied:
+                    return await self._respond(send, 401, {"error": "invalid_device_credential"})
+                except CallSessionError:
+                    return await self._respond(send, 400, {"error": "invalid_notification_request"})
+
             call_incoming = path == "/v1/devices/calls/incoming" and method == "GET"
             call_action = re.fullmatch(r"/v1/devices/calls/([A-Za-z0-9_-]{32,128})/(accept|reject|end)", path)
             call_read = re.fullmatch(r"/v1/devices/calls/([A-Za-z0-9_-]{32,128})", path) if method == "GET" else None
