@@ -233,7 +233,7 @@ class LANCallSessionStore:
             db.execute("BEGIN IMMEDIATE")
             device = self._authenticate(db, device_token)
             row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
-                             (_digest(session_id),)).fetchone()
+                             (_session_digest(session_id),)).fetchone()
             if row is None or row["owner_id"] != device.owner_id:
                 raise CallSessionDenied("call_session_not_found")
             participant = row["caller_device_id"] if required_role == "caller" else row["recipient_device_id"]
@@ -244,18 +244,18 @@ class LANCallSessionStore:
             if row["status"] == "ringing" and row["expires_at"] <= _stamp(now):
                 db.execute("""UPDATE lan_call_sessions SET status='expired',ended_at=?
                     WHERE session_hash=? AND status='ringing'""",
-                    (_stamp(now), _digest(session_id)))
+                    (_stamp(now), _session_digest(session_id)))
                 expired = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
-                                     (_digest(session_id),)).fetchone()
+                                     (_session_digest(session_id),)).fetchone()
                 return self._session(expired, session_id)
             accepted_at = _stamp(now) if set_accepted else row["accepted_at"]
             ended_at = _stamp(now) if target_status in {"rejected", "ended"} else row["ended_at"]
             db.execute("""UPDATE lan_call_sessions
                 SET status=?,accepted_at=?,ended_at=?
                 WHERE session_hash=? AND status=?""",
-                (target_status, accepted_at, ended_at, _digest(session_id), row["status"]))
+                (target_status, accepted_at, ended_at, _session_digest(session_id), row["status"]))
             updated = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
-                                 (_digest(session_id),)).fetchone()
+                                 (_session_digest(session_id),)).fetchone()
             return self._session(updated, session_id)
 
     def accept(self, *, session_id: str, recipient_token: str) -> CallSession:
