@@ -240,9 +240,7 @@ class LANCallSessionStore:
             if caller.device_id == recipient_device_id:
                 raise CallSessionError("cannot_call_same_device")
             # Bound active invitations per owner to avoid notification flooding.
-            db.execute("""UPDATE lan_call_sessions SET status='expired', ended_at=?
-                WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
-                (_stamp(now), caller.owner_id, _stamp(now)))
+            self._expire_owner_invites(db, caller.owner_id, caller.device_id, now)
             active = db.execute("""SELECT COUNT(*) FROM lan_call_sessions
                 WHERE owner_id=? AND status='ringing' AND expires_at>?""",
                 (caller.owner_id, _stamp(now))).fetchone()[0]
@@ -258,6 +256,8 @@ class LANCallSessionStore:
             row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                              (_digest(session_id),)).fetchone()
             self._enqueue_invitation_notification(db, row, now)
+            self._append_audit(db, "invited", _session_digest(session_id),
+                               caller.owner_id, caller.device_id)
             return self._session(row, session_id)
 
 
@@ -287,9 +287,7 @@ class LANCallSessionStore:
             """, (owner_id, caller_device_id, recipient_device_id)).fetchall()
             if len(devices) != 2:
                 raise CallSessionDenied("active_same_owner_devices_required")
-            db.execute("""UPDATE lan_call_sessions SET status='expired', ended_at=?
-                WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
-                (_stamp(now), owner_id, _stamp(now)))
+            self._expire_owner_invites(db, owner_id, caller_device_id, now)
             active = db.execute("""SELECT COUNT(*) FROM lan_call_sessions
                 WHERE owner_id=? AND status='ringing' AND expires_at>?""",
                 (owner_id, _stamp(now))).fetchone()[0]
@@ -305,6 +303,8 @@ class LANCallSessionStore:
             row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                              (_digest(session_id),)).fetchone()
             self._enqueue_invitation_notification(db, row, now)
+            self._append_audit(db, "invited", _session_digest(session_id),
+                               owner_id, caller_device_id)
             return self._session(row, session_id)
 
 
@@ -391,11 +391,7 @@ class LANCallSessionStore:
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute(
-                """UPDATE lan_call_sessions SET status='expired',ended_at=?
-                   WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
-                (_stamp(now), owner_id, _stamp(now)),
-            )
+            self._expire_owner_invites(db, owner_id, owner_id, now)
             rows = db.execute(
                 """SELECT * FROM lan_call_sessions WHERE owner_id=?
                    ORDER BY created_at DESC LIMIT ?""",
@@ -429,6 +425,7 @@ class LANCallSessionStore:
                 "SELECT * FROM lan_call_sessions WHERE session_hash=?",
                 (digest,),
             ).fetchone()
+            self._append_audit(db, status, digest, owner_id, owner_id)
             return self._session(updated, session_id)
 
     def list_incoming(self, *, device_token: str) -> list[dict]:
@@ -437,9 +434,10 @@ class LANCallSessionStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             device = self._authenticate(db, device_token)
-            db.execute("""UPDATE lan_call_sessions SET status='expired', ended_at=?
-                WHERE recipient_device_id=? AND status='ringing' AND expires_at<=?""",
-                (_stamp(now), device.device_id, _stamp(now)))
+            self._expire_owner_invites(
+                db, device.owner_id, device.device_id, now,
+                recipient_device_id=device.device_id,
+            )
             rows = db.execute("""SELECT * FROM lan_call_sessions
                 WHERE recipient_device_id=? AND owner_id=? AND status='ringing'
                   AND expires_at>? AND EXISTS (
@@ -490,6 +488,8 @@ class LANCallSessionStore:
                     (_stamp(now), _session_digest(session_id)))
                 expired = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                                      (_session_digest(session_id),)).fetchone()
+                self._append_audit(db, "expired", _session_digest(session_id),
+                                   device.owner_id, device.device_id)
                 return self._session(expired, session_id)
             accepted_at = _stamp(now) if set_accepted else row["accepted_at"]
             ended_at = _stamp(now) if target_status in {"rejected", "ended"} else row["ended_at"]
@@ -499,6 +499,8 @@ class LANCallSessionStore:
                 (target_status, accepted_at, ended_at, _session_digest(session_id), row["status"]))
             updated = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                                  (_session_digest(session_id),)).fetchone()
+            self._append_audit(db, target_status, _session_digest(session_id),
+                               device.owner_id, device.device_id)
             return self._session(updated, session_id)
 
     def accept(self, *, session_id: str, recipient_token: str) -> CallSession:
@@ -534,6 +536,8 @@ class LANCallSessionStore:
                 (status, _stamp(now), _session_digest(session_id), row["status"]))
             updated = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                                  (_session_digest(session_id),)).fetchone()
+            self._append_audit(db, status, _session_digest(session_id),
+                               device.owner_id, device.device_id)
             return self._session(updated, session_id)
 
     def get(self, *, session_id: str, device_token: str) -> CallSession:
@@ -554,6 +558,8 @@ class LANCallSessionStore:
                     (_stamp(_now()), _session_digest(session_id)))
                 row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                                  (_session_digest(session_id),)).fetchone()
+                self._append_audit(db, "expired", _session_digest(session_id),
+                                   device.owner_id, device.device_id)
             return self._session(row, session_id)
 
 
