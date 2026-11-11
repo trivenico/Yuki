@@ -15,6 +15,8 @@ import sqlite3
 import uuid
 from pathlib import Path
 
+from core.sqlite_file_security import prepare_private_sqlite_path
+
 
 _NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,80}$")
 
