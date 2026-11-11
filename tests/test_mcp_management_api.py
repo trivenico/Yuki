@@ -231,6 +231,48 @@ class MCPManagementAPITests(unittest.TestCase):
         self.assertEqual(body["revision"], 3)
         self.assertFalse(body["policies"][0]["enabled"])
 
+
+    def test_policy_removal_is_owner_confirmed_and_advances_revision(self):
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="read_profile", risk=MCPToolRisk.READ_ONLY,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ), expected_revision=1,
+        )
+        payload = json.dumps({"expected_revision": 2, "confirm": True}).encode()
+        status, body = self.request(
+            "DELETE", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["revision"], 3)
+        self.assertEqual(body["policies"], [])
+
+    def test_policy_change_requires_literal_owner_confirmation(self):
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 1, "confirm": 1,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "explicit_confirmation_required")
+        self.assertEqual(self.policies.load_registry(
+            owner_id="owner", provider_id="provider", account_id="account",
+        ).policies, ())
+
+    def test_duplicate_json_keys_are_rejected(self):
+        payload = b'{"enabled":true,"enabled":false,"expected_revision":1,"confirm":true}'
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
+
     def test_registered_connection_without_required_scope_is_denied(self):
         self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
         self.oauth.register(
