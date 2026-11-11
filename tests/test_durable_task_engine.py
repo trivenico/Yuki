@@ -13,6 +13,40 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.db = Path(self.tmp.name) / "tasks.sqlite"
         self.engine = DurableTaskEngine(self.db)
         self.goal = self.engine.create_goal()
+        self._install_claim_token_test_adapter(self.engine)
+
+    def _install_claim_token_test_adapter(self, engine):
+        # Existing lifecycle tests model a worker retaining its claim secret.
+        # The adapter passes that secret explicitly to the strict engine API.
+        tokens = {}
+        claim = engine.claim
+        heartbeat = engine.heartbeat
+        complete = engine.complete
+        fail = engine.fail
+        reject = engine.reject
+        def claim_with_token(worker_id, **kwargs):
+            task = claim(worker_id, **kwargs)
+            if task is not None:
+                tokens[(task["id"], worker_id)] = task["lease_token"]
+            return task
+        def token_for(task_id, worker_id, kwargs):
+            token = kwargs.pop("lease_token", tokens.get((task_id, worker_id)))
+            if not token:
+                raise AssertionError("test worker did not retain its claim token")
+            return token
+        def heartbeat_with_token(task_id, worker_id, **kwargs):
+            return heartbeat(task_id, worker_id, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        def complete_with_token(task_id, worker_id, result=None, **kwargs):
+            return complete(task_id, worker_id, result, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        def fail_with_token(task_id, worker_id, error, **kwargs):
+            return fail(task_id, worker_id, error, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        def reject_with_token(task_id, worker_id, reason, **kwargs):
+            return reject(task_id, worker_id, reason, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        engine.claim = claim_with_token
+        engine.heartbeat = heartbeat_with_token
+        engine.complete = complete_with_token
+        engine.fail = fail_with_token
+        engine.reject = reject_with_token
 
     def tearDown(self):
         self.tmp.cleanup()
