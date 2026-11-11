@@ -134,7 +134,7 @@ class AuthenticatedMCPManagementAPI:
             )
             if authenticated is None:
                 return
-            user, _connection = authenticated
+            user, connection = authenticated
             payload = await self._read_json_body(receive)
             if method == "PUT":
                 if set(payload) != {"enabled", "expected_revision", "confirm"}:
@@ -148,6 +148,7 @@ class AuthenticatedMCPManagementAPI:
                     enabled=payload["enabled"],
                     expected_revision=payload["expected_revision"],
                     owner_confirmed=payload["confirm"],
+                    granted_scopes=connection.scopes,
                 )
             else:
                 if set(payload) != {"expected_revision", "confirm"} or payload["confirm"] is not True:
