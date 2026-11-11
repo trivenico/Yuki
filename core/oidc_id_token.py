@@ -14,6 +14,8 @@ import re
 import time
 from typing import Callable
 
+from core.oidc_jwks_cache import OIDCJWKSCache, OIDCJWKSCacheError
+
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
@@ -68,6 +70,7 @@ class OIDCIdentityTokenVerifier:
         self, *, transport, jwks_uri: str, issuer: str, client_id: str,
         expected_subject: str, clock: Callable[[], float] = time.time,
         clock_skew_seconds: int = 60, maximum_token_age_seconds: int = 86_400,
+        jwks_cache: OIDCJWKSCache | None = None,
     ):
         if not callable(getattr(transport, "request_json", None)):
             raise TypeError("a pinned OAuth JSON transport is required")
@@ -89,6 +92,11 @@ class OIDCIdentityTokenVerifier:
         self._clock = clock
         self._skew = clock_skew_seconds
         self._max_age = maximum_token_age_seconds
+        if jwks_cache is not None and not callable(getattr(jwks_cache, "get", None)):
+            raise TypeError("a trusted JWKS cache is required")
+        self._jwks_cache = jwks_cache or OIDCJWKSCache(
+            fetcher=lambda uri: self._transport.request_json("GET", uri),
+        )
 
     @staticmethod
     def _public_key(jwk: dict, algorithm: str):
@@ -164,16 +172,34 @@ class OIDCIdentityTokenVerifier:
                 or ("typ" in header and header["typ"] != "JWT")):
             raise OIDCIdentityTokenError("oidc_header_parameter_unsupported")
         try:
-            jwks = self._transport.request_json("GET", self._jwks_uri)
+            jwks = self._jwks_cache.get(self._jwks_uri)
+        except OIDCJWKSCacheError as exc:
+            code = str(exc)
+            if code.endswith("_invalid"):
+                raise OIDCIdentityTokenError("oidc_jwks_invalid") from None
+            raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
         except Exception:
             raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
         keys = jwks.get("keys") if isinstance(jwks, dict) else None
         if not isinstance(keys, list) or not 1 <= len(keys) <= 100:
             raise OIDCIdentityTokenError("oidc_jwks_invalid")
-        kid_matches = [
-            item for item in keys
-            if isinstance(item, dict) and item.get("kid") == kid
-        ]
+        kid_matches = [item for item in keys if isinstance(item, dict) and item.get("kid") == kid]
+        if not kid_matches:
+            # A rotated key may not be in the cached set. Force one throttled
+            # refresh; never accept an unknown key or fall back to stale keys.
+            try:
+                jwks = self._jwks_cache.get(self._jwks_uri, force_refresh=True)
+            except OIDCJWKSCacheError as exc:
+                code = str(exc)
+                if code.endswith("_invalid"):
+                    raise OIDCIdentityTokenError("oidc_jwks_invalid") from None
+                raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
+            except Exception:
+                raise OIDCIdentityTokenError("oidc_jwks_unavailable") from None
+            keys = jwks.get("keys") if isinstance(jwks, dict) else None
+            if not isinstance(keys, list) or not 1 <= len(keys) <= 100:
+                raise OIDCIdentityTokenError("oidc_jwks_invalid")
+            kid_matches = [item for item in keys if isinstance(item, dict) and item.get("kid") == kid]
         if len(kid_matches) != 1:
             raise OIDCIdentityTokenError("oidc_signing_key_not_found")
         matches = [
