@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 cd "$(dirname "$0")"
-if [ ! -x ".venv/bin/python" ]; then
+if [ ! -x ".venv/bin/yuki" ]; then
   echo "Yuki's virtual environment is missing. Run: sh install_unix.sh"
   exit 1
 fi
