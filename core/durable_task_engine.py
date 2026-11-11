@@ -5,6 +5,8 @@ This module persists state but never executes task code or authorizes side effec
 from __future__ import annotations
 import json
 import math
+import hmac
+import secrets
 import sqlite3
 from contextlib import closing
 import time
@@ -49,7 +51,7 @@ class DurableTaskEngine:
               task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
               state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
               idempotency_key TEXT NOT NULL, submission_fingerprint TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
-              available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, last_error TEXT,
+              available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, lease_token TEXT, last_error TEXT,
               created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(goal_id,idempotency_key));
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
             CREATE INDEX IF NOT EXISTS tasks_goal_idx ON tasks(goal_id,created_at);
@@ -66,6 +68,8 @@ class DurableTaskEngine:
             task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
+            if "lease_token" not in task_columns:
+                c.execute("ALTER TABLE tasks ADD COLUMN lease_token TEXT")
 
     def close(self):
         """Release engine-owned resources. Safe to call more than once."""
@@ -107,6 +111,8 @@ class DurableTaskEngine:
     def _decode(row):
         if row is None: return None
         d = dict(row)
+        # Claim secrets are returned only by claim() to the owning worker.
+        d.pop("lease_token", None)
         for k in ("payload_json", "result_json"):
             if d.get(k) is not None:
                 d[k.removesuffix("_json")] = json.loads(d.pop(k))
@@ -182,8 +188,9 @@ class DurableTaskEngine:
               ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,)).fetchone()
             if row is None: c.commit(); return None
             until=now+lease_seconds
-            changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
-                              (worker_id,until,now,row["id"])).rowcount
+            lease_token=secrets.token_urlsafe(32)
+            changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,lease_token=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
+                              (worker_id,until,lease_token,now,row["id"])).rowcount
             if changed!=1: c.rollback(); return None
             self._event(c,row["goal_id"],row["id"],"task.claimed",{"worker_id":worker_id,"attempt":row["attempts"]+1,"lease_until":until})
             c.commit()
@@ -301,7 +308,7 @@ class DurableTaskEngine:
                 raise TaskConflict(
                     "running task cannot be cancelled safely; wait for the worker to finish"
                 )
-            c.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",(now,task_id))
+            c.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",(now,task_id))
             self._event(c,r["goal_id"],task_id,"task.cancelled",{})
             self._fail_blocked_descendants(c, r["goal_id"], now)
             self._complete_goal_if_terminal(c,r["goal_id"],now)
@@ -348,7 +355,7 @@ class DurableTaskEngine:
                     (goal_id,),
                 ).fetchall()
                 c.execute(
-                    "UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",
+                    "UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",
                     (now,goal_id),
                 )
                 for task in cancelled_tasks:
