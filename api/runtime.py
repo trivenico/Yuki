@@ -6,6 +6,7 @@ from typing import Any, Callable
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
+from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
@@ -18,6 +19,7 @@ from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
+from core.mcp_runtime import MCPRuntimeService
 
 
 class ConversationRuntime:
@@ -70,6 +72,7 @@ def build_conversation_runtime(
     oauth_authorization_service_for_provider: Callable[[str], Any] | None = None,
     oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
+    mcp_runtime: MCPRuntimeService | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the configured conversation runtime.
 
@@ -101,6 +104,10 @@ def build_conversation_runtime(
             prepared_oauth_provider_registry.authorization_service_for_provider
         )
         oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
+    if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
+        raise TypeError("mcp_runtime must be an MCPRuntimeService")
+    if mcp_runtime is not None and oauth_connections is None:
+        raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
         raise ValueError("oauth_connections and disconnect service resolver must be configured together")
     if oauth_authorization_service_for_provider is not None and oauth_connections is None:
@@ -133,6 +140,10 @@ def build_conversation_runtime(
                     oauth_authorization_service_for_provider,
                     provider_catalog=oauth_provider_catalog,
                 )
+        if mcp_runtime is not None:
+            app = AuthenticatedMCPManagementAPI(
+                app, auth_service, oauth_connections, mcp_runtime,
+            )
         return ConversationRuntime(app, store)
     except Exception:
         close = getattr(store, "close", None)
