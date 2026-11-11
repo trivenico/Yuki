@@ -61,7 +61,8 @@ class CompanionApplicationRuntimeTests(unittest.TestCase):
                 self.assertTrue(runtime.memory_enabled)
                 saved = runtime.memory.add("Owner-approved note", category="note")
                 self.assertEqual(runtime.memory.list()[0]["id"], saved["id"])
-                self.assertTrue((root / "companion" / "memory.json").is_file())
+                self.assertTrue((root / "companion" / "state.sqlite3").is_file())
+                self.assertFalse((root / "companion" / "memory.json").exists())
             finally:
                 runtime.close()
 
