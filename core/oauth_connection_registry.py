@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from pathlib import Path
 import time
 from dataclasses import dataclass
 
@@ -27,7 +28,8 @@ class SQLiteOAuthConnectionRegistry:
             raise ValueError("database_path must be non-empty")
         if not callable(clock):
             raise ValueError("clock must be callable")
-        self.database_path = database_path
+        self.database_path = str(Path(database_path).expanduser())
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self._clock = clock
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
