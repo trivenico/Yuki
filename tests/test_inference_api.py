@@ -130,6 +130,54 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         status, body = self.request("POST", "/v1/inference/worker/jobs/claim", {}, device_token)
         self.assertEqual((status, body["error"]), (401, "invalid_device_credential"))
 
+    def test_owner_confirmed_call_invitation_and_recipient_consent_api(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        caller_id = caller["device"]["device_id"]
+        recipient_id = recipient["device"]["device_id"]
+
+        status, denied = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirm": False,
+        }, self.owner_one.token)
+        self.assertEqual((status, denied["error"]), (403, "call_invitation_denied"))
+
+        status, created = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirm": True,
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        caller_session_id = created["session"]["session_id"]
+        self.assertEqual(created["session"]["status"], "ringing")
+
+        status, incoming = self.request(
+            "GET", "/v1/devices/calls/incoming", token=recipient["device_token"]
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(incoming["invitations"]), 1)
+        recipient_handle = incoming["invitations"][0]["session_id"]
+        self.assertNotEqual(recipient_handle, caller_session_id)
+        self.assertEqual(len(recipient_handle), 64)
+
+        status, accepted = self.request(
+            "POST", f"/v1/devices/calls/{recipient_handle}/accept", {},
+            recipient["device_token"],
+        )
+        self.assertEqual((status, accepted["session"]["status"]), (200, "accepted"))
+        status, caller_view = self.request(
+            "GET", f"/v1/devices/calls/{caller_session_id}", token=caller["device_token"]
+        )
+        self.assertEqual((status, caller_view["session"]["status"]), (200, "accepted"))
+
+        # Audit rows are committed with the call state changes in the same SQLite DB.
+        with self.pairing._connect() as db:
+            events = db.execute(
+                "SELECT event_type FROM lan_call_audit ORDER BY event_id"
+            ).fetchall()
+        self.assertEqual([row["event_type"] for row in events], ["invited", "accepted"])
+
     def test_device_bearer_cannot_authenticate_owner_endpoints(self):
         paired = self._pair_device()
         status, body = self.request("GET", "/v1/devices", token=paired["device_token"])
