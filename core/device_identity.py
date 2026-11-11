@@ -23,7 +23,7 @@ from core.device_pairing import DevicePairingService
 
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{40,128}$")
 _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-_DOMAIN = b"YUKI-DEVICE-IDENTITY-ENROLLMENT-V1\\x00"
+_DOMAIN = b"YUKI-DEVICE-IDENTITY-ENROLLMENT-V1\x00"
 
 
 def _now() -> datetime:
@@ -202,7 +202,7 @@ class DeviceIdentityRegistry:
         public_bytes = _decode(public_key, expected_length=32)
         # Reject invalid Ed25519 encodings before issuing an approval challenge.
         Ed25519PublicKey.from_public_bytes(public_bytes)
-        fingerprint = hashlib.sha256(b"YUKI-ED25519-KEY-V1\\x00" + public_bytes).hexdigest()
+        fingerprint = hashlib.sha256(b"YUKI-ED25519-KEY-V1\x00" + public_bytes).hexdigest()
         challenge_id, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         now = _now()
         expires = now + timedelta(seconds=self.challenge_ttl_seconds)
