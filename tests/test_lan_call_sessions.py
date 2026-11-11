@@ -168,7 +168,7 @@ class LANCallSessionStoreTests(unittest.TestCase):
             notification_id=event["notification_id"], device_token=self.recipient.token
         ))
         self.assertEqual(self.calls.list_notifications(device_token=self.recipient.token), [])
-        self.assertFalse(self.calls.acknowledge_notification(
+        self.assertTrue(self.calls.acknowledge_notification(
             notification_id=event["notification_id"], device_token=self.recipient.token
         ))
 
