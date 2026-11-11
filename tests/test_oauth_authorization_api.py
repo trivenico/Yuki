@@ -1,7 +1,11 @@
 import asyncio
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+
+from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 
@@ -11,8 +15,10 @@ class FakeAuth:
         return SimpleNamespace(user_id="owner") if token == "valid-session" else None
 
 
-class FakeRegistry:
+class FakeRegistry(SQLiteOAuthConnectionRegistry):
     def __init__(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        super().__init__(str(Path(self._tmp.name) / "registry.sqlite3"))
         self.records = []
         self.fail_register = False
     def register(self, **kwargs):
@@ -73,6 +79,37 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
         scope = {"type": "http", "method": method, "path": path, "headers": headers}
         asyncio.run(self.app(scope, receive, send))
         return sent[0]["status"], json.loads(sent[1]["body"])
+
+    def test_provider_catalog_is_authenticated_and_contains_only_safe_fields(self):
+        app = AuthenticatedOAuthAuthorizationAPI(
+            lambda *_: None, FakeAuth(), self.registry,
+            lambda provider: self.service if provider == "provider" else None,
+            provider_catalog=lambda: [{
+                "provider_id": "provider", "display_name": "Example",
+                "available": True, "description": "Read-only access",
+                "authorization_url": "https://untrusted.invalid",
+            }],
+        )
+        sent = []
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        async def send(message):
+            sent.append(message)
+        async def invoke(token):
+            headers = [(b"authorization", ("Bearer " + token).encode())] if token else []
+            await app({"type": "http", "method": "GET",
+                       "path": "/v1/integrations/oauth/providers", "headers": headers},
+                      receive, send)
+        asyncio.run(invoke("valid-session"))
+        self.assertEqual(sent[0]["status"], 200)
+        payload = json.loads(sent[1]["body"])
+        self.assertEqual(payload["providers"], [{
+            "provider_id": "provider", "display_name": "Example",
+            "available": True, "description": "Read-only access",
+        }])
+        sent.clear()
+        asyncio.run(invoke(""))
+        self.assertEqual(sent[0]["status"], 401)
 
     def test_authorization_start_is_bound_to_authenticated_owner_and_session(self):
         status, body = self.request(
