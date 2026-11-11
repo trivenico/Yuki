@@ -92,6 +92,39 @@ class MCPRuntimeService:
         self._policies = policy_store
         self._audit = audit_log
 
+    def discover_tools(self, *, owner_id: str, provider_id: str, account_id: str, granted_scopes):
+        """Perform inert, owner-bound discovery using only host-configured endpoints."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256:
+            raise ValueError("authenticated_owner_required")
+        if not isinstance(provider_id, str) or provider_id not in self._managers:
+            raise ValueError("mcp_provider_not_configured")
+        if not isinstance(account_id, str) or not account_id.strip() or len(account_id) > 256:
+            raise ValueError("provider_account_required")
+        if not isinstance(granted_scopes, (tuple, list, set, frozenset)) or len(granted_scopes) > 64:
+            raise ValueError("granted_oauth_scopes_invalid")
+        if any(not isinstance(scope, str) or not scope or len(scope) > 128
+               for scope in granted_scopes):
+            raise ValueError("granted_oauth_scopes_invalid")
+        scopes = tuple(granted_scopes)
+        config = self._configs[provider_id]
+        if not set(config.required_scopes).issubset(set(scopes)):
+            raise ValueError("required_oauth_scope_missing")
+        return self._managers[provider_id].discover_tools(
+            owner_id=owner_id,
+            account_id=account_id,
+            endpoint=config.endpoint,
+            allowed_hosts=config.allowed_hosts,
+            required_scopes=config.required_scopes,
+        )
+
+    def list_policies(self, *, owner_id: str, provider_id: str, account_id: str):
+        """Return an immutable owner/provider/account policy snapshot."""
+        if not isinstance(provider_id, str) or provider_id not in self._managers:
+            raise ValueError("mcp_provider_not_configured")
+        return self._policies.load_registry(
+            owner_id=owner_id, provider_id=provider_id, account_id=account_id,
+        )
+
     def create_client(
         self,
         *,
