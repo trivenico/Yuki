@@ -29,11 +29,11 @@ class LANCallSessionStoreTests(unittest.TestCase):
         return self.pairing.pair_device(challenge.code, name)
 
     def _invite(self, **kwargs):
-        values = {"caller_token": self.caller.token,
-                  "recipient_device_id": self.recipient.device.device_id,
-                  "owner_confirmed": True}
+        values = {"owner_id": "owner",
+                  "caller_device_id": self.caller.device.device_id,
+                  "recipient_device_id": self.recipient.device.device_id}
         values.update(kwargs)
-        return self.calls.invite(**values)
+        return self.calls.invite_as_owner(**values)
 
     def test_call_lifecycle_writes_verifiable_audit_chain(self):
         invite = self._invite()
@@ -63,10 +63,14 @@ class LANCallSessionStoreTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["event_type"], "expired")
 
-    def test_invitation_requires_literal_owner_confirmation(self):
-        for value in (False, 1, "true", None):
+    def test_legacy_boolean_confirmation_api_fails_closed(self):
+        for value in (False, True, 1, "true", None):
             with self.subTest(value=value), self.assertRaises(CallSessionDenied):
-                self._invite(owner_confirmed=value)
+                self.calls.invite(
+                    caller_token=self.caller.token,
+                    recipient_device_id=self.recipient.device.device_id,
+                    owner_confirmed=value,
+                )
 
     def test_recipient_authenticated_acceptance_is_explicit_consent(self):
         invite = self._invite()
@@ -106,8 +110,9 @@ class LANCallSessionStoreTests(unittest.TestCase):
         with self.assertRaises(CallSessionDenied):
             self._invite(recipient_device_id=foreign.device.device_id)
         # A third active device belonging to the same owner is a valid caller.
-        same_owner_invite = self.calls.invite(caller_token=self.other.token,
-            recipient_device_id=self.recipient.device.device_id, owner_confirmed=True)
+        same_owner_invite = self.calls.invite_as_owner(
+            owner_id="owner", caller_device_id=self.other.device.device_id,
+            recipient_device_id=self.recipient.device.device_id)
         self.assertEqual(same_owner_invite.status, "ringing")
 
 
