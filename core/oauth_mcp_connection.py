@@ -50,6 +50,35 @@ class OAuthMCPConnectionManager:
             raise ValueError("required_scopes contains duplicate scopes")
         return frozenset(values)
 
+    def discover_tools(
+        self, *, owner_id: str, account_id: str, endpoint: str,
+        allowed_hosts, required_scopes=(), timeout: float = 10,
+    ):
+        """Discover tools through a manager-bound, deny-all MCP client.
+
+        The provider ID comes from this manager; owner and account IDs must
+        originate from authenticated host state. The returned snapshot is
+        metadata only and cannot execute tools.
+        """
+        from core.mcp_tool_discovery import discover_mcp_tools
+
+        client = self.create_client(
+            owner_id=owner_id,
+            account_id=account_id,
+            endpoint=endpoint,
+            allowed_hosts=allowed_hosts,
+            allowed_tools=(),
+            approver=lambda _name, _arguments: False,
+            required_scopes=required_scopes,
+            timeout=timeout,
+        )
+        return discover_mcp_tools(
+            client,
+            owner_id=owner_id,
+            provider_id=self._provider_id,
+            account_id=account_id,
+        )
+
     def create_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, allowed_tools, approver,
