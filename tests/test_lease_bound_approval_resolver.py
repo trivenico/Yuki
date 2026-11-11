@@ -20,7 +20,7 @@ class FakeEngine:
 class LeaseBoundApprovalResolverTests(unittest.TestCase):
     def setUp(self):
         self.engine = FakeEngine()
-        self.context = SimpleNamespace(owner_id="owner", source="durable_task", goal_id="goal-1", task_id="task-1")
+        self.context = SimpleNamespace(principal_id="owner", trigger="durable_task", goal_id="goal-1", task_id="task-1")
         self.token = "t" * 48
         self.credential = "a" * 48
 
@@ -52,6 +52,15 @@ class LeaseBoundApprovalResolverTests(unittest.TestCase):
 
         resolver = self.make_resolver(consume_then_lose_claim)
         with self.assertRaisesRegex(PermissionError, "changed during"):
+            resolver.resolve(self.context, "write", lease_token=self.token)
+
+    def test_rejects_context_provenance_mutation_during_lookup(self):
+        def mutate_context(context, skill):
+            context.task_id = "task-2"
+            return self.credential
+
+        resolver = self.make_resolver(mutate_context)
+        with self.assertRaisesRegex(PermissionError, "context changed"):
             resolver.resolve(self.context, "write", lease_token=self.token)
 
     def test_validation_errors_fail_closed(self):
