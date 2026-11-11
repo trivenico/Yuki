@@ -58,7 +58,7 @@ class AuthenticatedMCPManagementAPI:
             return await self._respond(send, 405, {"error": "method_not_allowed"})
         return await self._respond(send, 404, {"error": "not_found"})
 
-    async def _authenticate_connection(self, scope, send, provider_id, account_id):
+    async def _authenticate_owner(self, scope, send):
         token = self._session_token(scope)
         if token is None:
             await self._respond(send, 401, {"error": "authentication_required"})
@@ -66,6 +66,12 @@ class AuthenticatedMCPManagementAPI:
         user = await asyncio.to_thread(self.auth.resolve_session, token)
         if user is None:
             await self._respond(send, 401, {"error": "authentication_required"})
+            return None
+        return user
+
+    async def _authenticate_connection(self, scope, send, provider_id, account_id):
+        user = await self._authenticate_owner(scope, send)
+        if user is None:
             return None
         if not self.mcp_runtime.has_provider(provider_id):
             await self._respond(send, 404, {"error": "provider_not_configured"})
@@ -129,18 +135,26 @@ class AuthenticatedMCPManagementAPI:
     async def _mutate(self, scope, receive, send, parts, method):
         provider_id, account_id, tool_name = parts
         try:
-            authenticated = await self._authenticate_connection(
-                scope, send, provider_id, account_id,
-            )
-            if authenticated is None:
+            user = await self._authenticate_owner(scope, send)
+            if user is None:
                 return
-            user, connection = authenticated
             payload = await self._read_json_body(receive)
             if method == "PUT":
                 if set(payload) != {"enabled", "expected_revision", "confirm"}:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 if type(payload["enabled"]) is not bool or payload["confirm"] is not True:
                     return await self._respond(send, 400, {"error": "explicit_confirmation_required"})
+                granted_scopes = ()
+                if payload["enabled"]:
+                    if not self.mcp_runtime.has_provider(provider_id):
+                        return await self._respond(send, 404, {"error": "provider_not_configured"})
+                    connection = await asyncio.to_thread(
+                        self.oauth_registry.get, owner_id=user.user_id,
+                        provider_id=provider_id, account_id=account_id,
+                    )
+                    if connection is None:
+                        return await self._respond(send, 404, {"error": "connection_not_found"})
+                    granted_scopes = connection.scopes
                 revision = await asyncio.to_thread(
                     self.mcp_runtime.set_tool_enabled,
                     owner_id=user.user_id, provider_id=provider_id,
@@ -148,7 +162,7 @@ class AuthenticatedMCPManagementAPI:
                     enabled=payload["enabled"],
                     expected_revision=payload["expected_revision"],
                     owner_confirmed=payload["confirm"],
-                    granted_scopes=connection.scopes,
+                    granted_scopes=granted_scopes,
                 )
             else:
                 if set(payload) != {"expected_revision", "confirm"} or payload["confirm"] is not True:
