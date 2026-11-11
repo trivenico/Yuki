@@ -188,6 +188,9 @@ class MCPRuntimeService:
         registry = self._policies.load_registry(
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
         )
+        if type(expected_revision) is not int or expected_revision != registry.revision:
+            from core.mcp_tool_policy_store import MCPToolPolicyConflict
+            raise MCPToolPolicyConflict("stale_policy_revision")
         previous = registry.get(
             provider_id=provider_id, account_id=account_id, tool_name=tool_name,
         )
@@ -214,6 +217,14 @@ class MCPRuntimeService:
     ) -> int:
         if owner_confirmed is not True:
             raise ValueError("explicit_owner_confirmation_required")
+        registry = self._policies.load_registry(
+            owner_id=owner_id, provider_id=provider_id, account_id=account_id,
+        )
+        if type(expected_revision) is not int or expected_revision != registry.revision:
+            from core.mcp_tool_policy_store import MCPToolPolicyConflict
+            raise MCPToolPolicyConflict("stale_policy_revision")
+        if registry.get(provider_id=provider_id, account_id=account_id, tool_name=tool_name) is None:
+            raise ValueError("policy_not_found")
         self._audit_policy_mutation(
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
             tool_name=tool_name, operation="remove", expected_revision=expected_revision,
