@@ -40,10 +40,14 @@ class AuthenticatedRelationshipSettingsAPI:
             user = await self._user(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+            method = scope.get("method", "GET").upper()
+            if method not in {"GET", "PUT", "DELETE"}:
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+            if method == "PUT" and not self._has_json_content_type(scope):
+                return await self._respond(send, 415, {"error": "unsupported_media_type"})
             store = await asyncio.to_thread(self.store_for_owner, user.user_id)
             if not isinstance(store, RelationshipSettingsStore) or store.owner_id != user.user_id:
                 return await self._respond(send, 500, {"error": "storage_unavailable"})
-            method = scope.get("method", "GET").upper()
             if method == "GET":
                 settings = await asyncio.to_thread(store.load)
                 return await self._respond(send, 200, {"settings": self._serialize(settings)})
@@ -77,15 +81,29 @@ class AuthenticatedRelationshipSettingsAPI:
             return await self._respond(send, 500, {"error": "internal_error"})
 
     async def _user(self, scope):
-        headers = {
-            key.lower(): value for key, value in scope.get("headers", [])
-            if isinstance(key, bytes) and isinstance(value, bytes)
-        }
-        raw = headers.get(b"authorization", b"").decode("latin-1")
-        scheme, separator, token = raw.partition(" ")
-        if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
+        authorization = [
+            value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and key.lower() == b"authorization"
+            and isinstance(value, bytes)
+        ]
+        if len(authorization) != 1:
             return None
-        return await asyncio.to_thread(self.auth.resolve_session, token)
+        parts = authorization[0].decode("latin-1").split()
+        if len(parts) != 2 or parts[0].lower() != "bearer" or len(parts[1]) > 256:
+            return None
+        return await asyncio.to_thread(self.auth.resolve_session, parts[1])
+
+    @staticmethod
+    def _has_json_content_type(scope):
+        values = [
+            value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and key.lower() == b"content-type"
+            and isinstance(value, bytes)
+        ]
+        if len(values) != 1:
+            return False
+        media_type = values[0].decode("latin-1").split(";", 1)[0].strip().lower()
+        return media_type == "application/json"
 
     @staticmethod
     async def _body(receive):
