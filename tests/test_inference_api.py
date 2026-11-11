@@ -206,6 +206,52 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual((status, accepted["session"]["status"]), (200, "accepted"))
 
 
+    def test_owner_can_cancel_only_their_ringing_call_invitation(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        caller_id = caller["device"]["device_id"]
+        recipient_id = recipient["device"]["device_id"]
+        status, challenge = self.request(
+            "POST", "/v1/devices/calls/confirmation-challenges", {
+                "password": "a-secure-owner-password",
+                "caller_device_id": caller_id,
+                "recipient_device_id": recipient_id,
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        status, created = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirmation_token": challenge["confirmation_token"],
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        handle = created["session"]["session_id"]
+        self.assertEqual(len(handle), 64)
+
+        # Another account cannot cancel or learn the existence of this call.
+        status, body = self.request(
+            "POST", f"/v1/devices/calls/{handle}/cancel", {}, self.owner_two.token
+        )
+        self.assertEqual((status, body["error"]), (404, "call_not_cancellable"))
+
+        status, cancelled = self.request(
+            "POST", f"/v1/devices/calls/{handle}/cancel", {}, self.owner_one.token
+        )
+        self.assertEqual((status, cancelled["session"]["status"]), (200, "ended"))
+
+        # A cancelled invitation is no longer delivered to the recipient inbox.
+        status, incoming = self.request(
+            "GET", "/v1/devices/calls/incoming", token=recipient["device_token"]
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(incoming["invitations"], [])
+
+        # Cancellation cannot be replayed as a second state transition.
+        status, body = self.request(
+            "POST", f"/v1/devices/calls/{handle}/cancel", {}, self.owner_one.token
+        )
+        self.assertEqual((status, body["error"]), (404, "call_not_cancellable"))
+
     def test_revoked_caller_device_cannot_ring_or_be_accepted(self):
         caller = self._pair_device()
         recipient = self._pair_device()
