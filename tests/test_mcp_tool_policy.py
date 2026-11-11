@@ -133,6 +133,7 @@ class MCPToolPolicyTests(unittest.TestCase):
             self.registry.build_approver(
                 owner_id="other-owner", provider_id="provider", account_id="account",
                 granted_scopes=(), owner_approval=lambda _r: True, audit=lambda _e: None,
+                current_revision=lambda: self.registry.revision,
             )
 
     def test_stale_or_unavailable_policy_revision_denies_every_call(self):
@@ -150,6 +151,23 @@ class MCPToolPolicyTests(unittest.TestCase):
             current_revision=lambda: (_ for _ in ()).throw(RuntimeError("unavailable")),
         )
         self.assertFalse(broken("read_profile", {}))
+        self.assertFalse(self.events)
+
+    def test_disabled_policy_is_not_in_allowlist_or_authorized(self):
+        disabled = MCPToolPolicy(
+            "owner", "provider", "account", "disabled_tool",
+            MCPToolRisk.READ_ONLY, (), 1, enabled=False,
+        )
+        registry = MCPToolPolicyRegistry(
+            owner_id="owner", policies=(disabled,), revision=8,
+        )
+        self.assertEqual(registry.tool_names(provider_id="provider", account_id="account"), ())
+        approve = registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=(), owner_approval=lambda _request: True,
+            audit=self.events.append, current_revision=lambda: 8,
+        )
+        self.assertFalse(approve("disabled_tool", {}))
         self.assertFalse(self.events)
 
     def test_invalid_arguments_and_non_finite_values_are_denied(self):
