@@ -14,16 +14,18 @@ class MCPError(RuntimeError):
     pass
 
 
+class MCPRemoteError(MCPError):
+    """The remote server returned an explicit JSON-RPC error response."""
+
+
 class MCPHTTPClient:
     MAX_RESPONSE_BYTES = 1_000_000
     PROTOCOL_VERSION = "2025-03-26"
     _BEARER_TOKEN = re.compile(r"^[A-Za-z0-9._~+/-]+=*$")
 
-    def __init__(
-        self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
-        access_token_provider=None, timeout=10, http_transport=None,
-        execution_audit=None,
-    ):
+    def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
+                 access_token_provider=None, timeout=10, http_transport=None,
+                 execution_audit=None):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
@@ -103,7 +105,7 @@ class MCPHTTPClient:
         if not notification and result.get("id") != self._request_id:
             raise MCPError("MCP server returned a mismatched response identifier.")
         if "error" in result:
-            raise MCPError("MCP server returned a JSON-RPC error.")
+            raise MCPRemoteError("MCP server returned a JSON-RPC error.")
         return result.get("result")
 
     def initialize(self):
@@ -131,6 +133,10 @@ class MCPHTTPClient:
                          "input_schema": tool.get("inputSchema", {})})
         return safe
 
+    def _record_execution(self, event, invocation_id):
+        if self._execution_audit is not None:
+            self._execution_audit(event, invocation_id)
+
     def call_tool(self, name, arguments):
         if not isinstance(name, str) or name not in self.allowed_tools:
             raise MCPError("MCP tool is not explicitly allow-listed.")
@@ -144,30 +150,34 @@ class MCPHTTPClient:
             raise MCPError("MCP tool arguments exceed the 64 KB limit.")
         if self.approver is None or self.approver(name, arguments) is not True:
             raise MCPError("MCP tool call was not explicitly approved.")
+
         invocation_id = uuid.uuid4().hex
-        if self._execution_audit is not None:
-            try:
-                self._execution_audit("execution_started")
-            except Exception:
-                raise MCPError("MCP execution audit is unavailable; call was not dispatched.") from None
+        try:
+            self._record_execution("execution_started", invocation_id)
+        except Exception:
+            raise MCPError("MCP execution audit is unavailable; call was not dispatched.") from None
+
         try:
             result = self._rpc("tools/call", {"name": name, "arguments": arguments})
-        except Exception:
-            if self._execution_audit is not None:
-                try:
-                    self._execution_audit("outcome_unknown")
-                except Exception:
-                    pass
-            raise
-        if isinstance(result, dict) and result.get("isError") is True:
-            event = "execution_failed"
-        else:
-            event = "executed"
-        if self._execution_audit is not None:
+        except MCPRemoteError:
             try:
-                self._execution_audit(event)
+                self._record_execution("execution_failed", invocation_id)
             except Exception:
-                raise MCPError("MCP result received but durable audit confirmation failed.") from None
+                pass
+            raise
+        except Exception:
+            try:
+                self._record_execution("outcome_unknown", invocation_id)
+            except Exception:
+                pass
+            raise
+
+        event = "execution_failed" if isinstance(result, dict) and result.get("isError") is True else "executed"
+        try:
+            self._record_execution(event, invocation_id)
+        except Exception:
+            raise MCPError("MCP result received but durable audit confirmation failed.") from None
+
         serialized = json.dumps(result, ensure_ascii=False)
         scan = scan_untrusted_text(serialized)
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}
