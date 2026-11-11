@@ -13,7 +13,7 @@ The repository now includes an owner-facing browser flow in `ui/web`: it lists p
 3. The owner enters the account password. The server revalidates the active session and password, then verifies both devices are active and owned by that account.
 4. The server returns a random challenge bound to the owner, current session, caller device, and recipient device.
 5. The UI immediately submits the exact device pair and challenge token. The invitation endpoint atomically consumes the token before persisting the invitation; a failed or replayed token cannot create a second call. The password field is cleared after the operation.
-6. The recipient device must separately accept the invitation. The owner UI does not impersonate the recipient device.
+6. The recipient device must separately accept the invitation. `automation/remote_call_client.py` provides an authenticated HTTPS inbox client, and `automation/call_inbox.py` provides a foreground-only terminal prompt with explicit accept/decline/ignore choices. The owner UI does not impersonate the recipient device.
 
 The API deliberately rejects the former `confirm: true` request shape.
 
