@@ -220,46 +220,14 @@ class LANCallSessionStore:
 
     def invite(self, *, caller_token: str, recipient_device_id: str,
                owner_confirmed: bool) -> CallSession:
-        """Create a short-lived invitation; caller must be the authenticated owner-approved device."""
-        if owner_confirmed is not True:
-            raise CallSessionDenied("owner_confirmation_required")
-        if not isinstance(recipient_device_id, str) or not 1 <= len(recipient_device_id) <= 128:
-            raise CallSessionError("recipient_device_id_invalid")
-        session_id = secrets.token_urlsafe(32)
-        now = _now()
-        expires = now + timedelta(seconds=self.invitation_ttl_seconds)
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            caller = self._authenticate(db, caller_token)
-            recipient = db.execute("""
-                SELECT device_id FROM paired_devices
-                WHERE device_id=? AND owner_id=? AND revoked_at IS NULL
-            """, (recipient_device_id, caller.owner_id)).fetchone()
-            if recipient is None:
-                raise CallSessionDenied("active_same_owner_recipient_required")
-            if caller.device_id == recipient_device_id:
-                raise CallSessionError("cannot_call_same_device")
-            # Bound active invitations per owner to avoid notification flooding.
-            self._expire_owner_invites(db, caller.owner_id, caller.device_id, now)
-            active = db.execute("""SELECT COUNT(*) FROM lan_call_sessions
-                WHERE owner_id=? AND status='ringing' AND expires_at>?""",
-                (caller.owner_id, _stamp(now))).fetchone()[0]
-            if active >= 10:
-                raise CallSessionDenied("active_invitation_limit")
-            db.execute("""
-                INSERT INTO lan_call_sessions
-                (session_hash,owner_id,caller_device_id,recipient_device_id,status,
-                 created_at,expires_at)
-                VALUES(?,?,?,?,?,?,?)
-            """, (_session_digest(session_id), caller.owner_id, caller.device_id,
-                  recipient_device_id, "ringing", _stamp(now), _stamp(expires)))
-            row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
-                             (_digest(session_id),)).fetchone()
-            self._enqueue_invitation_notification(db, row, now)
-            self._append_audit(db, "invited", _session_digest(session_id),
-                               caller.owner_id, caller.device_id)
-            return self._session(row, session_id)
+        """Reject the retired boolean-consent API.
 
+        A caller-controlled boolean is not proof of owner intent. New invitation
+        creation must flow through the authenticated owner API, which consumes
+        a one-time challenge bound to the owner session and exact device pair.
+        Kept temporarily to fail closed for older internal callers.
+        """
+        raise CallSessionDenied("owner_confirmation_challenge_required")
 
     def invite_as_owner(self, *, owner_id: str, caller_device_id: str,
                         recipient_device_id: str) -> CallSession:
