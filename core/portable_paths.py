@@ -1,38 +1,69 @@
-"""Portable Yuki path helpers.
+"""Portable Yuki config and data locations.
 
-YUKI_HOME optionally points at the Yuki data root (for example, a folder on an
-external SSD). Without it, data stays under the repository root. No secrets or
-credentials are created by this module.
+A source checkout keeps its existing repository-local defaults. An installed
+application stores mutable configuration and data in the user's OS config/data
+directories unless YUKI_CONFIG or YUKI_HOME explicitly overrides them.
 """
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _user_config_root() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        return Path(base).expanduser() / "Yuki" if base else Path.home() / "AppData" / "Roaming" / "Yuki"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Yuki"
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    return (Path(base).expanduser() if base else Path.home() / ".config") / "yuki"
+
+
+def _user_data_root() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        return Path(base).expanduser() / "Yuki" if base else Path.home() / "AppData" / "Local" / "Yuki"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Yuki" / "Data"
+    base = os.environ.get("XDG_DATA_HOME", "").strip()
+    return (Path(base).expanduser() if base else Path.home() / ".local" / "share") / "yuki"
+
+
 def data_root() -> Path:
     configured = os.environ.get("YUKI_HOME", "").strip()
-    root = Path(configured).expanduser() if configured else REPOSITORY_ROOT
-    if not root.is_absolute():
-        root = (REPOSITORY_ROOT / root).resolve()
-    return root.resolve()
+    if configured:
+        root = Path(configured).expanduser()
+        if not root.is_absolute():
+            root = (REPOSITORY_ROOT / root).resolve()
+        return root.resolve()
+    # Preserve repository-local behavior for developers; installed wheels use
+    # user-owned writable storage rather than site-packages.
+    if (REPOSITORY_ROOT / "config.yaml").is_file():
+        return REPOSITORY_ROOT.resolve()
+    return _user_data_root().resolve()
 
 
 def config_path() -> Path:
     configured = os.environ.get("YUKI_CONFIG", "").strip()
-    path = Path(configured).expanduser() if configured else REPOSITORY_ROOT / "config.yaml"
-    if not path.is_absolute():
-        path = (REPOSITORY_ROOT / path).resolve()
-    return path.resolve()
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = (REPOSITORY_ROOT / path).resolve()
+        return path.resolve()
+    source_config = REPOSITORY_ROOT / "config.yaml"
+    if source_config.is_file():
+        return source_config.resolve()
+    return (_user_config_root() / "config.yaml").resolve()
 
 
 def workspace_path(configured_workspace: str) -> Path:
-    """Resolve relative workspace paths under YUKI_HOME when set."""
+    """Resolve relative workspace paths under YUKI_HOME or the user data root."""
     value = Path(configured_workspace).expanduser()
     if value.is_absolute():
         return value.resolve()
-    root = data_root()
-    return (root / value).resolve()
+    return (data_root() / value).resolve()
