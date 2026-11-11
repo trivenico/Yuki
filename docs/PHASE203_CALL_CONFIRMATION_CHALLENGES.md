@@ -69,3 +69,8 @@ A failed acknowledgement is surfaced rather than reported as a successful
 delivery; accepting/declining may already have changed the call state, so the
 client must inspect current call state before retrying an action after an
 ambiguous network failure.
+
+Acknowledgement is idempotent for the same authenticated recipient device:
+repeating an acknowledgement after a lost response returns success when that
+same device had already acknowledged the alert. This makes acknowledgement
+safe to retry without changing the invitation's accept/decline state.
