@@ -288,17 +288,28 @@ class SQLiteOAuthCredentialVault:
                     db.execute("ROLLBACK")
                 raise
 
-    def disconnect(self, *, owner_id: str, provider_id: str, account_id: str) -> bool:
+    def disconnect(
+        self, *, owner_id: str, provider_id: str, account_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
         owner = self._identifier(owner_id, "owner_id")
         provider = self._identifier(provider_id, "provider_id")
         account = self._identifier(account_id, "account_id")
+        if expected_version is not None and (type(expected_version) is not int or expected_version < 1):
+            raise OAuthCredentialError("invalid_expected_version")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                cursor = db.execute(
-                    "DELETE FROM oauth_credentials WHERE owner_id=? AND provider_id=? AND account_id=?",
-                    (owner, provider, account),
-                )
+                if expected_version is None:
+                    cursor = db.execute(
+                        "DELETE FROM oauth_credentials WHERE owner_id=? AND provider_id=? AND account_id=?",
+                        (owner, provider, account),
+                    )
+                else:
+                    cursor = db.execute(
+                        "DELETE FROM oauth_credentials WHERE owner_id=? AND provider_id=? AND account_id=? AND version=?",
+                        (owner, provider, account, expected_version),
+                    )
                 db.execute("COMMIT")
                 return cursor.rowcount == 1
             except Exception:

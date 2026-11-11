@@ -3,10 +3,13 @@ import unittest
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
+from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
+from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.structured_tool_protocol import StructuredToolProtocol
 
 
@@ -61,6 +64,37 @@ class ConversationRuntimeTests(unittest.TestCase):
             )
             self.assertIs(runtime.app.provider_selector, selector)
             runtime.close()
+
+    def test_runtime_mounts_oauth_apis_with_trusted_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            registry = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite"))
+            authorization_resolver = lambda provider: None
+            disconnect_resolver = lambda provider: None
+            catalog = lambda: [{"provider_id": "example", "available": False}]
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                oauth_connections=registry,
+                oauth_disconnect_service_for_provider=disconnect_resolver,
+                oauth_authorization_service_for_provider=authorization_resolver,
+                oauth_provider_catalog=catalog,
+            )
+            self.assertIsInstance(runtime.app, AuthenticatedOAuthAuthorizationAPI)
+            self.assertIsInstance(runtime.app.app, AuthenticatedOAuthConnectionAPI)
+            self.assertIs(runtime.app._provider_catalog, catalog)
+            runtime.close()
+
+    def test_runtime_rejects_oauth_catalog_without_authorization_resolver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(ValueError, "requires authorization service"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    oauth_provider_catalog=lambda: [],
+                )
 
     def test_asgi_lifespan_closes_storage_on_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:

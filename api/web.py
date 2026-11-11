@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 _ASSETS = {
@@ -33,6 +34,21 @@ class YukiWebApplication:
         if path == "/healthz" and method in {"GET", "HEAD"}:
             body = json.dumps({"status": "ok", "service": "yuki"}).encode("utf-8")
             await self._respond(send, 200, body, "application/json; charset=utf-8", method)
+            return
+        callback = re.fullmatch(
+            r"/oauth/callback/([A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127})", path
+        )
+        if callback is not None:
+            if method not in {"GET", "HEAD"}:
+                await self._respond(send, 405, b"", "text/plain; charset=utf-8", method,
+                                    extra=[(b"allow", b"GET, HEAD")])
+                return
+            try:
+                body = (_WEB_ROOT / "index.html").read_bytes()
+            except OSError:
+                await self._respond(send, 503, b"Web interface unavailable.", "text/plain; charset=utf-8", method)
+                return
+            await self._respond(send, 200, body, "text/html; charset=utf-8", method, cache=b"no-store")
             return
         asset = _ASSETS.get(path)
         if asset is not None:

@@ -39,10 +39,13 @@ class YukiWebApplicationTests(unittest.TestCase):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/")
         self.assertIn(b'id="provider-label"', sent[1]["body"])
 
-    def test_chat_script_loads_authenticated_provider_status(self):
+    def test_chat_script_loads_authenticated_provider_status_and_oauth_callback(self):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.js")
         self.assertIn(b"/v1/providers", sent[1]["body"])
         self.assertIn(b"loadProviderStatus", sent[1]["body"])
+        self.assertIn(b'segments[2] === "callback"', sent[1]["body"])
+        self.assertIn(b'segments[1] === "oauth"', sent[1]["body"])
+        self.assertNotIn(b"yuki_oauth_provider", sent[1]["body"])
 
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
@@ -51,6 +54,25 @@ class YukiWebApplicationTests(unittest.TestCase):
             sent = self.request(app, path)
             self.assertEqual(sent[0]["status"], 200)
             self.assertIn(expected, sent[1]["body"])
+        self.assertEqual(api.calls, 0)
+
+    def test_provider_specific_oauth_callback_path_serves_chat_shell(self):
+        api = _FakeAPI()
+        sent = self.request(YukiWebApplication(api), "/oauth/callback/provider-a")
+        self.assertEqual(sent[0]["status"], 200)
+        self.assertIn(b'id="login-view"', sent[1]["body"])
+        self.assertEqual(api.calls, 0)
+
+    def test_invalid_oauth_callback_path_is_not_served_as_shell(self):
+        api = _FakeAPI()
+        sent = self.request(YukiWebApplication(api), "/oauth/callback/../admin")
+        self.assertEqual(sent[0]["status"], 404)
+        self.assertEqual(api.calls, 1)
+
+    def test_oauth_callback_path_rejects_non_get_methods(self):
+        api = _FakeAPI()
+        sent = self.request(YukiWebApplication(api), "/oauth/callback/provider-a", "POST")
+        self.assertEqual(sent[0]["status"], 405)
         self.assertEqual(api.calls, 0)
 
     def test_health_endpoint_is_public_and_minimal(self):

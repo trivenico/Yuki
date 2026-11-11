@@ -206,3 +206,17 @@ class OAuthAuthorizationService:
             "scopes": grant.granted_scopes,
             "credential_version": version,
         }
+
+    def discard_unregistered_grant(
+        self, *, owner_id: str, account_id: str, credential_version: int,
+    ) -> bool:
+        """Compensate a registry failure without deleting a newer credential generation."""
+        if type(credential_version) is not int or credential_version < 1:
+            raise OAuthAuthorizationServiceError("invalid_credential_generation")
+        try:
+            return bool(self._vault.disconnect(
+                owner_id=owner_id, provider_id=self._provider_id,
+                account_id=account_id, expected_version=credential_version,
+            ))
+        except Exception:
+            raise OAuthAuthorizationServiceError("credential_compensation_failed") from None
