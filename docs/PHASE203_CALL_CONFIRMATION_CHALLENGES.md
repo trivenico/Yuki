@@ -50,7 +50,7 @@ and acknowledge an item with
 Delivery is intentionally at-least-once until acknowledgement: a device that
 misses an acknowledgement may see the same alert again. The inbox is bounded
 to 50 rows per poll and filters expired/cancelled calls, revoked caller devices,
-and non-ringing sessions at read time. Acknowledgement is recipient-device and
+and non-ringing sessions at read time. Expired notification rows are pruned during inbox polling so offline devices cannot create an unbounded stale-alert backlog. Acknowledgement is recipient-device and
 owner scoped. Notification identifiers and call handles are opaque digests;
 the event contains no call secret, password, media token, or message content.
 The alert is only a prompt to open the call UI. Recipient acceptance remains a
