@@ -10,7 +10,7 @@ from core.mcp_oauth_metadata import (
 
 class FakeTransport:
     def __init__(self, response=None, error=None):
-        self.response = response or {"client_id": "client-123"}
+        self.response = response if response is not None else {"client_id": "client-123"}
         self.error = error
         self.calls = []
 
@@ -37,18 +37,20 @@ class PublicOAuthClientRegistrarTests(unittest.TestCase):
         )
         self.transport = FakeTransport()
         self.registrar = PublicOAuthClientRegistrar(
-            transport=self.transport,
+            transport=self.transport, application_type="web",
             allowed_registration_hosts=("auth.example.com",),
         )
         self.redirect = "https://yuki.example.com/oauth/callback/upwork"
         self.scopes = ("jobs.read", "profile.read")
 
+    def test_application_type_must_be_explicit(self):
+        with self.assertRaisesRegex(ValueError, "application_type"):
+            PublicOAuthClientRegistrar(transport=self.transport, application_type="browser")
+
     def test_preregistered_client_never_calls_network(self):
         result = self.registrar.register(
             plan=ClientRegistrationPlan("pre_registered"),
-            metadata=self.metadata,
-            redirect_uri=self.redirect,
-            scopes=self.scopes,
+            metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
             preregistered_client_id="registered-yuki-client",
         )
         self.assertEqual(result.client_id, "registered-yuki-client")
@@ -58,9 +60,7 @@ class PublicOAuthClientRegistrarTests(unittest.TestCase):
     def test_cimd_uses_document_uri_as_client_id_without_network(self):
         result = self.registrar.register(
             plan=ClientRegistrationPlan("client_id_metadata_document"),
-            metadata=self.metadata,
-            redirect_uri=self.redirect,
-            scopes=self.scopes,
+            metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
             cimd_document_uri="https://yuki.example.com/.well-known/oauth-client",
         )
         self.assertEqual(result.client_id, "https://yuki.example.com/.well-known/oauth-client")
@@ -74,9 +74,7 @@ class PublicOAuthClientRegistrarTests(unittest.TestCase):
         with self.assertRaisesRegex(OAuthMetadataError, "cimd_not_supported"):
             self.registrar.register(
                 plan=ClientRegistrationPlan("client_id_metadata_document"),
-                metadata=metadata,
-                redirect_uri=self.redirect,
-                scopes=self.scopes,
+                metadata=metadata, redirect_uri=self.redirect, scopes=self.scopes,
                 cimd_document_uri="https://yuki.example.com/client.json",
             )
 
@@ -85,9 +83,7 @@ class PublicOAuthClientRegistrarTests(unittest.TestCase):
             plan=ClientRegistrationPlan(
                 "dynamic_client_registration", self.metadata.registration_endpoint,
             ),
-            metadata=self.metadata,
-            redirect_uri=self.redirect,
-            scopes=self.scopes,
+            metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
         )
         self.assertEqual(result.client_id, "client-123")
         self.assertEqual(len(self.transport.calls), 1)
@@ -99,34 +95,57 @@ class PublicOAuthClientRegistrarTests(unittest.TestCase):
         self.assertEqual(payload["scope"], "jobs.read profile.read")
         self.assertNotIn("client_secret", payload)
 
+    def test_native_application_type_is_not_assumed_to_be_web(self):
+        registrar = PublicOAuthClientRegistrar(
+            transport=self.transport, application_type="native",
+            allowed_registration_hosts=("auth.example.com",),
+        )
+        registrar.register(
+            plan=ClientRegistrationPlan(
+                "dynamic_client_registration", self.metadata.registration_endpoint,
+            ),
+            metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
+        )
+        self.assertEqual(self.transport.calls[-1][2]["application_type"], "native")
+
     def test_dcr_rejects_unapproved_host_before_network(self):
         registrar = PublicOAuthClientRegistrar(
-            transport=self.transport, allowed_registration_hosts=(),
+            transport=self.transport, application_type="web",
+            allowed_registration_hosts=(),
         )
         with self.assertRaisesRegex(OAuthMetadataError, "registration_host_not_allowed"):
             registrar.register(
                 plan=ClientRegistrationPlan(
                     "dynamic_client_registration", self.metadata.registration_endpoint,
                 ),
-                metadata=self.metadata,
-                redirect_uri=self.redirect,
-                scopes=self.scopes,
+                metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
+            )
+        self.assertEqual(self.transport.calls, [])
+
+    def test_dcr_rejects_non_https_endpoint_before_network(self):
+        metadata = AuthorizationServerMetadata(
+            **{**self.metadata.__dict__,
+               "registration_endpoint": "http://auth.example.com/register"}
+        )
+        with self.assertRaisesRegex(OAuthMetadataError, "invalid_registration_endpoint"):
+            self.registrar.register(
+                plan=ClientRegistrationPlan(
+                    "dynamic_client_registration", metadata.registration_endpoint,
+                ),
+                metadata=metadata, redirect_uri=self.redirect, scopes=self.scopes,
             )
         self.assertEqual(self.transport.calls, [])
 
     def test_dcr_rejects_secret_in_public_client_response(self):
         self.transport.response = {
-            "client_id": "client-123",
-            "client_secret": "must-not-be-stored",
+            "client_id": "client-123", "client_secret": "must-not-be-stored",
         }
         with self.assertRaisesRegex(OAuthMetadataError, "unexpected_public_client_secret"):
             self.registrar.register(
                 plan=ClientRegistrationPlan(
                     "dynamic_client_registration", self.metadata.registration_endpoint,
                 ),
-                metadata=self.metadata,
-                redirect_uri=self.redirect,
-                scopes=self.scopes,
+                metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
             )
 
     def test_dcr_rejects_redirect_uri_mutation(self):
@@ -139,9 +158,7 @@ class PublicOAuthClientRegistrarTests(unittest.TestCase):
                 plan=ClientRegistrationPlan(
                     "dynamic_client_registration", self.metadata.registration_endpoint,
                 ),
-                metadata=self.metadata,
-                redirect_uri=self.redirect,
-                scopes=self.scopes,
+                metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
             )
 
     def test_dcr_failure_is_sanitized_and_never_retried(self):
@@ -151,9 +168,7 @@ class PublicOAuthClientRegistrarTests(unittest.TestCase):
                 plan=ClientRegistrationPlan(
                     "dynamic_client_registration", self.metadata.registration_endpoint,
                 ),
-                metadata=self.metadata,
-                redirect_uri=self.redirect,
-                scopes=self.scopes,
+                metadata=self.metadata, redirect_uri=self.redirect, scopes=self.scopes,
             )
         self.assertEqual(len(self.transport.calls), 1)
 
