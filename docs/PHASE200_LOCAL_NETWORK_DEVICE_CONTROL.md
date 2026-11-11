@@ -12,8 +12,8 @@ perform discovery, send remote commands, stream media, or place calls.
 - Reuses the existing one-time, owner-bound device pairing credentials.
 - Persists owner-scoped local endpoint registrations in the pairing SQLite DB.
 - Requires literal owner confirmation before registering or changing an endpoint.
-- Accepts only literal private/link-local IP addresses; DNS names, public IPs,
-  loopback, URL credentials, query strings, fragments and arbitrary paths are
+- Accepts only literal private/link-local IP addresses over HTTPS; DNS names, public IPs,
+  loopback, cleartext HTTP, URL credentials, query strings, fragments and arbitrary paths are
   rejected to avoid turning the control plane into an SSRF/DNS-rebinding path.
 - Grants only host-defined typed capabilities; remote device metadata cannot
   invent capabilities or authorize arbitrary shell execution.
