@@ -104,6 +104,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
                 policy_registry=object(), granted_scopes=("read",),
                 owner_approval=lambda _request: True, audit=lambda _event: None,
                 current_revision=lambda: 1,
+                execution_audit=lambda _event, _invocation: None,
             )
 
     def test_policy_client_rejects_invalid_granted_scopes_cleanly(self):
