@@ -247,7 +247,7 @@ class MCPRuntimeService:
             [provider_id, account_id, tool_name, operation, expected_revision],
             separators=(",", ":"), ensure_ascii=True,
         )
-        skill_id = "mcp-policy:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        skill_id = "mcp-policy-" + operation + ":" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
         self._audit.append(
             event_type="approved", pending_id=uuid.uuid4().hex,
             actor=owner_id, skill_id=skill_id,
