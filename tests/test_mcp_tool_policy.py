@@ -186,5 +186,45 @@ class MCPToolPolicyTests(unittest.TestCase):
         self.assertFalse(approve("read_profile", []))
 
 
+    def test_policy_revocation_during_owner_prompt_denies_approval(self):
+        live_revision = [self.registry.revision]
+
+        def confirm(_request):
+            live_revision[0] += 1
+            return True
+
+        approve = self.registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:write",),
+            owner_approval=confirm, audit=self.events.append,
+            current_revision=lambda: live_revision[0],
+        )
+
+        self.assertFalse(approve("update_profile", {"display_name": "Yuki"}))
+        self.assertEqual(
+            [event["event"] for event in self.events],
+            ["requested", "denied"],
+        )
+
+    def test_policy_revocation_during_request_audit_denies_read_only_call(self):
+        live_revision = [self.registry.revision]
+
+        def audit(event):
+            self.events.append(event)
+            if event["event"] == "requested":
+                live_revision[0] += 1
+
+        approve = self.registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",),
+            owner_approval=lambda _request: True, audit=audit,
+            current_revision=lambda: live_revision[0],
+        )
+
+        self.assertFalse(approve("read_profile", {"user_id": "123"}))
+        self.assertEqual([event["event"] for event in self.events], ["requested"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
