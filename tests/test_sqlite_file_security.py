@@ -8,6 +8,11 @@ from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.device_pairing import DevicePairingService
 from core.inference_jobs import InferenceJobService
+from core.oauth_credential_vault import SQLiteOAuthCredentialVault
+from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
+from automation.workflow_store import SQLiteWorkflowStore
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.sqlite_file_security import (
     SQLitePathSecurityError,
     prepare_private_sqlite_path,
@@ -67,6 +72,32 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         pairing = DevicePairingService(path)
         InferenceJobService(path, pairing)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
+    def test_sensitive_store_databases_are_owner_only(self):
+        constructors = (
+            ("oauth.sqlite3", lambda p: SQLiteOAuthCredentialVault(
+                p, cipher=_TestCipher(), hmac_key=b"k" * 32
+            )),
+            ("mcp.sqlite3", SQLiteMCPToolPolicyStore),
+            ("workflow.sqlite3", SQLiteWorkflowStore),
+            ("approval-audit.sqlite3", SQLiteApprovalAuditLog),
+            ("pending-approvals.sqlite3", SQLitePendingApprovalStore),
+        )
+        for filename, construct in constructors:
+            with self.subTest(filename=filename):
+                path = self.root / filename
+                construct(path)
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+
+class _TestCipher:
+    def encrypt(self, plaintext, *, associated_data):
+        return "test-key", plaintext
+
+    def decrypt(self, key_id, ciphertext, *, associated_data):
+        return ciphertext
+
 
     def test_directory_is_rejected_as_database_file(self):
         directory = self.root / "database.sqlite3"
