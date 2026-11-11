@@ -434,6 +434,17 @@ class ConversationStore:
             if row is None:
                 db.rollback()
                 raise ConversationNotFound("conversation not found.")
+            # A lease is a cross-process execution guard. Do not rely on its
+            # wall-clock expiry to prove a worker has stopped: a slow or paused
+            # worker may still resume. Fail closed until the lease holder releases
+            # it or a separately audited recovery/fencing procedure is available.
+            lease = db.execute(
+                "SELECT 1 FROM conversation_generation_leases WHERE conversation_id=? AND owner_id=?",
+                (conversation_id, owner),
+            ).fetchone()
+            if lease is not None:
+                db.rollback()
+                raise ConversationConflict("generation_active")
             cursor = db.execute(
                 "DELETE FROM conversations WHERE conversation_id=? AND owner_id=?",
                 (conversation_id, owner),
