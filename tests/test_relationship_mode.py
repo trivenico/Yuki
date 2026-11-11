@@ -1,5 +1,5 @@
 """Fail-closed tests for relationship mode settings."""
-import pytest
+import unittest
 
 from companion.relationship_mode import (
     AffectionLevel,
@@ -8,7 +8,7 @@ from companion.relationship_mode import (
 )
 
 
-def test_defaults_are_off_and_have_no_memory_or_proactive_checkins():
+def test_defaults_are_off_and_have_no_memory_or_proactive_checkins(self):
     settings = RelationshipModeSettings()
     assert settings.mode is RelationshipMode.OFF
     assert not settings.adult_confirmed
@@ -17,12 +17,12 @@ def test_defaults_are_off_and_have_no_memory_or_proactive_checkins():
     assert settings.persona_guidance() == ""
 
 
-def test_romantic_mode_requires_adult_confirmation():
-    with pytest.raises(ValueError, match="adult confirmation"):
+def test_romantic_mode_requires_adult_confirmation(self):
+    with self.assertRaisesRegex(ValueError, "adult confirmation"):
         RelationshipModeSettings(mode=RelationshipMode.ROMANTIC)
 
 
-def test_explicit_adult_confirmation_allows_romantic_style_context():
+def test_explicit_adult_confirmation_allows_romantic_style_context(self):
     settings = RelationshipModeSettings(
         mode=RelationshipMode.ROMANTIC,
         adult_confirmed=True,
@@ -34,20 +34,20 @@ def test_explicit_adult_confirmation_allows_romantic_style_context():
     assert "never grants tools" in guidance
 
 
-def test_friendly_mode_does_not_require_adult_confirmation():
+def test_friendly_mode_does_not_require_adult_confirmation(self):
     settings = RelationshipModeSettings(mode=RelationshipMode.FRIENDLY)
     assert "friendly" in settings.persona_guidance()
 
 
-def test_memory_and_checkins_are_independent_optins_and_disabled_mode_rejects_them():
-    with pytest.raises(ValueError, match="enabled mode"):
+def test_memory_and_checkins_are_independent_optins_and_disabled_mode_rejects_them(self):
+    with self.assertRaisesRegex(ValueError, "enabled mode"):
         RelationshipModeSettings(memory_enabled=True)
     with pytest.raises(ValueError, match="enabled mode"):
         RelationshipModeSettings(proactive_checkins_enabled=True)
 
 
-def test_checkins_require_quiet_hours():
-    with pytest.raises(ValueError, match="quiet-hour"):
+def test_checkins_require_quiet_hours(self):
+    with self.assertRaisesRegex(ValueError, "quiet-hour"):
         RelationshipModeSettings(
             mode=RelationshipMode.FRIENDLY,
             proactive_checkins_enabled=True,
@@ -61,23 +61,24 @@ def test_checkins_require_quiet_hours():
     assert settings.proactive_checkins_enabled
 
 
-@pytest.mark.parametrize("value", ["24:00", "12:60", "9:00", "noon", "12-00"])
-def test_invalid_quiet_hours_are_rejected(value):
-    with pytest.raises(ValueError, match="HH:MM"):
-        RelationshipModeSettings(
-            mode=RelationshipMode.FRIENDLY,
-            quiet_hours_start=value,
-        )
+def test_invalid_quiet_hours_are_rejected(self):
+    for value in ("24:00", "12:60", "9:00", "noon", "12-00"):
+        with self.subTest(value=value):
+            with self.assertRaisesRegex(ValueError, "HH:MM"):
+                RelationshipModeSettings(
+                    mode=RelationshipMode.FRIENDLY,
+                    quiet_hours_start=value,
+                )
 
 
-def test_topic_preferences_are_bounded_and_validated():
-    with pytest.raises(ValueError, match="topics_to_avoid"):
+def test_topic_preferences_are_bounded_and_validated(self):
+    with self.assertRaisesRegex(ValueError, "topics_to_avoid"):
         RelationshipModeSettings(topics_to_avoid=("",))
     with pytest.raises(ValueError, match="topics_to_avoid"):
         RelationshipModeSettings(topics_to_avoid=("x" * 121,))
 
 
-def test_relationship_guidance_does_not_claim_authority():
+def test_relationship_guidance_does_not_claim_authority(self):
     settings = RelationshipModeSettings(
         mode=RelationshipMode.ROMANTIC,
         adult_confirmed=True,
