@@ -31,12 +31,13 @@ class DeviceIdentityRegistryTests(unittest.TestCase):
         public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         return private, _b64(public)
 
-    def _challenge(self, *, owner="owner", device_id=None, public_key=None, confirmed=True):
-        _, generated = self._key() if public_key is None else (None, public_key)
-        return self.registry.create_challenge(
+    def _challenge(self, *, owner="owner", device_id=None, confirmed=True):
+        private, generated = self._key()
+        challenge = self.registry.create_challenge(
             owner, device_id or self.credential.device.device_id, generated,
             owner_confirmed=confirmed,
         )
+        return private, challenge
 
     def _activate(self, private, challenge):
         transcript = self.registry._transcript(
