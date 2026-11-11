@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import Mock, patch
 
 from yuki_cli import run_cli
 
@@ -55,6 +56,25 @@ class YukiCliTests(unittest.TestCase):
         self.assertIn("hidden", events[0][1])
         self.assertEqual(events[1], ("client", "https://yuki.example", "d" * 32))
         self.assertIn('"received": 0', output[-1])
+
+    def test_calls_inbox_watch_uses_foreground_mode_and_hidden_credential(self):
+        output = []
+        client = Mock()
+        with patch(
+            "yuki_cli.PairedDeviceCallInbox.run_forever",
+            side_effect=KeyboardInterrupt,
+        ) as watch:
+            code = run_cli(
+                ["calls-inbox", "--api-url", "https://yuki.example",
+                 "--watch", "--poll-interval", "5"],
+                config_loader=lambda: self.fail("provider config must not load"),
+                provider_factory=lambda config: self.fail("provider must not load"),
+                secret_input_fn=lambda prompt: "d" * 32,
+                call_client_factory=lambda url, token: client,
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 130)
+        watch.assert_called_once_with(poll_interval_seconds=5)
 
     def test_calls_inbox_rejects_empty_credential_before_client_creation(self):
         output = []
