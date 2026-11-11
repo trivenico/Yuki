@@ -66,9 +66,11 @@ than the legacy invitation listing endpoint. It acknowledges an alert only
 after an explicit accept or decline has succeeded. If the user ignores an alert,
 it remains unacknowledged and can be presented again after the process restarts.
 A failed acknowledgement is surfaced rather than reported as a successful
-delivery; accepting/declining may already have changed the call state, so the
-client must inspect current call state before retrying an action after an
-ambiguous network failure.
+delivery. If an accept/decline response is lost or times out, the client reads
+the participant-scoped call state before deciding what happened: it treats the
+action as complete only if the requested terminal state is present, and does
+not blindly replay a transition. If the server still reports `ringing`, the
+original error is surfaced and the notification remains unacknowledged.
 
 Acknowledgement is idempotent for the same authenticated recipient device:
 repeating an acknowledgement after a lost response returns success when that
