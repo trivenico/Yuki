@@ -50,6 +50,35 @@ class OAuthMCPConnectionManager:
             raise ValueError("required_scopes contains duplicate scopes")
         return frozenset(values)
 
+    def discover_tools(
+        self, *, owner_id: str, account_id: str, endpoint: str,
+        allowed_hosts, required_scopes=(), timeout: float = 10,
+    ):
+        """Discover tools through a manager-bound, deny-all MCP client.
+
+        The provider ID comes from this manager; owner and account IDs must
+        originate from authenticated host state. The returned snapshot is
+        metadata only and cannot execute tools.
+        """
+        from core.mcp_tool_discovery import discover_mcp_tools
+
+        client = self.create_client(
+            owner_id=owner_id,
+            account_id=account_id,
+            endpoint=endpoint,
+            allowed_hosts=allowed_hosts,
+            allowed_tools=(),
+            approver=lambda _name, _arguments: False,
+            required_scopes=required_scopes,
+            timeout=timeout,
+        )
+        return discover_mcp_tools(
+            client,
+            owner_id=owner_id,
+            provider_id=self._provider_id,
+            account_id=account_id,
+        )
+
     def create_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, allowed_tools, approver,
@@ -69,8 +98,10 @@ class OAuthMCPConnectionManager:
         scopes = self._scopes(required_scopes)
         if not callable(approver):
             raise OAuthMCPConnectionError("explicit_tool_approver_required")
-        if not isinstance(allowed_tools, (set, frozenset, tuple, list)) or not allowed_tools:
+        if not isinstance(allowed_tools, (set, frozenset, tuple, list)):
             raise OAuthMCPConnectionError("explicit_tool_allowlist_required")
+        # An empty allow-list is an explicit deny-all policy. It permits
+        # initialize/tools-list discovery while call_tool rejects every tool.
         if any(not isinstance(name, str) or not name or len(name) > 128 for name in allowed_tools):
             raise OAuthMCPConnectionError("invalid_tool_allowlist")
 

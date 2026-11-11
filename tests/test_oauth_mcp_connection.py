@@ -36,6 +36,14 @@ class CapturingClient:
         self.kwargs = kwargs
 
 
+class DiscoveryClient(CapturingClient):
+    def initialize(self):
+        return {"server_info": {"name": "provider"}, "protocol_version": "2025-03-26"}
+
+    def list_tools(self):
+        return [{"name": "read_profile", "description": "Read profile", "input_schema": {}}]
+
+
 class OAuthMCPConnectionTests(unittest.TestCase):
     def setUp(self):
         self.credential = SimpleNamespace(
@@ -101,8 +109,30 @@ class OAuthMCPConnectionTests(unittest.TestCase):
         with self.assertRaisesRegex(OAuthMCPConnectionError, "explicit_tool_approver_required"):
             self.client(approver=None)
         with self.assertRaisesRegex(OAuthMCPConnectionError, "explicit_tool_allowlist_required"):
-            self.client(allowed_tools=[])
+            self.client(allowed_tools=None)
 
+    def test_manager_discovery_binds_provider_and_uses_empty_execution_allowlist(self):
+        manager = OAuthMCPConnectionManager(
+            provider_id="provider", credential_vault=self.vault,
+            refresh_service=self.refresh, client_factory=DiscoveryClient,
+        )
+        snapshot = manager.discover_tools(
+            owner_id="owner", account_id="account",
+            endpoint="https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+            required_scopes=("read",),
+        )
+        self.assertEqual(
+            (snapshot.owner_id, snapshot.provider_id, snapshot.account_id),
+            ("owner", "provider", "account"),
+        )
+        self.assertFalse(snapshot.tools[0].execution_enabled)
+        self.assertFalse(snapshot.tools[0].read_only)
+
+    def test_empty_allowlist_creates_discovery_only_deny_all_client(self):
+        client = self.client(allowed_tools=())
+        self.assertEqual(client.kwargs["allowed_tools"], ())
+        self.assertIsNotNone(client.kwargs["access_token_provider"])
+        # The manager does not grant any tool execution permission.
     def test_invalid_owner_is_rejected_before_client_construction(self):
         with self.assertRaisesRegex(OAuthMCPConnectionError, "authenticated_owner_invalid"):
             self.client(owner_id="../other")
