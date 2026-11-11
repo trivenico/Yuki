@@ -132,29 +132,32 @@ class SQLiteApprovalAuditLog:
 
 
 class MCPExecutionAudit:
-    """Append-only lifecycle callback; no arguments, credentials or result payloads are stored."""
+    """Append-only lifecycle callback with exact per-tool identity."""
 
     _EVENTS = frozenset({"execution_started", "executed", "execution_failed", "outcome_unknown"})
 
     def __init__(self, audit_log: SQLiteApprovalAuditLog, *, owner_id: str,
-                 provider_id: str, account_id: str, tool_name: str):
+                 provider_id: str, account_id: str):
         for label, value in (("owner_id", owner_id), ("provider_id", provider_id),
-                             ("account_id", account_id), ("tool_name", tool_name)):
+                             ("account_id", account_id)):
             if not isinstance(value, str) or not value.strip() or len(value) > 256:
                 raise ValueError("invalid_" + label)
         if not isinstance(audit_log, SQLiteApprovalAuditLog):
             raise TypeError("trusted_sqlite_approval_audit_required")
         self._log, self._owner = audit_log, owner_id
-        self._skill = ":".join((provider_id, account_id, tool_name))[:120]
+        self._provider, self._account = provider_id, account_id
 
-    def __call__(self, event: str, invocation_id: str) -> int:
+    def __call__(self, event: str, invocation_id: str, tool_name: str) -> int:
         if event not in self._EVENTS:
             raise ValueError("unsupported_mcp_execution_event")
         if not isinstance(invocation_id, str) or not re.fullmatch(r"[a-f0-9]{32}", invocation_id):
             raise ValueError("invalid_mcp_invocation_id")
+        if not isinstance(tool_name, str) or not tool_name.strip() or len(tool_name) > 128:
+            raise ValueError("invalid_mcp_tool_name")
+        identity = json.dumps([self._provider, self._account, tool_name], separators=(",", ":"))
+        skill_id = "mcp:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return self._log.append(event_type=event, pending_id=invocation_id,
-                                actor=self._owner, skill_id=self._skill)
-
+                                actor=self._owner, skill_id=skill_id)
 
 
 class MCPToolPolicyAudit:
