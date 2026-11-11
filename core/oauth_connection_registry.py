@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 import time
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ class SQLiteOAuthConnectionRegistry:
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self._clock = clock
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_connections (
@@ -49,6 +50,16 @@ class SQLiteOAuthConnectionRegistry:
         db = sqlite3.connect(self.database_path, timeout=5.0)
         db.row_factory = sqlite3.Row
         return db
+
+    @contextmanager
+    def _connection(self):
+        """Commit/rollback transaction semantics and always release the OS handle."""
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _identifier(value, label):
@@ -72,7 +83,7 @@ class SQLiteOAuthConnectionRegistry:
         account_id = self._identifier(account_id, "account_id")
         scopes = self._scopes(scopes)
         connected_at = int(self._clock())
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("""
                 INSERT INTO oauth_connections(owner_id, provider_id, account_id, scopes_json, connected_at)
                 VALUES(?,?,?,?,?)
@@ -83,7 +94,7 @@ class SQLiteOAuthConnectionRegistry:
 
     def list_for_owner(self, *, owner_id):
         owner_id = self._identifier(owner_id, "owner_id")
-        with self._connect() as db:
+        with self._connection() as db:
             rows = db.execute("""
                 SELECT provider_id, account_id, scopes_json, connected_at
                 FROM oauth_connections WHERE owner_id=? ORDER BY connected_at DESC, provider_id, account_id
@@ -101,7 +112,7 @@ class SQLiteOAuthConnectionRegistry:
         owner_id = self._identifier(owner_id, "owner_id")
         provider_id = self._identifier(provider_id, "provider_id")
         account_id = self._identifier(account_id, "account_id")
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute("""
                 SELECT provider_id, account_id, scopes_json, connected_at
                 FROM oauth_connections WHERE owner_id=? AND provider_id=? AND account_id=?
@@ -117,7 +128,7 @@ class SQLiteOAuthConnectionRegistry:
         owner_id = self._identifier(owner_id, "owner_id")
         provider_id = self._identifier(provider_id, "provider_id")
         account_id = self._identifier(account_id, "account_id")
-        with self._connect() as db:
+        with self._connection() as db:
             cursor = db.execute("""
                 DELETE FROM oauth_connections WHERE owner_id=? AND provider_id=? AND account_id=?
             """, (owner_id, provider_id, account_id))
