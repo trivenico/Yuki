@@ -151,5 +151,25 @@ class RemoteCallClientTests(unittest.TestCase):
                 client.list_incoming()
 
 
+    def test_transport_timeout_is_normalized_as_ambiguous_runtime_error(self):
+        import urllib.error
+        with patch("urllib.request.build_opener") as build_opener:
+            build_opener.return_value.open.side_effect = urllib.error.URLError("timed out")
+            with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                self.client.accept(self.handle)
+
+    def test_server_error_is_ambiguous_but_authorization_error_is_definitive(self):
+        import urllib.error
+        for status, expected in ((503, RuntimeError), (403, PermissionError), (409, ValueError)):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError(
+                    "https://yuki.example", status, "failure", {}, None
+                )
+                with patch("urllib.request.build_opener") as build_opener:
+                    build_opener.return_value.open.side_effect = error
+                    with self.assertRaises(expected):
+                        self.client.accept(self.handle)
+
+
 if __name__ == "__main__":
     unittest.main()
