@@ -22,13 +22,30 @@ class PairedDeviceCallInbox:
         output: Callable[[str], None] = print,
     ):
         if not all(callable(getattr(client, method, None))
-                   for method in ("list_notifications", "acknowledge_notification", "accept", "reject")):
+                   for method in ("list_notifications", "acknowledge_notification", "accept", "reject", "get_call")):
             raise TypeError("client_must_implement_call_notification_protocol")
         if not callable(prompt) or not callable(output):
             raise TypeError("prompt_and_output_must_be_callable")
         self.client = client
         self.prompt = prompt
         self.output = output
+
+    def _apply_decision(self, session_id: str, action: str) -> None:
+        """Reconcile transport ambiguity without blindly replaying a state transition."""
+        desired = "accepted" if action == "accept" else "rejected"
+        try:
+            getattr(self.client, action)(session_id)
+            return
+        except RuntimeError:
+            # A timeout/connection loss can happen after the server committed.
+            # Read the authoritative state before deciding whether retry is safe.
+            current = self.client.get_call(session_id)
+            status = current.get("status") if isinstance(current, dict) else None
+            if status == desired:
+                return
+            if status == "ringing":
+                raise
+            raise RuntimeError("call_action_outcome_is_terminal_or_unknown") from None
 
     def _handle_notifications(self, notifications) -> dict[str, int]:
         result = {"received": len(notifications), "accepted": 0, "declined": 0, "ignored": 0}
@@ -42,13 +59,13 @@ class PairedDeviceCallInbox:
             )
             choice = self.prompt("Accept, decline, or ignore? [a/d/i] ").strip().lower()
             if choice in {"a", "accept"}:
-                self.client.accept(notification.session_id)
+                self._apply_decision(notification.session_id, "accept")
                 if not self.client.acknowledge_notification(notification.notification_id):
                     raise RuntimeError("call_accepted_but_notification_acknowledgement_failed")
                 result["accepted"] += 1
                 self.output("Invitation accepted. Media is not connected.")
             elif choice in {"d", "decline"}:
-                self.client.reject(notification.session_id)
+                self._apply_decision(notification.session_id, "reject")
                 if not self.client.acknowledge_notification(notification.notification_id):
                     raise RuntimeError("call_declined_but_notification_acknowledgement_failed")
                 result["declined"] += 1
