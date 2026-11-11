@@ -35,6 +35,34 @@ class LANCallSessionStoreTests(unittest.TestCase):
         values.update(kwargs)
         return self.calls.invite(**values)
 
+    def test_call_lifecycle_writes_verifiable_audit_chain(self):
+        invite = self._invite()
+        self.assertTrue(self.calls.verify_audit_chain())
+        self.calls.accept(
+            session_id=invite.session_id,
+            recipient_token=self.recipient.token,
+        )
+        self.assertTrue(self.calls.verify_audit_chain())
+        with self.calls._connect() as db:
+            count = db.execute("SELECT COUNT(*) FROM lan_call_audit").fetchone()[0]
+            self.assertGreaterEqual(count, 2)
+            db.execute(
+                "UPDATE lan_call_audit SET event_type='tampered' WHERE event_id=1"
+            )
+        self.assertFalse(self.calls.verify_audit_chain())
+
+    def test_call_expiry_is_audited_when_owner_lists_history(self):
+        invite = self._invite()
+        future = lan_call_sessions._now() + timedelta(seconds=31)
+        with patch("core.lan_call_sessions._now", return_value=future):
+            self.calls.list_for_owner(owner_id="owner")
+        self.assertTrue(self.calls.verify_audit_chain())
+        with self.calls._connect() as db:
+            row = db.execute(
+                "SELECT event_type FROM lan_call_audit ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+        self.assertEqual(row["event_type"], "expired")
+
     def test_invitation_requires_literal_owner_confirmation(self):
         for value in (False, 1, "true", None):
             with self.subTest(value=value), self.assertRaises(CallSessionDenied):
