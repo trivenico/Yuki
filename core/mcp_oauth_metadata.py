@@ -31,6 +31,8 @@ class AuthorizationServerMetadata:
     code_challenge_methods_supported: tuple[str, ...]
     client_id_metadata_document_supported: bool
     authorization_response_iss_parameter_supported: bool
+    jwks_uri: str | None
+    id_token_signing_alg_values_supported: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,24 @@ def validate_authorization_server_metadata(
     if "S256" not in challenges:
         raise OAuthMetadataError("pkce_s256_not_supported")
 
+    jwks_uri = document.get("jwks_uri")
+    signing_algorithms = document.get("id_token_signing_alg_values_supported")
+    if jwks_uri is None and signing_algorithms is None:
+        validated_jwks_uri = None
+        validated_signing_algorithms = ()
+    else:
+        validated_jwks_uri = _https_uri(jwks_uri, label="jwks_uri")
+        algorithms = _string_list(
+            signing_algorithms, label="id_token_signing_alg_values_supported",
+            required=True, maximum=32,
+        )
+        supported = ("RS256", "PS256", "ES256", "EdDSA")
+        validated_signing_algorithms = tuple(
+            algorithm for algorithm in algorithms if algorithm in supported
+        )
+        if not validated_signing_algorithms:
+            raise OAuthMetadataError("no_supported_oidc_signing_algorithm")
+
     cimd = document.get("client_id_metadata_document_supported", False)
     iss_response = document.get("authorization_response_iss_parameter_supported", False)
     if not isinstance(cimd, bool) or not isinstance(iss_response, bool):
@@ -182,6 +202,8 @@ def validate_authorization_server_metadata(
         code_challenge_methods_supported=challenges,
         client_id_metadata_document_supported=cimd,
         authorization_response_iss_parameter_supported=iss_response,
+        jwks_uri=validated_jwks_uri,
+        id_token_signing_alg_values_supported=validated_signing_algorithms,
     )
 
 
