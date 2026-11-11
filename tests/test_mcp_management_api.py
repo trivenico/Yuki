@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from core.approval_audit import SQLiteApprovalAuditLog
-from core.mcp_runtime import MCPProviderConnectionConfig, MCPRuntimeService
+from core.mcp_runtime import MCPProviderConnectionConfig, MCPRuntimeService, MCPTrustedToolDefinition
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
@@ -78,15 +78,21 @@ class MCPManagementAPITests(unittest.TestCase):
                 required_scopes=("profile:read",),
             )},
             policy_store=self.policies, audit_log=self.audit,
+            trusted_tool_definitions={
+                ("provider", "read_profile"): MCPTrustedToolDefinition(
+                    tool_name="read_profile", risk=MCPToolRisk.READ_ONLY,
+                    required_scopes=("profile:read",),
+                ),
+            },
         )
         self.app = AuthenticatedMCPManagementAPI(
             lambda *_args: None, FakeAuth(), self.oauth, self.runtime,
         )
 
-    def request(self, method, path, token=TOKEN, extra_headers=()):
+    def request(self, method, path, token=TOKEN, extra_headers=(), body=None):
         sent = []
         async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
+            return {"type": "http.request", "body": body or b"", "more_body": False}
         async def send(message):
             sent.append(message)
         headers = list(extra_headers)
@@ -146,6 +152,176 @@ class MCPManagementAPITests(unittest.TestCase):
             "tool_name": "read_profile", "risk": "read_only",
             "required_scopes": ["profile:read"], "version": 1, "enabled": True,
         }])
+
+
+    def test_owner_confirmed_policy_enable_uses_host_trusted_risk(self):
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 1, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["revision"], 2)
+        self.assertEqual(body["policies"][0]["risk"], "read_only")
+        self.assertTrue(body["policies"][0]["enabled"])
+        self.assertTrue(self.audit.verify_chain())
+
+    def test_client_cannot_override_host_trusted_risk(self):
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 1, "confirm": True,
+            "risk": "financial",
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
+        self.assertEqual(self.policies.load_registry(
+            owner_id="owner", provider_id="provider", account_id="account",
+        ).policies, ())
+
+
+    def test_policy_enable_requires_trusted_definition_scopes(self):
+        self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
+        self.oauth.register(
+            owner_id="owner", provider_id="provider", account_id="account",
+            scopes=("profile:basic",),
+        )
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 1, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "required_oauth_scope_missing")
+
+    def test_stale_policy_revision_is_rejected(self):
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 9, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "stale_policy_revision")
+
+
+    def test_boolean_revision_is_not_accepted_as_integer(self):
+        payload = json.dumps({
+            "enabled": True, "expected_revision": True, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
+
+    def test_audit_failure_prevents_policy_mutation(self):
+        class BrokenAudit:
+            def append(self, **_kwargs):
+                raise OSError("audit unavailable")
+        self.runtime._audit = BrokenAudit()
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 1, "confirm": True,
+        }).encode()
+        status, _ = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 502)
+        self.assertEqual(self.policies.load_registry(
+            owner_id="owner", provider_id="provider", account_id="account",
+        ).policies, ())
+
+    def test_policy_disable_advances_revision_and_revokes_policy(self):
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="read_profile", risk=MCPToolRisk.READ_ONLY,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ), expected_revision=1,
+        )
+        self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
+        self.runtime._trusted_tool_definitions = {}
+        payload = json.dumps({
+            "enabled": False, "expected_revision": 2, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["revision"], 3)
+        self.assertFalse(body["policies"][0]["enabled"])
+
+
+    def test_policy_removal_is_owner_confirmed_and_advances_revision(self):
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="read_profile", risk=MCPToolRisk.READ_ONLY,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ), expected_revision=1,
+        )
+        self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
+        payload = json.dumps({"expected_revision": 2, "confirm": True}).encode()
+        status, body = self.request(
+            "DELETE", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["revision"], 3)
+        self.assertEqual(body["policies"], [])
+
+
+    def test_policy_removal_rejects_boolean_revision(self):
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="read_profile", risk=MCPToolRisk.READ_ONLY,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ), expected_revision=1,
+        )
+        payload = json.dumps({"expected_revision": True, "confirm": True}).encode()
+        status, body = self.request(
+            "DELETE", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
+
+    def test_policy_change_requires_literal_owner_confirmation(self):
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 1, "confirm": 1,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "explicit_confirmation_required")
+        self.assertEqual(self.policies.load_registry(
+            owner_id="owner", provider_id="provider", account_id="account",
+        ).policies, ())
+
+    def test_duplicate_json_keys_are_rejected(self):
+        payload = b'{"enabled":true,"enabled":false,"expected_revision":1,"confirm":true}'
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
 
     def test_registered_connection_without_required_scope_is_denied(self):
         self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
