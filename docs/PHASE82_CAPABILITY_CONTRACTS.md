@@ -33,13 +33,12 @@ The dedicated GitHub Actions workflow validates schema, unique IDs, allowed stat
 
 ## Product-surface inventory expansion — 2026-11-11
 
-The canonical manifest now includes explicit product-level contracts for provider runtime, authenticated conversation API, companion foundations, CLI assistant, model registry/evaluation, paired-device inference, LAN call session state, income opportunity tracking, native desktop application, and integrated voice.
+The canonical manifest includes product-level contracts for provider runtime, authenticated conversation API, companion foundations, CLI assistant, model registry/evaluation, paired-device inference, income opportunity tracking, native desktop application, and integrated voice.
 
 These are intentionally conservative:
-- Provider, conversation, companion, CLI, model, paired-device, LAN call, income and voice contracts are **experimental**. Their tests cover bounded behavior, not complete release acceptance.
+- Provider, conversation, companion, CLI, model, paired-device, income and voice contracts are **experimental**. Their tests cover bounded behavior, not complete release acceptance.
 - Native desktop application is **planned** because the audited repository does not contain a native desktop application project or signed desktop artifacts.
 - The income contract describes opportunity tracking only. It does not claim a live earning adapter, proposal submission, payment action, or revenue.
-- The LAN call contract describes invitation/session state only. It does not claim notification delivery, WebRTC, media transport, or complete human-confirmation UX.
 - The companion contract describes component foundations, not a fully integrated persistent companion experience.
 
 A product contract must state limitations explicitly. A new source file, merged PR, or green unit-test suite is not sufficient grounds to promote a product surface to production-ready.
