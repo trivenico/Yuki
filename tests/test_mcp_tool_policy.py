@@ -38,6 +38,7 @@ class MCPToolPolicyTests(unittest.TestCase):
             owner_id="owner", provider_id="provider", account_id=account,
             granted_scopes=scopes, owner_approval=owner_approval,
             audit=audit or self.events.append,
+            current_revision=lambda: self.registry.revision,
         )
 
     def test_exact_read_only_policy_allows_without_interactive_confirmation(self):
@@ -133,6 +134,23 @@ class MCPToolPolicyTests(unittest.TestCase):
                 owner_id="other-owner", provider_id="provider", account_id="account",
                 granted_scopes=(), owner_approval=lambda _r: True, audit=lambda _e: None,
             )
+
+    def test_stale_or_unavailable_policy_revision_denies_every_call(self):
+        stale = self.registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",),
+            owner_approval=lambda _request: True, audit=self.events.append,
+            current_revision=lambda: self.registry.revision + 1,
+        )
+        self.assertFalse(stale("read_profile", {}))
+        broken = self.registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",),
+            owner_approval=lambda _request: True, audit=self.events.append,
+            current_revision=lambda: (_ for _ in ()).throw(RuntimeError("unavailable")),
+        )
+        self.assertFalse(broken("read_profile", {}))
+        self.assertFalse(self.events)
 
     def test_invalid_arguments_and_non_finite_values_are_denied(self):
         approve = self.approver()
