@@ -7,6 +7,7 @@ from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
+from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
@@ -65,6 +66,7 @@ def build_conversation_runtime(
     income_opportunities: SQLiteIncomeOpportunityStore | None = None,
     oauth_connections: SQLiteOAuthConnectionRegistry | None = None,
     oauth_disconnect_service_for_provider: Callable[[str], Any] | None = None,
+    oauth_authorization_service_for_provider: Callable[[str], Any] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the configured conversation runtime.
 
@@ -89,6 +91,10 @@ def build_conversation_runtime(
         raise TypeError("oauth_connections must be a SQLiteOAuthConnectionRegistry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
         raise ValueError("oauth_connections and disconnect service resolver must be configured together")
+    if oauth_authorization_service_for_provider is not None and oauth_connections is None:
+        raise ValueError("OAuth authorization requires the OAuth connection registry")
+    if oauth_authorization_service_for_provider is not None and not callable(oauth_authorization_service_for_provider):
+        raise TypeError("oauth_authorization_service_for_provider must be callable")
     store = create_conversation_store(config)
     try:
         service = ConversationService(store, agent_loop)
@@ -105,6 +111,11 @@ def build_conversation_runtime(
                 app, auth_service, oauth_connections,
                 oauth_disconnect_service_for_provider,
             )
+            if oauth_authorization_service_for_provider is not None:
+                app = AuthenticatedOAuthAuthorizationAPI(
+                    app, auth_service, oauth_connections,
+                    oauth_authorization_service_for_provider,
+                )
         return ConversationRuntime(app, store)
     except Exception:
         close = getattr(store, "close", None)
