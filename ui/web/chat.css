@@ -24,3 +24,12 @@
 .integration-action:disabled{opacity:.5;cursor:wait}
 .integration-action.danger-action{border-color:#633c43;background:#2c2024;color:#ffb3b3}
 @media(max-width:760px){.integration-list{max-height:22vh}.integration-row{padding:7px 6px}}
+
+
+.call-panel{margin-top:18px;border-top:1px solid var(--line);padding-top:8px}
+.call-form{display:grid;gap:7px;padding:0 6px 10px}
+.call-form label{font-size:10px;color:#b9bdc6;margin-top:5px}
+.call-form select,.call-form input{width:100%;min-width:0;background:#101216;border:1px solid var(--line);border-radius:8px;padding:9px;color:var(--text);font-size:10px}
+.call-form .integration-action{width:100%;margin-top:5px;padding:9px}
+.call-form .integration-action:disabled{opacity:.5;cursor:wait}
+.call-form .integration-empty{margin:3px 0;font-size:10px;overflow-wrap:anywhere}
