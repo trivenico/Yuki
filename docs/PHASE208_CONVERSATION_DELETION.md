@@ -14,7 +14,12 @@ and tested.
 - Unknown and foreign-owner IDs both return `404 not_found`.
 - A conversation with an active API-managed generation returns
   `409 generation_active`; callers must wait for the generation to finish
-  before retrying. Deletion never races an API-managed model/tool execution.
+  before retrying. Deletion checks the shared database generation-lease row
+  inside the same write transaction, so separate API processes sharing that
+  database cannot bypass the in-memory request registry.
+- Lease expiry is not treated as proof that an execution has stopped. A stale
+  lease therefore fails closed and requires a separately audited recovery
+  procedure; automatic stale-lease reclamation is intentionally not implemented.
 - The store uses a write transaction, owner-scoped lookup and owner-scoped
   delete. Foreign-key cascades delete messages, generation runs and leases.
 - SQLite enables foreign keys on each connection. PostgreSQL inherits the same
@@ -46,9 +51,14 @@ and tested.
   integration is introduced in this change.
 - PostgreSQL is covered by SQL translation tests only in this PR; a live
   PostgreSQL service integration run is still required.
-- Active generations created outside this API's in-memory registry are not
-  discoverable by this guard. A durable cross-process generation registry or
-  shared database lease check is required before multi-process production use.
+- The database lease check covers service instances sharing the same database,
+  but it is not yet a complete worker-fencing protocol. Existing model/tool
+  execution writes do not carry a lease generation through every commit. A
+  paused worker and lease-reclamation race must be addressed before automatic
+  recovery or multi-host execution is production-ready.
+- A crashed worker can leave a lease row behind. Deletion intentionally remains
+  blocked until an operator-approved recovery path verifies the worker is no
+  longer executing and clears the lease; there is no such recovery command yet.
 - A process crash during deletion relies on database transaction atomicity;
   recovery and audit verification still need integration tests.
 
