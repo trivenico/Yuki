@@ -8,6 +8,8 @@ import hmac
 import json
 from pathlib import Path
 import sqlite3
+import uuid
+import re
 from typing import Any
 
 _ALLOWED_EVENTS = frozenset({
@@ -152,3 +154,40 @@ class MCPExecutionAudit:
             raise ValueError("invalid_mcp_invocation_id")
         return self._log.append(event_type=event, pending_id=invocation_id,
                                 actor=self._owner, skill_id=self._skill)
+
+
+
+class MCPToolPolicyAudit:
+    """Adapter from MCP policy decisions to the existing metadata-only audit log."""
+
+    _EVENTS = {
+        "requested": "requested",
+        "owner_approved": "approved",
+        "authorized_read_only": "approved",
+        "denied": "denied",
+    }
+
+    def __init__(self, audit_log: SQLiteApprovalAuditLog):
+        if not isinstance(audit_log, SQLiteApprovalAuditLog):
+            raise TypeError("trusted_sqlite_approval_audit_required")
+        self._log = audit_log
+
+    def __call__(self, event: dict[str, Any]) -> int:
+        if not isinstance(event, dict):
+            raise ValueError("invalid_mcp_policy_audit_event")
+        event_type = self._EVENTS.get(event.get("event"))
+        owner, provider, account, tool = (
+            event.get("owner_id"), event.get("provider_id"),
+            event.get("account_id"), event.get("tool_name"),
+        )
+        for value in (owner, provider, account, tool):
+            if not isinstance(value, str) or not value.strip() or len(value) > 256:
+                raise ValueError("invalid_mcp_policy_audit_identity")
+        # A policy decision has its own correlation token. The execution client
+        # creates a separate invocation token immediately before dispatch.
+        return self._log.append(
+            event_type=event_type,
+            pending_id=uuid.uuid4().hex,
+            actor=owner,
+            skill_id=":".join((provider, account, tool))[:120],
+        ) if event_type else (_ for _ in ()).throw(ValueError("unsupported_mcp_policy_audit_event"))
