@@ -36,3 +36,26 @@ The API deliberately rejects the former `confirm: true` request shape. The authe
 - Add transport-level protections appropriate to the deployment (TLS, origin controls/CSRF where cookie sessions are used, rate limits, secret redaction).
 - Add notification delivery and authenticated WebRTC signaling/media only after invitation consent is complete.
 - Test real devices, reconnects, cancellation, notification delivery, and media permission prompts. No WebRTC, push notification, microphone or camera capability is implied by this API.
+
+
+## Durable paired-device notification inbox
+
+Call invitation creation now writes a minimal `incoming_call` notification row in
+the same SQLite transaction as the ringing session. This is a durable outbox
+boundary, not an OS push integration. Paired devices poll
+`GET /v1/devices/calls/notifications/inbox` with their device bearer credential
+and acknowledge an item with
+`POST /v1/devices/calls/notifications/{notification_id}/ack`.
+
+Delivery is intentionally at-least-once until acknowledgement: a device that
+misses an acknowledgement may see the same alert again. The inbox is bounded
+to 50 rows per poll and filters expired/cancelled calls, revoked caller devices,
+and non-ringing sessions at read time. Acknowledgement is recipient-device and
+owner scoped. Notification identifiers and call handles are opaque digests;
+the event contains no call secret, password, media token, or message content.
+The alert is only a prompt to open the call UI. Recipient acceptance remains a
+separate authenticated action; no media device is activated.
+
+This does not yet provide background delivery, OS notifications, lease-based
+worker dispatch, guaranteed exactly-once display, or WebRTC. The foreground CLI
+watcher remains the current polling client.
