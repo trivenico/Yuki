@@ -140,5 +140,87 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual((status, body["delegated"]), (200, True))
 
 
+
+    def test_call_invitation_requires_fresh_password_and_one_time_session_bound_challenge(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        caller_id = caller["device"]["device_id"]
+        recipient_id = recipient["device"]["device_id"]
+
+        # Legacy boolean consent is not accepted by the owner call endpoint.
+        status, body = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirm": True,
+        }, self.owner_one.token)
+        self.assertEqual((status, body["error"]), (400, "invalid_request"))
+
+        status, body = self.request("POST", "/v1/devices/calls/confirmation-challenges", {
+            "password": "wrong password",
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+        }, self.owner_one.token)
+        self.assertEqual((status, body["error"]), (403, "reauthentication_required"))
+
+        status, challenge = self.request("POST", "/v1/devices/calls/confirmation-challenges", {
+            "password": "a-secure-owner-password",
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        confirmation = challenge["confirmation_token"]
+
+        # Challenge is bound to the exact recipient and cannot be redirected.
+        status, body = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": caller_id,
+            "confirmation_token": confirmation,
+        }, self.owner_one.token)
+        self.assertEqual(status, 403)
+
+        status, created = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirmation_token": confirmation,
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        self.assertEqual(created["session"]["status"], "ringing")
+
+        # One-time token replay cannot create another invitation.
+        status, replay = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirmation_token": confirmation,
+        }, self.owner_one.token)
+        self.assertEqual((status, replay["error"]), (403, "confirmation_required_or_expired"))
+
+        status, incoming = self.request(
+            "GET", "/v1/devices/calls/incoming", token=recipient["device_token"]
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(incoming["invitations"]), 1)
+        handle = incoming["invitations"][0]["session_id"]
+        status, accepted = self.request(
+            "POST", f"/v1/devices/calls/{handle}/accept", {}, recipient["device_token"]
+        )
+        self.assertEqual((status, accepted["session"]["status"]), (200, "accepted"))
+
+    def test_confirmation_challenge_is_bound_to_owner_session(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        status, challenge = self.request("POST", "/v1/devices/calls/confirmation-challenges", {
+            "password": "a-secure-owner-password",
+            "caller_device_id": caller["device"]["device_id"],
+            "recipient_device_id": recipient["device"]["device_id"],
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+
+        status, body = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller["device"]["device_id"],
+            "recipient_device_id": recipient["device"]["device_id"],
+            "confirmation_token": challenge["confirmation_token"],
+        }, self.owner_two.token)
+        self.assertEqual(status, 403)
+
 if __name__ == "__main__":
     unittest.main()
