@@ -18,6 +18,17 @@ _DEVICE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 @dataclass(frozen=True)
+class RemoteCallNotification:
+    notification_id: str = field(repr=False)
+    session_id: str = field(repr=False)
+    caller_device_id: str
+    recipient_device_id: str
+    event_type: str
+    created_at: str
+    expires_at: str
+
+
+@dataclass(frozen=True)
 class RemoteCallInvitation:
     session_id: str = field(repr=False)
     caller_device_id: str
@@ -120,6 +131,41 @@ class RemoteCallClient:
         if len({item.session_id for item in invitations}) != len(invitations):
             raise RuntimeError("duplicate_call_invitation")
         return invitations
+
+    def list_notifications(self) -> list[RemoteCallNotification]:
+        body = self._request("GET", "/v1/devices/calls/notifications/inbox")
+        rows = body.get("notifications")
+        if body.get("delivery") != "at_least_once_polling" or not isinstance(rows, list) or len(rows) > 50:
+            raise RuntimeError("invalid_call_notification_inbox")
+        notifications = []
+        for row in rows:
+            expected = {"notification_id", "session_id", "caller_device_id",
+                        "recipient_device_id", "event_type", "created_at", "expires_at"}
+            if not isinstance(row, dict) or set(row) != expected:
+                raise RuntimeError("invalid_call_notification")
+            if not all(isinstance(row[key], str) and _SESSION_HANDLE.fullmatch(row[key])
+                       for key in ("notification_id", "session_id")):
+                raise RuntimeError("invalid_call_notification")
+            if not all(isinstance(row[key], str) and _DEVICE_ID.fullmatch(row[key])
+                       for key in ("caller_device_id", "recipient_device_id")):
+                raise RuntimeError("invalid_call_notification")
+            if row["event_type"] != "incoming_call":
+                raise RuntimeError("invalid_call_notification")
+            if not all(isinstance(row[key], str) and 0 < len(row[key]) <= 64
+                       for key in ("created_at", "expires_at")):
+                raise RuntimeError("invalid_call_notification")
+            notifications.append(RemoteCallNotification(**row))
+        if len({item.notification_id for item in notifications}) != len(notifications):
+            raise RuntimeError("duplicate_call_notification")
+        return notifications
+
+    def acknowledge_notification(self, notification_id: str) -> bool:
+        if not isinstance(notification_id, str) or not _SESSION_HANDLE.fullmatch(notification_id):
+            raise ValueError("invalid_call_notification_handle")
+        body = self._request("POST", f"/v1/devices/calls/notifications/{notification_id}/ack")
+        if not isinstance(body.get("acknowledged"), bool):
+            raise RuntimeError("invalid_call_notification_ack")
+        return body["acknowledged"]
 
     def _respond(self, session_id: str, action: str) -> dict:
         if not isinstance(session_id, str) or not _SESSION_HANDLE.fullmatch(session_id):
