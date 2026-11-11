@@ -29,8 +29,10 @@ does not accept either field from the owner request, and remote MCP discovery
 metadata is never used to construct or lower a risk classification. Missing
 trusted definitions fail closed.
 
-An explicit owner-confirmed request is required for each mutation. Registry
-revision compare-and-swap prevents stale clients from overwriting concurrent
+An explicit owner-confirmed request is required for each mutation. Enabling a
+tool also requires the owner's existing OAuth connection to include every
+scope in that host-reviewed definition. Registry revision compare-and-swap
+prevents stale clients from overwriting concurrent
 policy changes. Policy versions advance on update, and the durable registry
 revision advances on every successful set/remove. Existing policy-bound clients
 are fenced by the current revision check.
