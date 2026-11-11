@@ -214,6 +214,20 @@ class AuthenticatedInferenceAPI:
                     return await self._respond(send, 400, {"error": "invalid_call_request"})
                 return await self._respond(send, 200, {"session": self._call(session)})
 
+            if path == "/v1/devices/calls" and method == "GET":
+                user = await self._user(scope)
+                if user is None:
+                    return await self._respond(send, 401, {"error": "authentication_required"})
+                try:
+                    sessions = await asyncio.to_thread(
+                        self.calls.list_for_owner, owner_id=user.user_id, limit=50
+                    )
+                except CallSessionError:
+                    return await self._respond(send, 400, {"error": "invalid_call_request"})
+                return await self._respond(send, 200, {
+                    "sessions": [self._call(session) for session in sessions],
+                })
+
             if path == "/v1/devices/calls" and method == "POST":
                 payload = await self._body(receive)
                 if set(payload) != {"caller_device_id", "recipient_device_id", "confirmation_token"}:
