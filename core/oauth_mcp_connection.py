@@ -69,8 +69,10 @@ class OAuthMCPConnectionManager:
         scopes = self._scopes(required_scopes)
         if not callable(approver):
             raise OAuthMCPConnectionError("explicit_tool_approver_required")
-        if not isinstance(allowed_tools, (set, frozenset, tuple, list)) or not allowed_tools:
+        if not isinstance(allowed_tools, (set, frozenset, tuple, list)):
             raise OAuthMCPConnectionError("explicit_tool_allowlist_required")
+        # An empty allow-list is an explicit deny-all policy. It permits
+        # initialize/tools-list discovery while call_tool rejects every tool.
         if any(not isinstance(name, str) or not name or len(name) > 128 for name in allowed_tools):
             raise OAuthMCPConnectionError("invalid_tool_allowlist")
 
