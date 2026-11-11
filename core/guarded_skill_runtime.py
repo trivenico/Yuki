@@ -12,6 +12,31 @@ from typing import Callable, Any
 
 
 @dataclass(frozen=True)
+class SkillPolicyContext:
+    """Authenticated provenance passed from the durable task boundary.
+
+    Instances must be constructed by the trusted worker, never from task
+    payload fields. This value object validates shape only; the worker remains
+    responsible for deriving every field from authenticated durable records.
+    """
+    principal_id: str
+    trigger: str
+    goal_id: str
+    task_id: str
+
+    def __post_init__(self) -> None:
+        for field in ("principal_id", "trigger", "goal_id", "task_id"):
+            value = getattr(self, field)
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > 256
+                or value != value.strip()
+            ):
+                raise ValueError(f"{field} must be non-empty bounded trusted text")
+
+
+@dataclass(frozen=True)
 class SkillInvocationResult:
     ok: bool
     message: str

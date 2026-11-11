@@ -60,6 +60,32 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
                 self.assertIsNone(bounded)
                 self.assertTrue(truncated)
 
+    def test_trusted_skill_policy_context_validates_provenance_shape(self):
+        from core.guarded_skill_runtime import SkillPolicyContext
+
+        context = SkillPolicyContext(
+            principal_id="owner-1",
+            trigger="durable_task",
+            goal_id="goal-1",
+            task_id="task-1",
+        )
+        self.assertEqual(context.principal_id, "owner-1")
+        self.assertEqual(context.trigger, "durable_task")
+        self.assertEqual(context.goal_id, "goal-1")
+        self.assertEqual(context.task_id, "task-1")
+
+        invalid_contexts = (
+            {"principal_id": "", "trigger": "durable_task", "goal_id": "goal-1", "task_id": "task-1"},
+            {"principal_id": " owner-1", "trigger": "durable_task", "goal_id": "goal-1", "task_id": "task-1"},
+            {"principal_id": "owner-1", "trigger": " ", "goal_id": "goal-1", "task_id": "task-1"},
+            {"principal_id": "owner-1", "trigger": "durable_task", "goal_id": "g" * 257, "task_id": "task-1"},
+            {"principal_id": "owner-1", "trigger": "durable_task", "goal_id": "goal-1", "task_id": None},
+        )
+        for values in invalid_contexts:
+            with self.subTest(values=values):
+                with self.assertRaises(ValueError):
+                    SkillPolicyContext(**values)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
