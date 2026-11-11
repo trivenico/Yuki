@@ -207,6 +207,11 @@ class ConversationStoreTests(unittest.TestCase):
             self.store.delete_conversation(
                 owner_id=self.owner, conversation_id=conversation_id,
             )
+        with self.assertRaises(ConversationConflict):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker", ttl_seconds=30,
+            )
         self.assertTrue(worker_store.release_generation_lease(
             owner_id=self.owner, conversation_id=conversation_id,
             lease_token="worker-process-lease",
