@@ -82,7 +82,7 @@ class OAuthMCPConnectionManager:
     def create_policy_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, policy_registry, granted_scopes,
-        owner_approval, audit, current_revision, timeout: float = 10,
+        owner_approval, audit, current_revision, execution_audit, timeout: float = 10,
     ):
         """Create an MCP client whose execution gate is a trusted policy snapshot.
 
@@ -121,13 +121,14 @@ class OAuthMCPConnectionManager:
             allowed_tools=allowed_tools,
             approver=approver,
             required_scopes=scope_values,
+            execution_audit=execution_audit,
             timeout=timeout,
         )
 
     def create_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, allowed_tools, approver,
-        required_scopes=(), timeout: float = 10,
+        required_scopes=(), execution_audit=None, timeout: float = 10,
     ):
         """Create a client whose private token callback refreshes just-in-time.
 
@@ -190,6 +191,7 @@ class OAuthMCPConnectionManager:
                 allowed_tools=allowed_tools,
                 approver=approver,
                 access_token_provider=access_token_provider,
+                execution_audit=execution_audit,
                 timeout=timeout,
             )
         except OAuthMCPConnectionError:
