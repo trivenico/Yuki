@@ -70,14 +70,15 @@ class LANCallSessionStoreTests(unittest.TestCase):
         with self.assertRaises(CallSessionDenied):
             self.calls.accept(session_id=invite.session_id, recipient_token=self.recipient.token)
 
-    def test_other_owner_and_unpaired_recipient_are_denied(self):
+    def test_foreign_owner_recipient_is_denied_but_same_owner_devices_can_call(self):
         challenge = self.pairing.create_pairing_challenge("another-owner")
         foreign = self.pairing.pair_device(challenge.code, "Foreign")
         with self.assertRaises(CallSessionDenied):
             self._invite(recipient_device_id=foreign.device.device_id)
-        with self.assertRaises(CallSessionDenied):
-            self.calls.invite(caller_token=self.other.token,
-                recipient_device_id=self.recipient.device.device_id, owner_confirmed=True)
+        # A third active device belonging to the same owner is a valid caller.
+        same_owner_invite = self.calls.invite(caller_token=self.other.token,
+            recipient_device_id=self.recipient.device.device_id, owner_confirmed=True)
+        self.assertEqual(same_owner_invite.status, "ringing")
 
     def test_same_device_call_and_malformed_session_are_rejected(self):
         with self.assertRaises(CallSessionError):
