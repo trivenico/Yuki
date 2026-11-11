@@ -275,3 +275,18 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+
+## Installable CLI (first release slice)
+
+Python 3.10+ is required. From a source checkout, install the declared package and run the stable console command:
+
+```sh
+python -m pip install .
+yuki doctor
+yuki provider-status
+yuki ask "Hello, Yuki"
+yuki chat
+```
+
+The installed CLI creates a user-owned configuration from packaged safe defaults on first use. See [installation and provider setup](docs/INSTALLATION.md). This packaging milestone provides the stable CLI entry point; it does not make the broader agent runtime, desktop application, or product production-ready.
