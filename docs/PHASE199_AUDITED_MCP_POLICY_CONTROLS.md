@@ -31,7 +31,9 @@ trusted definitions fail closed.
 
 An explicit owner-confirmed request is required for each mutation. Enabling a
 tool also requires the owner's existing OAuth connection to include every
-scope in that host-reviewed definition. Registry revision compare-and-swap
+scope in that host-reviewed definition. Disabling or removing a policy remains
+possible after OAuth scope loss or trusted-definition removal, so revocation
+cannot be blocked by a degraded connection. Registry revision compare-and-swap
 prevents stale clients from overwriting concurrent
 policy changes. Policy versions advance on update, and the durable registry
 revision advances on every successful set/remove. Existing policy-bound clients
