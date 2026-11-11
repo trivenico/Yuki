@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 import secrets
 import sqlite3
 from typing import Any
@@ -37,10 +39,9 @@ class SQLitePendingApprovalStore:
             raise ValueError("ttl_seconds must be between 1 and 3600.")
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
-        self.database_path = str(Path(database_path).expanduser())
+        self.database_path = prepare_private_sqlite_path(database_path)
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS pending_approvals (
                 pending_id TEXT PRIMARY KEY,
