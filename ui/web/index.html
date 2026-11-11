@@ -31,6 +31,15 @@
       <aside class="sidebar">
         <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
         <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+        <section class="integration-panel" aria-labelledby="integration-heading">
+          <div class="integration-heading">
+            <span id="integration-heading" class="section-label">INTEGRATIONS</span>
+            <button id="refresh-integrations" class="quiet-button" type="button">Refresh</button>
+          </div>
+          <div id="integration-list" class="integration-list" aria-live="polite">
+            <p class="integration-empty">Loading connected services…</p>
+          </div>
+        </section>
         <p class="section-label">RECENT</p>
         <nav id="conversation-list" aria-label="Conversations"></nav>
         <div class="sidebar-bottom">
