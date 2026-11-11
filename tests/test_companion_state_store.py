@@ -115,6 +115,19 @@ class CompanionStateStoreTests(unittest.TestCase):
         self.assertEqual(store.list_outbox()[0]["status"], "failed")
         self.assertEqual(store.claim_outbox(now + timedelta(days=1)), [])
 
+    def test_repeated_worker_crashes_eventually_terminally_fail_outbox(self):
+        store = CompanionStateStore(self.database, owner_id="owner")
+        now = self._add_due_reminder(store)
+        store.enqueue_due_reminders(now)
+        first = store.claim_outbox(now, lease_seconds=5, max_attempts=2)[0]
+        second_time = now + timedelta(seconds=6)
+        second = store.claim_outbox(second_time, lease_seconds=5, max_attempts=2)[0]
+        self.assertEqual(second["attempt"], 2)
+        third_time = second_time + timedelta(seconds=6)
+        self.assertEqual(store.claim_outbox(third_time, lease_seconds=5, max_attempts=2), [])
+        self.assertEqual(store.list_outbox()[0]["status"], "failed")
+        self.assertFalse(store.complete_outbox(second["event_id"], second["lease_token"], third_time))
+
     def test_outbox_is_owner_scoped_and_rejects_invalid_bounds(self):
         first = CompanionStateStore(self.database, owner_id="owner-a")
         second = CompanionStateStore(self.database, owner_id="owner-b")
