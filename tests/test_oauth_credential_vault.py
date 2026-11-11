@@ -147,6 +147,20 @@ class OAuthCredentialVaultTests(unittest.TestCase):
         self.assertFalse(self.vault.disconnect(owner_id="owner-a", provider_id="upwork", account_id="acct-1"))
         self.assertIsNone(self.vault.get(owner_id="owner-a", provider_id="upwork", account_id="acct-1"))
 
+    def test_version_fenced_disconnect_cannot_delete_a_newer_credential(self):
+        self.store()
+        self.assertFalse(self.vault.disconnect(
+            owner_id="owner-a", provider_id="upwork", account_id="acct-1",
+            expected_version=2,
+        ))
+        self.assertEqual(self.vault.get(
+            owner_id="owner-a", provider_id="upwork", account_id="acct-1"
+        ).version, 1)
+        self.assertTrue(self.vault.disconnect(
+            owner_id="owner-a", provider_id="upwork", account_id="acct-1",
+            expected_version=1,
+        ))
+
     def test_rejects_expired_tokens_and_invalid_scopes(self):
         with self.assertRaisesRegex(OAuthCredentialError, "invalid_token_expiry"):
             self.vault.store(owner_id="owner-a", provider_id="upwork", account_id="acct-1",
