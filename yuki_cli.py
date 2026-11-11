@@ -1,15 +1,13 @@
-"""Thin CLI entry point for Yuki's shared provider and readiness services.
-
-This first CLI slice intentionally offers chat and diagnostics only. It does not
-execute tools; task execution remains in the guarded interactive runtime.
-"""
+"""Thin CLI entry point for Yuki's provider, diagnostics and persistent chat."""
 from __future__ import annotations
 
 import argparse
 import json
+import uuid
 from collections.abc import Callable, Sequence
 
 from core.config import load_config
+from core.local_cli_runtime import build_local_conversation_runtime
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
@@ -24,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
 
-    sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+    sub.add_parser("chat", help="Start persistent local conversation chat")
     return parser
 
 
@@ -47,12 +45,98 @@ def _safe_ask(provider, prompt: str) -> tuple[str, int]:
     return answer, 0
 
 
+def _run_persistent_chat(runtime, *, input_fn, output_fn) -> int:
+    """Run a durable chat session; commands never execute local tools."""
+    conversations = runtime.conversations
+    owner_id = runtime.owner_id
+    items = conversations.list(owner_id=owner_id, limit=1)
+    current = items[0] if items else conversations.create(owner_id=owner_id)
+    output_fn(
+        "Yuki persistent chat. /new, /list, /use ID, /history, /help, /quit. "
+        "Tool execution is disabled."
+    )
+
+    while True:
+        try:
+            message = input_fn("You> ")
+        except (EOFError, KeyboardInterrupt):
+            output_fn("")
+            return 0
+        if not isinstance(message, str):
+            output_fn("Yuki: Input must be text.")
+            continue
+        command = message.strip()
+        lowered = command.lower()
+        if lowered in {"/quit", "/exit"}:
+            return 0
+        if lowered == "/help":
+            output_fn("Commands: /new, /list, /use ID, /history, /quit.")
+            continue
+        if lowered == "/new":
+            current = conversations.create(owner_id=owner_id)
+            output_fn("Yuki: Started a new conversation.")
+            continue
+        if lowered == "/list":
+            listed = conversations.list(owner_id=owner_id, limit=50)
+            if not listed:
+                output_fn("Yuki: No saved conversations.")
+            for item in listed:
+                marker = "*" if item["conversation_id"] == current["conversation_id"] else " "
+                output_fn(f"{marker} {item['conversation_id']}  {item.get('title', 'Conversation')}")
+            continue
+        if lowered == "/history":
+            history = conversations.history(
+                owner_id=owner_id, conversation_id=current["conversation_id"], limit=20,
+            )
+            if not history:
+                output_fn("Yuki: This conversation is empty.")
+            for item in history:
+                speaker = "You" if item["role"] == "user" else "Yuki"
+                output_fn(f"{speaker}> {item['content']}")
+            continue
+        if lowered.startswith("/use "):
+            requested = command[5:].strip()
+            listed = conversations.list(owner_id=owner_id, limit=50)
+            selected = next(
+                (item for item in listed if item["conversation_id"] == requested), None
+            )
+            if selected is None:
+                output_fn("Yuki: Conversation not found.")
+            else:
+                current = selected
+                output_fn("Yuki: Switched conversation.")
+            continue
+        if lowered.startswith("/"):
+            output_fn("Yuki: Unknown command. Type /help.")
+            continue
+        if not command:
+            continue
+
+        try:
+            result = conversations.reply(
+                owner_id=owner_id,
+                conversation_id=current["conversation_id"],
+                user_text=command,
+                request_id=str(uuid.uuid4()),
+                expected_version=current["version"],
+                tools=[],
+            )
+            current["version"] = result["version"]
+            output_fn("Yuki> " + result["answer"])
+            if result["status"] not in {"completed", "replayed"}:
+                output_fn(f"Yuki: Turn status: {result['status']}.")
+        except Exception as exc:
+            output_fn(f"Yuki: Conversation failed ({type(exc).__name__}).")
+            return 4
+
+
 def run_cli(
     argv: Sequence[str] | None = None,
     *,
     config_loader: Callable = load_config,
     provider_factory: Callable = create_provider,
     readiness_builder: Callable = build_readiness_report,
+    conversation_runtime_factory: Callable = build_local_conversation_runtime,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
 ) -> int:
@@ -62,6 +146,22 @@ def run_cli(
         report = readiness_builder().to_dict()
         _write_json(report, output_fn)
         return 0
+
+    if args.command == "chat":
+        runtime = None
+        try:
+            config = config_loader()
+            runtime = conversation_runtime_factory(config)
+            return _run_persistent_chat(runtime, input_fn=input_fn, output_fn=output_fn)
+        except Exception as exc:
+            output_fn(f"Yuki could not initialize persistent chat ({type(exc).__name__}).")
+            return 2
+        finally:
+            if runtime is not None:
+                try:
+                    runtime.close()
+                except Exception:
+                    output_fn("Yuki: Chat storage could not close cleanly.")
 
     try:
         config = config_loader()
@@ -88,22 +188,7 @@ def run_cli(
         output_fn(answer)
         return status
 
-    if args.command == "chat":
-        output_fn("Yuki chat. Type /quit to exit. Tool execution is disabled in this CLI mode.")
-        while True:
-            try:
-                message = input_fn("You> ")
-            except (EOFError, KeyboardInterrupt):
-                output_fn("")
-                return 0
-            if message.strip().lower() in {"/quit", "/exit"}:
-                return 0
-            if not message.strip():
-                continue
-            answer, status = _safe_ask(provider, message)
-            output_fn("Yuki> " + answer)
-            if status in {3, 4}:
-                return status
+    return 2
 
 
 def main() -> int:
