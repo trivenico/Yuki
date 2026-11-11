@@ -60,4 +60,5 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           python -c "from core.config import load_config; assert load_config()['name'] == 'Yuki'"
+          python -c "import api.runtime; import api.conversations; import api.web"
           yuki doctor
