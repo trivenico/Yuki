@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=69,<82", "wheel>=0.43,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yuki-ai-assistant"
+version = "0.1.0"
+description = "A personal AI assistant with guarded tools, local memory, and pluggable model providers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+  "PyYAML>=6.0.3,<7.0",
+]
+
+[project.optional-dependencies]
+production-storage = [
+  "psycopg[binary]>=3.2.3,<4",
+  "psycopg-pool>=3.2.4,<4",
+  "cryptography>=42,<47",
+  "keyring>=25,<27",
+]
+voice = [
+  "pyttsx3>=2.90,<3.0",
+  "faster-whisper>=1.2.1,<2.0",
+  "sounddevice>=0.5.6,<1.0",
+  "numpy>=1.26,<3.0",
+  "openwakeword>=0.6,<1.0",
+  "soundfile>=0.14.0,<1.0",
+]
+ui = ["textual>=0.80,<2.0"]
+email = [
+  "google-api-python-client>=2.201.0,<3.0",
+  "google-auth>=2.35,<3.0",
+  "google-auth-oauthlib>=1.5.0,<2.0",
+]
+
+[project.scripts]
+yuki = "yuki_cli:main"
+
+[tool.setuptools]
+py-modules = ["yuki_cli"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "automation*", "companion*", "core*", "defense*", "evaluation*",
+  "hackback*", "knowledge*", "providers*", "skills*", "ui*", "voice*",
+]
+exclude = ["tests*", "benchmarks*", "scripts*"]
+
+[tool.setuptools.package-data]
+core = ["default_config.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
