@@ -155,7 +155,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.engine.claim("worker", lease_seconds=True)
         with self.assertRaises(ValueError):
-            self.engine.heartbeat("missing", "worker", lease_seconds=True)
+            self.engine.heartbeat("missing", "worker", lease_token="invalid-token", lease_seconds=True)
 
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="invalid-retry-delay"
