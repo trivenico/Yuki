@@ -87,7 +87,7 @@ class LANCallSessionStore:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
         db.execute("PRAGMA foreign_keys=ON")
-        return db
+        return _SQLiteConnection(db)
 
     @staticmethod
     def _session(row, session_id):
@@ -235,3 +235,23 @@ class LANCallSessionStore:
                 row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                                  (_digest(session_id),)).fetchone()
             return self._session(row, session_id)
+
+
+class _SQLiteConnection:
+    """Commit or roll back and always release the database handle."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
+        finally:
+            self.connection.close()
+        return False
