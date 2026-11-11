@@ -102,6 +102,22 @@ class MCPRuntimeServiceTests(unittest.TestCase):
                 owner_approval=lambda _request: True,
             )
 
+    def test_non_string_allowlist_host_is_rejected_as_validation_error(self):
+        with self.assertRaisesRegex(ValueError, "mcp_allowed_hosts_invalid"):
+            MCPProviderConnectionConfig(
+                endpoint="https://mcp.example/mcp", allowed_hosts=("mcp.example", None),
+            )
+
+    def test_malformed_granted_scopes_are_rejected_cleanly(self):
+        for scopes in ((None,), (["nested"],), ("x" * 129,), ("",)):
+            with self.subTest(scopes=scopes):
+                with self.assertRaisesRegex(ValueError, "granted_oauth_scopes_invalid"):
+                    self.service.create_client(
+                        owner_id="owner", provider_id="provider", account_id="account",
+                        granted_scopes=scopes,
+                        owner_approval=lambda _request: True,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
