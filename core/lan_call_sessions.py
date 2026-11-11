@@ -7,7 +7,6 @@ import hashlib
 import secrets
 import sqlite3
 
-from core.device_pairing import DevicePairingError
 
 
 class CallSessionError(ValueError):
@@ -169,7 +168,9 @@ class LANCallSessionStore:
                 db.execute("""UPDATE lan_call_sessions SET status='expired',ended_at=?
                     WHERE session_hash=? AND status='ringing'""",
                     (_stamp(now), _digest(session_id)))
-                raise CallSessionDenied("call_invitation_expired")
+                expired = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
+                                     (_digest(session_id),)).fetchone()
+                return self._session(expired, session_id)
             accepted_at = _stamp(now) if set_accepted else row["accepted_at"]
             ended_at = _stamp(now) if target_status in {"rejected", "ended"} else row["ended_at"]
             db.execute("""UPDATE lan_call_sessions
