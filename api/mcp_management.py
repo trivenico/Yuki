@@ -205,7 +205,7 @@ class AuthenticatedMCPManagementAPI:
                     result[key] = value
                 return result
             value = json.loads(b"".join(chunks), object_pairs_hook=unique_object)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
             raise ValueError("invalid_json") from None
         if not isinstance(value, dict):
             raise ValueError("json_object_required")
