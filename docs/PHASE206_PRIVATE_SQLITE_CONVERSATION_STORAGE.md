@@ -18,9 +18,12 @@ running as the same OS account.
 - On POSIX, set the database file mode to `0600` for new and pre-existing files.
 - Apply the helper to `ConversationStore` and `BuiltInAuthService`.
 - Apply it to `DevicePairingService` and `InferenceJobService`, which intentionally
-  share one SQLite database for pairing credentials and inference jobs. WAL and shared-memory sidecars inherit the secured database file
-  permissions on supported SQLite/OS combinations and are covered by tests
-  when the sidecars are present.
+  share one SQLite database for pairing credentials and inference jobs.
+- Apply it to `SQLiteOAuthCredentialVault`, `SQLiteMCPToolPolicyStore`,
+  `WorkflowRunStore`, `SQLiteApprovalAuditLog` and
+  `SQLitePendingApprovalStore`.
+- WAL and shared-memory sidecars are checked by tests when present; actual
+  sidecar permission behavior remains platform/SQLite dependent.
 
 ## Security boundaries and limitations
 
