@@ -61,5 +61,11 @@ Neither scheduler can back up an SSD that is disconnected. Test a manual backup 
 - Keep at least one separate backup copy; do not use the same physical drive as the only backup.
 - Never store backups in the Git repository; `BACKUP/` is ignored by Git.
 - Archives may contain sensitive memories, health/habit data, reminders and other private records. Protect access and remove old backups securely according to your device's storage policy.
-- Test restoration into a **new empty directory** before relying on backups. On Unix, inspect with `tar -tzf backup.tar.gz` and extract with `tar -xzf backup.tar.gz -C /path/to/restore`. On Windows, use File Explorer or PowerShell `Expand-Archive` into a new folder.
-- These scripts archive files as they are found. Stop Yuki first to avoid copying files while they are being updated. They do not perform database-aware snapshots.
+- Test restoration into a **new, non-existent directory** before relying on backups. Prefer Yuki's safe restore utility, which rejects absolute paths, `..` traversal, links, special files, duplicate members and oversized archives, and writes restored files with restrictive permissions where supported:
+
+  ```sh
+  python scripts/restore_backup.py "/path/to/yuki-data-YYYYMMDD_HHMMSS.tar.gz" "/path/to/new-restore-directory"
+  ```
+
+  On Windows, pass the `.zip` archive instead. The restore utility never overwrites an existing destination and stages extraction in a temporary sibling directory before publishing it. Review the restored files and configuration before pointing Yuki at them. Do not use generic archive extraction on untrusted backups.
+- These scripts archive files as they are found. Stop Yuki first to avoid copying files while they are being updated. They do not perform database-aware snapshots. The restore utility validates archive paths and file types, but it does not authenticate the archive's origin, verify a cryptographic signature, decrypt backups, or prove that a running application's SQLite databases were captured consistently. Stop Yuki before creating the archive. Encryption, authenticated manifests, database-aware online snapshots, and automated restore drills remain open production requirements.
