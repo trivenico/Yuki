@@ -52,13 +52,23 @@ class AuthenticatedOAuthAuthorizationAPI:
                     return await self._respond(send, 503, {"error": "provider_catalog_unavailable"})
                 safe = []
                 for item in providers:
-                    if not isinstance(item, dict) or not isinstance(item.get("provider_id"), str):
+                    if not isinstance(item, dict):
+                        continue
+                    provider_id = item.get("provider_id")
+                    display_name = item.get("display_name", provider_id)
+                    description = item.get("description", "")
+                    if (not isinstance(provider_id, str)
+                            or not _PROVIDER.fullmatch(provider_id)
+                            or not isinstance(display_name, str)
+                            or len(display_name) > 100
+                            or not isinstance(description, str)
+                            or len(description) > 240):
                         continue
                     safe.append({
-                        "provider_id": item["provider_id"],
-                        "display_name": item.get("display_name", item["provider_id"]),
+                        "provider_id": provider_id,
+                        "display_name": display_name,
                         "available": item.get("available") is True,
-                        "description": item.get("description", ""),
+                        "description": description,
                     })
                 return await self._respond(send, 200, {"providers": safe})
             except Exception:
