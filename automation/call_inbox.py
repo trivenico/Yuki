@@ -20,8 +20,9 @@ class PairedDeviceCallInbox:
         prompt: Callable[[str], str] = input,
         output: Callable[[str], None] = print,
     ):
-        if not isinstance(client, RemoteCallClient):
-            raise TypeError("client_must_be_RemoteCallClient")
+        if not all(callable(getattr(client, method, None))
+                   for method in ("list_incoming", "accept", "reject")):
+            raise TypeError("client_must_implement_call_inbox_protocol")
         if not callable(prompt) or not callable(output):
             raise TypeError("prompt_and_output_must_be_callable")
         self.client = client
