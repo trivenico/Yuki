@@ -205,6 +205,40 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         )
         self.assertEqual((status, accepted["session"]["status"]), (200, "accepted"))
 
+
+    def test_revoked_caller_device_cannot_ring_or_be_accepted(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        caller_id = caller["device"]["device_id"]
+        recipient_id = recipient["device"]["device_id"]
+        status, challenge = self.request("POST", "/v1/devices/calls/confirmation-challenges", {
+            "password": "a-secure-owner-password",
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        status, created = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirmation_token": challenge["confirmation_token"],
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        session_id = created["session"]["session_id"]
+
+        status, revoked = self.request(
+            "DELETE", f"/v1/devices/{caller_id}", token=self.owner_one.token
+        )
+        self.assertEqual((status, revoked["revoked"]), (200, True))
+        status, incoming = self.request(
+            "GET", "/v1/devices/calls/incoming", token=recipient["device_token"]
+        )
+        self.assertEqual((status, incoming["invitations"]), (200, []))
+        status, denied = self.request(
+            "POST", f"/v1/devices/calls/{session_id}/accept", {},
+            recipient["device_token"],
+        )
+        self.assertEqual((status, denied["error"]), (403, "call_action_denied"))
+
     def test_confirmation_challenge_is_bound_to_owner_session(self):
         caller = self._pair_device()
         recipient = self._pair_device()
