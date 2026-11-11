@@ -282,6 +282,35 @@
     } finally { state.abort = null; state.requestId = null; setBusy(false); $("message-input").focus(); }
   };
 
+  const loadCallHistory = async () => {
+    const container = $("call-history");
+    if (!container || !state.user) return;
+    try {
+      const data = await api("/v1/devices/calls");
+      container.replaceChildren();
+      const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+      if (!sessions.length) {
+        const empty = document.createElement("p");
+        empty.className = "integration-empty";
+        empty.textContent = "No recent calls.";
+        container.append(empty);
+        return;
+      }
+      sessions.slice(0, 20).forEach((session) => {
+        const item = document.createElement("div");
+        item.className = "call-history-item";
+        const title = document.createElement("strong");
+        title.textContent = session.caller_device_id + " → " + session.recipient_device_id;
+        const detail = document.createElement("span");
+        detail.textContent = session.status + " · " + session.created_at;
+        item.append(title, detail);
+        container.append(item);
+      });
+    } catch (error) {
+      container.textContent = "Unable to load call history: " + error.message;
+    }
+  };
+
   const loadPairedDevices = async () => {
     const caller = $("call-caller"), recipient = $("call-recipient");
     if (!caller || !recipient || !state.user) return;
@@ -302,6 +331,7 @@
       };
       fill(caller, "Choose calling device");
       fill(recipient, "Choose recipient device");
+      await loadCallHistory();
       $("call-status").textContent = devices.length < 2
         ? "Pair at least two active devices to place a LAN call."
         : devices.length + " active paired devices available. Calls remain pending until the recipient accepts.";
@@ -351,6 +381,7 @@
       $("call-cancel").hidden = created.session.status !== "ringing";
       $("call-status").textContent = "Invitation created. Status: " + created.session.status +
         ". The recipient device must accept before a call can proceed.";
+      await loadCallHistory();
       toast("LAN call invitation sent.");
     } catch (error) {
       $("call-status").textContent = "Call invitation not created: " + error.message;
@@ -374,6 +405,7 @@
       $("call-status").textContent = "Invitation cancelled. Status: " + result.session.status + ".";
       state.callSessionHandle = null;
       button.hidden = true;
+      await loadCallHistory();
       toast("Pending LAN call invitation cancelled.");
     } catch (error) {
       $("call-status").textContent = "Unable to cancel invitation: " + error.message;
