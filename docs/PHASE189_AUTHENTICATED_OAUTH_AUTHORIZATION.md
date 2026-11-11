@@ -10,8 +10,16 @@
 - Register non-secret connection metadata only after the authorization service reports successful credential storage and its provider identity matches the trusted route.
 - Bound callback request bodies and never echo callback URLs or authorization codes in API responses.
 - Mount the authorization API optionally alongside the authenticated connection-management API.
+- Add a trusted, authenticated provider catalog endpoint and an owner-facing browser panel for connect, status, scopes and disconnect.
+- The browser uses text-only DOM rendering for provider metadata and never constructs provider endpoints.
 
 ## API contract
+
+Provider catalog:
+GET /v1/integrations/oauth/providers
+Returns only bounded provider IDs, display names, descriptions and availability from a trusted host-injected catalog. The catalog never exposes endpoints, client secrets or tokens.
+
+The browser workspace includes an Integrations panel to list connected accounts, initiate configured connections, and request owner-confirmed disconnect. Configure each provider's exact registered redirect URI as the Yuki web origin with `yuki_oauth_provider={provider_id}` in the query string; the browser posts the returned callback URL to the authenticated callback endpoint using the initiating session.
 
 Start:
 POST /v1/integrations/oauth/providers/{provider_id}/authorize
