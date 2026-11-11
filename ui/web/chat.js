@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { token: sessionStorage.getItem("yuki_token"), user: null, conversations: [], active: null, busy: false, abort: null, version: 0, requestId: null };
+  const state = { token: sessionStorage.getItem("yuki_token"), user: null, conversations: [], active: null, busy: false, abort: null, version: 0, requestId: null, callSessionHandle: null };
   const api = async (path, options = {}) => {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     if (state.token) headers.Authorization = "Bearer " + state.token;
@@ -347,6 +347,8 @@
           confirmation_token: confirmationToken
         })
       });
+      state.callSessionHandle = created.session.session_id;
+      $("call-cancel").hidden = created.session.status !== "ringing";
       $("call-status").textContent = "Invitation created. Status: " + created.session.status +
         ". The recipient device must accept before a call can proceed.";
       toast("LAN call invitation sent.");
@@ -356,6 +358,27 @@
       confirmationToken = null;
       passwordInput.value = "";
       submit.disabled = false;
+    }
+  });
+  $("call-cancel").addEventListener("click", async () => {
+    if (!state.callSessionHandle || !window.confirm(
+      "Cancel this pending invitation? The recipient will no longer be able to accept it."
+    )) return;
+    const button = $("call-cancel");
+    button.disabled = true;
+    try {
+      const result = await api(
+        "/v1/devices/calls/" + encodeURIComponent(state.callSessionHandle) + "/cancel",
+        { method: "POST", body: "{}" }
+      );
+      $("call-status").textContent = "Invitation cancelled. Status: " + result.session.status + ".";
+      state.callSessionHandle = null;
+      button.hidden = true;
+      toast("Pending LAN call invitation cancelled.");
+    } catch (error) {
+      $("call-status").textContent = "Unable to cancel invitation: " + error.message;
+    } finally {
+      button.disabled = false;
     }
   });
   $("refresh-devices").addEventListener("click", () => loadPairedDevices());
