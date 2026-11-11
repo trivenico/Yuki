@@ -87,7 +87,7 @@ class CompanionStateStore:
 
     @staticmethod
     def _check_kind(kind: str):
-        if kind not in CompanionStateStore.MAX_RECORDS:
+        if not isinstance(kind, str) or kind not in CompanionStateStore.MAX_RECORDS:
             raise ValueError("unsupported companion record kind.")
 
     @staticmethod
@@ -121,6 +121,8 @@ class CompanionStateStore:
         self._check_kind(kind)
         if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
             raise ValueError("record must contain a non-empty id.")
+        if "created_at" in item and not isinstance(item["created_at"], str):
+            raise ValueError("created_at must be text.")
         payload = json.dumps(item, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         if len(payload) > 16_384:
             raise ValueError("record exceeds the storage limit.")
@@ -189,7 +191,9 @@ class CompanionStateStore:
             ).fetchall()
             for row in rows:
                 item = json.loads(row["payload"])
-                if datetime.fromisoformat(item["due_at"]) <= now:
+                if due_at = datetime.fromisoformat(item["due_at"])
+                    if due_at.tzinfo is None or due_at.utcoffset() is None:
+                        raise ValueError("reminder timestamp must be timezone-aware") <= now:
                     claimed.append(item)
                     db.execute(
                         """UPDATE companion_records SET delivered_at=?
@@ -220,8 +224,10 @@ class CompanionStateStore:
         if not isinstance(raw, list) or len(raw) > self.MAX_RECORDS[kind]:
             raise RuntimeError("Legacy companion state has an invalid structure or exceeds limits.")
         for item in raw:
-            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
                 raise RuntimeError("Legacy companion state contains an invalid record.")
+            if "created_at" in item and not isinstance(item["created_at"], str):
+                raise RuntimeError("Legacy companion timestamp is invalid.")
             if kind == "memory" and not isinstance(item.get("text"), str):
                 raise RuntimeError("Legacy memory record is invalid.")
             if kind == "identity" and (not isinstance(item.get("name"), str) or item.get("consent") is not True):
