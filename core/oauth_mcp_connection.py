@@ -95,11 +95,14 @@ class OAuthMCPConnectionManager:
         if not isinstance(policy_registry, MCPToolPolicyRegistry):
             raise OAuthMCPConnectionError("trusted_tool_policy_registry_required")
         try:
+            scope_values = tuple(sorted(granted_scopes)) if isinstance(
+                granted_scopes, (set, frozenset)
+            ) else tuple(granted_scopes)
             approver = policy_registry.build_approver(
                 owner_id=owner_id,
                 provider_id=self._provider_id,
                 account_id=account_id,
-                granted_scopes=granted_scopes,
+                granted_scopes=scope_values,
                 owner_approval=owner_approval,
                 audit=audit,
                 current_revision=current_revision,
@@ -117,7 +120,7 @@ class OAuthMCPConnectionManager:
             allowed_hosts=allowed_hosts,
             allowed_tools=allowed_tools,
             approver=approver,
-            required_scopes=tuple(granted_scopes),
+            required_scopes=scope_values,
             timeout=timeout,
         )
 
