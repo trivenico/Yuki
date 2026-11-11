@@ -45,4 +45,5 @@ jobs:
       - name: Verify installed command outside the source tree
         working-directory: ${{ runner.temp }}
         run: |
+          python -c "from core.config import load_config; assert load_config()['name'] == 'Yuki'"
           yuki doctor
