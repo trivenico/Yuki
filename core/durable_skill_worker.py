@@ -41,7 +41,6 @@ class DurableSkillWorker:
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
 
     def _invoke_with_lease_heartbeat(self, task_id: str, lease_token: str, skill_name: str, argument: str):
-        self._lease_token = lease_token
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
 
@@ -51,7 +50,7 @@ class DurableSkillWorker:
                     self.engine.heartbeat(
                         task_id,
                         self.worker_id,
-                        lease_token=self._lease_token,
+                        lease_token=lease_token,
                         lease_seconds=self.lease_seconds,
                     )
                 except Exception as error:
@@ -177,6 +176,7 @@ class DurableSkillWorker:
                         self.worker_id,
                         "worker invocation raised an exception",
                         retry_delay_seconds=0,
+                        lease_token=lease_token,
                     )
                     persisted_state = current.get("state", "failed")
             except Exception:
