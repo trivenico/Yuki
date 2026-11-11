@@ -8,6 +8,7 @@ from typing import Any
 
 from core.device_pairing import DevicePairingError, DevicePairingService
 from core.inference_jobs import InferenceJobService
+from core.lan_call_sessions import LANCallSessionStore, CallSessionDenied, CallSessionError
 
 _MAX_BODY = 70_000
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -31,6 +32,7 @@ class AuthenticatedInferenceAPI:
         self.auth = auth_service
         self.pairing = pairing
         self.jobs = jobs
+        self.calls = LANCallSessionStore(pairing)
 
     def __getattr__(self, name):
         """Preserve the wrapped conversation API's existing runtime surface."""
@@ -111,6 +113,33 @@ class AuthenticatedInferenceAPI:
                     return await self._respond(send, 200, {"job": job.public_dict()})
                 return await self._respond(send, 404, {"error": "not_found"})
 
+            call_incoming = path == "/v1/devices/calls/incoming" and method == "GET"
+            call_action = re.fullmatch(r"/v1/devices/calls/([A-Za-z0-9_-]{32,128})/(accept|reject|end)", path)
+            call_read = re.fullmatch(r"/v1/devices/calls/([A-Za-z0-9_-]{32,128})", path) and method == "GET"
+            if call_incoming or (call_action and method == "POST") or call_read:
+                device_token = self._bearer(scope)
+                if device_token is None:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                try:
+                    if call_incoming:
+                        invitations = await asyncio.to_thread(self.calls.list_incoming, device_token=device_token)
+                        return await self._respond(send, 200, {"invitations": invitations})
+                    if call_action:
+                        session_id, action = call_action.group(1), call_action.group(2)
+                        if action == "accept":
+                            session = await asyncio.to_thread(self.calls.accept, session_id=session_id, recipient_token=device_token)
+                        elif action == "reject":
+                            session = await asyncio.to_thread(self.calls.reject, session_id=session_id, recipient_token=device_token)
+                        else:
+                            session = await asyncio.to_thread(self.calls.end, session_id=session_id, device_token=device_token)
+                    else:
+                        session = await asyncio.to_thread(self.calls.get, session_id=call_read.group(1), device_token=device_token)
+                    return await self._respond(send, 200, {"session": self._call(session)})
+                except CallSessionDenied:
+                    return await self._respond(send, 403, {"error": "call_action_denied"})
+                except CallSessionError:
+                    return await self._respond(send, 400, {"error": "invalid_call_request"})
+
             user = await self._user(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
@@ -125,6 +154,25 @@ class AuthenticatedInferenceAPI:
                 return await self._respond(send, 201, {
                     "code": challenge.code, "expires_at": challenge.expires_at,
                 })
+
+            if path == "/v1/devices/calls" and method == "POST":
+                payload = await self._body(receive)
+                if set(payload) != {"caller_device_id", "recipient_device_id", "confirm"} or not all(
+                    isinstance(payload.get(k), str) for k in ("caller_device_id", "recipient_device_id")
+                ):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    session = await asyncio.to_thread(
+                        self.calls.invite_as_owner, owner_id=user.user_id,
+                        caller_device_id=payload["caller_device_id"],
+                        recipient_device_id=payload["recipient_device_id"],
+                        owner_confirmed=payload["confirm"],
+                    )
+                except CallSessionDenied:
+                    return await self._respond(send, 403, {"error": "call_invitation_denied"})
+                except CallSessionError:
+                    return await self._respond(send, 400, {"error": "invalid_call_request"})
+                return await self._respond(send, 201, {"session": self._call(session)})
 
             if path == "/v1/devices" and method == "GET":
                 devices = await asyncio.to_thread(self.pairing.list_devices, user.user_id)
@@ -196,6 +244,19 @@ class AuthenticatedInferenceAPI:
         if not sep or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
         return token
+
+    @staticmethod
+    def _call(session):
+        return {
+            "session_id": session.session_id,
+            "caller_device_id": session.caller_device_id,
+            "recipient_device_id": session.recipient_device_id,
+            "status": session.status,
+            "created_at": session.created_at,
+            "expires_at": session.expires_at,
+            "accepted_at": session.accepted_at,
+            "ended_at": session.ended_at,
+        }
 
     @staticmethod
     def _job_summary(job):
