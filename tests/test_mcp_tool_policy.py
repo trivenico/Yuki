@@ -170,6 +170,16 @@ class MCPToolPolicyTests(unittest.TestCase):
         self.assertFalse(approve("disabled_tool", {}))
         self.assertFalse(self.events)
 
+    def test_boolean_is_not_accepted_as_policy_revision(self):
+        approve = self.registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",),
+            owner_approval=lambda _request: True, audit=self.events.append,
+            current_revision=lambda: True,
+        )
+        self.assertFalse(approve("read_profile", {}))
+        self.assertFalse(self.events)
+
     def test_invalid_arguments_and_non_finite_values_are_denied(self):
         approve = self.approver()
         self.assertFalse(approve("read_profile", {"bad": float("nan")}))
