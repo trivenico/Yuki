@@ -13,7 +13,6 @@ import re
 from typing import Any, Callable
 
 
-
 class LeaseBoundApprovalResolver:
     """Resolve an approval token only while one exact task claim is current."""
 
@@ -85,7 +84,7 @@ class LeaseBoundApprovalResolver:
 
         # The resolver may perform I/O or block. Re-check after it returns so a
         # credential is never handed to a worker whose lease changed mid-lookup.
-        if not self._claim_is_current(context.task_id, lease_token):
+        if not self._claim_is_current(task_id, lease_token):
             raise PermissionError("durable task claim changed during approval resolution")
         if credential is None:
             return None
