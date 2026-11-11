@@ -24,10 +24,10 @@ running as the same OS account.
 
 ## Security boundaries and limitations
 
-- This phase now hardens the conversation, authentication, paired-device and
-  inference SQLite databases. Other SQLite stores, including income, OAuth,
-  workflow, approval audit, pending approvals and MCP policy stores, still
-  require separate inventory and adoption.
+- This phase now hardens conversation, authentication, paired-device, inference,
+  encrypted OAuth credential, MCP policy, workflow, approval-audit and pending-
+  approval SQLite databases. Other SQLite stores, including income and any additional feature-specific
+  stores not listed above, still require separate inventory and adoption.
 - POSIX mode `0600` is not encryption and does not protect data from the same
   OS user, root, malware running as the owner, or an untrusted backup process.
 - Windows ACL enforcement is not implemented here. The Windows user profile
@@ -47,8 +47,9 @@ running as the same OS account.
 - Symlink and hard-link rejection.
 - Reject a directory as a database file.
 - Verify conversation database mode and WAL/SHM sidecar modes when present.
-- Verify pre-existing permissive authentication DBs are tightened and the
-  shared device-pairing/inference DB is protected.
+- Verify pre-existing permissive authentication DBs are tightened, the shared
+  device-pairing/inference DB is protected, and the OAuth, MCP policy, workflow,
+  approval audit and pending approval stores are secured.
 - POSIX-only permission assertions are skipped on platforms without equivalent
   mode semantics.
 
