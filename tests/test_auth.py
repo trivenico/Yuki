@@ -60,6 +60,51 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             BuiltInAuthService(str(Path(self.tmp.name) / "bad.sqlite3"), password_iterations=1)
 
+
+    def test_session_password_reauthentication_requires_active_session(self):
+        self.auth.create_account("alice.user", "A sufficiently long password 3!")
+        session = self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+        user = self.auth.verify_session_password(
+            session.token, "A sufficiently long password 3!"
+        )
+        self.assertEqual(user.username, "alice.user")
+        self.assertEqual(self.auth.resolve_session(session.token).user_id, user.user_id)
+
+        with self.assertRaises(AuthenticationError):
+            self.auth.verify_session_password(session.token, "incorrect password")
+        with self.auth._connect() as db:
+            row = db.execute(
+                "SELECT failed_logins FROM auth_users WHERE user_id=?", (user.user_id,)
+            ).fetchone()
+        self.assertEqual(row["failed_logins"], 1)
+
+        self.assertTrue(self.auth.revoke_session(session.token))
+        with self.assertRaises(AuthenticationError):
+            self.auth.verify_session_password(
+                session.token, "A sufficiently long password 3!"
+            )
+
+    def test_reauthentication_lockout_and_expired_session(self):
+        self.auth.create_account("alice.user", "A sufficiently long password 3!")
+        session = self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+        for _ in range(3):
+            with self.assertRaises(AuthenticationError):
+                self.auth.verify_session_password(session.token, "incorrect password")
+        with self.assertRaises(AuthenticationError):
+            self.auth.verify_session_password(
+                session.token, "A sufficiently long password 3!"
+            )
+        with self.auth._connect() as db:
+            db.execute(
+                "UPDATE auth_sessions SET expires_at=? WHERE token_hash=?",
+                ("2000-01-01T00:00:00+00:00",
+                 __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest())
+            )
+        with self.assertRaises(AuthenticationError):
+            self.auth.verify_session_password(
+                session.token, "A sufficiently long password 3!"
+            )
+
     def test_workflow_approval_uses_authenticated_identity_not_request_claims(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
