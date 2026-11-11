@@ -10,6 +10,9 @@ from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
+from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAuthProviderRegistry
+from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
+from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
 
 
@@ -85,6 +88,64 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIsInstance(runtime.app.app, AuthenticatedOAuthConnectionAPI)
             self.assertIs(runtime.app._provider_catalog, catalog)
             runtime.close()
+
+    def test_runtime_wires_prepared_registry_resolver_and_safe_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            registry = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite"))
+            service = SimpleNamespace(begin=lambda **kwargs: {}, complete=lambda **kwargs: {})
+            prepared = PreparedOAuthProvider(
+                provider_id="example", issuer="https://issuer.example",
+                resource="https://mcp.example", client_id="private-client",
+                registration_method="pre_registered",
+                redirect_uri="https://app.example/oauth/callback/example",
+                scopes=("read",), authorization_service=service,
+            )
+            providers = PreparedOAuthProviderRegistry(
+                {"example": prepared},
+                {"example": OAuthProviderPresentation("Example", "Trusted integration")},
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                oauth_connections=registry,
+                oauth_disconnect_service_for_provider=lambda provider: None,
+                prepared_oauth_provider_registry=providers,
+            )
+            self.assertIs(runtime.app._service_for_provider("example"), service)
+            self.assertEqual(runtime.app._provider_catalog(), ({
+                "provider_id": "example", "display_name": "Example",
+                "description": "Trusted integration", "available": True,
+            },))
+            self.assertIsNone(runtime.app._service_for_provider("unknown"))
+            runtime.close()
+
+    def test_runtime_rejects_registry_combined_with_explicit_oauth_resolver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            connection_registry = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite"))
+            service = SimpleNamespace(begin=lambda **kwargs: {}, complete=lambda **kwargs: {})
+            prepared = PreparedOAuthProvider(
+                provider_id="example", issuer="https://issuer.example",
+                resource="https://mcp.example", client_id="private-client",
+                registration_method="pre_registered",
+                redirect_uri="https://app.example/oauth/callback/example",
+                scopes=("read",), authorization_service=service,
+            )
+            providers = PreparedOAuthProviderRegistry(
+                {"example": prepared}, {"example": OAuthProviderPresentation("Example")}
+            )
+            with self.assertRaisesRegex(ValueError, "cannot be combined"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    oauth_connections=connection_registry,
+                    oauth_disconnect_service_for_provider=lambda provider: None,
+                    oauth_authorization_service_for_provider=lambda provider: service,
+                    prepared_oauth_provider_registry=providers,
+                )
 
     def test_runtime_rejects_oauth_catalog_without_authorization_resolver(self):
         with tempfile.TemporaryDirectory() as directory:
