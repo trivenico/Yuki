@@ -185,7 +185,6 @@
       ? segments[3] : null;
     if (!provider) return false;
     const callbackUrl = window.location.href;
-    window.history.replaceState({}, document.title, "/" + window.location.hash);
     if (!state.token) {
       toast("Sign in with the account that started this connection, then retry the callback.");
       return true;
@@ -194,10 +193,16 @@
       await api("/v1/integrations/oauth/providers/" + encodeURIComponent(provider) + "/callback", {
         method: "POST", body: JSON.stringify({ callback_url: callbackUrl })
       });
+      window.history.replaceState({}, document.title, "/" + window.location.hash);
       toast(provider + " connected successfully.");
       await loadIntegrations();
     } catch (error) {
-      toast("OAuth connection failed: " + error.message);
+      if (!state.token) {
+        toast("Session expired. Sign in with the account that started this connection to retry.");
+      } else {
+        window.history.replaceState({}, document.title, "/" + window.location.hash);
+        toast("OAuth connection failed: " + error.message);
+      }
     }
     return true;
   };
