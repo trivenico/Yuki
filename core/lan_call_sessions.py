@@ -202,6 +202,34 @@ class LANCallSessionStore:
             return self._session(row, session_id)
 
 
+    def cancel_as_owner(self, *, owner_id: str, session_id: str) -> CallSession:
+        """Allow the authenticated owner to cancel only their still-ringing invite."""
+        if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 128:
+            raise CallSessionError("owner_id_invalid")
+        now = _now()
+        digest = _session_digest(session_id)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM lan_call_sessions WHERE session_hash=? AND owner_id=?",
+                (digest, owner_id),
+            ).fetchone()
+            if row is None:
+                raise CallSessionDenied("call_session_not_found")
+            if row["status"] != "ringing":
+                raise CallSessionDenied("only_ringing_invites_can_be_cancelled")
+            status = "expired" if row["expires_at"] <= _stamp(now) else "ended"
+            db.execute(
+                """UPDATE lan_call_sessions SET status=?,ended_at=?
+                   WHERE session_hash=? AND owner_id=? AND status='ringing'""",
+                (status, _stamp(now), digest, owner_id),
+            )
+            updated = db.execute(
+                "SELECT * FROM lan_call_sessions WHERE session_hash=?",
+                (digest,),
+            ).fetchone()
+            return self._session(updated, session_id)
+
     def list_incoming(self, *, device_token: str) -> list[dict]:
         """Return unexpired invitations for the authenticated recipient."""
         now = _now()
