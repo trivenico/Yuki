@@ -212,12 +212,15 @@ class OIDCIdentityTokenTests(unittest.TestCase):
 
     def test_rejects_duplicate_kids_and_private_jwks_material(self):
         self.transport.document = {"keys": [self.jwk, dict(self.jwk)]}
+        self.verifier._jwks_cache.invalidate(self.verifier._jwks_uri)
         with self.assertRaisesRegex(OIDCIdentityTokenError, "signing_key_not_found"):
             self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
         self.transport.document = {"keys": [self.jwk, {"kid": "key-1", "kty": "oct"}]}
+        self.verifier._jwks_cache.invalidate(self.verifier._jwks_uri)
         with self.assertRaisesRegex(OIDCIdentityTokenError, "signing_key_not_found"):
             self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
         self.transport.document = {"keys": [{**self.jwk, "d": "private"}]}
+        self.verifier._jwks_cache.invalidate(self.verifier._jwks_uri)
         with self.assertRaisesRegex(OIDCIdentityTokenError, "signing_key_invalid"):
             self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
 
@@ -232,6 +235,7 @@ class OIDCIdentityTokenTests(unittest.TestCase):
         with self.assertRaises(OIDCIdentityTokenError):
             self.verifier.verify(id_token="not.a.jwt", expected_nonce="nonce-value-1234567890")
         self.transport.document = {"keys": []}
+        self.verifier._jwks_cache.invalidate(self.verifier._jwks_uri)
         with self.assertRaisesRegex(OIDCIdentityTokenError, "jwks_invalid"):
             self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
 
