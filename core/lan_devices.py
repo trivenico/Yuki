@@ -9,6 +9,7 @@ never treated as authority.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 import ipaddress
 import json
@@ -91,7 +92,8 @@ def _validate_endpoint(value: str) -> str:
     normalized_port = port or (443 if parsed.scheme == "https" else 80)
     if not 1 <= normalized_port <= 65535:
         raise LocalDeviceError("endpoint_port_invalid")
-    return f"{parsed.scheme}://{address.compressed}:{normalized_port}"
+    host_text = f"[{address.compressed}]" if address.version == 6 else address.compressed
+    return f"{parsed.scheme}://{host_text}:{normalized_port}"
 
 
 class LocalNetworkDeviceRegistry:
@@ -168,7 +170,7 @@ class LocalNetworkDeviceRegistry:
         normalized_capabilities = self._capabilities(capabilities)
         if expected_revision is not None and (type(expected_revision) is not int or expected_revision < 1):
             raise LocalDeviceError("expected_revision_invalid")
-        now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             active = db.execute("""
