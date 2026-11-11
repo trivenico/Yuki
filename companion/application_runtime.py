@@ -1,7 +1,7 @@
 """Local companion composition over Yuki shared conversation runtime.
 
-This is a local foundation, not a background daemon or desktop notification
-service. Companion memory is disabled unless the owner explicitly opts in.
+Companion records use owner-scoped transactional SQLite persistence. Memory
+remains opt-in; legacy JSON state is imported without deleting source files.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from companion import DEFAULT_PERSONA, EmotionState, Persona
 from companion.identity_manager import IdentityManager
 from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
+from companion.state_store import CompanionStateStore
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
@@ -26,7 +27,7 @@ class CompanionApplicationRuntime:
     def __init__(self, *, application: ConversationApplicationRuntime,
                  persona: Persona, emotion: EmotionState, identities: IdentityManager,
                  reminders: ReminderQueue, memory: MemoryStore | None,
-                 workspace: Path) -> None:
+                 state_store: CompanionStateStore, workspace: Path) -> None:
         self.application = application
         self.conversations = application.conversations
         self.owner_id = application.owner_id
@@ -35,6 +36,7 @@ class CompanionApplicationRuntime:
         self.identities = identities
         self.reminders = reminders
         self.memory = memory
+        self.state_store = state_store
         self.workspace = workspace
         self._closed = False
 
@@ -58,13 +60,7 @@ def build_companion_application_runtime(
     persona: Persona = DEFAULT_PERSONA,
     store_factory: Callable[[dict[str, Any]], Any] | None = None,
 ) -> CompanionApplicationRuntime:
-    """Compose a local companion with persistent chat and opt-in memory.
-
-    The workspace is the local trust boundary. Identity, reminders and optional
-    memory files live beneath its companion directory. The stable local owner
-    identifier scopes the shared conversation database; it is not a network
-    credential. No scheduler, notification or device access is started here.
-    """
+    """Compose a local companion with shared chat and transactional local state."""
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
     if not isinstance(agent_loop, AgentExecutionLoop):
@@ -84,6 +80,13 @@ def build_companion_application_runtime(
     owner_id = load_or_create_local_owner_id(workspace)
     state_dir = workspace / "companion"
     state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    state_store = CompanionStateStore(state_dir / "state.sqlite3", owner_id=owner_id)
+
+    # Import each old JSON file once. Sources remain intact for rollback/recovery.
+    state_store.import_legacy_json("identity", state_dir / "identities.json")
+    state_store.import_legacy_json("reminder", state_dir / "reminders.json")
+    if memory_enabled:
+        state_store.import_legacy_json("memory", state_dir / "memory.json")
 
     kwargs = {} if store_factory is None else {"store_factory": store_factory}
     application = build_conversation_application_runtime(
@@ -92,9 +95,10 @@ def build_companion_application_runtime(
     try:
         return CompanionApplicationRuntime(
             application=application, persona=persona, emotion=EmotionState(),
-            identities=IdentityManager(state_dir / "identities.json"),
-            reminders=ReminderQueue(state_dir / "reminders.json"),
-            memory=MemoryStore(state_dir / "memory.json") if memory_enabled else None,
+            identities=IdentityManager(state_store=state_store),
+            reminders=ReminderQueue(state_store=state_store),
+            memory=MemoryStore(state_store=state_store) if memory_enabled else None,
+            state_store=state_store,
             workspace=workspace,
         )
     except Exception:

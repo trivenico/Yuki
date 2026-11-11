@@ -1,88 +1,68 @@
-"""Local reminder queue: emits due reminders, never runs arbitrary actions."""
+"""Local reminder queue backed by atomic, cross-process SQLite claims."""
 from __future__ import annotations
 
-import json
-import os
-import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
-from threading import RLock
 from uuid import uuid4
+
+from companion.state_store import CompanionStateStore
 
 
 class ReminderQueue:
     MAX_REMINDERS = 1000
     MAX_TEXT = 1000
 
-    def __init__(self, path: str | Path = "yuki_reminders.json"):
-        self.path = Path(path).expanduser().resolve()
-        self._lock = RLock()
-
-    def _load(self):
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return []
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Reminder store is unreadable; no data was overwritten.") from exc
-        if not isinstance(data, list) or len(data) > self.MAX_REMINDERS:
-            raise RuntimeError("Reminder store has an invalid structure or exceeds limits.")
-        return data
-
-    def _save(self, items):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(prefix=".yuki-reminders-", suffix=".tmp", dir=str(self.path.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(items[-self.MAX_REMINDERS:], handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, self.path)
-        finally:
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
+    def __init__(self, path: str | Path = "yuki_companion.sqlite3", *, owner_id: str = "local",
+                 state_store: CompanionStateStore | None = None):
+        self.store = state_store or CompanionStateStore(path, owner_id=owner_id)
 
     def add(self, text: str, due_at: datetime) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT:
             raise ValueError(f"Reminder text must be 1-{self.MAX_TEXT} characters.")
         if not isinstance(due_at, datetime) or due_at.tzinfo is None or due_at.utcoffset() is None:
             raise ValueError("due_at must be timezone-aware.")
-        with self._lock:
-            items = self._load()
-            if len(items) >= self.MAX_REMINDERS:
-                raise ValueError("Reminder queue is full.")
-            item = {"id": uuid4().hex, "text": text.strip(),
-                    "due_at": due_at.astimezone(timezone.utc).isoformat(), "delivered": False}
-            items.append(item)
-            self._save(items)
-            return dict(item)
+        item = {"id": uuid4().hex, "text": text.strip(),
+                "due_at": due_at.astimezone(timezone.utc).isoformat(), "delivered": False}
+        return self.store.add_record("reminder", item)
+
+    def claim_due_notifications(
+        self, now: datetime | None = None, *, lease_seconds: int = 60, limit: int = 20,
+    ) -> list[dict]:
+        """Claim durable notification work; delivery is not implied by claiming."""
+        current = now or datetime.now(timezone.utc)
+        self.store.enqueue_due_reminders(current)
+        return self.store.claim_outbox(current, lease_seconds=lease_seconds, limit=limit)
+
+    def complete_notification(self, claim: dict, now: datetime | None = None) -> bool:
+        if not isinstance(claim, dict):
+            return False
+        return self.store.complete_outbox(
+            claim.get("event_id"), claim.get("lease_token"), now or datetime.now(timezone.utc)
+        )
+
+    def fail_notification(
+        self, claim: dict, error: str, now: datetime | None = None, *,
+        retry_after_seconds: int = 60, max_attempts: int = 8,
+    ) -> bool:
+        if not isinstance(claim, dict):
+            return False
+        return self.store.fail_outbox(
+            claim.get("event_id"), claim.get("lease_token"), now or datetime.now(timezone.utc),
+            error=error, retry_after_seconds=retry_after_seconds, max_attempts=max_attempts,
+        )
 
     def due(self, now: datetime | None = None) -> list[dict]:
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now must be timezone-aware.")
-        with self._lock:
-            items = self._load()
-            ready = []
-            for item in items:
-                if not item.get("delivered") and datetime.fromisoformat(item["due_at"]) <= now:
-                    ready.append(dict(item))
-                    item["delivered"] = True
-            if ready:
-                self._save(items)
-            return ready
+        return self.store.claim_due_reminders(now)
 
     def list(self) -> list[dict]:
-        with self._lock:
-            return [dict(item) for item in self._load()]
-
+        return self.store.list_records("reminder")
 
 
 def summarize_habit_streaks(entries, *, today=None):
     """Summarize explicitly logged habit entries; never infer unrecorded behavior."""
-    from datetime import date, timedelta
     if not isinstance(entries, (list, tuple)):
         raise ValueError("entries must be a list of health log records.")
     current = today or datetime.now(timezone.utc).date()
@@ -94,8 +74,7 @@ def summarize_habit_streaks(entries, *, today=None):
     for item in entries:
         if not isinstance(item, dict) or item.get("type") not in {"habit", "exercise"}:
             continue
-        detail = item.get("detail")
-        stamp = item.get("occurred_at")
+        detail, stamp = item.get("detail"), item.get("occurred_at")
         if not isinstance(detail, str) or not detail.strip() or not isinstance(stamp, str):
             continue
         try:
@@ -106,8 +85,7 @@ def summarize_habit_streaks(entries, *, today=None):
     summaries = []
     for item in dates_by_habit.values():
         dates = item["dates"]
-        streak = 0
-        cursor = current
+        streak, cursor = 0, current
         while cursor in dates:
             streak += 1
             cursor -= timedelta(days=1)

@@ -61,7 +61,8 @@ class CompanionApplicationRuntimeTests(unittest.TestCase):
                 self.assertTrue(runtime.memory_enabled)
                 saved = runtime.memory.add("Owner-approved note", category="note")
                 self.assertEqual(runtime.memory.list()[0]["id"], saved["id"])
-                self.assertTrue((root / "companion" / "memory.json").is_file())
+                self.assertTrue((root / "companion" / "state.sqlite3").is_file())
+                self.assertFalse((root / "companion" / "memory.json").exists())
             finally:
                 runtime.close()
 
@@ -86,6 +87,27 @@ class CompanionApplicationRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
 
+    def test_reminder_notification_outbox_requires_explicit_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = build_companion_application_runtime(
+                {"workspace": str(root)}, agent_loop=_loop(),
+                store_factory=lambda config: ConversationStore(root / "conversations.sqlite3"),
+            )
+            try:
+                reminder = runtime.reminders.add(
+                    "Deliver safely", datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+                claims = runtime.reminders.claim_due_notifications()
+                self.assertEqual(len(claims), 1)
+                self.assertEqual(claims[0]["payload"]["id"], reminder["id"])
+                self.assertFalse(runtime.reminders.list()[0]["delivered"])
+                self.assertTrue(runtime.reminders.complete_notification(claims[0]))
+                self.assertTrue(runtime.reminders.list()[0]["delivered"])
+                self.assertFalse(runtime.reminders.complete_notification(claims[0]))
+            finally:
+                runtime.close()
+
     def test_rejects_invalid_memory_configuration_before_database_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -95,6 +117,55 @@ class CompanionApplicationRuntimeTests(unittest.TestCase):
                     agent_loop=_loop(),
                 )
             self.assertFalse((root / "conversations.sqlite3").exists())
+
+
+    def test_legacy_state_migrates_without_deleting_sources_and_memory_stays_opt_in(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_dir = root / "companion"
+            state_dir.mkdir()
+            legacy_identity = [{"id": "legacy-owner", "name": "Owner", "consent": True}]
+            legacy_reminder = [{"id": "legacy-reminder", "text": "Review", 
+                                "due_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                                "delivered": False}]
+            legacy_memory = [{"id": "legacy-memory", "created_at": datetime.now(timezone.utc).isoformat(),
+                              "category": "note", "text": "private note"}]
+            (state_dir / "identities.json").write_text(json.dumps(legacy_identity), encoding="utf-8")
+            (state_dir / "reminders.json").write_text(json.dumps(legacy_reminder), encoding="utf-8")
+            (state_dir / "memory.json").write_text(json.dumps(legacy_memory), encoding="utf-8")
+            runtime = build_companion_application_runtime(
+                {"workspace": str(root)}, agent_loop=_loop(),
+                store_factory=lambda config: ConversationStore(root / "conversations.sqlite3"),
+            )
+            try:
+                self.assertEqual(runtime.identities.list()[0]["id"], "legacy-owner")
+                self.assertEqual([x["id"] for x in runtime.reminders.due()], ["legacy-reminder"])
+                self.assertIsNone(runtime.memory)
+                self.assertEqual(json.loads((state_dir / "memory.json").read_text(encoding="utf-8")), legacy_memory)
+                self.assertEqual(json.loads((state_dir / "identities.json").read_text(encoding="utf-8")), legacy_identity)
+            finally:
+                runtime.close()
+
+    def test_legacy_memory_imports_only_after_explicit_opt_in(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_dir = root / "companion"
+            state_dir.mkdir()
+            legacy = [{"id": "legacy-memory", "created_at": datetime.now(timezone.utc).isoformat(),
+                       "category": "note", "text": "owner-approved"}]
+            (state_dir / "memory.json").write_text(json.dumps(legacy), encoding="utf-8")
+            runtime = build_companion_application_runtime(
+                {"workspace": str(root), "companion_memory_enabled": True},
+                agent_loop=_loop(),
+                store_factory=lambda config: ConversationStore(root / "conversations.sqlite3"),
+            )
+            try:
+                self.assertEqual(runtime.memory.list()[0]["id"], "legacy-memory")
+                self.assertEqual(json.loads((state_dir / "memory.json").read_text(encoding="utf-8")), legacy)
+            finally:
+                runtime.close()
 
     def test_requires_explicit_workspace(self):
         with self.assertRaisesRegex(ValueError, "workspace"):
