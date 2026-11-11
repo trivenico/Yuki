@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
+import json
 import secrets
 import sqlite3
 
@@ -131,12 +133,45 @@ class LANCallSessionStore:
             "created_at": created_at, "previous_hash": previous_hash,
         }
         event_hash = hashlib.sha256(
-            __import__("json").dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         db.execute("""INSERT INTO lan_call_audit
             (event_type,session_hash,owner_hash,actor_device_hash,created_at,previous_hash,event_hash)
             VALUES(?,?,?,?,?,?,?)""",
             (event_type, session_hash, owner_hash, actor_hash, created_at, previous_hash, event_hash))
+
+    def _expire_owner_invites(self, db, owner_id, actor_device_id, now):
+        stamp = _stamp(now)
+        rows = db.execute("""SELECT session_hash FROM lan_call_sessions
+            WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
+            (owner_id, stamp)).fetchall()
+        if rows:
+            db.execute("""UPDATE lan_call_sessions SET status='expired',ended_at=?
+                WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
+                (stamp, owner_id, stamp))
+            for row in rows:
+                self._append_audit(db, "expired", row["session_hash"], owner_id, actor_device_id)
+
+    def verify_audit_chain(self):
+        with self._connect() as db:
+            rows = db.execute("""SELECT event_type,session_hash,owner_hash,actor_device_hash,
+                created_at,previous_hash,event_hash FROM lan_call_audit ORDER BY event_id""").fetchall()
+        previous_hash = "0" * 64
+        for row in rows:
+            if not hmac.compare_digest(row["previous_hash"], previous_hash):
+                return False
+            payload = {
+                "event_type": row["event_type"], "session_hash": row["session_hash"],
+                "owner_hash": row["owner_hash"], "actor_device_hash": row["actor_device_hash"],
+                "created_at": row["created_at"], "previous_hash": row["previous_hash"],
+            }
+            expected = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            if not hmac.compare_digest(expected, row["event_hash"]):
+                return False
+            previous_hash = row["event_hash"]
+        return True
 
     def _authenticate(self, db, device_token):
         device = self._pairing.authenticate_device_in_transaction(db, device_token)
@@ -166,9 +201,7 @@ class LANCallSessionStore:
             if caller.device_id == recipient_device_id:
                 raise CallSessionError("cannot_call_same_device")
             # Bound active invitations per owner to avoid notification flooding.
-            db.execute("""UPDATE lan_call_sessions SET status='expired', ended_at=?
-                WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
-                (_stamp(now), caller.owner_id, _stamp(now)))
+            self._expire_owner_invites(db, caller.owner_id, caller.device_id, now)
             active = db.execute("""SELECT COUNT(*) FROM lan_call_sessions
                 WHERE owner_id=? AND status='ringing' AND expires_at>?""",
                 (caller.owner_id, _stamp(now))).fetchone()[0]
@@ -211,9 +244,7 @@ class LANCallSessionStore:
                 (recipient_device_id, owner_id)).fetchone()
             if caller is None or recipient is None:
                 raise CallSessionDenied("active_same_owner_devices_required")
-            db.execute("""UPDATE lan_call_sessions SET status='expired',ended_at=?
-                WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
-                (_stamp(now), owner_id, _stamp(now)))
+            self._expire_owner_invites(db, owner_id, caller_device_id, now)
             active = db.execute("""SELECT COUNT(*) FROM lan_call_sessions
                 WHERE owner_id=? AND status='ringing' AND expires_at>?""",
                 (owner_id, _stamp(now))).fetchone()[0]
@@ -236,9 +267,15 @@ class LANCallSessionStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             device = self._authenticate(db, device_token)
-            db.execute("""UPDATE lan_call_sessions SET status='expired',ended_at=?
+            expired_rows = db.execute("""SELECT session_hash FROM lan_call_sessions
                 WHERE recipient_device_id=? AND status='ringing' AND expires_at<=?""",
-                (now, device.device_id, now))
+                (device.device_id, now)).fetchall()
+            if expired_rows:
+                db.execute("""UPDATE lan_call_sessions SET status='expired',ended_at=?
+                    WHERE recipient_device_id=? AND status='ringing' AND expires_at<=?""",
+                    (now, device.device_id, now))
+                for row in expired_rows:
+                    self._append_audit(db, "expired", row["session_hash"], device.owner_id, device.device_id)
             rows = db.execute("""SELECT session_hash,caller_device_id,created_at,expires_at
                 FROM lan_call_sessions WHERE recipient_device_id=? AND status='ringing'
                 AND expires_at>? ORDER BY created_at ASC LIMIT 20""",
