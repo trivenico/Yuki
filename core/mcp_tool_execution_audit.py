@@ -71,6 +71,8 @@ class MCPToolExecutionAuditor:
             raise ValueError("invalid_mcp_audit_tool_name")
         if (not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id)):
             raise ValueError("invalid_mcp_execution_id")
+        if not isinstance(event_name, str):
+            raise ValueError("unsupported_mcp_audit_event")
         mapped = _EVENT_MAP.get(event_name)
         if mapped is None:
             raise ValueError("unsupported_mcp_audit_event")
