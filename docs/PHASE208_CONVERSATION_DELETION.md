@@ -17,9 +17,10 @@ and tested.
   before retrying. Deletion checks the shared database generation-lease row
   inside the same write transaction, so separate API processes sharing that
   database cannot bypass the in-memory request registry.
-- Lease expiry is not treated as proof that an execution has stopped. A stale
-  lease therefore fails closed and requires a separately audited recovery
-  procedure; automatic stale-lease reclamation is intentionally not implemented.
+- Lease expiry is not treated as proof that an execution has stopped. Acquisition
+  and deletion both fail closed while any lease row exists; automatic stale-lease
+  reclamation is intentionally disabled until worker fencing and supervised
+  recovery can prove the prior execution cannot resume.
 - The store uses a write transaction, owner-scoped lookup and owner-scoped
   delete. Foreign-key cascades delete messages, generation runs and leases.
 - SQLite enables foreign keys on each connection. PostgreSQL inherits the same
@@ -56,9 +57,10 @@ and tested.
   execution writes do not carry a lease generation through every commit. A
   paused worker and lease-reclamation race must be addressed before automatic
   recovery or multi-host execution is production-ready.
-- A crashed worker can leave a lease row behind. Deletion intentionally remains
-  blocked until an operator-approved recovery path verifies the worker is no
-  longer executing and clears the lease; there is no such recovery command yet.
+- A crashed worker can leave a lease row behind. New generations and deletion
+  intentionally remain blocked until an operator-approved recovery path verifies
+  the worker is no longer executing and clears the lease; there is no such
+  recovery command yet.
 - A process crash during deletion relies on database transaction atomicity;
   recovery and audit verification still need integration tests.
 
