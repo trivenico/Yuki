@@ -231,6 +231,7 @@ class BuiltInAuthService:
         invalid = False
         user = None
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
                 SELECT u.*, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at
                 FROM auth_sessions s JOIN auth_users u ON u.user_id=s.user_id
