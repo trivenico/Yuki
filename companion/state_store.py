@@ -101,13 +101,16 @@ class CompanionStateStore:
         self._check_kind(kind)
         if limit is not None and (type(limit) is not int or not 1 <= limit <= self.MAX_RECORDS[kind]):
             raise ValueError("limit is outside the supported range.")
-        query = "SELECT payload,delivered_at FROM companion_records WHERE owner_id=? AND kind=? ORDER BY created_at, record_id"
+        order = "DESC" if kind == "memory" and limit is not None else "ASC"
+        query = f"SELECT payload,delivered_at FROM companion_records WHERE owner_id=? AND kind=? ORDER BY created_at {order}, record_id {order}"
         params: tuple[Any, ...] = (self.owner_id, kind)
         if limit is not None:
             query += " LIMIT ?"
             params += (limit,)
         with self._connect() as db:
             rows = db.execute(query, params).fetchall()
+        if kind == "memory" and limit is not None:
+            rows.reverse()
         items = [self._decode(row) for row in rows]
         if kind == "reminder":
             for item, row in zip(items, rows):
@@ -131,6 +134,15 @@ class CompanionStateStore:
                 "SELECT 1 FROM companion_records WHERE owner_id=? AND kind=? AND record_id=?",
                 (self.owner_id, kind, item["id"]),
             ).fetchone()
+            if kind == "identity":
+                for row in db.execute(
+                    "SELECT payload FROM companion_records WHERE owner_id=? AND kind='identity'",
+                    (self.owner_id,),
+                ).fetchall():
+                    saved = json.loads(row["payload"])
+                    if saved.get("name", "").casefold() == item.get("name", "").casefold():
+                        db.rollback()
+                        raise ValueError("Identity already exists.")
             if existing is None and count >= self.MAX_RECORDS[kind]:
                 db.rollback()
                 raise ValueError(f"{kind} store is full.")
