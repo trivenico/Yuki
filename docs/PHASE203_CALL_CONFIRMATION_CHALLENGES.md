@@ -17,6 +17,17 @@ The repository now includes an owner-facing browser flow in `ui/web`: it lists p
 
 The API deliberately rejects the former `confirm: true` request shape. The authenticated owner can inspect a bounded newest-first history with `GET /v1/devices/calls` (up to 50 entries); this projection contains only opaque digest handles and call metadata, never bearer credentials or the original random session secret. The authenticated owner may also cancel a still-ringing invitation with `POST /v1/devices/calls/{opaque_session_handle}/cancel`; cancellation is owner-scoped, cannot cancel an accepted call, and immediately removes the invite from the recipient inbox. The opaque handle is the 64-character SHA-256 session digest returned by the API, not the original random session secret.
 
+## Call lifecycle audit integrity
+
+Call invitations and lifecycle transitions are recorded in a SQLite hash chain in
+the same transaction as the associated state change. The chain hashes event
+type, opaque session digest, owner digest, actor-device digest, timestamp and
+the previous event hash. `LANCallSessionStore.verify_audit_chain()` detects
+modified or reordered rows. This is tamper-evident integrity checking, not
+external anchoring: an attacker with full database rewrite access could
+rebuild the entire chain. Production deployment still needs protected backups,
+restricted database access and independent audit export/anchoring.
+
 ## Security properties
 
 - Random 256-bit URL-safe challenge token; only its SHA-256 digest is stored.
