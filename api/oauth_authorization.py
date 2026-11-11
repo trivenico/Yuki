@@ -16,7 +16,7 @@ class AuthenticatedOAuthAuthorizationAPI:
     """Expose only host-configured OAuth services; never accept provider URLs."""
 
     def __init__(self, app, auth_service, registry: SQLiteOAuthConnectionRegistry,
-                 authorization_service_for_provider):
+                 authorization_service_for_provider, provider_catalog=None):
         if not isinstance(registry, SQLiteOAuthConnectionRegistry):
             raise TypeError("registry must be a SQLiteOAuthConnectionRegistry")
         if not callable(authorization_service_for_provider):
@@ -25,6 +25,9 @@ class AuthenticatedOAuthAuthorizationAPI:
         self.auth = auth_service
         self.registry = registry
         self._service_for_provider = authorization_service_for_provider
+        if provider_catalog is not None and not callable(provider_catalog):
+            raise TypeError("trusted provider catalog is required")
+        self._provider_catalog = provider_catalog
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -34,6 +37,32 @@ class AuthenticatedOAuthAuthorizationAPI:
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "/")
+        if path == _PREFIX and scope.get("method", "").upper() == "GET":
+            try:
+                token = self._session_token(scope)
+                if token is None:
+                    return await self._respond(send, 401, {"error": "authentication_required"})
+                user = await asyncio.to_thread(self.auth.resolve_session, token)
+                if user is None:
+                    return await self._respond(send, 401, {"error": "authentication_required"})
+                if self._provider_catalog is None:
+                    return await self._respond(send, 200, {"providers": []})
+                providers = await asyncio.to_thread(self._provider_catalog)
+                if not isinstance(providers, (tuple, list)):
+                    return await self._respond(send, 503, {"error": "provider_catalog_unavailable"})
+                safe = []
+                for item in providers:
+                    if not isinstance(item, dict) or not isinstance(item.get("provider_id"), str):
+                        continue
+                    safe.append({
+                        "provider_id": item["provider_id"],
+                        "display_name": item.get("display_name", item["provider_id"]),
+                        "available": item.get("available") is True,
+                        "description": item.get("description", ""),
+                    })
+                return await self._respond(send, 200, {"providers": safe})
+            except Exception:
+                return await self._respond(send, 503, {"error": "provider_catalog_unavailable"})
         if not path.startswith(_PREFIX + "/"):
             await self.app(scope, receive, send)
             return
