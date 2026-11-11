@@ -67,6 +67,7 @@ def build_conversation_runtime(
     oauth_connections: SQLiteOAuthConnectionRegistry | None = None,
     oauth_disconnect_service_for_provider: Callable[[str], Any] | None = None,
     oauth_authorization_service_for_provider: Callable[[str], Any] | None = None,
+    oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the configured conversation runtime.
 
@@ -95,6 +96,10 @@ def build_conversation_runtime(
         raise ValueError("OAuth authorization requires the OAuth connection registry")
     if oauth_authorization_service_for_provider is not None and not callable(oauth_authorization_service_for_provider):
         raise TypeError("oauth_authorization_service_for_provider must be callable")
+    if oauth_provider_catalog is not None and not callable(oauth_provider_catalog):
+        raise TypeError("oauth_provider_catalog must be callable")
+    if oauth_provider_catalog is not None and oauth_authorization_service_for_provider is None:
+        raise ValueError("OAuth provider catalog requires authorization service configuration")
     store = create_conversation_store(config)
     try:
         service = ConversationService(store, agent_loop)
@@ -115,6 +120,7 @@ def build_conversation_runtime(
                 app = AuthenticatedOAuthAuthorizationAPI(
                     app, auth_service, oauth_connections,
                     oauth_authorization_service_for_provider,
+                    provider_catalog=oauth_provider_catalog,
                 )
         return ConversationRuntime(app, store)
     except Exception:
