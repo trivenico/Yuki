@@ -108,5 +108,22 @@ class PairedDeviceCallInboxTests(unittest.TestCase):
         self.client.accept.assert_not_called()
 
 
+    def test_definitive_authorization_failure_is_not_reconciled(self):
+        self.client.accept.side_effect = PermissionError("denied")
+        with self.assertRaises(PermissionError):
+            self.inbox("a").run_once()
+        self.client.accept.assert_called_once_with(self.notification.session_id)
+        self.client.get_call.assert_not_called()
+        self.client.acknowledge_notification.assert_not_called()
+
+    def test_ambiguous_server_failure_is_reconciled_from_authoritative_state(self):
+        self.client.accept.side_effect = RuntimeError("server unavailable")
+        self.client.get_call.return_value = {"status": "accepted"}
+        result = self.inbox("a").run_once()
+        self.assertEqual(result["accepted"], 1)
+        self.client.accept.assert_called_once_with(self.notification.session_id)
+        self.client.get_call.assert_called_once_with(self.notification.session_id)
+
+
 if __name__ == "__main__":
     unittest.main()
