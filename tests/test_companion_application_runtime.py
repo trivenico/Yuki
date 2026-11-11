@@ -76,6 +76,8 @@ class CompanionApplicationRuntimeTests(unittest.TestCase):
                 self.assertEqual(second.relationship_settings.load(), settings)
                 # Preference persistence must not silently inject persona guidance.
                 self.assertNotIn("romantic", second.companion_guidance().lower())
+                second.relationship_settings.reset()
+                self.assertEqual(second.relationship_settings.load(), RelationshipModeSettings())
             finally:
                 second.close()
 
