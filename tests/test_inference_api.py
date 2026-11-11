@@ -200,6 +200,10 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(incoming["invitations"]), 1)
         handle = incoming["invitations"][0]["session_id"]
+        # Owner creation and recipient inbox expose the same digest handle,
+        # never the original random session secret.
+        self.assertEqual(handle, created["session"]["session_id"])
+        self.assertRegex(handle, r"^[0-9a-f]{64}$")
         status, accepted = self.request(
             "POST", f"/v1/devices/calls/{handle}/accept", {}, recipient["device_token"]
         )
