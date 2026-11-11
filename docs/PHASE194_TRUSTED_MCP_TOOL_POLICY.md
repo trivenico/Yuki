@@ -34,3 +34,10 @@ The host supplies:
 ## Validation
 
 Regression tests cover exact identity binding, allow-list derivation, risk classification, owner confirmation, stale revision fencing, audit failure, immutable arguments, disabled policies and malformed inputs. CI is authoritative; no local test execution is claimed.
+
+
+## Follow-up hardening — post-approval revision fencing
+
+The authorization callback now re-reads the authoritative policy revision after the request audit and, for write/financial actions, again after the owner confirmation callback returns. If a policy is revoked or changed while the owner is reviewing the exact arguments, the stale confirmation is denied and the MCP client receives no authorization to dispatch. Read-only authorization is also revalidated after its request-audit step. Regression tests simulate revision changes during both audit and owner confirmation.
+
+This narrows the approval-time race window. The revision check and remote dispatch are not one distributed atomic transaction; the existing just-in-time execution audit and no-automatic-retry behavior remain required. Durable approval records bound to exact invocation IDs/argument digests and atomic one-time consumption remain a separate production-hardening milestone.
