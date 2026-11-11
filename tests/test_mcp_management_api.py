@@ -249,6 +249,11 @@ class MCPManagementAPITests(unittest.TestCase):
                 required_scopes=("profile:read",), version=1, enabled=True,
             ), expected_revision=1,
         )
+        self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
+        self.oauth.register(
+            owner_id="owner", provider_id="provider", account_id="account",
+            scopes=("profile:basic",),
+        )
         payload = json.dumps({
             "enabled": False, "expected_revision": 2, "confirm": True,
         }).encode()
