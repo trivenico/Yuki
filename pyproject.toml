@@ -9,7 +9,6 @@ description = "A personal AI assistant with guarded tools, local memory, and plu
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
 dependencies = [
   "PyYAML>=6.0.3,<7.0",
 ]
