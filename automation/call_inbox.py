@@ -29,6 +29,60 @@ class PairedDeviceCallInbox:
         self.prompt = prompt
         self.output = output
 
+    def _handle_invitations(self, invitations) -> dict[str, int]:
+        result = {"received": len(invitations), "accepted": 0, "declined": 0, "ignored": 0}
+        for invitation in invitations:
+            self.output(
+                "Incoming Yuki call\\n"
+                f"  From device: {invitation.caller_device_id}\\n"
+                f"  To device: {invitation.recipient_device_id}\\n"
+                f"  Expires: {invitation.expires_at}\\n"
+                "  No microphone or camera will be activated by accepting this invitation."
+            )
+            choice = self.prompt("Accept, decline, or ignore? [a/d/i] ").strip().lower()
+            if choice in {"a", "accept"}:
+                self.client.accept(invitation.session_id)
+                result["accepted"] += 1
+                self.output("Invitation accepted. Media is not connected.")
+            elif choice in {"d", "decline"}:
+                self.client.reject(invitation.session_id)
+                result["declined"] += 1
+                self.output("Invitation declined.")
+            else:
+                result["ignored"] += 1
+                self.output("Invitation left unanswered.")
+        return result
+
+    def run_forever(self, *, poll_interval_seconds: int = 3, sleep=None) -> None:
+        """Watch for new calls in the foreground until the user interrupts."""
+        import time
+        from collections import deque
+
+        if (isinstance(poll_interval_seconds, bool)
+                or not isinstance(poll_interval_seconds, int)
+                or not 1 <= poll_interval_seconds <= 30):
+            raise ValueError("poll_interval_seconds_must_be_between_1_and_30")
+        pause = sleep or time.sleep
+        seen = set()
+        seen_order = deque()
+        self.output(
+            f"Watching for Yuki calls in the foreground (checking every {poll_interval_seconds}s). "
+            "Press Ctrl-C to stop."
+        )
+        while True:
+            fresh = []
+            for invitation in self.client.list_incoming():
+                if invitation.session_id in seen:
+                    continue
+                seen.add(invitation.session_id)
+                seen_order.append(invitation.session_id)
+                fresh.append(invitation)
+            while len(seen_order) > 1000:
+                seen.discard(seen_order.popleft())
+            if fresh:
+                self._handle_invitations(fresh)
+            pause(poll_interval_seconds)
+
     def run_once(self) -> dict[str, int]:
         invitations = self.client.list_incoming()
         result = {"received": len(invitations), "accepted": 0, "declined": 0, "ignored": 0}
