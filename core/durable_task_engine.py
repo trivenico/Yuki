@@ -339,10 +339,19 @@ class DurableTaskEngine:
             c.commit()
         return count
 
-    def cancel_task(self,task_id):
+    def cancel_task(self,task_id,*,owner_id=None):
+        if owner_id is not None:
+            self._validate_owner_id(owner_id)
         now=self.clock()
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
+            c.execute("BEGIN IMMEDIATE")
+            if owner_id is None:
+                r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
+            else:
+                r=c.execute(
+                    "SELECT t.* FROM tasks t JOIN goals g ON g.id=t.goal_id WHERE t.id=? AND g.owner_id=?",
+                    (task_id,owner_id),
+                ).fetchone()
             if r is None: raise TaskNotFound("task not found")
             if r["state"] in TERMINAL: c.commit(); return self._decode(r)
             if r["state"] == "running":
@@ -371,11 +380,17 @@ class DurableTaskEngine:
                           ("dependency failed or was cancelled", now, task["id"]))
                 self._event(c, goal_id, task["id"], "task.blocked_dependency", {"dependency": "terminal_unsuccessful"})
     
-    def set_goal_state(self,goal_id,state):
+    def set_goal_state(self,goal_id,state,*,owner_id=None):
         if not isinstance(state, str) or state not in {"active","paused","cancelled"}: raise ValueError("invalid goal state")
+        if owner_id is not None:
+            self._validate_owner_id(owner_id)
         now=self.clock()
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); g=c.execute("SELECT * FROM goals WHERE id=?",(goal_id,)).fetchone()
+            c.execute("BEGIN IMMEDIATE")
+            if owner_id is None:
+                g=c.execute("SELECT * FROM goals WHERE id=?",(goal_id,)).fetchone()
+            else:
+                g=c.execute("SELECT * FROM goals WHERE id=? AND owner_id=?",(goal_id,owner_id)).fetchone()
             if g is None: raise TaskNotFound("goal not found")
             if g["state"] == "completed": raise TaskConflict("completed goal cannot change state")
             if g["state"] == "cancelled" and state != "cancelled": raise TaskConflict("cancelled goal cannot be resumed")
@@ -475,9 +490,9 @@ class DurableTaskEngine:
         return self.list_events(goal_id, after_id=after_id, limit=limit)
 
     def set_goal_state_for_owner(self, owner_id, goal_id, state):
-        self._require_goal_owner(goal_id, owner_id)
-        return self.set_goal_state(goal_id, state)
+        self._validate_owner_id(owner_id)
+        return self.set_goal_state(goal_id, state, owner_id=owner_id)
 
     def cancel_task_for_owner(self, owner_id, task_id):
-        self.get_task_for_owner(owner_id, task_id)
-        return self.cancel_task(task_id)
+        self._validate_owner_id(owner_id)
+        return self.cancel_task(task_id, owner_id=owner_id)
