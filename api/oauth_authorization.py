@@ -17,8 +17,6 @@ class AuthenticatedOAuthAuthorizationAPI:
 
     def __init__(self, app, auth_service, registry: SQLiteOAuthConnectionRegistry,
                  authorization_service_for_provider, provider_catalog=None):
-        if not isinstance(registry, SQLiteOAuthConnectionRegistry):
-            raise TypeError("registry must be a SQLiteOAuthConnectionRegistry")
         if not callable(authorization_service_for_provider):
             raise TypeError("trusted authorization service resolver is required")
         self.app = app
