@@ -214,6 +214,7 @@ def invoke_registered_skill(
     audit: Callable[[str, str], None] | None = None,
     max_result_chars: int = 2000,
     expected_skill: Any = None,
+    execution_guard: Callable[[], bool] | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -278,6 +279,18 @@ def invoke_registered_skill(
     if not callable(execute):
         record("invalid_skill")
         return SkillInvocationResult(False, "Registered skill has no supported run()/execute() interface.", skill_name, "invalid_skill")
+
+    if execution_guard is not None:
+        if not callable(execution_guard):
+            record("invalid_execution_guard")
+            return SkillInvocationResult(False, "Execution lease could not be verified; invocation was blocked.", skill_name, "execution_lease_lost")
+        try:
+            lease_valid = execution_guard() is True
+        except Exception:
+            lease_valid = False
+        if not lease_valid:
+            record("execution_lease_lost")
+            return SkillInvocationResult(False, "Execution lease is no longer valid; invocation was blocked.", skill_name, "execution_lease_lost")
 
     try:
         result = execute(argument)
