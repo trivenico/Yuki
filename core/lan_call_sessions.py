@@ -202,6 +202,27 @@ class LANCallSessionStore:
             return self._session(row, session_id)
 
 
+    def list_for_owner(self, *, owner_id: str, limit: int = 50) -> list[CallSession]:
+        """Return a bounded, newest-first history for the authenticated owner."""
+        if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 128:
+            raise CallSessionError("owner_id_invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise CallSessionError("limit_invalid")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """UPDATE lan_call_sessions SET status='expired',ended_at=?
+                   WHERE owner_id=? AND status='ringing' AND expires_at<=?""",
+                (_stamp(now), owner_id, _stamp(now)),
+            )
+            rows = db.execute(
+                """SELECT * FROM lan_call_sessions WHERE owner_id=?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (owner_id, limit),
+            ).fetchall()
+            return [self._session(row, row["session_hash"]) for row in rows]
+
     def cancel_as_owner(self, *, owner_id: str, session_id: str) -> CallSession:
         """Allow the authenticated owner to cancel only their still-ringing invite."""
         if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 128:
