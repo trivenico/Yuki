@@ -163,6 +163,38 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id="checkpoint-1", checkpoint={"payload": "x" * 5000},
             )
 
+    def test_delete_conversation_cascades_messages_runs_and_leases(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="Delete all of this", idempotency_key="delete-1",
+            expected_version=0, generation_request_id="delete-1",
+        )
+        lease = self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id, lease_token="lease-delete",
+        )
+        self.assertTrue(lease)
+        self.assertTrue(self.store.delete_conversation(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ))
+        with self.assertRaises(ConversationNotFound):
+            self.store.get_conversation(owner_id=self.owner, conversation_id=conversation_id)
+        with self.assertRaises(ConversationNotFound):
+            self.store.list_messages(owner_id=self.owner, conversation_id=conversation_id)
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ), [])
+
+    def test_delete_conversation_is_owner_scoped_and_idempotency_is_not_ambiguous(self):
+        conversation_id = self.conversation["conversation_id"]
+        with self.assertRaises(ConversationNotFound):
+            self.store.delete_conversation(owner_id=self.other_owner, conversation_id=conversation_id)
+        self.assertIsNotNone(self.store.get_conversation(
+            owner_id=self.owner, conversation_id=conversation_id,
+        ))
+        with self.assertRaises(ValueError):
+            self.store.delete_conversation(owner_id=self.owner, conversation_id="  ")
+
     def test_generation_records_are_owner_scoped(self):
         self.store.append_message(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
