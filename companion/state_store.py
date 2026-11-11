@@ -191,9 +191,10 @@ class CompanionStateStore:
             ).fetchall()
             for row in rows:
                 item = json.loads(row["payload"])
-                if due_at = datetime.fromisoformat(item["due_at"])
-                    if due_at.tzinfo is None or due_at.utcoffset() is None:
-                        raise ValueError("reminder timestamp must be timezone-aware") <= now:
+                due_at = datetime.fromisoformat(item["due_at"])
+                if due_at.tzinfo is None or due_at.utcoffset() is None:
+                    raise RuntimeError("Stored reminder timestamp must be timezone-aware.")
+                if due_at <= now:
                     claimed.append(item)
                     db.execute(
                         """UPDATE companion_records SET delivered_at=?
