@@ -147,6 +147,18 @@ class MCPManagementAPITests(unittest.TestCase):
             "required_scopes": ["profile:read"], "version": 1, "enabled": True,
         }])
 
+    def test_registered_connection_without_required_scope_is_denied(self):
+        self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
+        self.oauth.register(
+            owner_id="owner", provider_id="provider", account_id="account",
+            scopes=("profile:basic",),
+        )
+        status, body = self.request(
+            "GET", "/v1/integrations/mcp/provider/account/tools",
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "required_oauth_scope_missing")
+
     def test_unknown_provider_fails_closed(self):
         status, body = self.request(
             "GET", "/v1/integrations/mcp/unknown/account/tools",
