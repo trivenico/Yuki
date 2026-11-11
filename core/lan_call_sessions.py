@@ -88,6 +88,22 @@ class LANCallSessionStore:
             """)
             db.execute("""CREATE INDEX IF NOT EXISTS idx_lan_calls_owner_created
                 ON lan_call_sessions(owner_id, created_at)""")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS lan_call_notifications (
+                    notification_hash TEXT PRIMARY KEY,
+                    session_hash TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    recipient_device_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL CHECK(event_type='incoming_call'),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    acknowledged_at TEXT,
+                    UNIQUE(session_hash, event_type),
+                    FOREIGN KEY(session_hash) REFERENCES lan_call_sessions(session_hash)
+                )
+            """)
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_lan_call_notifications_recipient
+                ON lan_call_notifications(recipient_device_id, acknowledged_at, expires_at)""")
         self._pairing = pairing_service
 
     def _connect(self):
@@ -153,6 +169,7 @@ class LANCallSessionStore:
                   recipient_device_id, "ringing", _stamp(now), _stamp(expires)))
             row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                              (_digest(session_id),)).fetchone()
+            self._enqueue_invitation_notification(db, row, now)
             return self._session(row, session_id)
 
 
@@ -199,8 +216,76 @@ class LANCallSessionStore:
                   recipient_device_id, "ringing", _stamp(now), _stamp(expires)))
             row = db.execute("SELECT * FROM lan_call_sessions WHERE session_hash=?",
                              (_digest(session_id),)).fetchone()
+            self._enqueue_invitation_notification(db, row, now)
             return self._session(row, session_id)
 
+
+    @staticmethod
+    def _enqueue_invitation_notification(db, session_row, now):
+        """Write a minimal alert in the same transaction as invitation creation."""
+        notification_id = secrets.token_urlsafe(32)
+        db.execute("""
+            INSERT INTO lan_call_notifications
+            (notification_hash,session_hash,owner_id,recipient_device_id,event_type,
+             created_at,expires_at)
+            VALUES(?,?,?,?,?,?,?)
+        """, (_digest(notification_id), session_row["session_hash"],
+              session_row["owner_id"], session_row["recipient_device_id"],
+              "incoming_call", session_row["created_at"], session_row["expires_at"]))
+
+    def list_notifications(self, *, device_token: str, limit: int = 50) -> list[dict]:
+        """Return unacknowledged, still-ringing alerts; polling is at-least-once."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise CallSessionError("limit_invalid")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            device = self._authenticate(db, device_token)
+            rows = db.execute("""
+                SELECT n.notification_hash,n.event_type,n.created_at,n.expires_at,
+                       n.session_hash,s.caller_device_id,s.recipient_device_id
+                FROM lan_call_notifications n
+                JOIN lan_call_sessions s ON s.session_hash=n.session_hash
+                JOIN paired_devices caller ON caller.device_id=s.caller_device_id
+                WHERE n.recipient_device_id=? AND n.owner_id=?
+                  AND n.acknowledged_at IS NULL AND n.expires_at>?
+                  AND s.status='ringing' AND s.expires_at>?
+                  AND caller.owner_id=n.owner_id AND caller.revoked_at IS NULL
+                ORDER BY n.created_at ASC LIMIT ?
+            """, (device.device_id, device.owner_id, _stamp(now), _stamp(now), limit)).fetchall()
+            return [{
+                "notification_id": row["notification_hash"],
+                "event_type": row["event_type"],
+                "created_at": row["created_at"],
+                "expires_at": row["expires_at"],
+                "session_id": row["session_hash"],
+                "caller_device_id": row["caller_device_id"],
+                "recipient_device_id": row["recipient_device_id"],
+            } for row in rows]
+
+    def acknowledge_notification(self, *, notification_id: str, device_token: str) -> bool:
+        """Acknowledge only an alert owned by the authenticated recipient device."""
+        if not isinstance(notification_id, str) or not (
+            len(notification_id) == 64 and all(ch in "0123456789abcdef" for ch in notification_id)
+        ):
+            raise CallSessionError("notification_id_invalid")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            device = self._authenticate(db, device_token)
+            changed = db.execute("""
+                UPDATE lan_call_notifications SET acknowledged_at=?
+                WHERE notification_hash=? AND recipient_device_id=? AND owner_id=?
+                  AND acknowledged_at IS NULL AND expires_at>?
+            """, (_stamp(now), notification_id, device.device_id, device.owner_id,
+                  _stamp(now))).rowcount
+            if changed:
+                return True
+            exists = db.execute("""
+                SELECT 1 FROM lan_call_notifications
+                WHERE notification_hash=? AND recipient_device_id=? AND owner_id=?
+            """, (notification_id, device.device_id, device.owner_id)).fetchone()
+            return False if exists is None else False
 
     def list_for_owner(self, *, owner_id: str, limit: int = 50) -> list[CallSession]:
         """Return a bounded, newest-first history for the authenticated owner."""
