@@ -2,47 +2,36 @@
 
 ## Scope
 
-`core/call_confirmation.py` provides a durable primitive for a human-confirmed
-call invitation. It does not create calls, authenticate users, render a UI, or
-deliver notifications.
+`core/call_confirmation.py` provides durable, one-time confirmation challenges. `api/inference.py` now exposes an authenticated challenge-issuance endpoint and consumes the challenge before creating a LAN call invitation. The owner is derived from the authenticated session, and issuance requires a fresh password check against that same active session.
 
-The future API integration must follow this order:
+This is an API/security integration, **not yet a complete human-consent UX**. The repository still needs a trusted owner-facing confirmation surface that shows the exact caller and recipient and initiates the re-authentication and challenge flow. The API cannot infer that a request originated from a trusted visible UI merely because it contains a password and bearer token. Do not expose the owner password to models, agents, background workers, or tools.
 
-1. Resolve the owner from the authenticated Yuki session. Never accept an
-   owner ID supplied by the request body.
-2. Require a fresh credential check (password re-authentication or an
-   equivalent platform-authenticator ceremony) in an owner-controlled UI.
-   A long-lived bearer session alone is not a fresh confirmation.
-3. Verify both devices are active, paired to that owner, and that the requested
-   caller and recipient are exactly the devices displayed to the owner.
-4. Issue a challenge bound to the owner ID, hash of the current authenticated
-   session, caller device ID, and recipient device ID.
-5. Display the exact call intent and recipient to the owner before the
-   confirmation action. The confirmation token must be returned only from that
-   explicit UI action; model output and background agents must not access this
-   issuance path.
-6. On invitation creation, atomically consume the token using the same owner,
-   session, caller and recipient values. Only after successful consumption may
-   the call invitation be persisted.
+## API flow
+
+1. The owner UI authenticates using the existing Yuki session.
+2. It requests a challenge with the password and exact caller/recipient IDs. The server revalidates the session and password, then verifies both devices are active and owned by that account.
+3. The server returns a random challenge bound to the owner, current session, caller device, and recipient device.
+4. The UI must display the exact call intent and recipient and obtain the owner's explicit confirmation before submitting the challenge token.
+5. The invitation endpoint atomically consumes the token before persisting the invitation. A failed or replayed token cannot create a second call.
+6. The recipient device must separately accept the invitation.
+
+The API deliberately rejects the former `confirm: true` request shape.
 
 ## Security properties
 
 - Random 256-bit URL-safe challenge token; only its SHA-256 digest is stored.
 - 15–300 second configurable expiry (90 seconds by default).
-- Challenge is bound to one owner, one authenticated session and one exact
-  caller/recipient pair.
+- Bound to one owner, one authenticated session and one exact caller/recipient pair.
+- Re-authentication requires a currently active, unrevoked, unexpired session and the account password; failed checks increment the account lockout counter.
+- Re-authentication lockout updates serialize under SQLite `BEGIN IMMEDIATE`.
 - A mismatched attempt does not consume a legitimate challenge.
-- SQLite `BEGIN IMMEDIATE` and conditional update enforce single-use behavior
-  under concurrent/replayed requests.
-- At most ten outstanding challenges per owner; expired and consumed rows are
-  cleaned up on issuance.
-- No challenge is accepted from a boolean `confirm: true` field.
+- SQLite `BEGIN IMMEDIATE` and conditional update enforce single-use behavior under concurrent/replayed requests.
+- At most ten outstanding challenges per owner; expired and consumed rows are cleaned up on issuance.
+- Device bearer credentials cannot invoke owner endpoints; owner sessions cannot invoke recipient device actions.
 
-## Not yet implemented
+## Remaining production gates
 
-This commit is deliberately only the persistence/security primitive. The
-existing LAN call API branch still has its earlier boolean confirmation
-contract and must not be merged as production-safe until it is integrated with
-fresh owner re-authentication, the visible confirmation UX, and this atomic
-challenge consumption. No WebRTC, push notification, microphone or camera
-capability is implied.
+- Build a trusted owner UI with explicit intent display and a confirmation action; do not treat API possession of credentials as proof of visible human consent.
+- Add transport-level protections appropriate to the deployment (TLS, origin controls/CSRF where cookie sessions are used, rate limits, secret redaction).
+- Add notification delivery and authenticated WebRTC signaling/media only after invitation consent is complete.
+- Test real devices, reconnects, cancellation, notification delivery, and media permission prompts. No WebRTC, push notification, microphone or camera capability is implied by this API.
