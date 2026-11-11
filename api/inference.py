@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import traceback
 import re
 from typing import Any
 
@@ -116,7 +115,7 @@ class AuthenticatedInferenceAPI:
 
             call_incoming = path == "/v1/devices/calls/incoming" and method == "GET"
             call_action = re.fullmatch(r"/v1/devices/calls/([A-Za-z0-9_-]{32,128})/(accept|reject|end)", path)
-            call_read = re.fullmatch(r"/v1/devices/calls/([A-Za-z0-9_-]{32,128})", path) and method == "GET"
+            call_read = re.fullmatch(r"/v1/devices/calls/([A-Za-z0-9_-]{32,128})", path) if method == "GET" else None
             if call_incoming or (call_action and method == "POST") or call_read:
                 device_token = self._bearer(scope)
                 if device_token is None:
@@ -140,11 +139,8 @@ class AuthenticatedInferenceAPI:
                     return await self._respond(send, 403, {"error": "call_action_denied"})
                 except CallSessionError:
                     return await self._respond(send, 400, {"error": "invalid_call_request"})
-                except Exception as exc:
-                    return await self._respond(send, 500, {
-                        "error": "internal_error", "diagnostic": type(exc).__name__,
-                        "trace": traceback.format_exc(),
-                    })
+                except Exception:
+                    return await self._respond(send, 500, {"error": "internal_error"})
 
             user = await self._user(scope)
             if user is None:
