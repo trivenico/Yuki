@@ -191,8 +191,8 @@ class DurableSkillWorkerTests(unittest.TestCase):
         task = self.submit("read_demo", "commit-then-error", key="commit-response-error")
         original_complete = self.engine.complete
 
-        def commit_then_raise(task_id, worker_id, result=None):
-            original_complete(task_id, worker_id, result)
+        def commit_then_raise(task_id, worker_id, result=None, *, lease_token):
+            original_complete(task_id, worker_id, result, lease_token=lease_token)
             raise RuntimeError("simulated lost response")
 
         self.engine.complete = commit_then_raise
