@@ -14,7 +14,10 @@ class FakeAuth:
 class FakeRegistry:
     def __init__(self):
         self.records = []
+        self.fail_register = False
     def register(self, **kwargs):
+        if self.fail_register:
+            raise RuntimeError("registry unavailable")
         self.records.append(kwargs)
         return SimpleNamespace(
             provider_id=kwargs["provider_id"], account_id=kwargs["account_id"],
@@ -26,6 +29,7 @@ class FakeAuthorization:
     def __init__(self):
         self.begin_calls = []
         self.complete_calls = []
+        self.discard_calls = []
         self.result = {
             "provider_id": "provider", "account_id": "account",
             "scopes": ("read",), "credential_version": 1,
@@ -37,6 +41,9 @@ class FakeAuthorization:
     def complete(self, **kwargs):
         self.complete_calls.append(kwargs)
         return self.result
+    def discard_unregistered_grant(self, **kwargs):
+        self.discard_calls.append(kwargs)
+        return True
 
 
 class OAuthAuthorizationAPITests(unittest.TestCase):
@@ -114,6 +121,19 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
             "valid-session", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
         )
         self.assertEqual(status, 502)
+        self.assertEqual(self.registry.records, [])
+
+    def test_registry_failure_compensates_only_the_stored_credential_generation(self):
+        self.registry.fail_register = True
+        status, body = self.request(
+            "POST", "/v1/integrations/oauth/providers/provider/callback",
+            "valid-session", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"], "connection_registration_failed")
+        self.assertEqual(self.service.discard_calls, [{
+            "owner_id": "owner", "account_id": "account", "credential_version": 1,
+        }])
         self.assertEqual(self.registry.records, [])
 
     def test_callback_requires_exact_body_shape(self):
