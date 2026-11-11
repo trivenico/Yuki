@@ -53,6 +53,7 @@ class DurableTaskEngineTests(unittest.TestCase):
 
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
+        self._install_claim_token_test_adapter(engine)
         goal = engine.create_goal()
         engine.close()
         engine.close()
@@ -196,6 +197,7 @@ class DurableTaskEngineTests(unittest.TestCase):
     def test_expired_lease_recovery_and_stale_worker_rejected(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        self._install_claim_token_test_adapter(engine)
         goal = engine.create_goal()
         task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2)
         engine.claim("worker-a", lease_seconds=5)
