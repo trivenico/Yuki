@@ -116,7 +116,7 @@ class MCPManagementAPITests(unittest.TestCase):
         self.assertEqual(status, 401)
         status, _ = self.request(
             "GET", "/v1/integrations/mcp/provider/account/tools",
-            extra_headers=((b"authorization", ("Bearer " + TOKEN).encode()),),
+            extra_headers=((b"authorization", ("Bearer " + TOKEN).encode()), (b"authorization", ("Bearer " + TOKEN).encode())),
         )
         self.assertEqual(status, 401)
 
