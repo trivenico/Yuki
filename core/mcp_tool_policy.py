@@ -161,11 +161,14 @@ class MCPToolPolicyRegistry:
                 return False
             if len(encoded) > _MAX_ARGUMENT_BYTES:
                 return False
-            try:
-                live_revision = current_revision()
-                if type(live_revision) is not int or live_revision != self.revision:
+            def revision_is_current():
+                try:
+                    live_revision = current_revision()
+                    return type(live_revision) is int and live_revision == self.revision
+                except Exception:
                     return False
-            except Exception:
+
+            if not revision_is_current():
                 return False
             policy = self.get(
                 provider_id=provider_id, account_id=account_id, tool_name=tool_name,
@@ -190,6 +193,10 @@ class MCPToolPolicyRegistry:
                 return False
 
             if policy.risk is MCPToolRisk.READ_ONLY:
+                # Re-read after the request audit so a concurrent policy
+                # revocation during audit cannot authorize this stale snapshot.
+                if not revision_is_current():
+                    return False
                 try:
                     audit({**base, "event": "authorized_read_only"})
                     return True
@@ -209,6 +216,13 @@ class MCPToolPolicyRegistry:
                 confirmed = owner_approval(request) is True
             except Exception:
                 confirmed = False
+
+            # Owner confirmation can take time. Revalidate the authoritative
+            # revision after the prompt, before this callback can authorize
+            # MCPHTTPClient to dispatch the remote request.
+            if confirmed and not revision_is_current():
+                confirmed = False
+
             try:
                 audit({**base, "event": "owner_approved" if confirmed else "denied"})
             except Exception:
