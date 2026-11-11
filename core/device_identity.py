@@ -244,6 +244,8 @@ class DeviceIdentityRegistry:
     def activate_key(self, device_token: str, challenge_id: str, nonce: str,
                      signature: str) -> DeviceIdentityKey:
         """Consume a challenge once after paired-device auth and Ed25519 proof."""
+        if not isinstance(device_token, str) or not _TOKEN_RE.fullmatch(device_token):
+            raise DeviceIdentityError("Invalid or expired identity challenge.")
         if not isinstance(challenge_id, str) or not _TOKEN_RE.fullmatch(challenge_id):
             raise DeviceIdentityError("Invalid or expired identity challenge.")
         if not isinstance(nonce, str) or not _TOKEN_RE.fullmatch(nonce):
