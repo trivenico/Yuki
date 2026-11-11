@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import traceback
 import re
 from typing import Any
 
@@ -142,6 +143,7 @@ class AuthenticatedInferenceAPI:
                 except Exception as exc:
                     return await self._respond(send, 500, {
                         "error": "internal_error", "diagnostic": type(exc).__name__,
+                        "trace": traceback.format_exc(),
                     })
 
             user = await self._user(scope)
