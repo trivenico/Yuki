@@ -65,7 +65,11 @@ class DurableSkillWorker:
         )
         heartbeat_thread.start()
         try:
-            result = self.runtime.invoke(skill_name, argument)
+            result = self.runtime.invoke(
+                skill_name,
+                argument,
+                execution_guard=lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
+            )
         finally:
             stop.set()
             heartbeat_thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
