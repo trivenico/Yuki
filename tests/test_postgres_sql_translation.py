@@ -12,6 +12,18 @@ class PostgresSQLTranslationTests(unittest.TestCase):
             "UPDATE conversations SET archived=TRUE WHERE conversation_id=%s",
         )
 
+    def test_conversation_delete_transaction_is_translated(self):
+        self.assertEqual(
+            PostgresConversationStore._postgres_sql("BEGIN IMMEDIATE"),
+            "BEGIN",
+        )
+        self.assertEqual(
+            PostgresConversationStore._postgres_sql(
+                "DELETE FROM conversations WHERE conversation_id=? AND owner_id=?"
+            ),
+            "DELETE FROM conversations WHERE conversation_id=%s AND owner_id=%s",
+        )
+
     def test_archive_query_is_translated(self):
         self.assertEqual(
             PostgresConversationStore._postgres_sql(

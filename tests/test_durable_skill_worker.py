@@ -120,7 +120,9 @@ class DurableSkillWorkerTests(unittest.TestCase):
 
     def test_worker_exception_marks_single_attempt_task_failed(self):
         class RaisingRuntime:
-            def invoke(self, _skill_name, _argument):
+            def invoke(self, _skill_name, _argument, *, execution_guard=None):
+                if execution_guard is not None and execution_guard() is not True:
+                    raise RuntimeError("execution lease lost")
                 raise RuntimeError("secret token should not be persisted")
 
         task = self.submit("read_demo", "raises", key="worker-exception")
@@ -153,10 +155,12 @@ class DurableSkillWorkerTests(unittest.TestCase):
         release = threading.Event()
 
         class SlowRuntime:
-            def invoke(self, _skill_name, _argument):
+            def invoke(self, _skill_name, _argument, *, execution_guard=None):
                 started.set()
                 if not release.wait(timeout=8):
                     raise RuntimeError("test invocation timed out")
+                if execution_guard is not None and execution_guard() is not True:
+                    raise RuntimeError("execution lease lost")
                 return type("Result", (), {
                     "ok": True, "status": "completed", "message": "done"
                 })()
@@ -191,8 +195,8 @@ class DurableSkillWorkerTests(unittest.TestCase):
         task = self.submit("read_demo", "commit-then-error", key="commit-response-error")
         original_complete = self.engine.complete
 
-        def commit_then_raise(task_id, worker_id, result=None):
-            original_complete(task_id, worker_id, result)
+        def commit_then_raise(task_id, worker_id, result=None, *, lease_token):
+            original_complete(task_id, worker_id, result, lease_token=lease_token)
             raise RuntimeError("simulated lost response")
 
         self.engine.complete = commit_then_raise

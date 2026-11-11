@@ -87,6 +87,26 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertEqual(result.message, "done:sunny")
         self.assertEqual(self.events[-1], ("skill:invoke", "completed"))
 
+    def test_execution_lease_guard_blocks_skill_handler(self):
+        calls = []
+        class GuardedSkill:
+            name = "weather"
+            risk = "low"
+            requires_approval = False
+            def execute(self, argument=""):
+                calls.append(argument)
+                return type("Result", (), {"ok": True, "message": "executed"})()
+        self.registry.register(GuardedSkill())
+        denied = self.runtime.invoke("weather", "sunny", execution_guard=lambda: False)
+        self.assertEqual(denied.status, "execution_lease_lost")
+        self.assertEqual(calls, [])
+        unavailable = self.runtime.invoke("weather", "sunny", execution_guard=lambda: (_ for _ in ()).throw(RuntimeError("lease store unavailable")))
+        self.assertEqual(unavailable.status, "execution_lease_lost")
+        self.assertEqual(calls, [])
+        allowed = self.runtime.invoke("weather", "sunny", execution_guard=lambda: True)
+        self.assertTrue(allowed.ok)
+        self.assertEqual(calls, ["sunny"])
+
     def test_unknown_skill_cannot_be_approved_or_invoked(self):
         with self.assertRaises(ValueError):
             self.runtime.approve_invocation("not-registered")

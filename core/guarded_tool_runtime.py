@@ -45,7 +45,7 @@ class GuardedToolRuntime:
                 # Telemetry failure must not bypass or broaden authorization.
                 pass
 
-    def invoke(self, name: str, argument: str = "") -> str:
+    def invoke(self, name: str, argument: str = "", *, execution_guard: Callable[[], bool] | None = None) -> str:
         if not isinstance(name, str) or not name or len(name) > 128:
             self._record("invalid", "invalid_name")
             return "Invalid tool name."
@@ -62,6 +62,17 @@ class GuardedToolRuntime:
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
+        if execution_guard is not None:
+            if not callable(execution_guard):
+                self._record(name, "invalid_execution_guard")
+                return "Tool blocked because its execution lease is invalid."
+            try:
+                lease_valid = execution_guard() is True
+            except Exception:
+                lease_valid = False
+            if not lease_valid:
+                self._record(name, "execution_lease_lost")
+                return "Tool blocked because its execution lease is no longer valid."
         try:
             result = str(self._tools[name](argument))
         except Exception:

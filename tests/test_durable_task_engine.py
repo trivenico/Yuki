@@ -13,12 +13,49 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.db = Path(self.tmp.name) / "tasks.sqlite"
         self.engine = DurableTaskEngine(self.db)
         self.goal = self.engine.create_goal()
+        self._install_claim_token_test_adapter(self.engine)
+
+    def _install_claim_token_test_adapter(self, engine):
+        # Existing lifecycle tests model a worker retaining its claim secret.
+        # The adapter passes that secret explicitly to the strict engine API.
+        tokens = {}
+        claim = engine.claim
+        heartbeat = engine.heartbeat
+        complete = engine.complete
+        fail = engine.fail
+        reject = engine.reject
+        engine._strict_complete = complete
+        engine._strict_heartbeat = heartbeat
+        def claim_with_token(worker_id, **kwargs):
+            task = claim(worker_id, **kwargs)
+            if task is not None:
+                tokens[(task["id"], worker_id)] = task["lease_token"]
+            return task
+        def token_for(task_id, worker_id, kwargs):
+            token = kwargs.pop("lease_token", tokens.get((task_id, worker_id)))
+            if not token:
+                raise AssertionError("test worker did not retain its claim token")
+            return token
+        def heartbeat_with_token(task_id, worker_id, **kwargs):
+            return heartbeat(task_id, worker_id, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        def complete_with_token(task_id, worker_id, result=None, **kwargs):
+            return complete(task_id, worker_id, result, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        def fail_with_token(task_id, worker_id, error, **kwargs):
+            return fail(task_id, worker_id, error, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        def reject_with_token(task_id, worker_id, reason, **kwargs):
+            return reject(task_id, worker_id, reason, lease_token=token_for(task_id, worker_id, kwargs), **kwargs)
+        engine.claim = claim_with_token
+        engine.heartbeat = heartbeat_with_token
+        engine.complete = complete_with_token
+        engine.fail = fail_with_token
+        engine.reject = reject_with_token
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
+        self._install_claim_token_test_adapter(engine)
         goal = engine.create_goal()
         engine.close()
         engine.close()
@@ -34,6 +71,7 @@ class DurableTaskEngineTests(unittest.TestCase):
 
     def test_in_memory_database_persists_across_engine_connections(self):
         engine = DurableTaskEngine(":memory:")
+        self._install_claim_token_test_adapter(engine)
         goal = engine.create_goal()
         task = engine.submit(
             goal, "work", {"ok": True}, idempotency_key="memory-task"
@@ -120,7 +158,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.engine.claim("worker", lease_seconds=True)
         with self.assertRaises(ValueError):
-            self.engine.heartbeat("missing", "worker", lease_seconds=True)
+            self.engine.heartbeat("missing", "worker", lease_token="invalid-token", lease_seconds=True)
 
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="invalid-retry-delay"
@@ -162,6 +200,7 @@ class DurableTaskEngineTests(unittest.TestCase):
     def test_expired_lease_recovery_and_stale_worker_rejected(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        self._install_claim_token_test_adapter(engine)
         goal = engine.create_goal()
         task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2)
         engine.claim("worker-a", lease_seconds=5)
@@ -228,6 +267,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertIn("submission_fingerprint", columns)
+        self.assertIn("lease_token", columns)
         goal = migrated.create_goal("migrated-goal")
         task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
         self.assertIsNotNone(task["submission_fingerprint"])
@@ -405,6 +445,46 @@ class DurableTaskEngineTests(unittest.TestCase):
             self.engine.get_task("missing")
         with self.assertRaises(TaskNotFound):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
+
+
+    def test_recovered_claim_token_cannot_mutate_reassigned_task(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        self._install_claim_token_test_adapter(engine)
+        goal = engine.create_goal()
+        task = engine.submit(goal, "work", {}, idempotency_key="claim-fence", max_attempts=2)
+        first = engine.claim("same-worker", lease_seconds=5)
+        self.assertIsNotNone(first["lease_token"])
+        self.assertNotIn("lease_token", engine.get_task(task["id"]))
+        now[0] += 6
+        self.assertEqual(engine.recover_expired_leases(), 1)
+        second = engine.claim("same-worker", lease_seconds=5)
+        self.assertNotEqual(first["lease_token"], second["lease_token"])
+        for operation in (
+            lambda: engine.heartbeat(task["id"], "same-worker", lease_token=first["lease_token"]),
+            lambda: engine.complete(task["id"], "same-worker", {}, lease_token=first["lease_token"]),
+            lambda: engine.fail(task["id"], "same-worker", "stale", lease_token=first["lease_token"]),
+            lambda: engine.reject(task["id"], "same-worker", "invalid_payload", lease_token=first["lease_token"]),
+        ):
+            with self.assertRaises(TaskConflict):
+                operation()
+        self.assertEqual(engine.get_task(task["id"])["state"], "running")
+        self.assertEqual(
+            engine.complete(task["id"], "same-worker", {"ok": True}, lease_token=second["lease_token"])["state"],
+            "succeeded",
+        )
+
+    def test_worker_lifecycle_methods_require_a_claim_token(self):
+        task = self.engine.submit(self.goal, "work", {}, idempotency_key="claim-token-required")
+        claimed = self.engine.claim("token-required-worker")
+        with self.assertRaises(TypeError):
+            self.engine._strict_complete(task["id"], "token-required-worker", {})
+        with self.assertRaises(TypeError):
+            self.engine._strict_heartbeat(task["id"], "token-required-worker")
+        self.assertEqual(
+            self.engine._strict_complete(task["id"], "token-required-worker", {}, lease_token=claimed["lease_token"])["state"],
+            "succeeded",
+        )
 
 
 if __name__ == "__main__":
