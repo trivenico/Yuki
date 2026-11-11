@@ -11,7 +11,6 @@ import json
 import re
 from types import MappingProxyType
 
-
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$")
 _TOOL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
 _SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
@@ -106,6 +105,11 @@ class MCPToolPolicyRegistry:
 
     def get(self, *, provider_id: str, account_id: str, tool_name: str):
         return self._policies.get((provider_id, account_id, tool_name))
+
+    @property
+    def policies(self) -> tuple[MCPToolPolicy, ...]:
+        """Return the immutable, deterministically ordered policy snapshot."""
+        return tuple(self._policies[key] for key in sorted(self._policies))
 
     def tool_names(self, *, provider_id: str, account_id: str) -> tuple[str, ...]:
         """Return only enabled names for this exact provider/account binding."""
