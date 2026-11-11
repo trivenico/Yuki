@@ -201,6 +201,15 @@ class DurableTaskEngine:
             raise TaskConflict("worker does not hold the current fenced lease")
         return r
 
+    def validate_lease(self, task_id, worker_id, lease_token):
+        """Return whether this exact claim still owns a live task lease."""
+        try:
+            with closing(self._connect()) as c:
+                self._owned(c, task_id, worker_id, lease_token)
+            return True
+        except (TaskNotFound, TaskConflict, TypeError, ValueError):
+            return False
+
     def heartbeat(self,task_id,worker_id,*,lease_token,lease_seconds=60):
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1<=lease_seconds<=3600: raise ValueError("lease_seconds must be an integer in 1..3600")
         now=self.clock()
