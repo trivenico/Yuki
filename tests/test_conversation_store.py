@@ -238,6 +238,56 @@ class ConversationStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.delete_conversation(owner_id=self.owner, conversation_id="  ")
 
+    def test_generation_persistence_rejects_stale_lease_token(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="Fence stale worker", idempotency_key="fence-request",
+            expected_version=0, generation_request_id="fence-request",
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id, lease_token="old-worker",
+        )
+        self.assertTrue(self.store.update_generation_checkpoint(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fence-request", checkpoint={"phase": "running"},
+            lease_token="old-worker",
+        ))
+        self.assertTrue(self.store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id, lease_token="old-worker",
+        ))
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id, lease_token="new-worker",
+        )
+        self.assertFalse(self.store.update_generation_checkpoint(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fence-request", checkpoint={"phase": "stale"},
+            lease_token="old-worker",
+        ))
+        self.assertFalse(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fence-request", status="completed",
+            lease_token="old-worker",
+        ))
+        with self.assertRaises(ConversationConflict):
+            self.store.append_message(
+                owner_id=self.owner, conversation_id=conversation_id,
+                role="assistant", content="Stale answer",
+                idempotency_key="assistant:fence-request",
+                expected_version=1, generation_lease_token="old-worker",
+            )
+        self.assertTrue(self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="assistant", content="Current answer",
+            idempotency_key="assistant:fence-request",
+            expected_version=1, generation_lease_token="new-worker",
+        )["created"])
+        self.assertTrue(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fence-request", status="completed",
+            lease_token="new-worker",
+        ))
+
     def test_generation_records_are_owner_scoped(self):
         self.store.append_message(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
