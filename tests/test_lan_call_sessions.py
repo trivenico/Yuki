@@ -1,9 +1,12 @@
 """Security and lifecycle tests for LAN call invitations (no media transport)."""
 import tempfile
 import unittest
+from datetime import timedelta
+from unittest.mock import patch
 from pathlib import Path
 
 from core.device_pairing import DevicePairingService
+from core import lan_call_sessions
 from core.lan_call_sessions import LANCallSessionStore, CallSessionDenied, CallSessionError
 
 
@@ -93,6 +96,16 @@ class LANCallSessionStoreTests(unittest.TestCase):
                                         device_token=self.caller.token).status, "ringing")
         with self.assertRaises(CallSessionDenied):
             self.calls.get(session_id=invite.session_id, device_token=self.other.token)
+
+    def test_expired_invitation_cannot_be_accepted_and_is_persisted_expired(self):
+        invite = self._invite()
+        future = lan_call_sessions._now() + timedelta(seconds=31)
+        with patch("core.lan_call_sessions._now", return_value=future):
+            expired = self.calls.accept(session_id=invite.session_id,
+                                        recipient_token=self.recipient.token)
+        self.assertEqual(expired.status, "expired")
+        self.assertEqual(self.calls.get(session_id=invite.session_id,
+                                        device_token=self.caller.token).status, "expired")
 
 
 if __name__ == "__main__":
