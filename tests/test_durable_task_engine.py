@@ -443,5 +443,45 @@ class DurableTaskEngineTests(unittest.TestCase):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
 
 
+    def test_recovered_claim_token_cannot_mutate_reassigned_task(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        self._install_claim_token_test_adapter(engine)
+        goal = engine.create_goal()
+        task = engine.submit(goal, "work", {}, idempotency_key="claim-fence", max_attempts=2)
+        first = engine.claim("same-worker", lease_seconds=5)
+        self.assertIsNotNone(first["lease_token"])
+        self.assertNotIn("lease_token", engine.get_task(task["id"]))
+        now[0] += 6
+        self.assertEqual(engine.recover_expired_leases(), 1)
+        second = engine.claim("same-worker", lease_seconds=5)
+        self.assertNotEqual(first["lease_token"], second["lease_token"])
+        for operation in (
+            lambda: engine.heartbeat(task["id"], "same-worker", lease_token=first["lease_token"]),
+            lambda: engine.complete(task["id"], "same-worker", {}, lease_token=first["lease_token"]),
+            lambda: engine.fail(task["id"], "same-worker", "stale", lease_token=first["lease_token"]),
+            lambda: engine.reject(task["id"], "same-worker", "invalid_payload", lease_token=first["lease_token"]),
+        ):
+            with self.assertRaises(TaskConflict):
+                operation()
+        self.assertEqual(engine.get_task(task["id"])["state"], "running")
+        self.assertEqual(
+            engine.complete(task["id"], "same-worker", {"ok": True}, lease_token=second["lease_token"])["state"],
+            "succeeded",
+        )
+
+    def test_worker_lifecycle_methods_require_a_claim_token(self):
+        task = self.engine.submit(self.goal, "work", {}, idempotency_key="claim-token-required")
+        claimed = self.engine.claim("token-required-worker")
+        with self.assertRaises(TypeError):
+            self.engine.complete(task["id"], "token-required-worker", {})
+        with self.assertRaises(TypeError):
+            self.engine.heartbeat(task["id"], "token-required-worker")
+        self.assertEqual(
+            self.engine.complete(task["id"], "token-required-worker", {}, lease_token=claimed["lease_token"])["state"],
+            "succeeded",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
