@@ -66,5 +66,34 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIsInstance(result[0]["entrypoints"], list)
 
 
+    def test_product_surface_inventory_is_complete_and_conservative(self):
+        from core.capability_manifest import capability_manifest
+
+        contracts = {item.capability_id: item for item in capability_manifest()}
+        expected = {
+            "provider-runtime", "conversation-api", "companion-foundation",
+            "cli-assistant", "model-registry-evaluation", "paired-device-inference",
+            "lan-call-sessions", "income-opportunity-pipeline",
+            "native-desktop-application", "end-to-end-voice",
+        }
+        self.assertTrue(expected.issubset(contracts))
+        self.assertEqual(contracts["native-desktop-application"].status, "planned")
+        self.assertEqual(contracts["income-opportunity-pipeline"].status, "experimental")
+        self.assertEqual(contracts["lan-call-sessions"].status, "experimental")
+        self.assertTrue(any("WebRTC" in item for item in contracts["lan-call-sessions"].limitations))
+        self.assertTrue(any("No live platform adapter" in item
+                            for item in contracts["income-opportunity-pipeline"].limitations))
+        self.assertTrue(any("not prove a persistent companion loop" in item
+                            for item in contracts["companion-foundation"].limitations))
+
+    def test_all_product_contract_evidence_paths_exist(self):
+        from core.capability_manifest import capability_manifest
+
+        errors = validate_manifest(
+            capability_manifest(), repository_root=Path(__file__).resolve().parents[1]
+        )
+        self.assertEqual(errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()
