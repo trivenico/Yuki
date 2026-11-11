@@ -58,13 +58,18 @@ def build_local_conversation_runtime(
     agent_loop = AgentExecutionLoop(
         model,
         protocol,
-        stream_model=getattr(model, "stream_model", None)
-        if callable(getattr(provider, "generate_chat_stream", None)) else None,
+        stream_model=(
+            model.stream_model
+            if callable(getattr(provider, "generate_chat_stream", None)) else None
+        ),
         max_model_turns=max_turns,
     )
     store = store_factory(config)
     try:
-        owner_id = (owner_id_factory() if owner_id_factory is not None else\n                    load_or_create_local_owner_id(config.get("workspace")))
+        owner_id = (
+            owner_id_factory() if owner_id_factory is not None
+            else load_or_create_local_owner_id(config.get("workspace"))
+        )
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
             raise ValueError("local owner identity is invalid.")
         return LocalConversationRuntime(
