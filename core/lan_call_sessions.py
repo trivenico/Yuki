@@ -241,6 +241,12 @@ class LANCallSessionStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             device = self._authenticate(db, device_token)
+            # Expired alerts are not audit records; purge them during inbox polling
+            # so an offline device cannot leave an unbounded notification backlog.
+            db.execute(
+                "DELETE FROM lan_call_notifications WHERE expires_at<=?",
+                (_stamp(now),),
+            )
             rows = db.execute("""
                 SELECT n.notification_hash,n.event_type,n.created_at,n.expires_at,
                        n.session_hash,s.caller_device_id,s.recipient_device_id
