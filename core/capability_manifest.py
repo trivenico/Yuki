@@ -236,15 +236,6 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("A production device agent distribution, attestation, transport and real-device matrix remain incomplete.",),
     ),
     CapabilityContract(
-        "lan-call-sessions", "Consent-gated LAN call session state", "experimental",
-        "Stores bounded invitations and participant state transitions for paired devices.",
-        ("core/lan_call_sessions.py", "api/inference.py"),
-        ("paired device identity and SQLite",), ("call:invite", "call:accept", "call:end"),
-        ("call invitation records and audit events",), ("local",), "critical",
-        ("tests/test_lan_call_sessions.py", "tests/test_inference_api.py"),
-        ("Session state is not notification delivery, WebRTC signaling, audio/video transport, or a complete human-confirmation UX.",),
-    ),
-    CapabilityContract(
         "income-opportunity-pipeline", "Owner-scoped online income opportunity tracking", "experimental",
         "Tracks researched opportunities and owner-controlled lifecycle state without claiming earnings.",
         ("core/income_opportunities.py", "core/income_discovery.py", "api/income.py"),
