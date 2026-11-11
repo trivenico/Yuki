@@ -149,7 +149,7 @@ class CompanionStateStore:
 
     def add_record(self, kind: str, item: dict[str, Any]) -> dict[str, Any]:
         self._check_kind(kind)
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"].strip():
             raise ValueError("record must contain a non-empty id.")
         if "created_at" in item and not isinstance(item["created_at"], str):
             raise ValueError("created_at must be text.")
@@ -166,6 +166,9 @@ class CompanionStateStore:
                 "SELECT 1 FROM companion_records WHERE owner_id=? AND kind=? AND record_id=?",
                 (self.owner_id, kind, item["id"]),
             ).fetchone()
+            if existing is not None:
+                db.rollback()
+                raise ValueError("record already exists.")
             if kind == "identity":
                 for row in db.execute(
                     "SELECT payload FROM companion_records WHERE owner_id=? AND kind='identity'",
