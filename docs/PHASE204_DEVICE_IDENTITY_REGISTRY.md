@@ -1,7 +1,7 @@
 # Phase 204 — paired-device Ed25519 identity registry
 
 **Status:** Experimental core service; draft implementation, not production-ready.  
-**Depends on:** [Device identity and call key agreement proposal](DEVICE_IDENTITY_AND_CALL_KEY_AGREEMENT.md).
+**Scope:** General paired-device identity foundation for future authenticated local-network device operations.
 
 ## Implemented in this phase
 
@@ -16,13 +16,13 @@
 
 ## Deliberate limitations
 
-- This phase is a core service only. It does not add HTTP routes, UI, native key generation/storage, OS-keystore integration, key rotation, call handshakes, X25519, signaling, WebRTC, or device control.
+- This phase is a core service only. It does not add HTTP routes, UI, native key generation/storage, OS-keystore integration, key rotation, authenticated command transport, or device-control execution.
 - Enrollment is initial-key-only. A device with an active key cannot replace it through this API. Rotation needs a separately reviewed two-key transition and recovery protocol.
 - The owner_confirmed argument is an application boundary, not a UI. Any future API must derive owner identity from the authenticated session and only set confirmation after a real owner approval interaction.
 - The bearer credential authenticates the device record; Ed25519 proof separately establishes possession of the submitted private key. Neither alone is sufficient.
 - Public-key fingerprints are not an out-of-band identity verification channel. A future UI must show the fingerprint and provide a clear owner verification step.
 - Software private-key custody is not implemented. Device keys must be generated and retained locally by a future native agent using platform keystore APIs where available.
-- The signature transcript is an enrollment proof, not an authenticated key-exchange or call protocol. Do not use this service to authorize signaling or media.
+- The signature transcript is an enrollment proof, not a general-purpose request-signing or transport protocol. Do not treat enrollment as authorization for device commands.
 
 ## Required follow-up before production
 
@@ -31,7 +31,7 @@
 3. Native agent implementation for key generation, signing, secure storage, key backup/recovery policy and cross-platform behavior.
 4. Key rotation and owner recovery design with race, rollback and revocation tests.
 5. Known-answer tests and interoperability vectors on every supported platform.
-6. Only then proceed to a separately reviewed authenticated key-agreement implementation and ciphertext-only signaling mailbox.
+6. Implement a separately reviewed authenticated command protocol with request signing, freshness/replay protection, capability checks, and per-command audit before enabling remote device actions.
 
 ## Test coverage added
 
