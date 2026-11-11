@@ -169,7 +169,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         status, caller_view = self.request(
             "GET", f"/v1/devices/calls/{caller_session_id}", token=caller["device_token"]
         )
-        self.assertEqual((status, caller_view["session"]["status"]), (200, "accepted"))
+        self.assertEqual((status, caller_view.get("session", {}).get("status")), (200, "accepted"), msg=f"caller session response: {status} {caller_view}")
 
         # Audit rows are committed with the call state changes in the same SQLite DB.
         with self.pairing._connect() as db:
