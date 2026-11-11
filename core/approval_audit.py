@@ -7,6 +7,8 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 import sqlite3
 import uuid
 import re
@@ -25,8 +27,7 @@ class SQLiteApprovalAuditLog:
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS approval_audit_events (
                 event_id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
