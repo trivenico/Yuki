@@ -35,8 +35,10 @@ if errorlevel 1 (
   echo WARNING: pip upgrade failed. Continuing with the existing pip version.
 )
 
-echo [3/4] Checking declared dependencies...
+echo [3/4] Installing declared dependencies and Yuki CLI...
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+".venv\Scripts\python.exe" -m pip install .
+if errorlevel 1 exit /b 1
 if errorlevel 1 (
   echo ERROR: Dependency step failed.
   exit /b 1
