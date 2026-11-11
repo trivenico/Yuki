@@ -86,5 +86,28 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.invoke("echo", "ok"), "ok")
 
 
+    def test_execution_guard_is_checked_before_handler(self):
+        outcomes = iter((True, False))
+        self.assertEqual(
+            self.runtime.invoke("echo", "first", execution_guard=lambda: next(outcomes)),
+            "first",
+        )
+        blocked = self.runtime.invoke("echo", "second", execution_guard=lambda: next(outcomes))
+        self.assertIn("lease", blocked.lower())
+        self.assertEqual(self.calls, ["first"])
+
+    def test_execution_guard_exception_fails_closed(self):
+        def broken_guard():
+            raise RuntimeError("lease service unavailable")
+        result = self.runtime.invoke("echo", "payload", execution_guard=broken_guard)
+        self.assertIn("lease", result.lower())
+        self.assertEqual(self.calls, [])
+
+    def test_invalid_execution_guard_fails_closed(self):
+        result = self.runtime.invoke("echo", "payload", execution_guard="yes")
+        self.assertIn("lease", result.lower())
+        self.assertEqual(self.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
