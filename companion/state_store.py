@@ -267,24 +267,36 @@ class CompanionStateStore:
             db.commit()
         return inserted
 
-    def claim_outbox(self, now: datetime, *, lease_seconds: int = 60, limit: int = 20) -> list[dict[str, Any]]:
+    def claim_outbox(
+        self, now: datetime, *, lease_seconds: int = 60, limit: int = 20,
+        max_attempts: int = 8,
+    ) -> list[dict[str, Any]]:
         """Lease pending events; callers must use event_id as provider idempotency key."""
         current = self._aware_utc(now, "now")
         if type(lease_seconds) is not int or not 5 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be between 5 and 3600.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100.")
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 20:
+            raise ValueError("max_attempts must be between 1 and 20.")
         expires = (current + timedelta(seconds=lease_seconds)).isoformat()
         claimed = []
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """UPDATE companion_outbox SET status='failed',
+                   last_error=COALESCE(last_error,'lease expired after maximum attempts'),
+                   lease_token_hash=NULL,lease_expires_at=NULL
+                   WHERE owner_id=? AND status='leased' AND lease_expires_at<=? AND attempts>=?""",
+                (self.owner_id, current.isoformat(), max_attempts),
+            )
             rows = db.execute(
                 """SELECT event_id,payload,attempts FROM companion_outbox
-                   WHERE owner_id=? AND (
+                   WHERE owner_id=? AND attempts<? AND (
                      (status='pending' AND available_at<=?) OR
                      (status='leased' AND lease_expires_at<=?)
                    ) ORDER BY available_at,event_id LIMIT ?""",
-                (self.owner_id, current.isoformat(), current.isoformat(), limit),
+                (self.owner_id, max_attempts, current.isoformat(), current.isoformat(), limit),
             ).fetchall()
             for row in rows:
                 token = secrets.token_urlsafe(32)
