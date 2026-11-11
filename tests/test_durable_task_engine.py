@@ -487,10 +487,6 @@ class DurableTaskEngineTests(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_owner_bound_goals_isolate_goal_task_and_event_access(self):
         alice_goal = self.engine.create_owned_goal("owner-alice")
         bob_goal = self.engine.create_owned_goal("owner-bob")
@@ -570,3 +566,7 @@ if __name__ == "__main__":
             migrated.get_goal_for_owner("owner-new", "old-goal")
         new_goal = migrated.create_owned_goal("owner-new")
         self.assertEqual(migrated.get_goal_for_owner("owner-new", new_goal)["owner_id"], "owner-new")
+
+
+if __name__ == "__main__":
+    unittest.main()
