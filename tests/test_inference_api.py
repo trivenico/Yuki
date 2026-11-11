@@ -285,6 +285,39 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         )
         self.assertEqual((status, body["error"]), (404, "call_not_cancellable"))
 
+    def test_call_state_read_is_authenticated_and_participant_scoped(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        unrelated = self._pair_device()
+        status, challenge = self.request("POST", "/v1/devices/calls/confirmation-challenges", {
+            "password": "a-secure-owner-password",
+            "caller_device_id": caller["device"]["device_id"],
+            "recipient_device_id": recipient["device"]["device_id"],
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        status, created = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller["device"]["device_id"],
+            "recipient_device_id": recipient["device"]["device_id"],
+            "confirmation_token": challenge["confirmation_token"],
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        handle = created["session"]["session_id"]
+
+        status, state = self.request(
+            "GET", f"/v1/devices/calls/{handle}", token=caller["device_token"]
+        )
+        self.assertEqual((status, state["session"]["status"]), (200, "ringing"))
+        status, state = self.request(
+            "GET", f"/v1/devices/calls/{handle}", token=recipient["device_token"]
+        )
+        self.assertEqual((status, state["session"]["status"]), (200, "ringing"))
+        status, denied = self.request(
+            "GET", f"/v1/devices/calls/{handle}", token=unrelated["device_token"]
+        )
+        self.assertEqual((status, denied["error"]), (403, "call_action_denied"))
+        status, denied = self.request("GET", f"/v1/devices/calls/{handle}")
+        self.assertEqual((status, denied["error"]), (401, "device_authentication_required"))
+
     def test_revoked_caller_device_cannot_ring_or_be_accepted(self):
         caller = self._pair_device()
         recipient = self._pair_device()
