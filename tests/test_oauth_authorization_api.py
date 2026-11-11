@@ -12,7 +12,7 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 
 class FakeAuth:
     def resolve_session(self, token):
-        return SimpleNamespace(user_id="owner") if token == "valid-session" else None
+        return SimpleNamespace(user_id="owner") if token == "valid-session-token-1234567890" else None
 
 
 class FakeRegistry(SQLiteOAuthConnectionRegistry):
@@ -100,7 +100,7 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
             await app({"type": "http", "method": "GET",
                        "path": "/v1/integrations/oauth/providers", "headers": headers},
                       receive, send)
-        asyncio.run(invoke("valid-session"))
+        asyncio.run(invoke("valid-session-token-1234567890"))
         self.assertEqual(sent[0]["status"], 200)
         payload = json.loads(sent[1]["body"])
         self.assertEqual(payload["providers"], [{
@@ -114,29 +114,29 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
     def test_authorization_start_is_bound_to_authenticated_owner_and_session(self):
         status, body = self.request(
             "POST", "/v1/integrations/oauth/providers/provider/authorize",
-            "valid-session",
+            "valid-session-token-1234567890",
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["authorization_url"], "https://identity.example/authorize?state=opaque")
         self.assertEqual(self.service.begin_calls, [{
-            "owner_id": "owner", "session_id": "valid-session",
+            "owner_id": "owner", "session_id": "valid-session-token-1234567890",
         }])
 
     def test_callback_registers_only_after_successful_service_completion(self):
         status, body = self.request(
             "POST", "/v1/integrations/oauth/providers/provider/callback",
-            "valid-session", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
+            "valid-session-token-1234567890", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
         )
         self.assertEqual(status, 200)
         self.assertTrue(body["connected"])
         self.assertEqual(self.service.complete_calls[0]["owner_id"], "owner")
-        self.assertEqual(self.service.complete_calls[0]["session_id"], "valid-session")
+        self.assertEqual(self.service.complete_calls[0]["session_id"], "valid-session-token-1234567890")
         self.assertEqual(self.registry.records[0]["scopes"], ("read",))
 
     def test_invalid_session_cannot_start_authorization(self):
         status, _ = self.request(
             "POST", "/v1/integrations/oauth/providers/provider/authorize",
-            "invalid-session",
+            "invalid-session-token-1234567890",
         )
         self.assertEqual(status, 401)
         self.assertEqual(self.service.begin_calls, [])
@@ -144,7 +144,7 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
     def test_unconfigured_provider_is_not_resolved_from_request_data(self):
         status, body = self.request(
             "POST", "/v1/integrations/oauth/providers/attacker/authorize",
-            "valid-session",
+            "valid-session-token-1234567890",
         )
         self.assertEqual(status, 404)
         self.assertEqual(body["error"], "provider_not_configured")
@@ -155,7 +155,7 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
         }
         status, _ = self.request(
             "POST", "/v1/integrations/oauth/providers/provider/callback",
-            "valid-session", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
+            "valid-session-token-1234567890", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
         )
         self.assertEqual(status, 502)
         self.assertEqual(self.registry.records, [])
@@ -164,7 +164,7 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
         self.registry.fail_register = True
         status, body = self.request(
             "POST", "/v1/integrations/oauth/providers/provider/callback",
-            "valid-session", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
+            "valid-session-token-1234567890", {"callback_url": "https://app.example/oauth/callback?code=secret&state=opaque"},
         )
         self.assertEqual(status, 503)
         self.assertEqual(body["error"], "connection_registration_failed")
@@ -176,7 +176,7 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
     def test_callback_requires_exact_body_shape(self):
         status, _ = self.request(
             "POST", "/v1/integrations/oauth/providers/provider/callback",
-            "valid-session", {"callback_url": "https://app.example/callback", "owner_id": "attacker"},
+            "valid-session-token-1234567890", {"callback_url": "https://app.example/callback", "owner_id": "attacker"},
         )
         self.assertEqual(status, 400)
         self.assertEqual(self.registry.records, [])
