@@ -9,8 +9,9 @@ from automation.remote_call_client import RemoteCallClient
 class PairedDeviceCallInbox:
     """Present incoming invitations and require a local choice for each one.
 
-    This is intentionally a foreground primitive. It does not poll forever,
-    spawn a background listener, activate media hardware, or auto-accept calls.
+    This is intentionally foreground-only. Watch mode polls while this process
+    remains open; it never spawns a background listener, activates media
+    hardware, or auto-accepts calls.
     """
 
     def __init__(
@@ -33,10 +34,10 @@ class PairedDeviceCallInbox:
         result = {"received": len(invitations), "accepted": 0, "declined": 0, "ignored": 0}
         for invitation in invitations:
             self.output(
-                "Incoming Yuki call\\n"
-                f"  From device: {invitation.caller_device_id}\\n"
-                f"  To device: {invitation.recipient_device_id}\\n"
-                f"  Expires: {invitation.expires_at}\\n"
+                "Incoming Yuki call\n"
+                f"  From device: {invitation.caller_device_id}\n"
+                f"  To device: {invitation.recipient_device_id}\n"
+                f"  Expires: {invitation.expires_at}\n"
                 "  No microphone or camera will be activated by accepting this invitation."
             )
             choice = self.prompt("Accept, decline, or ignore? [a/d/i] ").strip().lower()
