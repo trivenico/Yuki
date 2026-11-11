@@ -109,7 +109,7 @@ class OAuthMCPConnectionTests(unittest.TestCase):
         with self.assertRaisesRegex(OAuthMCPConnectionError, "explicit_tool_approver_required"):
             self.client(approver=None)
         with self.assertRaisesRegex(OAuthMCPConnectionError, "explicit_tool_allowlist_required"):
-            self.client(allowed_tools=[])
+            self.client(allowed_tools=None)
 
     def test_manager_discovery_binds_provider_and_uses_empty_execution_allowlist(self):
         manager = OAuthMCPConnectionManager(
