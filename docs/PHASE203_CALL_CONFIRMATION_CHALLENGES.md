@@ -4,7 +4,7 @@
 
 `core/call_confirmation.py` provides durable, one-time confirmation challenges. `api/inference.py` now exposes an authenticated challenge-issuance endpoint and consumes the challenge before creating a LAN call invitation. The owner is derived from the authenticated session, and issuance requires a fresh password check against that same active session.
 
-The repository now includes an owner-facing browser flow in `ui/web`: it lists paired devices, displays the exact caller and recipient IDs/names in a confirmation prompt, then re-authenticates and immediately consumes the challenge. This improves the human-consent boundary but does not make a browser prompt cryptographic proof of a trusted gesture; the server still enforces session, password, ownership, expiry, and one-time challenge checks. Do not expose the owner password to models, agents, background workers, or tools.
+The repository now includes an owner-facing browser flow in `ui/web`: it lists paired devices, displays the exact caller and recipient IDs/names in a confirmation prompt, then re-authenticates and immediately consumes the challenge. After creation, the browser retains only the opaque digest handle and offers an explicit owner-confirmed cancellation control while the invitation is still ringing. This improves the human-consent boundary but does not make a browser prompt cryptographic proof of a trusted gesture; the server still enforces session, password, ownership, expiry, and one-time challenge checks. Do not expose the owner password to models, agents, background workers, or tools.
 
 ## API flow
 
