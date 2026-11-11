@@ -71,6 +71,7 @@ class DurableTaskEngineTests(unittest.TestCase):
 
     def test_in_memory_database_persists_across_engine_connections(self):
         engine = DurableTaskEngine(":memory:")
+        self._install_claim_token_test_adapter(engine)
         goal = engine.create_goal()
         task = engine.submit(
             goal, "work", {"ok": True}, idempotency_key="memory-task"
@@ -266,6 +267,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertIn("submission_fingerprint", columns)
+        self.assertIn("lease_token", columns)
         goal = migrated.create_goal("migrated-goal")
         task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
         self.assertIsNotNone(task["submission_fingerprint"])
