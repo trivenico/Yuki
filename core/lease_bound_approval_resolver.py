@@ -69,10 +69,23 @@ class LeaseBoundApprovalResolver:
         # broker and worker layers own provenance construction. At this boundary
         # require a bounded task identifier before consulting the lease engine.
         try:
-            task_id = context.task_id
+            provenance = {
+                name: getattr(context, name)
+                for name in ("principal_id", "trigger", "goal_id", "task_id")
+            }
+            task_id = provenance["task_id"]
         except Exception:
             raise PermissionError("trusted task provenance is required") from None
-        if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
+        if (
+            not isinstance(provenance["principal_id"], str)
+            or not provenance["principal_id"].strip()
+            or provenance["trigger"] != "durable_task"
+            or not isinstance(provenance["goal_id"], str)
+            or not provenance["goal_id"].strip()
+            or not isinstance(task_id, str)
+            or not task_id
+            or len(task_id) > 256
+        ):
             raise PermissionError("trusted task provenance is required")
         if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
             raise ValueError("skill_name is invalid")
@@ -81,6 +94,15 @@ class LeaseBoundApprovalResolver:
             raise PermissionError("durable task claim is no longer current")
 
         credential = self.resolver(context, skill_name)
+
+        # The resolver is an internal trusted component, but verify that it did
+        # not mutate the provenance object used for its own credential lookup.
+        try:
+            unchanged = all(getattr(context, name) == value for name, value in provenance.items())
+        except Exception:
+            unchanged = False
+        if not unchanged:
+            raise PermissionError("trusted task context changed during approval resolution")
 
         # The resolver may perform I/O or block. Re-check after it returns so a
         # credential is never handed to a worker whose lease changed mid-lookup.
