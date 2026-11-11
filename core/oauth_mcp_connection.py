@@ -82,7 +82,7 @@ class OAuthMCPConnectionManager:
     def create_policy_client(
         self, *, owner_id: str, account_id: str, endpoint: str,
         allowed_hosts, policy_registry, granted_scopes,
-        owner_approval, audit, timeout: float = 10,
+        owner_approval, audit, current_revision, timeout: float = 10,
     ):
         """Create an MCP client whose execution gate is a trusted policy snapshot.
 
@@ -102,6 +102,7 @@ class OAuthMCPConnectionManager:
                 granted_scopes=granted_scopes,
                 owner_approval=owner_approval,
                 audit=audit,
+                current_revision=current_revision,
             )
             allowed_tools = policy_registry.tool_names(
                 provider_id=self._provider_id,
