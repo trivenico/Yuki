@@ -33,16 +33,11 @@ class DeviceCapability(str, Enum):
     MEDIA_VOLUME = "media.volume"
     DISPLAY_BRIGHTNESS = "display.brightness"
     DEVICE_LOCK = "device.lock"
-    CALL_START = "call.start"
-    CALL_ACCEPT = "call.accept"
-    CALL_END = "call.end"
 
 
 _CAPABILITIES = frozenset(item.value for item in DeviceCapability)
 _OWNER_CONFIRMATION = frozenset({
     DeviceCapability.DEVICE_LOCK.value,
-    DeviceCapability.CALL_START.value,
-    DeviceCapability.CALL_ACCEPT.value,
 })
 _MAX_ENDPOINT_LENGTH = 512
 
@@ -63,7 +58,6 @@ class LocalDeviceAuthorization:
     capability: DeviceCapability
     endpoint: str
     policy_revision: int
-    recipient_accepted: bool
 
 
 def _validate_endpoint(value: str) -> str:
@@ -221,7 +215,7 @@ class LocalNetworkDeviceRegistry:
 
     def authorize(
         self, *, owner_id: str, device_id: str, capability: DeviceCapability | str,
-        owner_confirmed: bool = False, recipient_accepted: bool = False,
+        owner_confirmed: bool = False,
     ) -> LocalDeviceAuthorization:
         """Authorize one typed capability; this method never sends a network command."""
         self._identity(owner_id, device_id)
@@ -229,12 +223,10 @@ class LocalNetworkDeviceRegistry:
             selected = capability if isinstance(capability, DeviceCapability) else DeviceCapability(capability)
         except (ValueError, TypeError) as exc:
             raise LocalDeviceDenied("capability_not_supported") from exc
-        if type(owner_confirmed) is not bool or type(recipient_accepted) is not bool:
+        if type(owner_confirmed) is not bool:
             raise LocalDeviceDenied("confirmation_invalid")
         if selected.value in _OWNER_CONFIRMATION and owner_confirmed is not True:
             raise LocalDeviceDenied("owner_confirmation_required")
-        if selected is DeviceCapability.CALL_START and recipient_accepted is not True:
-            raise LocalDeviceDenied("recipient_consent_required")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
@@ -251,7 +243,6 @@ class LocalNetworkDeviceRegistry:
             return LocalDeviceAuthorization(
                 device_id=device_id, owner_id=owner_id, capability=selected,
                 endpoint=row["endpoint"], policy_revision=row["revision"],
-                recipient_accepted=recipient_accepted,
             )
 
     def remove_endpoint(self, *, owner_id: str, device_id: str) -> bool:
