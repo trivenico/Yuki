@@ -72,12 +72,13 @@ class TrustedMCPOAuthDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual(len(transport.calls), 3)
 
-    def test_rejects_unapproved_metadata_host_before_network_access(self):
+    def test_rejects_unapproved_authorization_server_before_second_network_access(self):
         transport = FakeTransport(self._documents())
         discovery = self._discovery(transport, hosts=("mcp.example.com",))
         with self.assertRaisesRegex(OAuthMetadataError, "metadata_host_not_allowed"):
             discovery.discover(resource=self.resource)
-        self.assertEqual(transport.calls, [])
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[0][0], "GET")
 
     def test_requires_explicit_selection_when_resource_advertises_multiple_issuers(self):
         documents = self._documents()
