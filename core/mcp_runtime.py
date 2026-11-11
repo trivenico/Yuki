@@ -182,17 +182,6 @@ class MCPRuntimeService:
             raise ValueError("explicit_owner_confirmation_required")
         if type(enabled) is not bool:
             raise ValueError("policy_enabled_invalid")
-        definition = self._trusted_tool_definitions.get((provider_id, tool_name))
-        if definition is None:
-            raise ValueError("trusted_tool_definition_not_configured")
-        if enabled:
-            if (not isinstance(granted_scopes, (tuple, list, set, frozenset))
-                    or len(granted_scopes) > 64
-                    or any(not isinstance(scope, str) or not scope or len(scope) > 128
-                           for scope in granted_scopes)):
-                raise ValueError("granted_oauth_scopes_invalid")
-            if not set(definition.required_scopes).issubset(set(granted_scopes)):
-                raise ValueError("required_oauth_scope_missing")
         registry = self._policies.load_registry(
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
         )
@@ -203,10 +192,29 @@ class MCPRuntimeService:
         previous = registry.get(
             provider_id=provider_id, account_id=account_id, tool_name=tool_name,
         )
+        if enabled:
+            definition = self._trusted_tool_definitions.get((provider_id, tool_name))
+            if definition is None:
+                raise ValueError("trusted_tool_definition_not_configured")
+            if (not isinstance(granted_scopes, (tuple, list, set, frozenset))
+                    or len(granted_scopes) > 64
+                    or any(not isinstance(scope, str) or not scope or len(scope) > 128
+                           for scope in granted_scopes)):
+                raise ValueError("granted_oauth_scopes_invalid")
+            if not set(definition.required_scopes).issubset(set(granted_scopes)):
+                raise ValueError("required_oauth_scope_missing")
+            risk = definition.risk
+            required_scopes = definition.required_scopes
+        else:
+            if previous is None:
+                raise ValueError("policy_not_found")
+            # Revocation must remain possible after scope loss or trusted-profile removal.
+            risk = previous.risk
+            required_scopes = previous.required_scopes
         policy = MCPToolPolicy(
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
-            tool_name=tool_name, risk=definition.risk,
-            required_scopes=definition.required_scopes,
+            tool_name=tool_name, risk=risk,
+            required_scopes=required_scopes,
             version=(previous.version + 1) if previous else 1,
             enabled=enabled,
         )
