@@ -3,7 +3,7 @@
 ## Delivered
 
 - Extend the existing SQLite approval audit event vocabulary with execution_started, outcome_unknown, executed and execution_failed.
-- Add an MCPExecutionAudit adapter that records event type, hashed owner, hashed per-invocation correlation ID, timestamp, hash-chain links, and bounded provider/account/tool identity.
+- Add MCPToolPolicyAudit and MCPExecutionAudit adapters that records event type, hashed owner, hashed per-invocation correlation ID, timestamp, hash-chain links, and bounded provider/account/tool identity.
 - Do not persist arguments, credentials, remote results, or raw owner identifiers.
 - Make policy-bound OAuth MCP client construction require an execution-audit callback.
 - Emit execution_started durably before dispatch. If that audit write fails, do not send the remote call.
