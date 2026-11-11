@@ -147,5 +147,45 @@ class LANCallSessionStoreTests(unittest.TestCase):
                                         device_token=self.caller.token).status, "accepted")
 
 
+    def test_notification_outbox_is_atomic_recipient_scoped_and_acknowledged(self):
+        invite = self.calls.invite_as_owner(
+            owner_id="owner",
+            caller_device_id=self.caller.device.device_id,
+            recipient_device_id=self.recipient.device.device_id,
+        )
+        notifications = self.calls.list_notifications(device_token=self.recipient.token)
+        self.assertEqual(len(notifications), 1)
+        event = notifications[0]
+        self.assertEqual(event["event_type"], "incoming_call")
+        self.assertEqual(event["session_id"], self.calls.get(
+            session_id=invite.session_id, device_token=self.caller.token
+        ).session_id)
+        self.assertEqual(len(event["notification_id"]), 64)
+        self.assertNotIn(invite.session_id, repr(event))
+        self.assertEqual(self.calls.list_notifications(device_token=self.other.token), [])
+        self.assertTrue(self.calls.acknowledge_notification(
+            notification_id=event["notification_id"], device_token=self.recipient.token
+        ))
+        self.assertEqual(self.calls.list_notifications(device_token=self.recipient.token), [])
+        self.assertFalse(self.calls.acknowledge_notification(
+            notification_id=event["notification_id"], device_token=self.recipient.token
+        ))
+
+    def test_notification_is_suppressed_after_invite_cancellation_or_caller_revocation(self):
+        invite = self.calls.invite_as_owner(
+            owner_id="owner",
+            caller_device_id=self.caller.device.device_id,
+            recipient_device_id=self.recipient.device.device_id,
+        )
+        self.calls.cancel_as_owner(owner_id="owner", session_id=invite.session_id)
+        self.assertEqual(self.calls.list_notifications(device_token=self.recipient.token), [])
+        second = self.calls.invite_as_owner(
+            owner_id="owner",
+            caller_device_id=self.caller.device.device_id,
+            recipient_device_id=self.recipient.device.device_id,
+        )
+        self.pairing.revoke_device("owner", self.caller.device.device_id)
+        self.assertEqual(self.calls.list_notifications(device_token=self.recipient.token), [])
+
 if __name__ == "__main__":
     unittest.main()
