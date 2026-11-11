@@ -24,6 +24,54 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_chat_uses_persistent_runtime_and_closes_it(self):
+        class Conversations:
+            def __init__(self):
+                self.items = []
+                self.history_calls = 0
+                self.reply_calls = 0
+
+            def list(self, *, owner_id, limit):
+                return list(self.items[:limit])
+
+            def create(self, *, owner_id, title="New conversation"):
+                item = {"conversation_id": "conversation-1234567890", "title": title, "version": 0}
+                self.items.insert(0, item)
+                return item
+
+            def history(self, *, owner_id, conversation_id, limit=100):
+                self.history_calls += 1
+                return [{"role": "user", "content": "hello"}]
+
+            def reply(self, **kwargs):
+                self.reply_calls += 1
+                return {"answer": "saved answer", "version": 2, "status": "completed"}
+
+        class Runtime:
+            def __init__(self):
+                self.owner_id = "local-test-owner"
+                self.conversations = Conversations()
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        runtime = Runtime()
+        output = []
+        inputs = iter(["hello", "/history", "/quit"])
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            conversation_runtime_factory=lambda config: runtime,
+            input_fn=lambda prompt: next(inputs),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(runtime.closed)
+        self.assertEqual(runtime.conversations.reply_calls, 1)
+        self.assertEqual(runtime.conversations.history_calls, 1)
+        self.assertIn("Yuki> saved answer", output)
+
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
         output = []
