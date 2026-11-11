@@ -181,7 +181,7 @@ class MCPHTTPClient:
                         "MCP remote outcome is unknown and audit persistence failed; do not retry this action."
                     ) from None
             raise MCPExecutionOutcomeUnknown(
-                "MCP remote outcome is unknown after execution start; inspect provider state before any retry."
+                "MCP remote outcome is unknown after execution start; do not retry until provider state is checked."
             ) from None
 
         if self.execution_audit is not None:
