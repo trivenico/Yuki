@@ -1,0 +1,36 @@
+# Safe defaults; all privileged/integration features remain disabled.
+name: Yuki
+workspace: ./yuki_workspace
+provider: openai
+openai_model: gpt-4.1-mini
+ollama_base_url: http://127.0.0.1:11434
+ollama_model: ""
+max_agent_steps: 3
+voice_enabled: false
+language_behavior: auto_detect
+voice_style: natural_realistic_female
+spoken_reply_policy: every_reply_when_voice_mode_active
+stt_model: small
+tts_rate: 170
+tts_backend: piper
+piper_model_path: ""
+wakeword_enabled: false
+wakeword_model_path: ""
+gmail_enabled: false
+security_lab_enabled: false
+recon_allowlisted_targets: []
+sandbox_enabled: false
+sandbox_allowed_images: []
+firewall_enabled: false
+firewall_dry_run: true
+web_allowed_hosts: []
+# Python plugins execute with Yuki's permissions. Keep disabled unless you trust the code.
+plugin_discovery_enabled: false
+trusted_plugin_modules: []
+
+# Additional local project roots eligible for the explicitly approved GitHub push skill.
+# Alternatively set YUKI_GITHUB_ALLOWED_ROOTS using the OS path-list separator.
+github_allowed_roots: []
+
+# Reviewed HTTPS MCP servers. Empty by default; every server requires explicit host and tool allow-lists.
+mcp_servers: []
