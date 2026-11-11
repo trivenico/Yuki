@@ -119,10 +119,10 @@ class OAuthMCPConnectionManager:
             if not isinstance(event, dict):
                 raise ValueError("mcp_execution_audit_event_invalid")
             execution_audit({
+                **event,
                 "owner_id": owner_id,
                 "provider_id": self._provider_id,
                 "account_id": account_id,
-                **event,
             })
 
         return self.create_client(
