@@ -368,5 +368,47 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         }, self.owner_two.token)
         self.assertEqual(status, 403)
 
+    def test_authenticated_device_notification_inbox_and_ack(self):
+        caller = self._pair_device()
+        recipient = self._pair_device()
+        caller_id = caller["device"]["device_id"]
+        recipient_id = recipient["device"]["device_id"]
+        status, challenge = self.request("POST", "/v1/devices/calls/confirmation-challenges", {
+            "password": "a-secure-owner-password",
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        status, created = self.request("POST", "/v1/devices/calls", {
+            "caller_device_id": caller_id,
+            "recipient_device_id": recipient_id,
+            "confirmation_token": challenge["confirmation_token"],
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+
+        status, inbox = self.request(
+            "GET", "/v1/devices/calls/notifications/inbox", token=recipient["device_token"]
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(inbox["delivery"], "at_least_once_polling")
+        self.assertEqual(len(inbox["notifications"]), 1)
+        notification = inbox["notifications"][0]
+        self.assertEqual(notification["session_id"], created["session"]["session_id"])
+        self.assertNotIn("confirmation_token", notification)
+        status, denied = self.request(
+            "POST", f"/v1/devices/calls/notifications/{notification['notification_id']}/ack",
+            {}, caller["device_token"],
+        )
+        self.assertEqual((status, denied["acknowledged"]), (200, False))
+        status, ack = self.request(
+            "POST", f"/v1/devices/calls/notifications/{notification['notification_id']}/ack",
+            {}, recipient["device_token"],
+        )
+        self.assertEqual((status, ack["acknowledged"]), (200, True))
+        status, inbox = self.request(
+            "GET", "/v1/devices/calls/notifications/inbox", token=recipient["device_token"]
+        )
+        self.assertEqual((status, len(inbox["notifications"])), (200, 0))
+
 if __name__ == "__main__":
     unittest.main()
