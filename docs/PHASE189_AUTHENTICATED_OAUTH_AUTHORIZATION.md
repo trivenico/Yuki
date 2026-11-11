@@ -11,7 +11,7 @@
 - Bound callback request bodies and never echo callback URLs or authorization codes in API responses.
 - Mount the authorization API optionally alongside the authenticated connection-management API.
 - Add a trusted, authenticated provider catalog endpoint and an owner-facing browser panel for connect, status, scopes and disconnect.
-- The browser uses text-only DOM rendering for provider metadata and never constructs provider endpoints.
+- The browser uses text-only DOM rendering for provider metadata and never constructs provider endpoints. Configure each provider's exact registered redirect URI as `https://<trusted-yuki-origin>/oauth/callback/<provider_id>`. The web shell serves only validated provider-specific callback paths. The redirect URI must have no query string: OAuth callbacks are validated against the exact scheme, authority and path, and only `code`, `state`, and optional `iss` are accepted as callback parameters. The browser identifies the provider from the callback path and posts the original callback URL to the authenticated callback API using the initiating browser session.
 
 ## API contract
 
