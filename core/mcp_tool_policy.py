@@ -122,7 +122,7 @@ class MCPToolPolicyRegistry:
 
     def build_approver(
         self, *, owner_id: str, provider_id: str, account_id: str,
-        granted_scopes, owner_approval, audit,
+        granted_scopes, owner_approval, audit, current_revision,
     ):
         """Return the bool callback expected by MCPHTTPClient.
 
@@ -141,8 +141,8 @@ class MCPToolPolicyRegistry:
                for scope in granted_scopes):
             raise MCPToolPolicyError("granted_scopes_invalid")
         scopes = frozenset(granted_scopes)
-        if not callable(owner_approval) or not callable(audit):
-            raise MCPToolPolicyError("owner_approval_and_audit_required")
+        if not callable(owner_approval) or not callable(audit) or not callable(current_revision):
+            raise MCPToolPolicyError("owner_approval_audit_and_revision_required")
 
         def approve(tool_name, arguments):
             if not isinstance(tool_name, str) or not _TOOL_NAME.fullmatch(tool_name):
@@ -156,6 +156,11 @@ class MCPToolPolicyRegistry:
             except (TypeError, ValueError, UnicodeEncodeError):
                 return False
             if len(encoded) > _MAX_ARGUMENT_BYTES:
+                return False
+            try:
+                if current_revision() != self.revision:
+                    return False
+            except Exception:
                 return False
             policy = self.get(
                 provider_id=provider_id, account_id=account_id, tool_name=tool_name,
