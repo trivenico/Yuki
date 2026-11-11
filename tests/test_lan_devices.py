@@ -51,13 +51,17 @@ class LocalNetworkDeviceRegistryTests(unittest.TestCase):
             self.register(owner_confirmed=False)
         for endpoint in (
             "http://example.com:8765", "http://8.8.8.8:8765",
-            "http://127.0.0.1:8765", "http://169.254.1.2:8765",
+            "http://127.0.0.1:8765", "http://0.0.0.0:8765", "http://224.0.0.1:8765",
             "http://192.168.1.25:8765/path", "http://user:pass@192.168.1.25",
             "https://192.168.1.25?token=secret",
         ):
             with self.subTest(endpoint=endpoint):
                 with self.assertRaises(LocalDeviceError):
                     self.register(endpoint=endpoint)
+
+    def test_ipv6_private_endpoint_is_normalized(self):
+        endpoint = self.register(endpoint="http://[fd00::25]:8765")
+        self.assertEqual(endpoint.endpoint, "http://[fd00::25]:8765")
 
     def test_supported_capabilities_only_and_revision_compare_and_swap(self):
         first = self.register()
