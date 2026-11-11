@@ -1,7 +1,6 @@
 """Regression tests for approval resolution fenced by the active task claim."""
 import unittest
-
-from core.guarded_skill_runtime import SkillPolicyContext
+from types import SimpleNamespace
 from core.lease_bound_approval_resolver import LeaseBoundApprovalResolver
 
 
@@ -21,7 +20,7 @@ class FakeEngine:
 class LeaseBoundApprovalResolverTests(unittest.TestCase):
     def setUp(self):
         self.engine = FakeEngine()
-        self.context = SkillPolicyContext("owner", "durable_task", "goal-1", "task-1")
+        self.context = SimpleNamespace(owner_id="owner", source="durable_task", goal_id="goal-1", task_id="task-1")
         self.token = "t" * 48
         self.credential = "a" * 48
 
