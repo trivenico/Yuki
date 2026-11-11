@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 import re
 import sqlite3
 import uuid
@@ -86,9 +88,8 @@ class SQLiteIncomeOpportunityStore:
             raise ValueError("database_path_required")
         if type(max_per_owner) is not int or not 1 <= max_per_owner <= 100000:
             raise ValueError("invalid_max_per_owner")
-        self.database_path = str(Path(database_path).expanduser().resolve())
+        self.database_path = prepare_private_sqlite_path(database_path)
         self.max_per_owner = max_per_owner
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS income_opportunities (
