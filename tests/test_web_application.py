@@ -39,10 +39,12 @@ class YukiWebApplicationTests(unittest.TestCase):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/")
         self.assertIn(b'id="provider-label"', sent[1]["body"])
 
-    def test_chat_script_loads_authenticated_provider_status(self):
+    def test_chat_script_loads_authenticated_provider_status_and_oauth_callback(self):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.js")
         self.assertIn(b"/v1/providers", sent[1]["body"])
         self.assertIn(b"loadProviderStatus", sent[1]["body"])
+        self.assertIn(b"/oauth/callback/", sent[1]["body"])
+        self.assertNotIn(b"yuki_oauth_provider", sent[1]["body"])
 
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
