@@ -45,7 +45,7 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
-  "automation*", "companion*", "core*", "defense*", "evaluation*",
+  "api*", "automation*", "companion*", "core*", "defense*", "evaluation*",
   "hackback*", "knowledge*", "providers*", "skills*", "ui*", "voice*",
 ]
 exclude = ["tests*", "benchmarks*", "scripts*"]
