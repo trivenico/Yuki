@@ -77,7 +77,7 @@ def _validate_endpoint(value: str) -> str:
     except ValueError as exc:
         raise LocalDeviceError("endpoint_invalid") from exc
     if (address is None or address.version not in (4, 6)
-            or parsed.scheme not in {"http", "https"}
+            or parsed.scheme != "https"
             or parsed.username or parsed.password or parsed.query or parsed.fragment
             or parsed.path not in {"", "/"} or "%" in (host or "")):
         raise LocalDeviceError("endpoint_invalid")
@@ -87,9 +87,7 @@ def _validate_endpoint(value: str) -> str:
             or address.is_unspecified or address.is_reserved
             or not (address.is_private or address.is_link_local)):
         raise LocalDeviceError("endpoint_must_be_local")
-    if parsed.scheme == "http" and not (address.is_private or address.is_link_local):
-        raise LocalDeviceError("cleartext_endpoint_not_allowed")
-    normalized_port = port or (443 if parsed.scheme == "https" else 80)
+    normalized_port = port or 443
     if not 1 <= normalized_port <= 65535:
         raise LocalDeviceError("endpoint_port_invalid")
     host_text = f"[{address.compressed}]" if address.version == 6 else address.compressed
