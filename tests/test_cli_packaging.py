@@ -14,7 +14,7 @@ class CliPackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "site-packages"
             root.mkdir()
-            with patch("core.portable_paths.REPOSITORY_ROOT", root), patch.dict(os.environ, {}, clear=True):
+            with patch("core.portable_paths.REPOSITORY_ROOT", root), patch.dict(os.environ, {"APPDATA": str(Path(directory) / "roaming"), "LOCALAPPDATA": str(Path(directory) / "local"), "USERPROFILE": directory, "HOME": directory}, clear=True):
                 self.assertNotEqual(config_path(), (root / "config.yaml").resolve())
                 self.assertNotEqual(data_root(), root.resolve())
                 self.assertTrue(config_path().is_absolute())
