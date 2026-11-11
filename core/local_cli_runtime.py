@@ -1,17 +1,18 @@
 """Local CLI composition for durable, owner-scoped assistant conversations.
 
 The CLI deliberately starts with an empty guarded tool registry. Persistent chat
-uses the same provider-neutral agent loop and conversation service as the API,
-but does not grant the terminal an implicit ability to execute tools.
+uses the shared conversation application runtime used by the API, but does not
+grant the terminal an implicit ability to execute tools.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable
 
 from core.agent_execution_loop import AgentExecutionLoop
-from core.conversation_service import ConversationService
-from core.conversation_store_factory import create_conversation_store
+from core.conversation_application_runtime import (
+    ConversationApplicationRuntime,
+    build_conversation_application_runtime,
+)
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.local_owner_identity import load_or_create_local_owner_id
 from core.structured_tool_protocol import StructuredToolProtocol
@@ -26,23 +27,15 @@ class _DenyAllLocalTools:
         return False
 
 
-@dataclass
-class LocalConversationRuntime:
-    owner_id: str
-    conversations: ConversationService
-    store: Any
-
-    def close(self) -> None:
-        close = getattr(self.store, "close", None)
-        if callable(close):
-            close()
+# Preserve the established import name while sharing the actual runtime type.
+LocalConversationRuntime = ConversationApplicationRuntime
 
 
 def build_local_conversation_runtime(
     config: dict[str, Any],
     *,
     provider_factory: Callable[..., Any] = create_provider,
-    store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    store_factory: Callable[[dict[str, Any]], Any] | None = None,
     owner_id_factory: Callable[[], str] | None = None,
 ) -> LocalConversationRuntime:
     """Build the installed CLI's persistent chat service with fail-closed tools."""
@@ -64,21 +57,13 @@ def build_local_conversation_runtime(
         ),
         max_model_turns=max_turns,
     )
-    store = store_factory(config)
-    try:
-        owner_id = (
-            owner_id_factory() if owner_id_factory is not None
-            else load_or_create_local_owner_id(config.get("workspace"))
-        )
-        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
-            raise ValueError("local owner identity is invalid.")
-        return LocalConversationRuntime(
-            owner_id=owner_id,
-            conversations=ConversationService(store, agent_loop),
-            store=store,
-        )
-    except Exception:
-        close = getattr(store, "close", None)
-        if callable(close):
-            close()
-        raise
+    owner_id = (
+        owner_id_factory() if owner_id_factory is not None
+        else load_or_create_local_owner_id(config.get("workspace"))
+    )
+    if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+        raise ValueError("local owner identity is invalid.")
+    return build_conversation_application_runtime(
+        config, agent_loop=agent_loop, owner_id=owner_id,
+        **({"store_factory": store_factory} if store_factory is not None else {}),
+    )

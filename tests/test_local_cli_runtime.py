@@ -31,6 +31,9 @@ class LocalOwnerIdentityTests(unittest.TestCase):
     def test_invalid_existing_identity_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "local-owner-id").write_text("not-an-owner\n", encoding="ascii")
+            identity_path = Path(directory) / "local-owner-id"
+            if os.name != "nt":
+                identity_path.chmod(0o600)
             with self.assertRaisesRegex(RuntimeError, "invalid"):
                 load_or_create_local_owner_id(directory)
 
@@ -74,7 +77,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 self.assertEqual(len(persisted), 1)
                 self.assertEqual(persisted[0]["version"], 2)
             finally:
-                reopened.close()
+                pass
 
 
 if __name__ == "__main__":

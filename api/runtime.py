@@ -12,8 +12,10 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
-from core.conversation_service import ConversationService
-from core.conversation_store_factory import create_conversation_store
+from core.conversation_application_runtime import (
+    ConversationApplicationRuntime,
+    build_conversation_application_runtime,
+)
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
@@ -23,12 +25,13 @@ from core.mcp_runtime import MCPRuntimeService
 
 
 class ConversationRuntime:
-    """Own the API and its persistence resource for one application process."""
+    """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: YukiConversationAPI, store: Any):
+    def __init__(self, app: Any, application: ConversationApplicationRuntime):
         self.app = app
         self.web = YukiWebApplication(app)
-        self.store = store
+        self.application = application
+        self.store = application.store
         self._closed = False
 
     async def __call__(self, scope, receive, send):
@@ -50,9 +53,7 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
-        close = getattr(self.store, "close", None)
-        if callable(close):
-            close()
+        self.application.close()
         self._closed = True
 
 
@@ -74,10 +75,10 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
 ) -> ConversationRuntime:
-    """Build authenticated APIs around the configured conversation runtime.
+    """Build authenticated APIs around the shared conversation application core.
 
-    Provider/auth construction belongs to the caller. The conversation store
-    is owned here; optional workflow stores use per-operation SQLite connections.
+    Provider/auth construction belongs to the caller. API owner identity is
+    always derived by the authenticated API from its session, never from config.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -118,11 +119,13 @@ def build_conversation_runtime(
         raise TypeError("oauth_provider_catalog must be callable")
     if oauth_provider_catalog is not None and oauth_authorization_service_for_provider is None:
         raise ValueError("OAuth provider catalog requires authorization service configuration")
-    store = create_conversation_store(config)
+
+    application = build_conversation_application_runtime(
+        config, agent_loop=agent_loop,
+    )
     try:
-        service = ConversationService(store, agent_loop)
         app = YukiConversationAPI(
-            auth_service, service, tools_for_user=tools_for_user,
+            auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
         )
         if device_pairing is not None:
@@ -144,9 +147,7 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, store)
+        return ConversationRuntime(app, application)
     except Exception:
-        close = getattr(store, "close", None)
-        if callable(close):
-            close()
+        application.close()
         raise
