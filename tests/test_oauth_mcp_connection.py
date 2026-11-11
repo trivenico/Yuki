@@ -103,6 +103,11 @@ class OAuthMCPConnectionTests(unittest.TestCase):
         with self.assertRaisesRegex(OAuthMCPConnectionError, "explicit_tool_allowlist_required"):
             self.client(allowed_tools=[])
 
+    def test_empty_allowlist_creates_discovery_only_deny_all_client(self):
+        client = self.client(allowed_tools=())
+        self.assertEqual(client.kwargs["allowed_tools"], ())
+        self.assertIsNotNone(client.kwargs["access_token_provider"])
+        # The manager does not grant any tool execution permission.
     def test_invalid_owner_is_rejected_before_client_construction(self):
         with self.assertRaisesRegex(OAuthMCPConnectionError, "authenticated_owner_invalid"):
             self.client(owner_id="../other")
