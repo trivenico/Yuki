@@ -118,7 +118,7 @@ class MCPRuntimeService:
         self._managers = MappingProxyType(dict(connection_managers))
         self._configs = MappingProxyType(dict(provider_configs))
         self._policies = policy_store
-        definitions = trusted_tool_definitions or {}
+        definitions = {} if trusted_tool_definitions is None else trusted_tool_definitions
         if not isinstance(definitions, Mapping):
             raise TypeError("trusted_mcp_tool_definitions_mapping_required")
         normalized = {}
