@@ -1,7 +1,7 @@
 # Yuki production gap audit — 2026-11-11
 
 **Audited repository:** `trivenico/Yuki`  
-**Audited base:** `main` at `14772c850e9ef3936dc610ea570b568d67d7505a`  
+**Audited base:** `main` at `48ebbe882c738b36e67790862f177c1cb2212ef6`  
 **Method:** GitHub source/tree/documentation review and exact-head GitHub Actions check inspection. No local checkout, clean-install run, real-device test, penetration test, independent security review, or production deployment was performed. This is a gap inventory, not a production certification.
 
 ## Executive decision
@@ -12,10 +12,10 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 
 ## Snapshot and evidence
 
-- The recursive `main` tree contained 631 entries, including 140 documentation files and 163 Python test files. These are inventory counts, not coverage or quality scores.
+- The recursive `main` tree contained 612 files, including 141 Markdown files under `docs/`, 407 Python files overall, and 165 Python test files. These are inventory counts, not coverage or quality scores.
 - There are 23 GitHub Actions workflow files. The main quality workflow currently runs Python 3.11 on Ubuntu, Windows, and macOS, with dependency installation, `pip check`, compilation, and unittest discovery. The dependency-manifest audit is separate. The presence of a workflow is not proof that every security, packaging, release, or operational gate exists.
 - The repository contains no desktop-specific implementation, desktop framework project, or native desktop packaging manifest in the audited tree. Existing web chat and Textual terminal/dashboard code are not a desktop application.
-- No `pyproject.toml`, `setup.py`, `setup.cfg`, or other Python package/console-entrypoint manifest was found in the audited tree. The CLI is source-run, not yet a versioned installable distribution.
+- `pyproject.toml` now defines a PEP 517/setuptools distribution and the `yuki` console entry point. PRs #716 and #717 established installable CLI packaging and persistent CLI conversations. The package-discovery list currently omits the `api` namespace; PR #729 proposes adding it and an installed-environment API import smoke test. Until #729 passes exact-head CI and is merged, the API packaging gap remains open.
 - The phase ledger was last reconciled on 2026-11-02 and explicitly retains unknown historical phase serials and open blockers. It needs a current reconciliation before it can serve as a reliable release ledger.
 
 ## Product capability matrix
@@ -27,7 +27,7 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 | Companion | Persona, identity labels, explicit mood self-report, proactive/reminder/evolution and memory modules | Integrate companion state into the actual conversation lifecycle; durable scheduler and notification delivery; consented memory lifecycle/export/delete/retention; explainable personalization; cross-session acceptance tests; no biometric or ambient sensing without dedicated consent and platform permission |
 | Assistant / tools | Guarded terminal runtime, skill registry, approval services, tool policy, MCP runtime foundations, web chat with deny-all tools by default | Unify tool policy and schemas across interfaces; production-grade execution isolation; approval receipts bound to exact action/target/arguments; cancellation and recovery; prompt-injection containment; safe browser interaction; end-to-end UI approval and audit views |
 | Desktop app | No native desktop app implementation found | Choose and implement a supported desktop shell; signed installers and updates; OS keychain/credential storage; secure IPC; single-instance/lifecycle; background service controls; crash recovery; logs/diagnostics; accessibility; auto-update rollback; Windows/macOS/Linux install, upgrade and uninstall acceptance |
-| CLI | `yuki_cli.py` provides doctor, provider-status, ask and simple chat; legacy guarded runtime remains | Package metadata and stable `yuki` entry point; config migration; secure login/token lifecycle; stable JSON output and exit codes; shell completion; scripting/streaming; command compatibility policy; installer and clean-machine upgrade/uninstall tests |
+| CLI | Installable setuptools distribution and `yuki` entry point; persistent owner-scoped SQLite/Postgres chat; `/new`, `/list`, `/use`, `/history`, `/help`, `/quit`; CLI tool execution remains deny-all | Secure login/token lifecycle; stable JSON output and exit codes; shell completion; scripting/streaming; command compatibility policy; guarded agent-task integration; installer and clean-machine upgrade/uninstall tests |
 | Models and inference | Model/provider registries, Ollama and remote device inference, model discovery/evaluation modules, capability metadata and worker leases | Establish whether “Yuki models” means model routing/hosting or proprietary model training. No evidence of a trained proprietary foundation model. Add reproducible benchmark datasets, task-specific quality/safety evals, hardware profiling, model artifact provenance/license checks, quantization/upgrade rollback, resource admission, and provider fallback acceptance |
 | Memory and knowledge | Local lexical memory, opt-in embedding retrieval, knowledge index/graph, conversation persistence and Postgres adapter | Unified user-facing inspect/export/delete/retention and backup lifecycle; schema-versioned migrations; corruption recovery; encryption/key rotation; restore drills; retention enforcement; retrieval relevance/privacy evaluations; clear local/cloud data boundaries |
 | Device pairing and inference | Owner-bound pairing, device inventory/revocation, authenticated inference API, local worker and lease foundations | Device agent installation/update/attestation; heartbeats; network transport; reconnect/offline queue; request replay protection; per-command audit/idempotency; revocation races; multi-OS and real hardware tests |
@@ -36,7 +36,7 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 | OAuth / MCP / integrations | PKCE, OAuth/OIDC validation, encrypted credential vault primitives, provider registry, MCP transport/runtime and policy foundations | Reconcile open draft PRs (#701, #694, #678, #666 at audit snapshot); complete lifecycle end-to-end per provider; token revocation/rotation and OS-key storage acceptance; tool inventory review; exact schema pinning; ambiguous-write reconciliation; connector-specific integration tests and owner UX |
 | Defensive security tools | Explicit scope, approvals, sandbox/recon/IDS foundations; dry-run firewall | No live firewall mutation until durable expiry/rollback/restart recovery and privileged OS acceptance; strengthen isolation and output bounds; test DNS/redirect/private-address paths; separate security lab from general assistant permissions; independent security review |
 | Deployment / operations | ASGI runtime, local launcher, Dockerfile, basic diagnostics and CI | Supported deployment profile; TLS/reverse-proxy hardening; trusted hosts/CSRF/rate limiting; secret provisioning/rotation; process supervision; health/readiness/liveness; metrics/traces/redacted logs; migrations; backup encryption and restore; disaster recovery; capacity/load testing; release/rollback runbooks |
-| Packaging / updates | Windows batch and Unix shell installers/launchers; portable path foundations | Reproducible versioned artifacts; dependency lock and SBOM; signatures/checksums; supported Python/OS matrix; clean install/upgrade/uninstall; offline/portable mode; update verification and rollback; release automation |
+| Packaging / updates | PEP 517/setuptools metadata, `yuki` console entry point, Python >=3.10 declaration, optional dependency groups, first-run config bootstrap and portable path foundations | Verify all runtime namespaces are included in built artifacts (API namespace fix proposed in #729); reproducible versioned artifacts; dependency lock and SBOM; signatures/checksums; supported Python/OS matrix; clean install/upgrade/uninstall; offline/portable mode; update verification and rollback; release automation |
 | Quality / governance | Broad unittest suite, CI matrix, many phase documents and a phase ledger | Coverage measurement; static analysis/type checks and policy gates; full dependency/security/secret/license scans; end-to-end acceptance suite; flaky-test policy; test artifacts; independent review; reconcile stale docs, phase serials, open draft PRs and duplicated historical work |
 
 ## High-priority release blockers
@@ -71,9 +71,11 @@ Do not describe a subsystem as production-ready merely because its module, API, 
 - The code tree has a real web chat/API runtime and provider tool loop, but the web launcher intentionally injects a deny-all tool policy. The CLI's simple chat also explicitly disables tool execution. Therefore “agent loop exists” must not be conflated with “all product interfaces can safely execute agent tools.”
 - The phase ledger is stale relative to phases 162–201 and does not yet reconcile all recent merges, draft PRs and undocumented serials.
 - The root README's target `src/yuki/` layout is explicitly aspirational; the codebase still uses root-level modules. Do not perform a bulk migration before packaging/import-compatibility tests exist.
+- The setuptools package-discovery include list does not currently include `api*`, despite API modules being a product surface. PR #729 adds the namespace and an installed-wheel import smoke test; it is not merged at this audit snapshot.
 
 ## Recommended execution order
 
+1. **Reconcile this audit against current source and CI after each phase:** keep counts, merged PRs, exact commit SHA and outstanding gaps current; do not treat the phase ledger as current until its historical serials and recent phases are reconciled.
 2. **Create a single product capability/readiness contract:** implemented/configured/available/tested/deployed/released states, consumed by doctor, CLI, web and future desktop.
 3. **Consolidate the shared application runtime:** one provider, conversation, memory, tool policy, approvals, task, event and lifecycle composition.
 4. **Complete the security/recovery baseline:** threat model, data inventory, encrypted backup/restore, migrations, worker fencing, credential revocation, audit and recovery tests.
