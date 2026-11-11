@@ -183,6 +183,23 @@ class MCPManagementAPITests(unittest.TestCase):
             owner_id="owner", provider_id="provider", account_id="account",
         ).policies, ())
 
+
+    def test_policy_enable_requires_trusted_definition_scopes(self):
+        self.oauth.remove(owner_id="owner", provider_id="provider", account_id="account")
+        self.oauth.register(
+            owner_id="owner", provider_id="provider", account_id="account",
+            scopes=("profile:basic",),
+        )
+        payload = json.dumps({
+            "enabled": True, "expected_revision": 1, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "required_oauth_scope_missing")
+
     def test_stale_policy_revision_is_rejected(self):
         payload = json.dumps({
             "enabled": True, "expected_revision": 9, "confirm": True,
