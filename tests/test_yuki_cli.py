@@ -24,6 +24,43 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+
+    def test_calls_inbox_uses_hidden_credential_and_does_not_initialize_provider(self):
+        events = []
+
+        class FakeClient:
+            def __init__(self, api_url, token):
+                events.append(("client", api_url, token))
+
+            def list_incoming(self):
+                return []
+
+        output = []
+        code = run_cli(
+            ["calls-inbox", "--api-url", "https://yuki.example"],
+            config_loader=lambda: (_ for _ in ()).throw(AssertionError("provider config must not load")),
+            provider_factory=lambda config: (_ for _ in ()).throw(AssertionError("provider must not load")),
+            secret_input_fn=lambda prompt: events.append(("secret_prompt", prompt)) or "d" * 32,
+            call_client_factory=FakeClient,
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(events[0][0], "secret_prompt")
+        self.assertIn("hidden", events[0][1])
+        self.assertEqual(events[1], ("client", "https://yuki.example", "d" * 32))
+        self.assertIn('"received": 0', output[-1])
+
+    def test_calls_inbox_rejects_empty_credential_before_client_creation(self):
+        output = []
+        code = run_cli(
+            ["calls-inbox", "--api-url", "https://yuki.example"],
+            secret_input_fn=lambda prompt: "",
+            call_client_factory=lambda *args: self.fail("client must not be created"),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("credential", output[0].lower())
+
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
         output = []
