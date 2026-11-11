@@ -53,8 +53,8 @@ class DeviceIdentityRegistryTests(unittest.TestCase):
         )
 
     def test_versioned_domain_separators_are_nul_terminated(self):
-        self.assertTrue(_DOMAIN.endswith(b"\\x00"))
-        self.assertTrue(_KEY_DOMAIN.endswith(b"\\x00"))
+        self.assertTrue(_DOMAIN.endswith(b"\x00"))
+        self.assertTrue(_KEY_DOMAIN.endswith(b"\x00"))
 
     def test_owner_approval_and_device_ownership_are_required(self):
         _, public = self._key()
