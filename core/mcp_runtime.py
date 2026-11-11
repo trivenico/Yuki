@@ -28,16 +28,22 @@ class MCPProviderConnectionConfig:
     def __post_init__(self):
         if not isinstance(self.endpoint, str):
             raise ValueError("mcp_endpoint_invalid")
-        parsed = urlsplit(self.endpoint)
-        if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+        try:
+            parsed = urlsplit(self.endpoint)
+            endpoint_host = parsed.hostname
+        except ValueError:
+            raise ValueError("mcp_endpoint_invalid") from None
+        if (parsed.scheme != "https" or not endpoint_host or parsed.username
                 or parsed.password or parsed.fragment):
             raise ValueError("mcp_endpoint_must_be_trusted_https")
         if not isinstance(self.allowed_hosts, tuple) or not self.allowed_hosts:
             raise ValueError("mcp_allowed_hosts_required")
-        hosts = tuple(host.lower().rstrip(".") for host in self.allowed_hosts)
-        if any(not isinstance(host, str) or not host or "/" in host or ":" in host for host in hosts):
+        if any(not isinstance(host, str) for host in self.allowed_hosts):
             raise ValueError("mcp_allowed_hosts_invalid")
-        if parsed.hostname.lower().rstrip(".") not in hosts:
+        hosts = tuple(host.lower().rstrip(".") for host in self.allowed_hosts)
+        if any(not host or "/" in host or ":" in host or "@" in host for host in hosts):
+            raise ValueError("mcp_allowed_hosts_invalid")
+        if endpoint_host.lower().rstrip(".") not in hosts:
             raise ValueError("mcp_endpoint_host_not_allowlisted")
         if not isinstance(self.required_scopes, tuple) or len(self.required_scopes) > 64:
             raise ValueError("mcp_required_scopes_invalid")
@@ -109,7 +115,13 @@ class MCPRuntimeService:
         required = set(config.required_scopes)
         if not isinstance(granted_scopes, (tuple, list, set, frozenset)):
             raise ValueError("granted_oauth_scopes_required")
-        if not required.issubset(set(granted_scopes)):
+        if len(granted_scopes) > 64 or any(
+            not isinstance(scope, str) or not scope or len(scope) > 128
+            for scope in granted_scopes
+        ):
+            raise ValueError("granted_oauth_scopes_invalid")
+        normalized_scopes = tuple(granted_scopes)
+        if not required.issubset(set(normalized_scopes)):
             raise ValueError("required_oauth_scope_missing")
 
         registry = self._policies.load_registry(
@@ -132,7 +144,7 @@ class MCPRuntimeService:
             endpoint=config.endpoint,
             allowed_hosts=config.allowed_hosts,
             policy_registry=registry,
-            granted_scopes=tuple(granted_scopes),
+            granted_scopes=normalized_scopes,
             owner_approval=owner_approval,
             audit=policy_audit,
             current_revision=current_revision,
