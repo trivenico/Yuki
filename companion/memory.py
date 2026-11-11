@@ -12,21 +12,25 @@ from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
+from core.private_file import PrivateFileError, prepare_private_file_path, read_private_file
+
 
 class MemoryStore:
     MAX_ENTRIES = 2000
     MAX_TEXT = 4000
+    MAX_FILE_BYTES = 16 * 1024 * 1024
 
     def __init__(self, path: str | Path = "yuki_memory.json"):
-        self.path = Path(path).expanduser().resolve()
+        self.path = prepare_private_file_path(path)
         self._lock = RLock()
 
     def _load(self) -> list[dict]:
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            raw_bytes = read_private_file(self.path, max_bytes=self.MAX_FILE_BYTES)
+            raw = json.loads(raw_bytes.decode("utf-8")) if raw_bytes else []
         except FileNotFoundError:
             return []
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, PrivateFileError) as exc:
             raise RuntimeError("Memory file is unreadable; no data was overwritten.") from exc
         if not isinstance(raw, list) or len(raw) > self.MAX_ENTRIES:
             raise RuntimeError("Memory file has an invalid structure or exceeds limits.")
