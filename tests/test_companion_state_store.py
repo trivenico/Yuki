@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -124,6 +125,30 @@ class CompanionStateStoreTests(unittest.TestCase):
             first.claim_outbox(now, lease_seconds=1)
         with self.assertRaises(ValueError):
             first.claim_outbox(now, limit=101)
+
+    def test_schema_v1_upgrades_transactionally_to_v2_outbox(self):
+        db = sqlite3.connect(self.database)
+        db.executescript("""
+            CREATE TABLE companion_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL);
+            INSERT INTO companion_schema(singleton,version) VALUES(1,1);
+            CREATE TABLE companion_records(
+                owner_id TEXT NOT NULL, kind TEXT NOT NULL, record_id TEXT NOT NULL,
+                payload TEXT NOT NULL, created_at TEXT NOT NULL, delivered_at TEXT,
+                PRIMARY KEY(owner_id,kind,record_id)
+            );
+            CREATE TABLE companion_migrations(
+                owner_id TEXT NOT NULL, source_name TEXT NOT NULL, migrated_at TEXT NOT NULL,
+                imported_count INTEGER NOT NULL, PRIMARY KEY(owner_id,source_name)
+            );
+        """)
+        db.close()
+        CompanionStateStore(self.database, owner_id="owner")
+        db = sqlite3.connect(self.database)
+        self.assertEqual(db.execute("SELECT version FROM companion_schema").fetchone()[0], 2)
+        self.assertIsNotNone(db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='companion_outbox'"
+        ).fetchone())
+        db.close()
 
     def test_rejects_database_symlink(self):
         target = self.root / "target.sqlite3"
