@@ -6,16 +6,18 @@ it inside the owner's private workspace and protect backups separately.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
+import secrets
 from pathlib import Path
 import sqlite3
 from typing import Any
 
 
 class CompanionStateStore:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
     MAX_RECORDS = {"memory": 2000, "identity": 100, "reminder": 1000}
 
     def __init__(self, database_path: str | Path, *, owner_id: str):
@@ -78,7 +80,35 @@ class CompanionStateStore:
                 );
             """)
             row = db.execute("SELECT version FROM companion_schema WHERE singleton=1").fetchone()
-            if row is None or row["version"] != self.SCHEMA_VERSION:
+            if row is None or row["version"] > self.SCHEMA_VERSION:
+                raise RuntimeError("Unsupported companion state schema version.")
+            if row["version"] == 1:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS companion_outbox (
+                        owner_id TEXT NOT NULL,
+                        event_id TEXT NOT NULL,
+                        reminder_id TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('pending','leased','delivered','failed')),
+                        created_at TEXT NOT NULL,
+                        available_at TEXT NOT NULL,
+                        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                        lease_token_hash TEXT,
+                        lease_expires_at TEXT,
+                        delivered_at TEXT,
+                        last_error TEXT,
+                        PRIMARY KEY(owner_id, event_id),
+                        UNIQUE(owner_id, reminder_id)
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_companion_outbox_claim
+                    ON companion_outbox(owner_id, status, available_at, lease_expires_at)
+                """)
+                db.execute("UPDATE companion_schema SET version=? WHERE singleton=1", (self.SCHEMA_VERSION,))
+                db.commit()
+            elif row["version"] != self.SCHEMA_VERSION:
                 raise RuntimeError("Unsupported companion state schema version.")
 
     @staticmethod
@@ -203,6 +233,160 @@ class CompanionStateStore:
                     )
             db.commit()
         return claimed
+
+    @staticmethod
+    def _aware_utc(value: datetime, field: str) -> datetime:
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field} must be timezone-aware.")
+        return value.astimezone(timezone.utc)
+
+    def enqueue_due_reminders(self, now: datetime) -> int:
+        """Durably enqueue due reminders without treating enqueue as delivery."""
+        cutoff = self._aware_utc(now, "now").isoformat()
+        inserted = 0
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                """SELECT record_id,payload,created_at FROM companion_records
+                   WHERE owner_id=? AND kind='reminder' AND delivered_at IS NULL
+                   ORDER BY created_at,record_id""", (self.owner_id,)
+            ).fetchall()
+            for row in rows:
+                item = json.loads(row["payload"])
+                due_at = self._aware_utc(datetime.fromisoformat(item["due_at"]), "reminder due_at")
+                if due_at > datetime.fromisoformat(cutoff):
+                    continue
+                event_id = f"reminder:{row['record_id']}"
+                cursor = db.execute(
+                    """INSERT OR IGNORE INTO companion_outbox
+                       (owner_id,event_id,reminder_id,payload,status,created_at,available_at)
+                       VALUES(?,?,?,?,'pending',?,?)""",
+                    (self.owner_id, event_id, row["record_id"], row["payload"], cutoff, cutoff),
+                )
+                inserted += cursor.rowcount
+            db.commit()
+        return inserted
+
+    def claim_outbox(self, now: datetime, *, lease_seconds: int = 60, limit: int = 20) -> list[dict[str, Any]]:
+        """Lease pending events; callers must use event_id as provider idempotency key."""
+        current = self._aware_utc(now, "now")
+        if type(lease_seconds) is not int or not 5 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be between 5 and 3600.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        expires = (current + timedelta(seconds=lease_seconds)).isoformat()
+        claimed = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                """SELECT event_id,payload,attempts FROM companion_outbox
+                   WHERE owner_id=? AND (
+                     (status='pending' AND available_at<=?) OR
+                     (status='leased' AND lease_expires_at<=?)
+                   ) ORDER BY available_at,event_id LIMIT ?""",
+                (self.owner_id, current.isoformat(), current.isoformat(), limit),
+            ).fetchall()
+            for row in rows:
+                token = secrets.token_urlsafe(32)
+                token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+                db.execute(
+                    """UPDATE companion_outbox SET status='leased',attempts=attempts+1,
+                       lease_token_hash=?,lease_expires_at=?
+                       WHERE owner_id=? AND event_id=?""",
+                    (token_hash, expires, self.owner_id, row["event_id"]),
+                )
+                claimed.append({
+                    "event_id": row["event_id"],
+                    "idempotency_key": row["event_id"],
+                    "payload": json.loads(row["payload"]),
+                    "attempt": row["attempts"] + 1,
+                    "lease_token": token,
+                    "lease_expires_at": expires,
+                })
+            db.commit()
+        return claimed
+
+    def complete_outbox(self, event_id: str, lease_token: str, now: datetime) -> bool:
+        current = self._aware_utc(now, "now")
+        if not isinstance(event_id, str) or not event_id or not isinstance(lease_token, str) or not lease_token:
+            return False
+        token_hash = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        delivered_at = current.isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT reminder_id FROM companion_outbox
+                   WHERE owner_id=? AND event_id=? AND status='leased'
+                     AND lease_token_hash=? AND lease_expires_at>?""",
+                (self.owner_id, event_id, token_hash, delivered_at),
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                return False
+            db.execute(
+                """UPDATE companion_outbox SET status='delivered',delivered_at=?,
+                   lease_token_hash=NULL,lease_expires_at=NULL,last_error=NULL
+                   WHERE owner_id=? AND event_id=?""",
+                (delivered_at, self.owner_id, event_id),
+            )
+            db.execute(
+                """UPDATE companion_records SET delivered_at=?
+                   WHERE owner_id=? AND kind='reminder' AND record_id=? AND delivered_at IS NULL""",
+                (delivered_at, self.owner_id, row["reminder_id"]),
+            )
+            db.commit()
+        return True
+
+    def fail_outbox(
+        self, event_id: str, lease_token: str, now: datetime, *,
+        error: str, retry_after_seconds: int = 60, max_attempts: int = 8,
+    ) -> bool:
+        current = self._aware_utc(now, "now")
+        if not isinstance(event_id, str) or not event_id or not isinstance(lease_token, str) or not lease_token:
+            return False
+        if not isinstance(error, str) or not error.strip():
+            raise ValueError("error must be non-empty text.")
+        if type(retry_after_seconds) is not int or not 1 <= retry_after_seconds <= 86400:
+            raise ValueError("retry_after_seconds must be between 1 and 86400.")
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 20:
+            raise ValueError("max_attempts must be between 1 and 20.")
+        token_hash = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT attempts FROM companion_outbox
+                   WHERE owner_id=? AND event_id=? AND status='leased'
+                     AND lease_token_hash=? AND lease_expires_at>?""",
+                (self.owner_id, event_id, token_hash, current.isoformat()),
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                return False
+            terminal = row["attempts"] >= max_attempts
+            next_status = "failed" if terminal else "pending"
+            available = current.isoformat() if terminal else (
+                current + __import__("datetime").timedelta(seconds=retry_after_seconds)
+            ).isoformat()
+            db.execute(
+                """UPDATE companion_outbox SET status=?,available_at=?,last_error=?,
+                   lease_token_hash=NULL,lease_expires_at=NULL
+                   WHERE owner_id=? AND event_id=?""",
+                (next_status, available, error.strip()[:1000], self.owner_id, event_id),
+            )
+            db.commit()
+        return True
+
+    def list_outbox(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000.")
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT event_id,reminder_id,status,created_at,available_at,attempts,
+                   lease_expires_at,delivered_at,last_error FROM companion_outbox
+                   WHERE owner_id=? ORDER BY created_at,event_id LIMIT ?""",
+                (self.owner_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def import_legacy_json(self, kind: str, source: str | Path) -> int:
         """Import a legacy JSON array once; never delete or rewrite the source."""
