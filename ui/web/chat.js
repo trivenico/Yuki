@@ -179,13 +179,15 @@
     }
   };
   const handleOAuthCallback = async () => {
-    const params = new URLSearchParams(window.location.search);
-    const provider = params.get("yuki_oauth_provider");
-    if (!provider || !state.token) return false;
+    const match = window.location.pathname.match(/^\\/oauth\\/callback\\/([A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127})$/);
+    const provider = match ? match[1] : null;
+    if (!provider) return false;
     const callbackUrl = window.location.href;
-    params.delete("yuki_oauth_provider");
-    const clean = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
-    window.history.replaceState({}, document.title, clean);
+    window.history.replaceState({}, document.title, "/" + window.location.hash);
+    if (!state.token) {
+      toast("Sign in with the account that started this connection, then retry the callback.");
+      return true;
+    }
     try {
       await api("/v1/integrations/oauth/providers/" + encodeURIComponent(provider) + "/callback", {
         method: "POST", body: JSON.stringify({ callback_url: callbackUrl })
