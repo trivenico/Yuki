@@ -226,9 +226,9 @@ class DurableTaskEngine:
         # Persist a stable safe marker rather than raw exception text.
         now,safe_error=self.clock(),"worker reported an error (details redacted)"
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
+            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_token)
             retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-            c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",
+            c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
             if not retry:
@@ -257,7 +257,7 @@ class DurableTaskEngine:
             r = self._owned(c, task_id, worker_id, lease_token)
             c.execute(
                 """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
-                   lease_until=NULL,updated_at=? WHERE id=?""",
+                   lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?""",
                 (safe_error, now, task_id),
             )
             self._event(c, r["goal_id"], task_id, "task.rejected", {"reason": reason})
