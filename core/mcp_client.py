@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from urllib.parse import urlsplit
 
 from core.mcp_pinned_transport import MCPPinnedTransportError, PinnedMCPHTTPTransport
@@ -21,6 +22,7 @@ class MCPHTTPClient:
     def __init__(
         self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
         access_token_provider=None, timeout=10, http_transport=None,
+        execution_audit=None,
     ):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
@@ -29,12 +31,13 @@ class MCPHTTPClient:
         if access_token_provider is not None and not callable(access_token_provider):
             raise TypeError("MCP access token provider must be callable.")
         self._access_token_provider = access_token_provider
+        if execution_audit is not None and not callable(execution_audit):
+            raise TypeError("MCP execution audit must be callable.")
+        self._execution_audit = execution_audit
         self.timeout = timeout
         if http_transport is not None and not callable(getattr(http_transport, "post_json", None)):
             raise TypeError("MCP HTTP transport must provide post_json.")
-        self._http = http_transport or PinnedMCPHTTPTransport(
-            allowed_hosts=self.allowed_hosts, timeout=timeout,
-        )
+        self._http = http_transport or PinnedMCPHTTPTransport(allowed_hosts=self.allowed_hosts, timeout=timeout)
         self.session_id = None
         self._initialized = False
         self._request_id = 0
@@ -82,9 +85,7 @@ class MCPHTTPClient:
         if self._initialized:
             headers["MCP-Protocol-Version"] = self.PROTOCOL_VERSION
         try:
-            status, response_headers, body = self._http.post_json(
-                self.endpoint, payload=payload, headers=headers,
-            )
+            status, response_headers, body = self._http.post_json(self.endpoint, payload=payload, headers=headers)
         except MCPPinnedTransportError:
             raise MCPError("MCP server was unreachable or rejected the request.") from None
         self.session_id = response_headers.get("mcp-session-id", self.session_id)
@@ -107,8 +108,7 @@ class MCPHTTPClient:
 
     def initialize(self):
         result = self._rpc("initialize", {
-            "protocolVersion": self.PROTOCOL_VERSION,
-            "capabilities": {},
+            "protocolVersion": self.PROTOCOL_VERSION, "capabilities": {},
             "clientInfo": {"name": "Yuki", "version": "0.1"},
         })
         if not isinstance(result, dict):
@@ -137,14 +137,37 @@ class MCPHTTPClient:
         if not isinstance(arguments, dict):
             raise MCPError("MCP tool arguments must be an object.")
         try:
-            encoded_arguments = json.dumps(arguments, ensure_ascii=False).encode("utf-8")
-        except (TypeError, ValueError):
+            encoded_arguments = json.dumps(arguments, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError):
             raise MCPError("MCP tool arguments must be JSON-serializable.") from None
         if len(encoded_arguments) > 64000:
             raise MCPError("MCP tool arguments exceed the 64 KB limit.")
         if self.approver is None or self.approver(name, arguments) is not True:
             raise MCPError("MCP tool call was not explicitly approved.")
-        result = self._rpc("tools/call", {"name": name, "arguments": arguments})
+        invocation_id = uuid.uuid4().hex
+        if self._execution_audit is not None:
+            try:
+                self._execution_audit("execution_started")
+            except Exception:
+                raise MCPError("MCP execution audit is unavailable; call was not dispatched.") from None
+        try:
+            result = self._rpc("tools/call", {"name": name, "arguments": arguments})
+        except Exception:
+            if self._execution_audit is not None:
+                try:
+                    self._execution_audit("outcome_unknown")
+                except Exception:
+                    pass
+            raise
+        if isinstance(result, dict) and result.get("isError") is True:
+            event = "execution_failed"
+        else:
+            event = "executed"
+        if self._execution_audit is not None:
+            try:
+                self._execution_audit(event)
+            except Exception:
+                raise MCPError("MCP result received but durable audit confirmation failed.") from None
         serialized = json.dumps(result, ensure_ascii=False)
         scan = scan_untrusted_text(serialized)
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}
