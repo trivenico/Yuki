@@ -26,7 +26,7 @@ class FakeTransport:
 class MCPExecutionAuditTests(unittest.TestCase):
     def _client(self, log, transport, approver=True):
         events = MCPExecutionAudit(log, owner_id="owner", provider_id="provider",
-                                   account_id="account", tool_name="publish")
+                                   account_id="account")
         return MCPHTTPClient("https://mcp.example/mcp", allowed_hosts=("mcp.example",),
             allowed_tools=("publish",), approver=lambda _n, _a: approver,
             execution_audit=events, http_transport=transport)
@@ -68,7 +68,7 @@ class MCPExecutionAuditTests(unittest.TestCase):
 
     def test_audit_failure_prevents_dispatch(self):
         transport = FakeTransport()
-        def broken(_event, _invocation):
+        def broken(_event, _invocation, _tool_name):
             raise RuntimeError("audit offline")
         client = MCPHTTPClient("https://mcp.example/mcp", allowed_hosts=("mcp.example",),
             allowed_tools=("publish",), approver=lambda _n, _a: True,
@@ -97,7 +97,7 @@ class MCPExecutionAuditTests(unittest.TestCase):
         transport, events = FakeTransport(), []
         client = MCPHTTPClient("https://mcp.example/mcp", allowed_hosts=("mcp.example",),
             allowed_tools=("publish",), approver=lambda _n, _a: False,
-            execution_audit=lambda event, invocation: events.append((event, invocation)),
+            execution_audit=lambda event, invocation, tool_name: events.append((event, invocation, tool_name)),
             http_transport=transport)
         with self.assertRaises(MCPError):
             client.call_tool("publish", {})

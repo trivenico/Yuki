@@ -133,9 +133,9 @@ class MCPHTTPClient:
                          "input_schema": tool.get("inputSchema", {})})
         return safe
 
-    def _record_execution(self, event, invocation_id):
+    def _record_execution(self, event, invocation_id, tool_name):
         if self._execution_audit is not None:
-            self._execution_audit(event, invocation_id)
+            self._execution_audit(event, invocation_id, tool_name)
 
     def call_tool(self, name, arguments):
         if not isinstance(name, str) or name not in self.allowed_tools:
@@ -153,7 +153,7 @@ class MCPHTTPClient:
 
         invocation_id = uuid.uuid4().hex
         try:
-            self._record_execution("execution_started", invocation_id)
+            self._record_execution("execution_started", invocation_id, name)
         except Exception:
             raise MCPError("MCP execution audit is unavailable; call was not dispatched.") from None
 
@@ -161,20 +161,20 @@ class MCPHTTPClient:
             result = self._rpc("tools/call", {"name": name, "arguments": arguments})
         except MCPRemoteError:
             try:
-                self._record_execution("execution_failed", invocation_id)
+                self._record_execution("execution_failed", invocation_id, name)
             except Exception:
                 pass
             raise
         except Exception:
             try:
-                self._record_execution("outcome_unknown", invocation_id)
+                self._record_execution("outcome_unknown", invocation_id, name)
             except Exception:
                 pass
             raise
 
         event = "execution_failed" if isinstance(result, dict) and result.get("isError") is True else "executed"
         try:
-            self._record_execution(event, invocation_id)
+            self._record_execution(event, invocation_id, name)
         except Exception:
             raise MCPError("MCP result received but durable audit confirmation failed.") from None
 
