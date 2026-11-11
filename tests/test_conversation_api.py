@@ -90,6 +90,61 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 500)
         self.assertEqual(data, {"error": "provider_catalog_unavailable"})
 
+    def test_conversation_delete_requires_authentication_and_cascades_history(self):
+        status, created, _ = self.request(
+            "POST", "/v1/conversations", {"title": "Private"}, self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        conversation_id = created["conversation_id"]
+        status, data, _ = self.request(
+            "POST", f"/v1/conversations/{conversation_id}/messages",
+            {"content": "Delete this", "request_id": "delete-request", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        status, data, _ = self.request("DELETE", f"/v1/conversations/{conversation_id}")
+        self.assertEqual(status, 401)
+        status, data, _ = self.request(
+            "DELETE", f"/v1/conversations/{conversation_id}", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data, {"deleted": True})
+        status, data, _ = self.request(
+            "GET", f"/v1/conversations/{conversation_id}/messages", token=self.issued.token,
+        )
+        self.assertEqual(status, 404)
+
+    def test_conversation_delete_does_not_disclose_or_delete_other_owner_data(self):
+        other = self.app.conversations.create(owner_id="another-owner")
+        conversation_id = other["conversation_id"]
+        status, data, _ = self.request(
+            "DELETE", f"/v1/conversations/{conversation_id}", token=self.issued.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertIsNotNone(self.app.conversations.store.get_conversation(
+            owner_id="another-owner", conversation_id=conversation_id,
+        ))
+
+    def test_conversation_delete_refuses_active_generation(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        conversation_id = conversation["conversation_id"]
+        key = (self.user.user_id, conversation_id, "active-request")
+        event = threading.Event()
+        with self.app._active_lock:
+            self.app._active_generations[key] = event
+        try:
+            status, data, _ = self.request(
+                "DELETE", f"/v1/conversations/{conversation_id}", token=self.issued.token,
+            )
+            self.assertEqual(status, 409)
+            self.assertEqual(data, {"error": "generation_active"})
+            self.assertIsNotNone(self.app.conversations.store.get_conversation(
+                owner_id=self.user.user_id, conversation_id=conversation_id,
+            ))
+        finally:
+            with self.app._active_lock:
+                self.app._active_generations.pop(key, None)
+
     def test_authenticated_identity_endpoint_returns_role(self):
         status, data, _ = self.request("GET", "/v1/auth/me", token=self.issued.token)
         self.assertEqual(status, 200)
