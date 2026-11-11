@@ -4,6 +4,7 @@
 
 - Permit an empty MCP execution allow-list as an explicit deny-all policy.
 - Add a discovery service that initializes an already host-bound MCP client and requests `tools/list`.
+- Add `OAuthMCPConnectionManager.discover_tools`, which creates the client with an empty execution allow-list and derives the provider ID from the manager itself.
 - Bind each snapshot to the authenticated owner, trusted provider and configured provider account supplied by host code.
 - Bound the remote tool count, tool names, descriptions, schema depth, schema item count and serialized schema size.
 - Publish remote descriptions and schemas as untrusted metadata.
@@ -13,7 +14,7 @@
 
 - The OAuth connection manager still requires a callable per-call approver. Empty `allowed_tools` means no tool can pass the MCP client's allow-list check.
 - Discovery does not call `tools/call`, persist a tool catalog, enable a tool, or infer read-only behavior.
-- The host must create the client with owner identity from the authenticated session and provider/account/endpoint/host policy from trusted configuration.
+- `OAuthMCPConnectionManager.discover_tools` binds the provider from manager configuration; owner identity must come from the authenticated session, and account/endpoint/host policy must come from trusted configuration.
 - Server-provided metadata remains untrusted even after prompt-injection scanning. A clean scan is not an authorization decision.
 - Tool execution requires a separate trusted review and explicit allow-list plus per-call approval policy.
 
