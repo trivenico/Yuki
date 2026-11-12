@@ -189,6 +189,10 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertTrue(self.store.revoke_independent_assignment(
             "owner:alice", project.project_id, assignment_id
         ))
+        replacement = self.store.create_independent_assignments(
+            "owner:alice", project.project_id, task.task_id, ["annotator:one", "annotator:three"]
+        )
+        self.assertNotEqual(replacement[0]["assignment_id"], assignment_id)
         with self.assertRaisesRegex(ValueError, "annotation_assignment_not_claimable"):
             self.store.claim_independent_assignment(
                 "annotator:one", assignment_id, expected_version=2
