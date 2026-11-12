@@ -909,6 +909,67 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         )
         self.assertFalse(tampered["valid"])
 
+    def test_expired_reviewer_calibration_is_rejected(self):
+        project = self.store.create_project(
+            "owner:alice", name="Calibration expiry", task_type="text_classification",
+            instructions="Classify.", rubric={"labels": ["positive", "negative"]},
+        )
+        for index in range(5):
+            task = self.store.create_task(
+                "owner:alice", project.project_id, external_ref=f"expiry-gold-{index}",
+                input_data={"text": f"Gold sample {index}"},
+            )
+            self.store.create_gold_standard(
+                "owner:alice", project.project_id, task.task_id, "positive",
+            )
+            assignments = self.store.create_independent_assignments(
+                "owner:alice", project.project_id, task.task_id,
+                ["reviewer:expiry", f"peer:expiry:{index}"],
+            )
+            for assignment, annotator in zip(assignments, ["reviewer:expiry", f"peer:expiry:{index}"]):
+                claimed = self.store.claim_independent_assignment(
+                    annotator, assignment["assignment_id"], expected_version=1,
+                )
+                self.store.submit_independent_assignment(
+                    annotator, assignment["assignment_id"], payload={"label": "positive"},
+                    expected_version=claimed["version"], human_confirmed=True,
+                )
+        target = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="expiry-target",
+            input_data={"text": "Target requiring review"},
+        )
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", project.project_id, target.task_id,
+            ["annotator:expiry-a", "annotator:expiry-b"],
+        )
+        for assignment, annotator in zip(assignments, ["annotator:expiry-a", "annotator:expiry-b"]):
+            claimed = self.store.claim_independent_assignment(
+                annotator, assignment["assignment_id"], expected_version=1,
+            )
+            self.store.submit_independent_assignment(
+                annotator, assignment["assignment_id"], payload={"label": "positive"},
+                expected_version=claimed["version"], human_confirmed=True,
+            )
+        old = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE annotation_gold_results SET created_at=? WHERE owner_id=? AND project_id=? AND annotator_id=?",
+                (old, "owner:alice", project.project_id, "reviewer:expiry"),
+            )
+            db.commit()
+        self.store.set_calibration_policy(
+            "owner:alice", project.project_id, maximum_age_days=30,
+        )
+        report = self.store.gold_calibration_report("owner:alice", project.project_id)
+        reviewer = next(item for item in report["annotators"] if item["annotator_id"] == "reviewer:expiry")
+        self.assertEqual(reviewer["status"], "expired")
+        with self.assertRaisesRegex(PermissionError, "reviewer_calibration_expired"):
+            self.store.adjudicate_independent_task(
+                "owner:alice", project.project_id, target.task_id, "reviewer:expiry",
+                decision="accepted", final_label="positive", notes="Reviewed.",
+                require_reviewer_grant=False,
+            )
+
     def test_quality_drift_report_detects_significant_gold_accuracy_drop(self):
         annotators = ("annotator:drift-a", "annotator:drift-b")
         assignments = []
