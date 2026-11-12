@@ -51,20 +51,41 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
                 "owner:alice", task.task_id, expected_version=task.version
             )
 
-    def test_ai_assisted_work_requires_explicit_human_confirmation(self):
+    def test_ai_assistance_is_prohibited_by_default(self):
         task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        with self.assertRaisesRegex(PermissionError, "ai_assistance_not_permitted"):
+            self.store.submit(
+                "owner:alice", task.task_id, payload={"label": "bird"},
+                expected_version=claimed.version, ai_assisted=True,
+                human_confirmed=True,
+            )
+
+    def test_ai_assisted_work_requires_explicit_human_confirmation(self):
+        project = self.store.create_project(
+            "owner:alice", name="Permitted AI review",
+            task_type="text_classification", instructions="Review text.",
+            rubric={"labels": ["positive", "negative"]},
+            ai_assistance_mode="permitted_with_disclosure",
+        )
+        task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="ai-1",
+            input_data={"text": "Good"},
+        )
         claimed = self.store.claim_task(
             "owner:alice", task.task_id, expected_version=task.version
         )
         with self.assertRaisesRegex(PermissionError, "human_confirmation_required"):
             self.store.submit(
                 "owner:alice", task.task_id,
-                payload={"label": "bird"}, expected_version=claimed.version,
+                payload={"label": "positive"}, expected_version=claimed.version,
                 ai_assisted=True, human_confirmed=False,
             )
         submission = self.store.submit(
             "owner:alice", task.task_id,
-            payload={"label": "bird"}, expected_version=claimed.version,
+            payload={"label": "positive"}, expected_version=claimed.version,
             ai_assisted=True, human_confirmed=True,
         )
         self.assertTrue(submission.ai_assisted)
