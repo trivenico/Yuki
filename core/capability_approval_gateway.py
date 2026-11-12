@@ -168,7 +168,7 @@ class CapabilityApprovalGateway:
         """Issue an opaque token only after trusted human approval authorization."""
         digest = self._request_digest(request)
         if not isinstance(approved_by, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", approved_by
+            r"[A-Za-z0-9_-][A-Za-z0-9._:/@+-]{0,255}", approved_by
         ):
             raise ValueError("approved_by must be a bounded authenticated identity")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= self.max_approval_ttl_seconds:
@@ -336,7 +336,7 @@ class CapabilityApprovalGateway:
         if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
             raise ValueError("request_id is invalid")
         if not isinstance(rejected_by, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", rejected_by
+            r"[A-Za-z0-9_-][A-Za-z0-9._:/@+-]{0,255}", rejected_by
         ):
             raise ValueError("rejected_by must be a bounded authenticated identity")
         now = self.clock()
@@ -387,7 +387,7 @@ class CapabilityApprovalGateway:
         if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
             raise ValueError("request_id is invalid")
         if not isinstance(approved_by, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", approved_by
+            r"[A-Za-z0-9_-][A-Za-z0-9._:/@+-]{0,255}", approved_by
         ):
             raise ValueError("approved_by must be a bounded authenticated identity")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= self.max_approval_ttl_seconds:
