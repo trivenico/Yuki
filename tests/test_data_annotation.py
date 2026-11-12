@@ -895,12 +895,16 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertIsNone(self.store.verify_delivery_manifest(
             "owner:bob", self.project.project_id, manifest["manifest_id"],
         ))
-        with sqlite3.connect(self.database) as db:
+        db = sqlite3.connect(self.database)
+        try:
             db.execute("DROP TRIGGER annotation_delivery_manifests_no_update")
             db.execute(
                 "UPDATE annotation_delivery_manifests SET snapshot_json=? WHERE manifest_id=?",
                 ('{"tampered":true}', manifest["manifest_id"]),
             )
+            db.commit()
+        finally:
+            db.close()
         tampered = self.store.verify_delivery_manifest(
             "owner:alice", self.project.project_id, manifest["manifest_id"],
         )
