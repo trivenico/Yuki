@@ -1,4 +1,5 @@
 import tempfile
+from contextlib import closing
 import unittest
 from pathlib import Path
 
@@ -238,6 +239,39 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.gateway.request_approval(request)
 
+    def test_approval_credential_is_bound_to_typed_operation_envelope(self):
+        payload = {"changes": [{"path": "README.md", "content": "approved"}]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.write", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        request = self.make_request(argument_sha256=argument_digest(payload))
+        request_id = self.gateway.request_approval(request, operation=operation)
+        token = self.gateway.approve_request(request_id, approved_by="admin")
+        self.assertTrue(self.gateway.authorize(
+            request, approval_token=token, operation=operation
+        ).allowed)
+        # A credential bound to a typed envelope cannot be consumed through
+        # the legacy untyped authorization route.
+        request_id = self.gateway.request_approval(
+            self.make_request(argument_sha256=argument_digest(payload),
+                              run_id="run-2", step_id="step-2"),
+            operation=operation,
+        )
+        request2 = self.make_request(argument_sha256=argument_digest(payload),
+                                     run_id="run-2", step_id="step-2")
+        token2 = self.gateway.approve_request(request_id, approved_by="admin")
+        self.assertFalse(self.gateway.authorize(
+            request2, approval_token=token2
+        ).allowed)
+        altered = ApprovalOperation.from_payload(
+            operation_type="workspace.delete", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        self.assertFalse(self.gateway.authorize(
+            request2, approval_token=token2, operation=altered
+        ).allowed)
+
     def test_typed_operation_metadata_fails_closed_after_storage_tampering(self):
         payload = {"changes": [{"path": "README.md", "content": "approved"}]}
         operation = ApprovalOperation.from_payload(
@@ -246,7 +280,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         )
         request = self.make_request(argument_sha256=argument_digest(payload))
         request_id = self.gateway.request_approval(request, operation=operation)
-        with self.gateway._connect() as db:
+        with closing(self.gateway._connect()) as db:
             db.execute(
                 "UPDATE capability_approval_operations SET operation_json=? WHERE request_id=?",
                 ('{"schema_version":1,"operation_type":"workspace.delete"}', request_id),
