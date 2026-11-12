@@ -213,6 +213,39 @@ class AuthenticatedAnnotationAPI:
                     "accepted_annotations": records,
                 })
 
+            draft_match = re.fullmatch(
+                re.escape(prefix) + r"/tasks/([0-9a-f]{32})/draft", path
+            )
+            if draft_match:
+                task_id = draft_match.group(1)
+                if method == "GET":
+                    draft = await asyncio.to_thread(
+                        self.workbench.get_draft, user.user_id, task_id
+                    )
+                    return await self._respond(
+                        send, 200, {"draft": asdict(draft) if draft else None}
+                    )
+                if method == "PUT":
+                    payload = await self._body(receive)
+                    if set(payload) != {"payload", "expected_revision"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    draft = await asyncio.to_thread(
+                        self.workbench.save_draft, user.user_id, task_id, **payload
+                    )
+                    return await self._respond(
+                        send, 200 if draft else 404,
+                        {"draft": asdict(draft)} if draft else {"error": "not_found"},
+                    )
+                if method == "DELETE":
+                    payload = await self._body(receive)
+                    if set(payload) != {"expected_revision"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    deleted = await asyncio.to_thread(
+                        self.workbench.delete_draft, user.user_id, task_id, **payload
+                    )
+                    return await self._respond(send, 200, {"deleted": deleted})
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             match = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks", path
             )
