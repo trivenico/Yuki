@@ -852,6 +852,8 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             decision="accepted", final_label="positive",
         )
         self.assertEqual(accepted["round_number"], 2)
+        # Reopening the store must not backfill duplicate copies of later adjudication events.
+        SQLiteAnnotationWorkbench(str(self.database))
         with sqlite3.connect(self.database) as db:
             events = db.execute(
                 "SELECT round_number, event_type FROM annotation_adjudication_events "
