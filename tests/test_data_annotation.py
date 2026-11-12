@@ -954,6 +954,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertEqual(report["report"]["summary"]["drift_detected_count"], 2)
         self.assertTrue(all(
             item["status"] == "drift_detected"
+            and item["false_discovery_rate_q_value"] <= 0.05
             for item in report["report"]["annotators"]
         ))
         repeated = self.store.create_quality_drift_report(
@@ -966,6 +967,26 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertIsNone(self.store.get_quality_drift_report(
             "owner:bob", self.project.project_id, report["report_id"],
         ))
+
+    def test_corrupt_quality_drift_report_is_reported_as_invalid(self):
+        report = self.store.create_quality_drift_report(
+            "owner:alice", self.project.project_id, idempotency_key="drift-corrupt-001",
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("DROP TRIGGER annotation_quality_drift_reports_no_update")
+            db.execute(
+                "UPDATE annotation_quality_drift_reports SET report_json=? WHERE report_id=?",
+                ("not-json", report["report_id"]),
+            )
+            db.commit()
+        result = self.store.get_quality_drift_report(
+            "owner:alice", self.project.project_id, report["report_id"],
+        )
+        self.assertFalse(result["integrity_valid"])
+        self.assertIsNone(result["report"])
+        history = self.store.list_quality_drift_reports("owner:alice", self.project.project_id)
+        self.assertFalse(history[0]["integrity_valid"])
+        self.assertEqual(history[0]["summary"], {})
 
     def test_performance_report_uses_persisted_round_and_reviewer_evidence(self):
         assignments = self.store.create_independent_assignments(
