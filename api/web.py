@@ -9,13 +9,15 @@ _ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/assets/chat.js": ("chat.js", "text/javascript; charset=utf-8"),
     "/assets/chat.css": ("chat.css", "text/css; charset=utf-8"),
+    "/assets/annotation.js": ("annotation.js", "text/javascript; charset=utf-8"),
+    "/assets/annotation.css": ("annotation.css", "text/css; charset=utf-8"),
 }
 _WEB_ROOT = Path(__file__).resolve().parent.parent / "ui" / "web"
 _SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),
     (b"referrer-policy", b"no-referrer"),
     (b"x-frame-options", b"DENY"),
-    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
 ]
 
 
