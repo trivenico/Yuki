@@ -11,7 +11,7 @@ Carry authenticated owner provenance from durable goal storage through the curre
 - `DurableSkillWorker` constructs immutable `SkillPolicyContext` only from the engine-derived owner, goal and task identifiers, and passes it to the runtime.
 - `ApprovedSkillRuntime` and `invoke_registered_skill` accept and validate the trusted context.
 - One-shot invocation approvals are now scoped by principal, skill name and exact argument digest. An approval created for one owner cannot authorize another owner's task.
-- Added tests for owner derivation, unowned legacy tasks, cross-owner approval rejection and normal owner-bound execution.
+- Added tests for owner derivation, unowned legacy tasks, cross-owner approval rejection, malformed/unavailable claim identity fail-closed behavior and normal owner-bound execution.
 
 ## Trust boundary
 
