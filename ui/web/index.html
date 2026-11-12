@@ -113,6 +113,14 @@
                 </label>
                 <button id="annotation-independent-assign" type="button">Create independent assignments</button>
                 <button id="annotation-agreement-refresh" type="button">Refresh agreement report</button>
+                <h4>Gold-standard calibration</h4>
+                <p>Register a known-answer text task before assigning it. Expected answers are never included in annotator task data.</p>
+                <label class="annotation-field" for="annotation-gold-label">Expected classification label
+                  <input id="annotation-gold-label" maxlength="256" autocomplete="off" placeholder="Exact rubric label">
+                </label>
+                <button id="annotation-gold-create" type="button">Register selected task as gold</button>
+                <button id="annotation-calibration-refresh" type="button">Refresh annotator calibration</button>
+                <div id="annotation-calibration-summary" class="annotation-hint" aria-live="polite">Calibration requires gold-standard submissions.</div>
                 <div id="annotation-agreement-summary" class="annotation-hint" aria-live="polite">Agreement metrics are available for classification tasks after independent submissions.</div>
                 <h4>My independent assignments</h4>
                 <button id="annotation-independent-load" type="button">Load my assignments</button>
