@@ -169,8 +169,6 @@ class AuthenticatedAnnotationAPI:
                         self._read_clean_asset, user.user_id, project_id, asset_id
                     )
                     return await self._respond_bytes(send, 200, data, media_type)
-                if method == "GET" and path.endswith("/preview"):
-                    return await self._respond(send, 404, {"error": "not_found"})
                 if method == "DELETE":
                     deleted = await asyncio.to_thread(
                         self.asset_store.delete, user.user_id, project_id, asset_id
