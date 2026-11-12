@@ -87,6 +87,7 @@ class DurableSkillWorker:
         heartbeat_thread.start()
         try:
             approval_token = None
+            approval_request_id = None
             if self.approval_token_resolver is not None:
                 if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
                     raise PermissionError("task claim is no longer valid before approval lookup")
@@ -103,9 +104,9 @@ class DurableSkillWorker:
                     decision_name = getattr(getattr(decision, "decision", None), "value", None)
                     requires_owner_approval = decision_name == "require_approval"
                     if requires_owner_approval:
-                        request_id = gateway.request_approval(policy_request)
+                        approval_request_id = gateway.request_approval(policy_request)
                         self.engine.record_approval_wait(
-                            task_id, self.worker_id, lease_token, request_id,
+                            task_id, self.worker_id, lease_token, approval_request_id,
                         )
                 if requires_owner_approval or policy_engine is None:
                     deadline = time.monotonic() + self.approval_wait_timeout_seconds
@@ -115,6 +116,14 @@ class DurableSkillWorker:
                         approval_token = self.approval_token_resolver(
                             policy_context, skill_name, lease_token
                         )
+                        if approval_request_id is not None:
+                            request_status = gateway.get_request_status(approval_request_id)
+                            if request_status in {"rejected", "expired"}:
+                                claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+                                self.engine.transition_approval_wait(
+                                    task_id, claim_digest, request_status,
+                                )
+                                raise PermissionError("owner did not approve this operation")
                         if heartbeat_errors:
                             raise RuntimeError("task lease heartbeat failed while awaiting approval")
                         if approval_token is not None:
