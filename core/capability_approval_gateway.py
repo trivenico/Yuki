@@ -302,7 +302,15 @@ class CapabilityApprovalGateway:
                 raise PermissionError("typed operation kind is not registered for this capability")
         if (operation is None) != (operation_payload is None):
             raise ValueError("typed operation and exact operation_payload must be supplied together")
-        operation_digest = self._operation_digest(operation)
+        operation_json = None if operation is None else json.dumps(
+            asdict(operation), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        )
+        operation_digest = None if operation_json is None else hashlib.sha256(
+            operation_json.encode("utf-8")
+        ).hexdigest()
+        if operation_digest != self._operation_digest(operation):
+            raise ValueError("typed operation serialization is not canonical")
         payload_ciphertext = None
         if operation is not None:
             encoded_payload = canonical_operation_payload(operation_payload)
@@ -313,19 +321,6 @@ class CapabilityApprovalGateway:
             payload_ciphertext = self._seal_operation_payload(
                 encoded_payload, self._operation_payload_aad(digest, operation_digest)
             )
-        operation_json = None if operation is None else json.dumps(
-            {
-                "schema_version": operation.schema_version,
-                "operation_type": operation.operation_type,
-                "capability": operation.capability,
-                "target": operation.target,
-                "payload_sha256": operation.payload_sha256,
-            },
-            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-        )
-        operation_digest = None if operation_json is None else hashlib.sha256(
-            operation_json.encode("utf-8")
-        ).hexdigest()
         policy = self.policy_engine.evaluate(request)
         if policy.decision != Decision.REQUIRE_APPROVAL:
             raise PermissionError("the current policy does not permit an approval request")
