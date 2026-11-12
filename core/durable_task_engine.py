@@ -62,6 +62,18 @@ class DurableTaskEngine:
               id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id TEXT NOT NULL, task_id TEXT,
               event_type TEXT NOT NULL, detail_json TEXT NOT NULL, created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS events_goal_idx ON run_events(goal_id,id);
+            CREATE TABLE IF NOT EXISTS lease_recovery_outbox(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id TEXT NOT NULL,
+              worker_id TEXT NOT NULL,
+              claim_token_sha256 TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              claimed_by TEXT,
+              claim_until REAL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(task_id,claim_token_sha256));
+            CREATE INDEX IF NOT EXISTS lease_recovery_pending_idx
+              ON lease_recovery_outbox(claim_until,id);
             """)
             # Existing databases receive additive, non-destructive migrations.
             goal_columns = {row["name"] for row in c.execute("PRAGMA table_info(goals)")}
@@ -354,6 +366,14 @@ class DurableTaskEngine:
             rows=c.execute("SELECT * FROM tasks WHERE state='running' AND lease_until<=?",(now,)).fetchall()
             for r in rows:
                 retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
+                if r["lease_owner"] and r["lease_token"]:
+                    claim_digest = __import__("hashlib").sha256(r["lease_token"].encode("ascii")).hexdigest()
+                    c.execute(
+                        """INSERT OR IGNORE INTO lease_recovery_outbox
+                           (task_id,worker_id,claim_token_sha256,created_at)
+                           VALUES(?,?,?,?)""",
+                        (r["id"], r["lease_owner"], claim_digest, now),
+                    )
                 c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
                 if not retry:
@@ -362,6 +382,65 @@ class DurableTaskEngine:
                 count+=1
             c.commit()
         return count
+
+
+    def claim_recovery_outbox(self, supervisor_id: str, *, limit: int = 50, lease_seconds: int = 60):
+        """Lease pending credential-revocation work to one trusted supervisor."""
+        if not isinstance(supervisor_id, str) or not supervisor_id or len(supervisor_id) > 256:
+            raise ValueError("invalid supervisor_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit must be in 1..500")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be in 1..3600")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            rows = c.execute(
+                """SELECT * FROM lease_recovery_outbox
+                   WHERE claim_until IS NULL OR claim_until<=?
+                   ORDER BY id LIMIT ?""", (now, limit),
+            ).fetchall()
+            result = []
+            for row in rows:
+                changed = c.execute(
+                    """UPDATE lease_recovery_outbox
+                       SET claimed_by=?,claim_until=?,attempts=attempts+1
+                       WHERE id=? AND (claim_until IS NULL OR claim_until<=?)""",
+                    (supervisor_id, now + lease_seconds, row["id"], now),
+                ).rowcount
+                if changed == 1:
+                    item = dict(row)
+                    item["claimed_by"] = supervisor_id
+                    item["claim_until"] = now + lease_seconds
+                    item["attempts"] = row["attempts"] + 1
+                    result.append(item)
+            c.commit()
+            return result
+
+    def acknowledge_recovery_outbox(self, event_id: int, supervisor_id: str) -> bool:
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
+            raise ValueError("invalid recovery event id")
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            changed = c.execute(
+                "DELETE FROM lease_recovery_outbox WHERE id=? AND claimed_by=?",
+                (event_id, supervisor_id),
+            ).rowcount
+            c.commit()
+            return changed == 1
+
+    def release_recovery_outbox(self, event_id: int, supervisor_id: str) -> bool:
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
+            raise ValueError("invalid recovery event id")
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            changed = c.execute(
+                """UPDATE lease_recovery_outbox SET claimed_by=NULL,claim_until=NULL
+                   WHERE id=? AND claimed_by=?""",
+                (event_id, supervisor_id),
+            ).rowcount
+            c.commit()
+            return changed == 1
 
     def cancel_task(self,task_id,*,owner_id=None):
         if owner_id is not None:
