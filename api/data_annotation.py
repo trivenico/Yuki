@@ -11,6 +11,10 @@ import json
 import re
 
 from core.annotation_assets import SQLiteAnnotationAssetStore
+from core.annotation_image_preview import (
+    AnnotationImagePreviewError,
+    create_safe_png_preview,
+)
 from core.data_annotation import (
     AnnotationConflict,
     AnnotationPolicyError,
@@ -137,6 +141,25 @@ class AuthenticatedAnnotationAPI:
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/assets/([0-9a-f]{32})",
                 path,
             )
+            asset_preview = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/assets/([0-9a-f]{32})/preview",
+                path,
+            )
+            if asset_preview and method == "GET":
+                if self.asset_store is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                project_id, asset_id = asset_preview.groups()
+                source = await asyncio.to_thread(
+                    self.asset_store.read, user.user_id, project_id, asset_id
+                )
+                try:
+                    preview = await asyncio.to_thread(create_safe_png_preview, source)
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "image_preview_unavailable"})
+                except AnnotationImagePreviewError:
+                    return await self._respond(send, 415, {"error": "unsupported_image_content"})
+                return await self._respond_preview_png(send, preview)
+
             if asset_access:
                 if self.asset_store is None:
                     return await self._respond(send, 404, {"error": "not_found"})
@@ -146,6 +169,8 @@ class AuthenticatedAnnotationAPI:
                         self._read_clean_asset, user.user_id, project_id, asset_id
                     )
                     return await self._respond_bytes(send, 200, data, media_type)
+                if method == "GET" and path.endswith("/preview"):
+                    return await self._respond(send, 404, {"error": "not_found"})
                 if method == "DELETE":
                     deleted = await asyncio.to_thread(
                         self.asset_store.delete, user.user_id, project_id, asset_id
@@ -326,6 +351,19 @@ class AuthenticatedAnnotationAPI:
             if not event.get("more_body", False):
                 break
         return bytes(chunks)
+
+    @staticmethod
+    async def _respond_preview_png(send, body):
+        await send({"type": "http.response.start", "status": 200, "headers": [
+            (b"content-type", b"image/png"),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"cache-control", b"no-store"),
+            (b"x-content-type-options", b"nosniff"),
+            (b"content-disposition", b"inline"),
+            (b"content-security-policy", b"default-src 'none'; sandbox"),
+            (b"cross-origin-resource-policy", b"same-origin"),
+        ]})
+        await send({"type": "http.response.body", "body": body})
 
     @staticmethod
     async def _respond_bytes(send, status, body, media_type):
