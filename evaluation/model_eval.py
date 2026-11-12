@@ -74,15 +74,15 @@ class ModelEvaluator:
         if (
             isinstance(max_total_duration_seconds, bool)
             or not isinstance(max_total_duration_seconds, (int, float))
-            or not math.isfinite(max_total_duration_seconds)
             or not 1 <= max_total_duration_seconds <= 1800
+            or not math.isfinite(max_total_duration_seconds)
         ):
             raise ValueError("max_total_duration_seconds must be finite and between 1 and 1800")
         if (
             isinstance(minimum_pass_rate, bool)
             or not isinstance(minimum_pass_rate, (int, float))
-            or not math.isfinite(minimum_pass_rate)
             or not 0.0 <= minimum_pass_rate <= 1.0
+            or not math.isfinite(minimum_pass_rate)
         ):
             raise ValueError("minimum_pass_rate must be finite and between 0 and 1")
         self.max_cases = max_cases
@@ -116,7 +116,7 @@ class ModelEvaluator:
             raise ValueError("prompt must be non-empty text without NUL characters")
         if isinstance(case.max_latency_seconds, bool) or not isinstance(case.max_latency_seconds, (int, float)):
             raise ValueError("max_latency_seconds must be a finite number")
-        if not math.isfinite(case.max_latency_seconds) or not 0 < case.max_latency_seconds <= 1800:
+        if not 0 < case.max_latency_seconds <= 1800 or not math.isfinite(case.max_latency_seconds):
             raise ValueError("max_latency_seconds must be finite and in (0, 1800]")
         if type(case.max_response_chars) is not int or not 1 <= case.max_response_chars <= 200_000:
             raise ValueError("max_response_chars must be an integer between 1 and 200000")
