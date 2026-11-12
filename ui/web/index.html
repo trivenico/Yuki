@@ -121,6 +121,16 @@
                 </label>
                 <button id="annotation-gold-create" type="button">Register selected task as gold</button>
                 <button id="annotation-calibration-refresh" type="button">Refresh annotator calibration</button>
+                <label class="annotation-field" for="annotation-calibration-minimum">Minimum gold samples
+                  <input id="annotation-calibration-minimum" type="number" min="1" max="100" value="5">
+                </label>
+                <label class="annotation-field" for="annotation-calibration-accuracy">Passing accuracy (0.5–1.0)
+                  <input id="annotation-calibration-accuracy" type="number" min="0.5" max="1" step="0.01" value="0.8">
+                </label>
+                <label class="annotation-field" for="annotation-calibration-age">Maximum calibration age (days)
+                  <input id="annotation-calibration-age" type="number" min="1" max="3650" value="90">
+                </label>
+                <button id="annotation-calibration-policy-save" type="button">Save calibration policy</button>
                 <div id="annotation-calibration-summary" class="annotation-hint" aria-live="polite">Calibration requires gold-standard submissions.</div>
                 <div id="annotation-agreement-summary" class="annotation-hint" aria-live="polite">Agreement metrics are available for classification tasks after independent submissions.</div>
                 <h4>Adjudication and delivery</h4>
