@@ -55,6 +55,7 @@ class ApprovalCredentialBroker:
                     goal_id TEXT NOT NULL,
                     task_id TEXT NOT NULL,
                     worker_id TEXT NOT NULL,
+                    claim_token_sha256 TEXT,
                     credential_sha256 TEXT NOT NULL,
                     ciphertext BLOB NOT NULL,
                     expires_at REAL NOT NULL,
@@ -63,6 +64,11 @@ class ApprovalCredentialBroker:
                     consumed_at REAL
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(approval_worker_credentials)")}
+            if "claim_token_sha256" not in columns:
+                db.execute("ALTER TABLE approval_worker_credentials ADD COLUMN claim_token_sha256 TEXT")
+                # Credentials created before claim fencing cannot safely be reused.
+                db.execute("UPDATE approval_worker_credentials SET status='revoked',ciphertext=X'' WHERE status='available'")
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_worker_credentials_lookup
                 ON approval_worker_credentials(principal_id,goal_id,task_id,worker_id,status)
@@ -105,21 +111,29 @@ class ApprovalCredentialBroker:
         return db
 
     @staticmethod
-    def _aad(request_id: str, binding: dict[str, Any], worker_id: str) -> bytes:
+    def _aad(request_id: str, binding: dict[str, Any], worker_id: str, claim_token_sha256: str) -> bytes:
         material = {
             "request_id": request_id, "principal_id": binding["principal_id"],
             "goal_id": binding["run_id"], "task_id": binding["step_id"],
-            "worker_id": worker_id, "capability": binding["capability"],
+            "worker_id": worker_id, "claim_token_sha256": claim_token_sha256,
+            "capability": binding["capability"],
             "target": binding["target"], "policy_version": binding["policy_version"],
             "expires_at": binding["expires_at"],
         }
         return json.dumps(material, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
-    def deliver_credential(self, request_id: str, token: str) -> None:
-        """Approval-service callback: encrypt and persist without plaintext."""
+    def deliver_credential(self, request_id: str, token: str, *, lease_token: str) -> None:
+        """Deliver only to the exact active worker claim; lease token is never persisted."""
+        if not isinstance(lease_token, str) or not 40 <= len(lease_token) <= 256:
+            raise ValueError("a valid active claim lease token is required")
+        try:
+            lease_token.encode("ascii")
+        except UnicodeEncodeError:
+            raise ValueError("claim lease token must be ASCII") from None
+        claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
         binding = self.gateway.approval_delivery_binding(request_id, token)
         token_bytes = token.encode("ascii")
-        ciphertext = self.seal(token_bytes, self._aad(request_id, binding, self.worker_id))
+        ciphertext = self.seal(token_bytes, self._aad(request_id, binding, self.worker_id, claim_digest))
         if not isinstance(ciphertext, bytes) or len(ciphertext) < 16 or len(ciphertext) > 16384:
             raise ValueError("encryption adapter returned an invalid envelope")
         now = self.clock()
@@ -132,11 +146,11 @@ class ApprovalCredentialBroker:
             try:
                 db.execute(
                     """INSERT INTO approval_worker_credentials
-                       (request_id,principal_id,goal_id,task_id,worker_id,
+                       (request_id,principal_id,goal_id,task_id,worker_id,claim_token_sha256,
                         credential_sha256,ciphertext,expires_at,status,created_at)
-                       VALUES(?,?,?,?,?,?,?,?, 'available',?)""",
+                       VALUES(?,?,?,?,?,?,?,?,?, 'available',?)""",
                     (request_id, binding["principal_id"], binding["run_id"],
-                     binding["step_id"], self.worker_id,
+                     binding["step_id"], self.worker_id, claim_digest,
                      hashlib.sha256(token_bytes).hexdigest(), ciphertext,
                      binding["expires_at"], now),
                 )
@@ -145,12 +159,12 @@ class ApprovalCredentialBroker:
                 raise PermissionError("credential delivery has already been recorded") from None
             db.commit()
 
-    def resolver(self, worker_id: str | None = None) -> Callable[[SkillPolicyContext, str], str | None]:
+    def resolver(self, worker_id: str | None = None) -> Callable[[SkillPolicyContext, str, str], str | None]:
         """Create a resolver closure pinned to this broker's worker identity."""
         if worker_id is not None and worker_id != self.worker_id:
             raise PermissionError("resolver worker identity does not match broker identity")
 
-        def resolve(context: SkillPolicyContext, skill_name: str) -> str | None:
+        def resolve(context: SkillPolicyContext, skill_name: str, lease_token: str) -> str | None:
             if not isinstance(context, SkillPolicyContext):
                 raise PermissionError("trusted task context is required")
             if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
@@ -172,7 +186,7 @@ class ApprovalCredentialBroker:
                 binding = self.gateway.approval_delivery_binding_by_digest(
                     row["request_id"], row["credential_sha256"],
                 )
-                aad = self._aad(row["request_id"], binding, self.worker_id)
+                aad = self._aad(row["request_id"], binding, self.worker_id, claim_digest)
                 plaintext = self.unseal(bytes(row["ciphertext"]), aad)
                 if not isinstance(plaintext, bytes) or not 40 <= len(plaintext) <= 256:
                     db.rollback()
@@ -197,6 +211,22 @@ class ApprovalCredentialBroker:
         # The worker constructor verifies this pinned identity before accepting the resolver.
         resolve.worker_id = self.worker_id
         return resolve
+
+    def revoke_claim(self, task_id: str, lease_token: str) -> int:
+        """Revoke all undelivered credentials for one exact claim generation."""
+        if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
+            raise ValueError("task_id is invalid")
+        if not isinstance(lease_token, str) or not 40 <= len(lease_token) <= 256:
+            raise ValueError("lease_token is invalid")
+        digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute(
+                "UPDATE approval_worker_credentials SET status='revoked',ciphertext=X'' WHERE task_id=? AND worker_id=? AND claim_token_sha256=? AND status='available'",
+                (task_id, self.worker_id, digest),
+            ).rowcount
+            db.commit()
+            return changed
 
     def revoke(self, request_id: str) -> bool:
         """Invalidate a not-yet-delivered credential record for this worker."""
