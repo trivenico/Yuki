@@ -183,7 +183,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         )
         self.store.submit(
             "owner:alice", task.task_id, payload={"private_text": "sensitive content"},
-            expected_version=claimed.version, ai_assisted=True, human_confirmed=True,
+            expected_version=claimed.version, ai_assisted=False, human_confirmed=True,
         )
         events = self.store.audit_events("owner:alice")
         serialized = repr(events)
