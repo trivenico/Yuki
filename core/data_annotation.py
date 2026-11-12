@@ -622,7 +622,7 @@ class SQLiteAnnotationWorkbench:
                    ORDER BY s.updated_at, s.submission_id LIMIT ?""",
                 (owner_id, project_id, limit),
             ).fetchall()
-        return [{
+        result = [{
             "external_ref": row["external_ref"],
             "asset_ref": row["asset_ref"],
             "input_data": _decode(row["input_json"]),
@@ -631,6 +631,31 @@ class SQLiteAnnotationWorkbench:
             "ai_assisted": bool(row["ai_assisted"]),
             "accepted_at": row["accepted_at"],
         } for row in rows]
+        remaining = max(0, limit - len(result))
+        if remaining:
+            with self._connect() as db:
+                adjudicated = db.execute(
+                    """SELECT t.external_ref, t.asset_ref, t.input_json,
+                              a.final_label, a.agreement, a.reviewer_id, a.created_at
+                       FROM annotation_adjudications a
+                       JOIN annotation_tasks t
+                         ON t.task_id=a.task_id AND t.owner_id=a.owner_id
+                       WHERE a.owner_id=? AND a.project_id=? AND a.decision='accepted'
+                       ORDER BY a.created_at, a.adjudication_id LIMIT ?""",
+                    (owner_id, project_id, remaining),
+                ).fetchall()
+            result.extend({
+                "external_ref": row["external_ref"],
+                "asset_ref": row["asset_ref"],
+                "input_data": _decode(row["input_json"]),
+                "annotation": {"label": row["final_label"]},
+                "quality": {"source": "independent_adjudication",
+                            "annotator_agreement": row["agreement"],
+                            "reviewer_id": row["reviewer_id"]},
+                "ai_assisted": False,
+                "accepted_at": row["created_at"],
+            } for row in adjudicated)
+        return result
 
     def get_task(self, owner_id: str, task_id: str) -> AnnotationTask | None:
         owner_id = _owner(owner_id)
