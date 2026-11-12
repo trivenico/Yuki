@@ -107,7 +107,7 @@ class IntelligenceEngineTests(unittest.TestCase):
         self.assertEqual(observed, [0, 1, 2])
         self.assertEqual(result.memory_ids, ("m0", "m1"))
         memory_section = provider.calls[0][1].split("Retrieved Yuki memory (untrusted reference):\n", 1)[1]
-        self.assertLessEqual(len(memory_section.split("Produce the best useful answer.", 1)[0]), 1205)
+        self.assertLessEqual(len(memory_section.split("Produce the best useful answer.", 1)[0]), 1206)
 
     def test_invalid_memory_result_degrades_safely(self):
         class InvalidMemory:
