@@ -12,7 +12,7 @@ from core.capability_approval_gateway import CapabilityApprovalGateway
 from core.capability_approval_preview import ApprovalPreview, CapabilityApprovalPreviewRegistry
 from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest
 from core.approval_operation import ApprovalOperation
-from automation.approved_workspace_changes import ApprovedWorkspaceChanges, FileChange
+from automation.approved_workspace_changes import ApprovedWorkspaceChanges, FileChange, WorkspaceChangeError
 from automation.authorized_read_tools import ToolPrincipal
 from core.approved_workspace_operation_executor import apply_claim_bound_workspace_changes
 
@@ -242,7 +242,7 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
             audit=lambda event: None, allowed_paths=("README.md",),
         )
         checks = iter((True, True, False))
-        with self.assertRaises(PermissionError):
+        with self.assertRaises(WorkspaceChangeError):
             apply_claim_bound_workspace_changes(
                 gateway=self.gateway, executor=executor, request=request,
                 approval_token=approval_token, principal=principal,
