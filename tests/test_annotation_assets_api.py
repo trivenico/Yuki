@@ -208,7 +208,7 @@ class AnnotationAssetAPITests(unittest.TestCase):
         from PIL import Image
 
         upload_path = f"/v1/annotation/projects/{self.project_id}/assets"
-        bad_data = b"\\x89PNG\\r\\n\\x1a\\n" + b"not-a-real-image"
+        bad_data = b"\x89PNG\r\n\x1a\n" + b"not-a-real-image"
         status, body, _ = self.request(
             "POST", upload_path, bad_data, self.owner.token,
             "application/octet-stream",
