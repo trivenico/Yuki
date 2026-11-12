@@ -5,8 +5,8 @@ owns gesture identity, tool state, normalized geometry, and bounded history.
 """
 from __future__ import annotations
 
-from typing import Any
 import math
+from typing import Any
 
 from core.annotation_geometry import (
     Point, Rect, SnapshotHistory, bounding_box_from_drag, validate_polygon,
