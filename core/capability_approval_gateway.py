@@ -419,6 +419,9 @@ class CapabilityApprovalGateway:
             "principal_id": row["principal_id"], "capability": row["capability"],
             "target": row["target"], "run_id": row["run_id"], "step_id": row["step_id"],
             "policy_version": row["policy_version"],
+            "claim_token_sha256": json.loads(
+                self._request_json_for_binding(request_id)
+            ).get("claim_token_sha256"),
             "expires_at": min(row["expires_at"], row["credential_expires_at"]),
         }
 
