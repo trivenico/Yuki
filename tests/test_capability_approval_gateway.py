@@ -242,6 +242,16 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.gateway.request_approval(request)
 
+    def test_capability_rejects_unregistered_typed_operation_kind(self):
+        payload = {"changes": [{"path": "README.md", "content": "approved"}]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.delete", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        request = self.make_request(argument_sha256=argument_digest(payload))
+        with self.assertRaises(PermissionError):
+            self.gateway.request_approval(request, operation=operation)
+
     def test_approval_credential_is_bound_to_typed_operation_envelope(self):
         payload = {"changes": [{"path": "README.md", "content": "approved"}]}
         operation = ApprovalOperation.from_payload(
