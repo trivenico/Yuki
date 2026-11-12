@@ -27,8 +27,10 @@ class ApprovalDeliveryRouter:
                 raise TypeError("every delivery target must be an ApprovalCredentialBroker")
             if broker.worker_id != worker_id or broker.gateway is not gateway:
                 raise ValueError("broker identity or gateway does not match router registration")
-            if broker.validate_claim_digest is None:
-                raise ValueError("broker must use authoritative digest-based claim validation")
+            if broker.validate_claim_digest != engine.validate_claim_digest:
+                raise ValueError("broker must use this router's exact task engine for digest validation")
+            if broker.validate_claim != engine.validate_lease:
+                raise ValueError("broker resolver must use this router's exact task engine for lease validation")
             normalized[worker_id] = broker
         self.engine, self.gateway = engine, gateway
         self.brokers_by_worker = normalized
