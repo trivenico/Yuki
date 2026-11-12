@@ -1082,9 +1082,10 @@
       target.textContent = "Select a project to view dataset manifests.";
       return;
     }
+    const projectId = state.project.project_id;
     try {
       const result = await api("/v1/annotation/projects/" +
-        encodeURIComponent(state.project.project_id) + "/delivery-manifests");
+        encodeURIComponent(projectId) + "/delivery-manifests");
       if (!result.manifests.length) {
         target.textContent = "No delivery manifests have been created.";
         return;
@@ -1101,7 +1102,7 @@
           verify.disabled = true;
           try {
             const checked = await api("/v1/annotation/projects/" +
-              encodeURIComponent(state.project.project_id) + "/delivery-manifests/" +
+              encodeURIComponent(projectId) + "/delivery-manifests/" +
               encodeURIComponent(manifest.manifest_id) + "/verify");
             verify.textContent = checked.verification.valid ? "Checksum verified" : "Checksum mismatch";
           } catch (error) {
@@ -1125,12 +1126,15 @@
       return;
     }
     const button = $("annotation-manifest-create");
+    const projectId = state.project.project_id;
     button.disabled = true;
-    if (!manifestIdempotencyKey) manifestIdempotencyKey = crypto.randomUUID();
+    if (!manifestIdempotencyKey || manifestIdempotencyKey.projectId !== projectId) {
+      manifestIdempotencyKey = { projectId, key: crypto.randomUUID() };
+    }
     try {
       const result = await api("/v1/annotation/projects/" +
-        encodeURIComponent(state.project.project_id) + "/delivery-manifests", {
-          method: "POST", body: JSON.stringify({ idempotency_key: manifestIdempotencyKey })
+        encodeURIComponent(projectId) + "/delivery-manifests", {
+          method: "POST", body: JSON.stringify({ idempotency_key: manifestIdempotencyKey.key })
         });
       manifestIdempotencyKey = null;
       $("annotation-manifest-list").textContent =
