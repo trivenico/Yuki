@@ -11,6 +11,7 @@ import shlex
 from typing import Any
 
 from core.data_annotation import AnnotationConflict
+from ui.annotation_forms import annotation_editor_fields, build_annotation_payload
 
 
 def execute_annotation_command(
@@ -32,6 +33,7 @@ def execute_annotation_command(
             "/tasks [pending|in_progress|submitted|accepted|rework] — list tasks in the open project\n"
             "/task TASK_ID — inspect a task and its current version\n"
             "/claim TASK_ID VERSION — claim or reclaim a task using its current version\n"
+            "/edit TASK_ID VERSION — open the task-family annotation form\n"
             "/submit TASK_ID VERSION CONFIRM JSON — submit your human-confirmed annotation\n"
             "/submissions TASK_ID — show submissions for a task\n"
             "/review SUBMISSION_ID accepted|rework [NOTES] — review a submission\n"
@@ -158,12 +160,116 @@ def run_annotation_workbench(workbench: Any, owner_id: str) -> None:
         raise ValueError("annotation_owner_id_required")
     try:
         from textual.app import App, ComposeResult
-        from textual.containers import Vertical
-        from textual.widgets import Footer, Header, Input, RichLog, Static
+        from textual.containers import Vertical, VerticalScroll
+        from textual.screen import ModalScreen
+        from textual.widgets import Button, Footer, Header, Input, RichLog, Static, TextArea
     except ImportError as exc:
         raise RuntimeError(
             "Install the optional UI dependency with: pip install -r requirements-ui.txt"
         ) from exc
+
+    class AnnotationEditorScreen(ModalScreen):
+        """Structured task-family editor with a separate human confirmation step."""
+
+        def __init__(self, task_id: str, expected_version: int, project: Any):
+            super().__init__()
+            self.task_id = task_id
+            self.expected_version = expected_version
+            self.project = project
+            self.payload = None
+            self.fields = annotation_editor_fields(project.task_type, project.rubric)
+
+        def compose(self) -> ComposeResult:
+            yield Static(
+                f"{self.project.name} · {self.project.task_type} · task {self.task_id} "
+                f"· version {self.expected_version}",
+                id="editor-heading",
+            )
+            with VerticalScroll(id="editor-fields"):
+                for field in self.fields:
+                    choices = (" Choices: " + ", ".join(field.options)) if field.options else ""
+                    yield Static(f"{field.label}{' *' if field.required else ''} — {field.help_text}{choices}")
+                    if field.kind.startswith("json-"):
+                        yield TextArea(id=f"field-{field.name}", soft_wrap=True)
+                    else:
+                        yield Input(placeholder=field.placeholder or field.label,
+                                    id=f"field-{field.name}")
+            yield Static("", id="editor-error")
+            yield Static("", id="editor-review")
+            yield Button("Review annotation", id="editor-review-button")
+            yield Button("Confirm and submit", id="editor-confirm-button", disabled=True)
+            yield Button("Edit annotation", id="editor-edit-button", disabled=True)
+            yield Button("Cancel", id="editor-cancel-button")
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "editor-cancel-button":
+                self.dismiss("Annotation cancelled; no submission was made.")
+                return
+            if event.button.id == "editor-edit-button":
+                self.query_one("#editor-fields", VerticalScroll).styles.display = "block"
+                self.query_one("#editor-review", Static).styles.display = "none"
+                self.query_one("#editor-review-button", Button).disabled = False
+                self.query_one("#editor-confirm-button", Button).disabled = True
+                self.query_one("#editor-edit-button", Button).disabled = True
+                self.query_one("#editor-error", Static).update("")
+                return
+            if event.button.id == "editor-review-button":
+                values = {}
+                for field in self.fields:
+                    widget = self.query_one(f"#field-{field.name}")
+                    values[field.name] = widget.text if isinstance(widget, TextArea) else widget.value
+                try:
+                    self.payload = build_annotation_payload(
+                        self.project.task_type, values, self.project.rubric,
+                    )
+                except (TypeError, ValueError) as exc:
+                    self.query_one("#editor-error", Static).update(
+                        f"Cannot review annotation: {exc}"
+                    )
+                    return
+                self.query_one("#editor-error", Static).update("")
+                self.query_one("#editor-fields", VerticalScroll).styles.display = "none"
+                self.query_one("#editor-review", Static).styles.display = "block"
+                self.query_one("#editor-review", Static).update(
+                    "Review the exact payload below. Confirming submits it as human-annotated work.\n"
+                    + json.dumps(self.payload, ensure_ascii=False, indent=2)
+                )
+                self.query_one("#editor-review-button", Button).disabled = True
+                self.query_one("#editor-confirm-button", Button).disabled = False
+                self.query_one("#editor-edit-button", Button).disabled = False
+                return
+            if event.button.id == "editor-confirm-button":
+                if self.payload is None:
+                    self.query_one("#editor-error", Static).update(
+                        "Review the annotation before confirming."
+                    )
+                    return
+                try:
+                    submission = workbench.submit(
+                        owner_id, self.task_id, payload=self.payload,
+                        expected_version=self.expected_version,
+                        ai_assisted=False, human_confirmed=True,
+                    )
+                except AnnotationConflict:
+                    self.dismiss(
+                        "Task version conflict: reload the task and rebuild the annotation."
+                    )
+                    return
+                except (ValueError, TypeError, PermissionError):
+                    self.query_one("#editor-error", Static).update(
+                        "Submission rejected by task validation or project policy."
+                    )
+                    return
+                except Exception:
+                    self.dismiss("Submission failed safely; refresh the task before retrying.")
+                    return
+                if submission is None:
+                    self.dismiss("Task not found; no submission was recorded.")
+                else:
+                    self.dismiss(
+                        f"Submission recorded: {submission.submission_id} · {submission.status}. "
+                        "It has not been delivered to a client or marketplace."
+                    )
 
     class AnnotationApp(App):
         TITLE = "Yuki — Data Annotation Workbench"
@@ -195,12 +301,38 @@ def run_annotation_workbench(workbench: Any, owner_id: str) -> None:
                 "Use /help to see commands."
             )
 
+        def _on_editor_finished(self, result) -> None:
+            if result:
+                self.query_one("#output", RichLog).write(str(result))
+
         def on_input_submitted(self, event: Input.Submitted) -> None:
             command = event.value.strip()
             event.input.value = ""
             log = self.query_one("#output", RichLog)
             if command == "/quit":
                 self.exit()
+                return
+            if command.startswith("/edit"):
+                try:
+                    parts = shlex.split(command)
+                    if len(parts) != 3 or parts[0] != "/edit":
+                        raise ValueError("syntax")
+                    task_id = parts[1]
+                    expected_version = _positive_version(parts[2])
+                    task = workbench.get_task(owner_id, task_id)
+                    if task is None:
+                        raise ValueError("missing")
+                    project = workbench.get_project(owner_id, task.project_id)
+                    if project is None or project.status != "active":
+                        raise ValueError("inactive")
+                    if task.status != "in_progress" or task.version != expected_version:
+                        raise ValueError("stale")
+                    self.push_screen(
+                        AnnotationEditorScreen(task_id, expected_version, project),
+                        self._on_editor_finished,
+                    )
+                except (ValueError, TypeError):
+                    log.write("Editor unavailable: verify task ID/version, claim the task, and use /edit TASK_ID VERSION.")
                 return
             if command.startswith("/open "):
                 try:
