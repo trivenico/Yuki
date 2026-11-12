@@ -111,6 +111,34 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(updated_task.status, "rework")
         self.assertGreater(updated_task.version, claimed.version)
 
+    def test_review_queue_lists_only_submitted_work_and_records_reviewer_identity(self):
+        project = self.project()
+        task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="review-queue",
+            input_data={"text": "A sample"},
+        )
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        submission = self.store.submit(
+            "owner:alice", task.task_id, payload={"label": "positive"},
+            expected_version=claimed.version, human_confirmed=True,
+        )
+        queue = self.store.list_review_queue("owner:alice", project.project_id)
+        self.assertEqual([item.submission_id for item in queue], [submission.submission_id])
+        with self.assertRaisesRegex(PermissionError, "self_review_prohibited"):
+            self.store.review(
+                "owner:alice", submission.submission_id,
+                decision="accepted", reviewer_id="owner:alice",
+            )
+        reviewed = self.store.review(
+            "owner:alice", submission.submission_id,
+            decision="accepted", reviewer_id="owner:reviewer",
+            expected_project_id=project.project_id,
+        )
+        self.assertEqual(reviewed.reviewer_id, "owner:reviewer")
+        self.assertEqual(self.store.list_review_queue("owner:alice", project.project_id), [])
+
     def test_project_completion_requires_all_tasks_accepted_and_is_terminal(self):
         task = self._task()
         with self.assertRaisesRegex(ValueError, "has_unreviewed_tasks"):
