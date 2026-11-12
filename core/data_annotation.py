@@ -1252,11 +1252,20 @@ class SQLiteAnnotationWorkbench:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             task = db.execute(
-                "SELECT task_id FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                "SELECT status FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
                 (owner_id, project_id, task_id),
             ).fetchone()
             if task is None:
                 return None
+            if task["status"] == "rework":
+                raise ValueError("use_rework_assignment_endpoint")
+            if task["status"] in {"accepted", "completed"}:
+                raise ValueError("task_already_delivered")
+            current_round = db.execute(
+                "SELECT COALESCE(MAX(round_number), 0) FROM annotation_independent_assignments "
+                "WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()[0] or 1
             project = db.execute(
                 "SELECT task_type, rubric_json, status FROM annotation_projects "
                 "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
@@ -1277,21 +1286,18 @@ class SQLiteAnnotationWorkbench:
                         raise ValueError("annotator_already_assigned_to_task")
                     db.execute(
                         """UPDATE annotation_independent_assignments
-                           SET assignment_id=?, status='assigned', version=1, payload_json=NULL,
+                           SET assignment_id=?, round_number=?, status='assigned', version=1, payload_json=NULL,
                                quality_json='{}', created_at=?, updated_at=?
                            WHERE owner_id=? AND task_id=? AND annotator_id=? AND status='revoked'""",
-                        (assignment_id, now, now, owner_id, task_id, annotator_id),
+                        (assignment_id, current_round, now, now, owner_id, task_id, annotator_id),
                     )
                 else:
                     db.execute(
                         """INSERT INTO annotation_independent_assignments
-                        (assignment_id, task_id, project_id, owner_id, annotator_id,
-                         status, version, payload_json, quality_json, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, 'assigned', 1, NULL, '{}', ?, ?)""",
-                        (assignment_id, task_id, project_id, owner_id, annotator_id, now, now),
+undefined
                     )
                 created.append({"assignment_id": assignment_id, "task_id": task_id,
-                    "project_id": project_id, "round_number": 1, "status": "assigned", "version": 1,
+                    "project_id": project_id, "round_number": current_round, "status": "assigned", "version": 1,
                     "created_at": now})
             self._audit(db, owner_id, project_id, task_id, "independent_assignments_created",
                         {"assignment_count": len(created)})
