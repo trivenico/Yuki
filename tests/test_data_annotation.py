@@ -906,6 +906,31 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         )
         self.assertFalse(tampered["valid"])
 
+    def test_performance_report_uses_persisted_round_and_reviewer_evidence(self):
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, self.task.task_id,
+            ["annotator:perf-a", "annotator:perf-b"],
+        )
+        workers = ["annotator:perf-a", "annotator:perf-b"]
+        self._submit_round(
+            [dict(item, annotator_id=worker) for item, worker in zip(assignments, workers)],
+            ["positive", "negative"],
+        )
+        self.store.adjudicate_independent_task(
+            "owner:alice", self.project.project_id, self.task.task_id, "owner:alice",
+            decision="rework", notes="Labels need another pass.",
+        )
+        report = self.store.performance_report("owner:alice", self.project.project_id)
+        self.assertEqual(len(report["annotators"]), 2)
+        self.assertTrue(all(item["submitted"] == 1 for item in report["annotators"]))
+        self.assertTrue(all(item["rework_requested_count"] == 1 for item in report["annotators"]))
+        self.assertEqual(len(report["reviewers"]), 1)
+        self.assertEqual(report["reviewers"][0]["reviewer_id"], "owner:alice")
+        self.assertEqual(report["reviewers"][0]["independent_adjudications"], 1)
+        self.assertEqual(report["reviewers"][0]["rework_adjudications"], 1)
+        self.assertEqual(report["reviewers"][0]["calibration_status"], "insufficient_evidence")
+        self.assertIsNone(self.store.performance_report("owner:bob", self.project.project_id))
+
     def test_rework_requires_new_distinct_annotators_and_current_round(self):
         first = self.store.create_independent_assignments(
             "owner:alice", self.project.project_id, self.task.task_id,
