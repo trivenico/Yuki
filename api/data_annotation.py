@@ -340,6 +340,49 @@ class AuthenticatedAnnotationAPI:
                     )
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            calibration_sessions = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/calibration-sessions", path
+            )
+            if calibration_sessions:
+                project_id = calibration_sessions.group(1)
+                if method == "GET":
+                    sessions = await asyncio.to_thread(
+                        self.workbench.list_calibration_sessions, user.user_id, project_id,
+                    )
+                    return await self._respond(
+                        send, 200 if sessions is not None else 404,
+                        {"sessions": sessions} if sessions is not None else {"error": "not_found"},
+                    )
+                if method == "POST":
+                    payload = await self._body(receive)
+                    if set(payload) != {"task_ids", "annotator_user_ids", "idempotency_key"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    project = await asyncio.to_thread(
+                        self.workbench.get_project, user.user_id, project_id,
+                    )
+                    if project is None:
+                        return await self._respond(send, 404, {"error": "not_found"})
+                    annotator_ids = payload["annotator_user_ids"]
+                    if not isinstance(annotator_ids, list):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    users = await asyncio.to_thread(self.auth.list_users)
+                    known = {item.user_id for item in users}
+                    if any(item not in known for item in annotator_ids):
+                        return await self._respond(send, 404, {"error": "annotator_not_found"})
+                    try:
+                        session = await asyncio.to_thread(
+                            self.workbench.create_calibration_session, user.user_id, project_id,
+                            task_ids=payload["task_ids"], annotator_ids=annotator_ids,
+                            idempotency_key=payload["idempotency_key"],
+                        )
+                    except ValueError as exc:
+                        return await self._respond(send, 400, {"error": str(exc)})
+                    return await self._respond(
+                        send, 201 if session else 404,
+                        {"session": session} if session else {"error": "not_found"},
+                    )
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             calibration_report = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/calibration-report", path
             )
