@@ -64,3 +64,9 @@ worker does not yet build/pass the adapter envelope at authorization and
 execution time, and the human preview does not yet display a structured exact
 file-change diff. Those are required before this capability is enabled for
 production use.
+
+Capability-owned operation-kind allowlists are now part of the trusted preview
+registry. A capability must explicitly register the operation type it accepts;
+typed request creation, approval and authorization reject an unregistered or
+substituted operation kind. This prevents a caller from pairing an arbitrary
+operation label with a capability merely because the payload digest matches.
