@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from core.tool_policy import Decision, PolicyRequest, Risk
 from core.capability_approval_preview import CapabilityApprovalPreviewRegistry
+from core.approval_operation import ApprovalOperation
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,12 @@ class CapabilityApprovalGateway:
                     request_id TEXT PRIMARY KEY REFERENCES capability_approval_requests(request_id),
                     preview_json TEXT NOT NULL,
                     preview_sha256 TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS capability_approval_operations (
+                    request_id TEXT PRIMARY KEY REFERENCES capability_approval_requests(request_id),
+                    operation_json TEXT NOT NULL,
+                    operation_sha256 TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS capability_audit (
@@ -218,6 +225,24 @@ class CapabilityApprovalGateway:
         digest = self._request_digest(request)
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86400:
             raise ValueError("ttl_seconds is outside the configured request lifetime")
+        if operation is not None:
+            if not isinstance(operation, ApprovalOperation):
+                raise TypeError("operation must be a validated ApprovalOperation")
+            if not operation.verify_policy_request(request):
+                raise ValueError("typed operation does not match the policy request")
+        operation_json = None if operation is None else json.dumps(
+            {
+                "schema_version": operation.schema_version,
+                "operation_type": operation.operation_type,
+                "capability": operation.capability,
+                "target": operation.target,
+                "payload_sha256": operation.payload_sha256,
+            },
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        )
+        operation_digest = None if operation_json is None else hashlib.sha256(
+            operation_json.encode("utf-8")
+        ).hexdigest()
         policy = self.policy_engine.evaluate(request)
         if policy.decision != Decision.REQUIRE_APPROVAL:
             raise PermissionError("the current policy does not permit an approval request")
@@ -253,6 +278,13 @@ class CapabilityApprovalGateway:
                 (digest, policy.policy_version, now),
             ).fetchone()
             if existing is not None:
+                stored_operation = db.execute(
+                    "SELECT operation_sha256 FROM capability_approval_operations WHERE request_id=?",
+                    (existing["request_id"],),
+                ).fetchone()
+                stored_digest = None if stored_operation is None else stored_operation["operation_sha256"]
+                if stored_digest != operation_digest:
+                    raise PermissionError("an existing request is bound to a different typed operation")
                 db.commit()
                 return existing["request_id"]
             request_id = secrets.token_hex(16)
@@ -271,6 +303,13 @@ class CapabilityApprovalGateway:
                        (request_id,preview_json,preview_sha256,created_at)
                        VALUES(?,?,?,?)""",
                     (request_id, preview_json, preview_digest, now),
+                )
+            if operation_json is not None and operation_digest is not None:
+                db.execute(
+                    """INSERT INTO capability_approval_operations
+                       (request_id,operation_json,operation_sha256,created_at)
+                       VALUES(?,?,?,?)""",
+                    (request_id, operation_json, operation_digest, now),
                 )
             self._audit(db, "approval_requested", request, digest,
                         policy.policy_version, policy.matched_rule_ids, "pending")
@@ -318,6 +357,38 @@ class CapabilityApprovalGateway:
         if not isinstance(value, dict) or set(value) != {"title", "operation", "target", "impact"}:
             return None
         return value
+
+    def approval_operation(self, request_id: str) -> dict[str, Any] | None:
+        """Return integrity-checked typed operation metadata for a pending request."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT o.operation_json,o.operation_sha256,r.status,r.expires_at
+                   FROM capability_approval_operations o
+                   JOIN capability_approval_requests r ON r.request_id=o.request_id
+                   WHERE o.request_id=?""", (request_id,),
+            ).fetchone()
+        if row is None or row["status"] != "pending" or row["expires_at"] <= now:
+            return None
+        encoded = row["operation_json"]
+        actual = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(actual, row["operation_sha256"]):
+            return None
+        try:
+            value = json.loads(encoded)
+            operation = ApprovalOperation(**value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return {
+            "schema_version": operation.schema_version,
+            "operation_type": operation.operation_type,
+            "capability": operation.capability,
+            "target": operation.target,
+            "payload_sha256": operation.payload_sha256,
+            "operation_sha256": row["operation_sha256"],
+        }
 
     def pending_requests(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """Return redacted inbox metadata; never expose request arguments or credentials."""
