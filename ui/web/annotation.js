@@ -6,7 +6,8 @@
   const state = {
     projects: [], tasks: [], project: null, task: null, image: null, imageUrl: null,
     camera: null, tool: "box", boxes: [], polygons: [], draft: [], pointer: null,
-    preview: null, claimed: false, resizeObserver: null
+    preview: null, claimed: false, resizeObserver: null,
+    undoStack: [], redoStack: [], lastHistorySnapshot: null
   };
   const draftSessions = new Map();
   const draftSession = (taskId) => {
@@ -33,6 +34,36 @@
     }
     return payload;
   };
+  const cloneJson = (value) => JSON.parse(JSON.stringify(value));
+  const historySnapshot = () => cloneJson(draftPayload() || {});
+  const pushUndo = () => {
+    if (!state.task || !state.claimed) return;
+    const snapshot = historySnapshot();
+    if (state.undoStack.length >= 20) state.undoStack.shift();
+    state.undoStack.push(snapshot);
+    state.redoStack = [];
+    state.lastHistorySnapshot = cloneJson(snapshot);
+  };
+  const applyHistorySnapshot = (snapshot) => {
+    const payload = snapshot || {}, family = state.project?.task_type;
+    if (family === "bounding_boxes") state.boxes = Array.isArray(payload.boxes) ? cloneJson(payload.boxes) : [];
+    else if (family === "polygon_segmentation") {
+      state.polygons = Array.isArray(payload.polygons) ? cloneJson(payload.polygons) : [];
+      state.draft = Array.isArray(payload.draft_points) ? payload.draft_points.map((p) => ({ x: p[0], y: p[1] })) : [];
+    } else if (family === "image_classification" || family === "text_classification") {
+      $("annotation-label").value = typeof payload.label === "string" ? payload.label : "";
+    } else $("annotation-family-json").value = JSON.stringify(payload, null, 2);
+    state.lastHistorySnapshot = historySnapshot();
+    renderCanvas();
+    scheduleDraftSave();
+  };
+  const draftStoragePayload = (payload) => {
+    const history = { undo: state.undoStack, redo: state.redoStack };
+    while (JSON.stringify(history).length > 16 * 1024 && (history.undo.length || history.redo.length)) {
+      if (history.undo.length) history.undo.shift(); else history.redo.shift();
+    }
+    return { ...payload, _history: history };
+  };
   const flushDraftSave = (taskId) => {
     const session = draftSessions.get(taskId);
     if (!session) return Promise.resolve();
@@ -42,7 +73,7 @@
         const payload = session.payload;
         session.dirty = false;
         const result = await api("/v1/annotation/tasks/" + encodeURIComponent(taskId) + "/draft", {
-          method: "PUT", body: JSON.stringify({ payload, expected_revision: session.revision })
+          method: "PUT", body: JSON.stringify({ payload: draftStoragePayload(payload), expected_revision: session.revision })
         });
         session.revision = result.draft.revision;
         if (state.task?.task_id === taskId) setStatus("Draft saved · revision " + session.revision);
@@ -81,7 +112,11 @@
     session.revision = draft ? draft.revision : 0;
     session.conflict = false; session.dirty = false;
     if (!draft) return;
-    const payload = draft.payload || {};
+    const payload = cloneJson(draft.payload || {});
+    const history = payload._history || {};
+    delete payload._history;
+    state.undoStack = Array.isArray(history.undo) ? history.undo.slice(-20) : [];
+    state.redoStack = Array.isArray(history.redo) ? history.redo.slice(-20) : [];
     const family = state.project?.task_type;
     if (family === "bounding_boxes") state.boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
     else if (family === "polygon_segmentation") {
@@ -90,6 +125,7 @@
     } else if (family === "image_classification" || family === "text_classification") {
       $("annotation-label").value = typeof payload.label === "string" ? payload.label : "";
     } else $("annotation-family-json").value = JSON.stringify(payload, null, 2);
+    state.lastHistorySnapshot = historySnapshot();
     setStatus("Recovered saved draft · revision " + draft.revision);
   };
   const api = async (path, options = {}) => {
@@ -206,6 +242,7 @@
     if (previousTaskId && previousTaskId !== nextTaskId) await flushDraftSave(previousTaskId);
     state.task = selectedTask(); state.claimed = Boolean(state.task && ["in_progress", "rework"].includes(state.task.status));
     state.boxes = []; state.polygons = []; state.draft = [];
+    state.undoStack = []; state.redoStack = []; state.lastHistorySnapshot = null;
     $("annotation-label").value = "";
     $("annotation-family-json").value = "{}";
     if (!state.task) {
@@ -352,6 +389,7 @@
       const point = imagePoint(p.x, p.y);
       if (!point) return;
       if (state.draft.length >= 2048) { setStatus("Polygon vertex limit reached.", true); return; }
+      pushUndo();
       state.draft.push(point);
       scheduleDraftSave();
     }
@@ -372,7 +410,7 @@
     if (!state.pointer || state.pointer.id !== event.pointerId) return;
     const pointer = state.pointer; state.pointer = null;
     if (pointer.mode === "box" && commit) {
-      try { addBox(pointer.start, pointerPosition(event)); setStatus("Bounding box added. Review it before submitting."); scheduleDraftSave(); }
+      try { pushUndo(); addBox(pointer.start, pointerPosition(event)); setStatus("Bounding box added. Review it before submitting."); scheduleDraftSave(); }
       catch (error) { setStatus(error.message, true); }
     }
     renderCanvas();
@@ -496,11 +534,13 @@
           if (intersects(a, b, c, d)) throw new Error("Polygon edges intersect.");
         }
       }
+      pushUndo();
       state.polygons.push({ label: requiredLabel(), points }); state.draft = [];
       setStatus("Polygon added. Review it before submitting."); renderCanvas(); scheduleDraftSave();
     } catch (error) { setStatus(error.message, true); }
   });
   $("cancel-annotation-draft").addEventListener("click", () => {
+    pushUndo();
     state.boxes = []; state.polygons = []; state.draft = []; state.pointer = null;
     setStatus("Unsubmitted geometry cleared."); renderCanvas(); scheduleDraftSave();
   });
@@ -616,8 +656,32 @@
     if (state.camera) state.camera = fitCamera(state.camera.iw, state.camera.ih, canvas.clientWidth, canvas.clientHeight);
     renderCanvas();
   });
-  $("annotation-label").addEventListener("input", () => { renderCanvas(); scheduleDraftSave(); });
-  $("annotation-family-json").addEventListener("input", scheduleDraftSave);
+  const trackTextHistory = () => {
+    const current = historySnapshot();
+    if (state.lastHistorySnapshot && JSON.stringify(current) !== JSON.stringify(state.lastHistorySnapshot)) {
+      if (state.undoStack.length >= 20) state.undoStack.shift();
+      state.undoStack.push(state.lastHistorySnapshot);
+      state.redoStack = [];
+    }
+    state.lastHistorySnapshot = current;
+    scheduleDraftSave();
+  };
+  $("annotation-label").addEventListener("input", () => { renderCanvas(); trackTextHistory(); });
+  $("annotation-family-json").addEventListener("input", trackTextHistory);
+  $("annotation-undo").addEventListener("click", () => {
+    if (!state.undoStack.length) return;
+    const current = historySnapshot(), previous = state.undoStack.pop();
+    if (state.redoStack.length >= 20) state.redoStack.shift();
+    state.redoStack.push(current);
+    applyHistorySnapshot(previous);
+  });
+  $("annotation-redo").addEventListener("click", () => {
+    if (!state.redoStack.length) return;
+    const current = historySnapshot(), next = state.redoStack.pop();
+    if (state.undoStack.length >= 20) state.undoStack.shift();
+    state.undoStack.push(current);
+    applyHistorySnapshot(next);
+  });
   if (window.ResizeObserver) {
     state.resizeObserver = new ResizeObserver(resizeCanvas);
     state.resizeObserver.observe(canvas);
