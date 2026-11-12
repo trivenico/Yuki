@@ -774,8 +774,8 @@ class SQLiteAnnotationWorkbench:
         expected_project_id: str | None = None,
     ) -> AnnotationSubmission | None:
         owner_id = _owner(owner_id)
-        reviewer_id = _owner(reviewer_id) if reviewer_id is not None else owner_id
-        if reviewer_id == owner_id:
+        reviewer_id = _owner(reviewer_id) if reviewer_id is not None else ""
+        if reviewer_id and reviewer_id == owner_id:
             raise PermissionError("self_review_prohibited")
         if decision not in {"accepted", "rework"}:
             raise ValueError("invalid_review_decision")
