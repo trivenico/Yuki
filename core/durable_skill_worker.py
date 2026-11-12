@@ -91,23 +91,49 @@ class DurableSkillWorker:
             raise RuntimeError("durable task claim did not provide a valid fencing token")
         # Derive principal identity from the durable goal while validating this
         # exact live claim. Never trust owner IDs from task payloads or model output.
-        identity = self.engine.get_claim_identity(task_id, self.worker_id, lease_token)
+        try:
+            identity = self.engine.get_claim_identity(task_id, self.worker_id, lease_token)
+        except Exception:
+            # A stale, expired or unreadable claim must not crash the worker loop
+            # and must never fall back to caller-supplied identity.
+            return {
+                "task_id": task_id,
+                "state": "running",
+                "status": "claim_identity_unavailable",
+                "message": "Claim identity could not be verified; no skill was dispatched.",
+            }
         owner_id = identity.get("owner_id") if isinstance(identity, dict) else None
         if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 256:
-            rejected = self.engine.reject(
-                task_id, self.worker_id, "unowned_goal", lease_token=lease_token
-            )
+            try:
+                rejected = self.engine.reject(
+                    task_id, self.worker_id, "unowned_goal", lease_token=lease_token
+                )
+            except Exception:
+                return {
+                    "task_id": task_id,
+                    "state": "unknown",
+                    "status": "claim_lost_during_rejection",
+                    "message": "Unowned task could not be rejected under the current claim.",
+                }
             return {
                 "task_id": task_id,
                 "state": rejected["state"],
                 "status": "unowned_goal",
             }
-        policy_context = SkillPolicyContext(
-            principal_id=owner_id,
-            trigger="durable_task",
-            goal_id=identity["goal_id"],
-            task_id=identity["task_id"],
-        )
+        try:
+            policy_context = SkillPolicyContext(
+                principal_id=owner_id,
+                trigger="durable_task",
+                goal_id=identity["goal_id"],
+                task_id=identity["task_id"],
+            )
+        except (KeyError, TypeError, ValueError):
+            return {
+                "task_id": task_id,
+                "state": "running",
+                "status": "invalid_claim_identity",
+                "message": "Durable claim identity was malformed; no skill was dispatched.",
+            }
         # Side-effecting skill calls must not be automatically retried after an
         # ambiguous failure. Require the submitter to set max_attempts=1.
         if task.get("task_type") != "skill.invoke":
