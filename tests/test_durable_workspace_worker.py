@@ -171,7 +171,7 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
         task = self.submit()
         result = self.worker().run_once()
         self.assertEqual(result["task_id"], task["id"])
-        self.assertEqual(result["state"], "succeeded", f"sanitized worker failure classification: {result.get('failure_code')}")
+        self.assertEqual(result["state"], "succeeded", f"sanitized worker failure classification: {result.get('failure_code')}/{result.get('failure_cause_code')}")
         self.assertEqual(result["status"], "workspace_changes_applied")
         self.assertEqual(self.target.read_text(encoding="utf-8"), "after\n")
         self.assertEqual(len(self.request_ids), 1)
