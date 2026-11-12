@@ -205,7 +205,7 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
         self.assertEqual(result, {
             "claimed": 1, "revoked": 1, "acknowledged": 1, "deferred": 0,
         })
-        with sqlite3.connect(self.broker.database_path) as db:
+        with closing(sqlite3.connect(self.broker.database_path)) as db:
             status, ciphertext = db.execute(
                 "SELECT status,ciphertext FROM approval_worker_credentials WHERE request_id=?",
                 (self.request_id,),
