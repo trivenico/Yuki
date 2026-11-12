@@ -53,6 +53,31 @@ class DurableTaskEngineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_expired_claim_creates_leased_durable_revocation_outbox(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="recovery-outbox"
+        )
+        claimed = self.engine.claim("recovery-worker")
+        self.assertEqual(claimed["id"], task["id"])
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+        self.assertEqual(self.engine.recover_expired_leases(), 1)
+        first = self.engine.claim_recovery_outbox("supervisor-a")
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first[0]["task_id"], task["id"])
+        self.assertEqual(first[0]["worker_id"], "recovery-worker")
+        self.assertEqual(len(first[0]["claim_token_sha256"]), 64)
+        self.assertNotIn("lease_token", first[0])
+        # A second supervisor cannot take an item while its processing lease is live.
+        self.assertEqual(self.engine.claim_recovery_outbox("supervisor-b"), [])
+        self.assertTrue(self.engine.release_recovery_outbox(first[0]["id"], "supervisor-a"))
+        second = self.engine.claim_recovery_outbox("supervisor-b")
+        self.assertEqual(len(second), 1)
+        self.assertTrue(
+            self.engine.acknowledge_recovery_outbox(second[0]["id"], "supervisor-b")
+        )
+        self.assertEqual(self.engine.claim_recovery_outbox("supervisor-c"), [])
+
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
         self._install_claim_token_test_adapter(engine)
