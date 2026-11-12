@@ -138,7 +138,10 @@ class BenchmarkRegistry:
                     "ORDER BY benchmark_id, version"
                 ).fetchall()
             for row in rows:
-                definition = BenchmarkDefinition.from_payload(row["payload"])
+                try:
+                    definition = BenchmarkDefinition.from_payload(row["payload"])
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError("stored benchmark revision failed integrity verification") from exc
                 if (definition.benchmark_id != row["benchmark_id"]
                     or definition.version != row["version"]
                     or not _DIGEST.fullmatch(row["digest"])
