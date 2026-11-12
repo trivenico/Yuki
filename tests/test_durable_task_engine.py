@@ -104,6 +104,40 @@ class DurableTaskEngineTests(unittest.TestCase):
             second[0]["id"], "same-supervisor", second[0]["claim_token"]
         ))
 
+    def test_approval_wait_is_durable_and_stale_after_claim_recovery(self):
+        task = self.engine.submit(
+            self.goal, "skill.invoke", {"skill_name": "write", "argument": "x"},
+            idempotency_key="durable-approval-wait", max_attempts=2,
+        )
+        claimed = self.engine.claim("approval-worker")
+        request_id = "a" * 32
+        wait = self.engine.record_approval_wait(
+            task["id"], "approval-worker", claimed["lease_token"], request_id,
+        )
+        self.assertEqual(wait["state"], "pending")
+        reopened = DurableTaskEngine(self.db)
+        digest = wait["claim_token_sha256"]
+        self.assertEqual(
+            reopened.get_approval_wait(task["id"], digest)["request_id"], request_id
+        )
+        self.assertTrue(reopened.transition_approval_wait(task["id"], digest, "delivered"))
+        self.assertTrue(reopened.transition_approval_wait(task["id"], digest, "completed"))
+        self.assertFalse(reopened.transition_approval_wait(task["id"], digest, "stale"))
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+        self.assertEqual(reopened.recover_expired_leases(), 1)
+        self.assertEqual(reopened.get_approval_wait(task["id"], digest)["state"], "stale")
+        self.assertEqual(reopened.get_task(task["id"])["state"], "queued")
+        replacement = reopened.claim("replacement-worker")
+        self.assertNotEqual(
+            __import__("hashlib").sha256(replacement["lease_token"].encode("ascii")).hexdigest(),
+            digest,
+        )
+        self.assertIsNone(reopened.get_approval_wait(
+            task["id"],
+            __import__("hashlib").sha256(replacement["lease_token"].encode("ascii")).hexdigest(),
+        ))
+
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
         self._install_claim_token_test_adapter(engine)
