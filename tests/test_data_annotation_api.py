@@ -9,6 +9,7 @@ from api.runtime import build_conversation_runtime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.data_annotation import SQLiteAnnotationWorkbench
+from core.annotation_assets import SQLiteAnnotationAssetStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -228,6 +229,39 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, body["error"]), (409, "version_conflict"))
 
+    def test_typed_payload_validation_rejects_invalid_label_without_advancing_task(self):
+        project_id = self.create_project()
+        _, created = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "typed-1", "input_data": {"text": "A plane"}},
+            self.owner_one.token,
+        )
+        task = created["task"]
+        task_id = task["task_id"]
+        _, claimed = self.request(
+            "POST", f"/v1/annotation/tasks/{task_id}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        status, body = self.request(
+            "POST", f"/v1/annotation/tasks/{task_id}/submit",
+            {"payload": {"label": "airplane"},
+             "expected_version": claimed["task"]["version"],
+             "human_confirmed": True},
+            self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (400, "invalid_request"))
+        _, tasks = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/tasks",
+            token=self.owner_one.token,
+        )
+        unchanged = next(item for item in tasks["tasks"] if item["task_id"] == task_id)
+        self.assertEqual((unchanged["status"], unchanged["version"]), ("in_progress", claimed["task"]["version"]))
+        _, submissions = self.request(
+            "GET", f"/v1/annotation/tasks/{task_id}/submissions",
+            token=self.owner_one.token,
+        )
+        self.assertEqual(submissions["submissions"], [])
+
     def test_unrelated_routes_are_delegated(self):
         status, body = self.request("GET", "/healthz")
         self.assertEqual((status, body["delegated"]), (200, True))
@@ -250,6 +284,27 @@ class AnnotationRuntimeTests(unittest.TestCase):
             )
             self.assertIsInstance(runtime.app, AuthenticatedAnnotationAPI)
             self.assertIs(runtime.app.workbench, store)
+            runtime.close()
+
+    def test_runtime_mounts_asset_store_only_with_annotation_workbench(self):
+        def model(**kwargs):
+            return {"text": "ready", "tool_calls": {"tool_calls": []}}
+        loop = AgentExecutionLoop(
+            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workbench = SQLiteAnnotationWorkbench(str(root / "annotation.sqlite"))
+            assets = SQLiteAnnotationAssetStore(str(root / "assets"), str(root / "assets.sqlite"))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=loop,
+                annotation_workbench=workbench, annotation_assets=assets,
+                annotation_asset_scanner=lambda media_type, data: True,
+            )
+            self.assertIs(runtime.app.asset_store, assets)
+            self.assertTrue(callable(runtime.app.asset_scanner))
             runtime.close()
 
     def test_runtime_rejects_invalid_annotation_store(self):
