@@ -896,21 +896,73 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertIsNone(self.store.verify_delivery_manifest(
             "owner:bob", self.project.project_id, manifest["manifest_id"],
         ))
-        db = sqlite3.connect(self.database)
-        try:
+        with closing(sqlite3.connect(self.database)) as db:
             db.execute("DROP TRIGGER annotation_delivery_manifests_no_update")
             db.execute(
                 "UPDATE annotation_delivery_manifests SET snapshot_json=? WHERE manifest_id=?",
                 ('{"tampered":true}', manifest["manifest_id"]),
             )
             db.commit()
-            db.commit()
-        finally:
-            db.close()
         tampered = self.store.verify_delivery_manifest(
             "owner:alice", self.project.project_id, manifest["manifest_id"],
         )
         self.assertFalse(tampered["valid"])
+
+    def test_performance_report_uses_persisted_round_and_reviewer_evidence(self):
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, self.task.task_id,
+            ["annotator:perf-a", "annotator:perf-b"],
+        )
+        workers = ["annotator:perf-a", "annotator:perf-b"]
+        self._submit_round(
+            [dict(item, annotator_id=worker) for item, worker in zip(assignments, workers)],
+            ["positive", "negative"],
+        )
+        self.store.adjudicate_independent_task(
+            "owner:alice", self.project.project_id, self.task.task_id, "owner:alice",
+            decision="rework", notes="Labels need another pass.",
+        )
+        report = self.store.performance_report("owner:alice", self.project.project_id)
+        self.assertEqual(len(report["annotators"]), 2)
+        self.assertTrue(all(item["submitted"] == 1 for item in report["annotators"]))
+        self.assertTrue(all(item["rework_requested_count"] == 1 for item in report["annotators"]))
+        self.assertEqual(len(report["reviewers"]), 1)
+        self.assertEqual(report["reviewers"][0]["reviewer_id"], "owner:alice")
+        self.assertEqual(report["reviewers"][0]["independent_adjudications"], 1)
+        self.assertEqual(report["reviewers"][0]["rework_adjudications"], 1)
+        self.assertEqual(report["reviewers"][0]["calibration_status"], "insufficient_evidence")
+        self.assertIsNone(self.store.performance_report("owner:bob", self.project.project_id))
+
+    def test_performance_report_calibration_shows_sample_size_and_threshold(self):
+        annotators = [f"annotator:gold-{index}" for index in range(5)]
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, self.task.task_id, annotators,
+        )
+        gold_id = "gold-performance-fixture"
+        now = "2026-11-12T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "INSERT INTO annotation_gold_standards "
+                "(gold_id, owner_id, project_id, task_id, expected_label, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (gold_id, "owner:alice", self.project.project_id, self.task.task_id, "positive", now),
+            )
+            db.executemany(
+                "INSERT INTO annotation_gold_results "
+                "(assignment_id, gold_id, owner_id, project_id, task_id, annotator_id, correct, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (item["assignment_id"], gold_id, "owner:alice", self.project.project_id,
+                     self.task.task_id, annotator, 1 if index < 4 else 0, now)
+                    for index, (item, annotator) in enumerate(zip(assignments, annotators))
+                ],
+            )
+            db.commit()
+        report = self.store.performance_report("owner:alice", self.project.project_id)
+        by_id = {item["annotator_id"]: item for item in report["annotators"]}
+        self.assertEqual(by_id[annotators[0]]["gold_sample_count"], 1)
+        self.assertEqual(by_id[annotators[0]]["calibration_status"], "insufficient_evidence")
+        self.assertEqual(by_id[annotators[0]]["gold_accuracy"], 1.0)
 
     def test_rework_requires_new_distinct_annotators_and_current_round(self):
         first = self.store.create_independent_assignments(
