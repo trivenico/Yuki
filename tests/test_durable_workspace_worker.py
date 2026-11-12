@@ -146,7 +146,7 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
         self.assertEqual(result["state"], "failed")
         self.assertEqual(self.target.read_text(encoding="utf-8"), "before\n")
         self.assertEqual(self.request_ids, [])
-        self.assertEqual(self.gateway.pending_requests(), [])
+        self.assertEqual(self.gateway.pending_requests(), ())
 
     def test_principal_factory_cannot_substitute_workspace_owner(self):
         self.submit()
