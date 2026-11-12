@@ -10,6 +10,11 @@ from dataclasses import asdict
 import json
 import re
 
+from core.annotation_assets import AnnotationAssetError, SQLiteAnnotationAssetStore
+from core.annotation_image_preview import (
+    AnnotationImagePreviewError,
+    create_safe_png_preview,
+)
 from core.data_annotation import (
     AnnotationConflict,
     AnnotationPolicyError,
@@ -31,12 +36,20 @@ _SUBMIT_FIELDS = frozenset({
 class AuthenticatedAnnotationAPI:
     """Authenticate every request and derive owner identity only from its token."""
 
-    def __init__(self, app, auth_service, workbench: SQLiteAnnotationWorkbench):
+    def __init__(self, app, auth_service, workbench: SQLiteAnnotationWorkbench,
+                 asset_store: SQLiteAnnotationAssetStore | None = None,
+                 asset_scanner=None):
         if not isinstance(workbench, SQLiteAnnotationWorkbench):
             raise TypeError("workbench_must_be_SQLiteAnnotationWorkbench")
         self.app = app
         self.auth = auth_service
         self.workbench = workbench
+        if asset_store is not None and not isinstance(asset_store, SQLiteAnnotationAssetStore):
+            raise TypeError("asset_store_must_be_SQLiteAnnotationAssetStore")
+        if asset_scanner is not None and not callable(asset_scanner):
+            raise TypeError("asset_scanner_must_be_callable")
+        self.asset_store = asset_store
+        self.asset_scanner = asset_scanner
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -85,6 +98,87 @@ class AuthenticatedAnnotationAPI:
                     {"project": asdict(project)} if project else {"error": "not_found"},
                 )
 
+            asset_upload = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/assets", path
+            )
+            if asset_upload and method == "POST":
+                if self.asset_store is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                project_id = asset_upload.group(1)
+                project = await asyncio.to_thread(
+                    self.workbench.get_project, user.user_id, project_id
+                )
+                if project is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                headers = {key.lower(): value for key, value in scope.get("headers", [])
+                           if isinstance(key, bytes) and isinstance(value, bytes)}
+                content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+                if content_type != b"application/octet-stream":
+                    return await self._respond(send, 415, {"error": "application_octet_stream_required"})
+                data = await self._binary_body(receive, self.asset_store.max_bytes)
+                asset = await asyncio.to_thread(
+                    self.asset_store.upload, user.user_id, project_id, data
+                )
+                scan_status = "quarantined"
+                if self.asset_scanner is not None:
+                    try:
+                        clean = await asyncio.to_thread(self.asset_scanner, asset.media_type, data)
+                        if type(clean) is bool:
+                            await asyncio.to_thread(
+                                self.asset_store.mark_scan_result, user.user_id,
+                                project_id, asset.asset_id, clean=clean
+                            )
+                            scan_status = "clean" if clean else "blocked"
+                    except Exception:
+                        pass
+                return await self._respond(send, 201 if scan_status == "clean" else (422 if scan_status == "blocked" else 202), {
+                    "asset_id": asset.asset_id, "media_type": asset.media_type,
+                    "size_bytes": asset.size_bytes, "sha256": asset.sha256,
+                    "scan_status": scan_status,
+                })
+
+            asset_access = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/assets/([0-9a-f]{32})",
+                path,
+            )
+            asset_preview = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/assets/([0-9a-f]{32})/preview",
+                path,
+            )
+            if asset_preview and method == "GET":
+                if self.asset_store is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                project_id, asset_id = asset_preview.groups()
+                try:
+                    source = await asyncio.to_thread(
+                        self.asset_store.read, user.user_id, project_id, asset_id
+                    )
+                except AnnotationAssetError:
+                    return await self._respond(send, 409, {"error": "asset_integrity_check_failed"})
+                try:
+                    preview = await asyncio.to_thread(create_safe_png_preview, source)
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "image_preview_unavailable"})
+                except AnnotationImagePreviewError:
+                    return await self._respond(send, 415, {"error": "unsupported_image_content"})
+                return await self._respond_preview_png(send, preview)
+
+            if asset_access:
+                if self.asset_store is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                project_id, asset_id = asset_access.groups()
+                if method == "GET":
+                    data, media_type = await asyncio.to_thread(
+                        self._read_clean_asset, user.user_id, project_id, asset_id
+                    )
+                    return await self._respond_bytes(send, 200, data, media_type)
+                if method == "DELETE":
+                    deleted = await asyncio.to_thread(
+                        self.asset_store.delete, user.user_id, project_id, asset_id
+                    )
+                    return await self._respond(send, 200 if deleted else 404, {"deleted": bool(deleted)})
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             match = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/batch", path
             )
@@ -92,8 +186,15 @@ class AuthenticatedAnnotationAPI:
                 payload = await self._body(receive)
                 if set(payload) != {"tasks"} or not isinstance(payload["tasks"], list):
                     return await self._respond(send, 400, {"error": "invalid_request"})
+                project_id = match.group(1)
+                for task_data in payload["tasks"]:
+                    if not isinstance(task_data, dict):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    await self._validate_task_asset_ref(
+                        user.user_id, project_id, task_data.get("asset_ref")
+                    )
                 tasks = await asyncio.to_thread(
-                    self.workbench.create_tasks, user.user_id, match.group(1),
+                    self.workbench.create_tasks, user.user_id, project_id,
                     tasks=payload["tasks"],
                 )
                 return await self._respond(send, 201, {
@@ -123,6 +224,9 @@ class AuthenticatedAnnotationAPI:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     if set(payload) - _TASK_FIELDS:
                         return await self._respond(send, 400, {"error": "invalid_request"})
+                    await self._validate_task_asset_ref(
+                        user.user_id, project_id, payload.get("asset_ref")
+                    )
                     task = await asyncio.to_thread(
                         self.workbench.create_task, user.user_id, project_id, **payload
                     )
@@ -214,6 +318,64 @@ class AuthenticatedAnnotationAPI:
         if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
         return await asyncio.to_thread(self.auth.resolve_session, token)
+
+    async def _validate_task_asset_ref(self, owner_id, project_id, asset_ref):
+        """Only bind a task to an existing, clean asset in this owner's project."""
+        if asset_ref is None:
+            return
+        if self.asset_store is None:
+            raise ValueError("annotation_asset_store_required")
+        asset = await asyncio.to_thread(
+            self.asset_store.get_asset, owner_id, project_id, asset_ref
+        )
+        if asset is None:
+            raise ValueError("annotation_asset_not_clean_or_not_found")
+
+    def _read_clean_asset(self, owner_id, project_id, asset_id):
+        asset = self.asset_store.get_asset(owner_id, project_id, asset_id)
+        if asset is None:
+            raise LookupError("annotation_asset_not_found")
+        return self.asset_store.read(owner_id, project_id, asset_id), asset.media_type
+
+    @staticmethod
+    async def _binary_body(receive, limit):
+        chunks = bytearray()
+        while True:
+            event = await receive()
+            if event.get("type") == "http.disconnect":
+                raise ValueError("client_disconnected")
+            if event.get("type") != "http.request":
+                continue
+            chunks.extend(event.get("body", b""))
+            if len(chunks) > limit:
+                raise ValueError("asset_too_large")
+            if not event.get("more_body", False):
+                break
+        return bytes(chunks)
+
+    @staticmethod
+    async def _respond_preview_png(send, body):
+        await send({"type": "http.response.start", "status": 200, "headers": [
+            (b"content-type", b"image/png"),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"cache-control", b"no-store"),
+            (b"x-content-type-options", b"nosniff"),
+            (b"content-disposition", b"inline"),
+            (b"content-security-policy", b"default-src 'none'; sandbox"),
+            (b"cross-origin-resource-policy", b"same-origin"),
+        ]})
+        await send({"type": "http.response.body", "body": body})
+
+    @staticmethod
+    async def _respond_bytes(send, status, body, media_type):
+        await send({"type": "http.response.start", "status": status, "headers": [
+            (b"content-type", media_type.encode("ascii")),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"cache-control", b"no-store"),
+            (b"x-content-type-options", b"nosniff"),
+            (b"content-disposition", b"attachment"),
+        ]})
+        await send({"type": "http.response.body", "body": body})
 
     @staticmethod
     async def _body(receive):

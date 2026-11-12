@@ -32,12 +32,20 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertEqual(headers[b"content-type"], b"text/html; charset=utf-8")
         self.assertEqual(headers[b"x-frame-options"], b"DENY")
         self.assertIn(b"script-src 'self'", headers[b"content-security-policy"])
+        self.assertIn(b"img-src 'self' data: blob:", headers[b"content-security-policy"])
         self.assertIn(b"Yuki", sent[1]["body"])
         self.assertEqual(api.calls, 0)
 
     def test_web_shell_contains_provider_status_indicator(self):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/")
         self.assertIn(b'id="provider-label"', sent[1]["body"])
+        self.assertIn(b'id="open-annotation"', sent[1]["body"])
+        self.assertIn(b'id="annotation-canvas"', sent[1]["body"])
+        self.assertIn(b'id="annotation-create-project"', sent[1]["body"])
+        self.assertIn(b'id="annotation-create-task"', sent[1]["body"])
+        self.assertIn(b'id="annotation-upload-button"', sent[1]["body"])
+        self.assertIn(b'/assets/annotation.js', sent[1]["body"])
+        self.assertIn(b'/assets/annotation.css', sent[1]["body"])
 
     def test_chat_script_loads_authenticated_provider_status_and_oauth_callback(self):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.js")
@@ -55,6 +63,20 @@ class YukiWebApplicationTests(unittest.TestCase):
             self.assertEqual(sent[0]["status"], 200)
             self.assertIn(expected, sent[1]["body"])
         self.assertEqual(api.calls, 0)
+
+    def test_annotation_assets_are_allowlisted_and_served(self):
+        app = YukiWebApplication(_FakeAPI())
+        js = self.request(app, "/assets/annotation.js")
+        css = self.request(app, "/assets/annotation.css")
+        self.assertEqual(js[0]["status"], 200)
+        self.assertEqual(css[0]["status"], 200)
+        self.assertIn(b"/v1/annotation/tasks/", js[1]["body"])
+        self.assertIn(b"human_confirmed", js[1]["body"])
+        self.assertIn(b"scan_status", js[1]["body"])
+        self.assertIn(b"polygon_segmentation", js[1]["body"])
+        self.assertIn(b"ai_assisted: false", js[1]["body"])
+        self.assertIn(b"touch-action:none", css[1]["body"])
+        self.assertEqual(self.request(app, "/assets/../api/runtime.py")[0]["status"], 404)
 
     def test_provider_specific_oauth_callback_path_serves_chat_shell(self):
         api = _FakeAPI()
