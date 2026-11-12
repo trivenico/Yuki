@@ -803,16 +803,20 @@ class SQLiteAnnotationWorkbench:
                 return None
             if row["status"] != "submitted":
                 raise ValueError("submission_already_reviewed")
-            db.execute(
+            updated_submission = db.execute(
                 "UPDATE annotation_submissions SET status=?, reviewer_notes=?, reviewer_id=?, updated_at=? "
                 "WHERE owner_id=? AND submission_id=? AND status='submitted'",
                 (decision, notes, reviewer_id, now, owner_id, submission_id),
             )
-            db.execute(
+            if updated_submission.rowcount != 1:
+                raise AnnotationConflict("submission_review_race")
+            updated_task = db.execute(
                 "UPDATE annotation_tasks SET status=?, version=version+1, updated_at=? "
                 "WHERE owner_id=? AND task_id=? AND status='submitted'",
                 (decision, now, owner_id, row["task_id"]),
             )
+            if updated_task.rowcount != 1:
+                raise AnnotationConflict("task_review_state_conflict")
             self._audit(db, owner_id, row["project_id"], row["task_id"],
                         "submission_reviewed", {"decision": decision, "reviewer_id": reviewer_id})
             updated = db.execute(
