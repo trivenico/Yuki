@@ -195,6 +195,7 @@
     state.project = selectedProject();
     await loadTasks();
     await loadReviewerMembers();
+    await loadQualityReport();
   };
   const loadTasks = async () => {
     if (state.task?.task_id) {
@@ -586,7 +587,7 @@
   $("annotation-project").addEventListener("change", async () => {
     const previousProjectId = state.project?.project_id;
     state.project = selectedProject();
-    try { await loadTasks(); await loadReviewerMembers(); }
+    try { await loadTasks(); await loadReviewerMembers(); await loadQualityReport(); }
     catch (error) {
       if (previousProjectId) $("annotation-project").value = previousProjectId;
       state.project = state.projects.find((item) => item.project_id === previousProjectId) || null;
@@ -740,6 +741,45 @@
     if (state.imageUrl) URL.revokeObjectURL(state.imageUrl);
     if (state.resizeObserver) state.resizeObserver.disconnect();
   });
+  const loadQualityReport = async () => {
+    const container = $("annotation-quality-summary");
+    container.replaceChildren();
+    if (!state.project) {
+      container.textContent = "Select a project to view quality metrics.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/quality-report");
+      const report = result.report;
+      const summary = document.createElement("p");
+      const passRate = report.quality_pass_rate === null
+        ? "Not yet available"
+        : Math.round(report.quality_pass_rate * 100) + "%";
+      summary.textContent = report.submission_count + " submissions · " +
+        report.quality.pass + " passed · " + report.quality.warning +
+        " flagged · " + report.review.accepted + " accepted · " +
+        report.review.rework + " sent for rework · quality pass rate " + passRate;
+      container.append(summary);
+      const findings = Object.entries(report.finding_counts || {});
+      if (!findings.length) {
+        const empty = document.createElement("p");
+        empty.textContent = "No configured quality findings.";
+        container.append(empty);
+      } else {
+        const list = document.createElement("ul");
+        for (const [code, count] of findings) {
+          const item = document.createElement("li");
+          item.textContent = code.replaceAll("_", " ") + ": " + count;
+          list.append(item);
+        }
+        container.append(list);
+      }
+    } catch (error) {
+      container.textContent = "Could not load quality report: " + error.message;
+    }
+  };
+  $("annotation-quality-refresh").addEventListener("click", () => loadQualityReport());
   const loadReviewerMembers = async () => {
     const container = $("annotation-reviewer-members");
     container.replaceChildren();
