@@ -209,8 +209,8 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         two = self.auth.authenticate("annotator-two", "annotator-two-password")
         status, created = self.request(
             "POST", "/v1/annotation/projects", {
-                "name": "Independent labels", "task_type": "image_classification",
-                "instructions": "Classify the animal.",
+                "name": "Independent labels", "task_type": "text_classification",
+                "instructions": "Classify the sentence.",
                 "rubric": {"labels": ["bird", "cat", "dog"]},
             }, self.owner_one.token,
         )
@@ -239,7 +239,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, submitted = self.request(
             "POST", f"/v1/annotation/assignments/{assignment_id}/submit",
-            {"payload": {"label": "bird"}, "expected_version": claimed["assignment"]["version"],
+            {"payload": {"label": "positive"}, "expected_version": claimed["assignment"]["version"],
              "human_confirmed": True}, one.token,
         )
         self.assertEqual(status, 201)
