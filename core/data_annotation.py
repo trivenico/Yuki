@@ -251,14 +251,19 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_adjudication_events_task
                 ON annotation_adjudication_events(owner_id, project_id, task_id, round_number, created_at)""")
+            db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_annotation_adjudication_events_adjudication
+                ON annotation_adjudication_events(adjudication_id)""")
             db.execute("""INSERT OR IGNORE INTO annotation_adjudication_events
                 (event_id, owner_id, project_id, task_id, round_number, adjudication_id,
                  event_type, snapshot_json, created_at)
-                SELECT adjudication_id, owner_id, project_id, task_id, 1, adjudication_id,
-                       'adjudicated', json_object('reviewer_id', reviewer_id, 'decision', decision,
-                       'final_label', final_label, 'notes', notes,
-                       'source_assignment_ids_json', source_assignment_ids_json,
-                       'agreement', agreement), created_at FROM annotation_adjudications""")
+                SELECT a.adjudication_id, a.owner_id, a.project_id, a.task_id, 1, a.adjudication_id,
+                       'adjudicated', json_object('reviewer_id', a.reviewer_id, 'decision', a.decision,
+                       'final_label', a.final_label, 'notes', a.notes,
+                       'source_assignment_ids_json', a.source_assignment_ids_json,
+                       'agreement', a.agreement), a.created_at
+                FROM annotation_adjudications a
+                WHERE NOT EXISTS (SELECT 1 FROM annotation_adjudication_events e
+                                  WHERE e.adjudication_id=a.adjudication_id)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_delivery_manifests (
                 manifest_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL,
                 version INTEGER NOT NULL, idempotency_key TEXT NOT NULL, snapshot_json TEXT NOT NULL,
