@@ -38,7 +38,7 @@ class AuthenticatedAnnotationAPI:
 
     def __init__(self, app, auth_service, workbench: SQLiteAnnotationWorkbench,
                  asset_store: SQLiteAnnotationAssetStore | None = None,
-                 asset_scanner=None):
+                 asset_scanner=None, reviewer_authorizer=None):
         if not isinstance(workbench, SQLiteAnnotationWorkbench):
             raise TypeError("workbench_must_be_SQLiteAnnotationWorkbench")
         self.app = app
@@ -50,6 +50,9 @@ class AuthenticatedAnnotationAPI:
             raise TypeError("asset_scanner_must_be_callable")
         self.asset_store = asset_store
         self.asset_scanner = asset_scanner
+        if reviewer_authorizer is not None and not callable(reviewer_authorizer):
+            raise TypeError("reviewer_authorizer_must_be_callable")
+        self.reviewer_authorizer = reviewer_authorizer
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -313,16 +316,44 @@ class AuthenticatedAnnotationAPI:
                     })
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            review_queue = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/review-queue", path
+            )
+            if review_queue and method == "GET":
+                if self.reviewer_authorizer is None:
+                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
+                project_id = review_queue.group(1)
+                owner_id = await asyncio.to_thread(self.reviewer_authorizer, user, project_id)
+                if not isinstance(owner_id, str) or not owner_id or owner_id == user.user_id:
+                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
+                items = await asyncio.to_thread(
+                    self.workbench.list_review_queue, owner_id, project_id
+                )
+                return await self._respond(send, 200, {
+                    "submissions": [asdict(item) for item in items],
+                })
+
             match = re.fullmatch(
                 re.escape(prefix) + r"/submissions/([0-9a-f]{32})/review", path
             )
             if match and method == "POST":
                 payload = await self._body(receive)
-                if set(payload) - {"decision", "notes"} or "decision" not in payload:
+                if set(payload) - {"decision", "notes", "project_id"} or not {"decision", "project_id"} <= set(payload):
                     return await self._respond(send, 400, {"error": "invalid_request"})
+                if self.reviewer_authorizer is None:
+                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
+                project_id = payload.pop("project_id")
+                if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                owner_id = await asyncio.to_thread(self.reviewer_authorizer, user, project_id)
+                if not isinstance(owner_id, str) or not owner_id or owner_id == user.user_id:
+                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 submission = await asyncio.to_thread(
-                    self.workbench.review, user.user_id, match.group(1), **payload
+                    self.workbench.review, owner_id, match.group(1),
+                    reviewer_id=user.user_id, **{key: value for key, value in payload.items() if key != "project_id"}
                 )
+                if submission is not None and submission.project_id != project_id:
+                    return await self._respond(send, 404, {"error": "not_found"})
                 return await self._respond(
                     send, 200 if submission else 404,
                     {"submission": asdict(submission)} if submission else {"error": "not_found"},
