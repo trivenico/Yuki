@@ -20,7 +20,7 @@ Implemented as a foundational persistence boundary. This phase is not a complete
 
 The `owner_id` argument is trusted input only when supplied by an authenticated application service after deriving the principal from its verified session. It must never be copied from a request body, task payload, model output, or caller-selected header.
 
-The legacy `create_goal()`, unscoped `get_*`, `list_*` and mutation methods remain available for existing local engine consumers. They are not an authenticated API boundary. The durable skill worker does not yet derive policy context from owner-bound records in this phase.
+The legacy `create_goal()`, unscoped `get_*`, `list_*` and mutation methods remain available for existing local engine consumers. They are not an authenticated API boundary. The durable skill worker now derives its policy context from the owner-bound goal record and exact active claim. The single-owner terminal CLI uses a fixed local principal (`owner:local`) for its local workflow; this is a local-process trust model, not a substitute for authenticated session identity in API or multi-user deployments.
 
 ## Migration and compatibility
 
