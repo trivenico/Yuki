@@ -42,6 +42,7 @@ class CapabilityApprovalGateway:
         authorize_approver: Callable[[str, PolicyRequest], bool],
         clock: Callable[[], float] = time.time,
         max_approval_ttl_seconds: int = 3600,
+        preview_registry: CapabilityApprovalPreviewRegistry | None = None,
     ) -> None:
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
             raise ValueError("database_path must be a non-empty path")
