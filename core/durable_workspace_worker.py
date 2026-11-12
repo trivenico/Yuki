@@ -215,7 +215,11 @@ class DurableWorkspaceWorker:
             return {"task_id": task_id, "state": completed["state"],
                     "status": "workspace_changes_applied",
                     "changed_paths": list(result.changed_paths)}
-        except Exception:
+        except Exception as exc:
+            # Expose only a bounded exception type for operations diagnostics; never persist messages or secrets.
+            failure_code = type(exc).__name__
+            if not isinstance(failure_code, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", failure_code):
+                failure_code = "ExecutionError"
             # Side effects are not replayed: workspace tasks are single-attempt.
             try:
                 current = self.engine.get_task(task_id)
@@ -225,8 +229,10 @@ class DurableWorkspaceWorker:
                         lease_token=lease_token, retry_delay_seconds=0,
                     )
                     return {"task_id": task_id, "state": failed["state"],
-                            "status": "workspace_execution_failed"}
+                            "status": "workspace_execution_failed",
+                            "failure_code": failure_code}
             except Exception:
                 pass
             return {"task_id": task_id, "state": "unknown",
-                    "status": "workspace_claim_lost_or_outcome_ambiguous"}
+                    "status": "workspace_claim_lost_or_outcome_ambiguous",
+                    "failure_code": failure_code}
