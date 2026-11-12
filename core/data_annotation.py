@@ -1522,9 +1522,12 @@ class SQLiteAnnotationWorkbench:
             rows = db.execute(
                 """SELECT assignment_id, annotator_id, payload_json, quality_json, updated_at
                    FROM annotation_independent_assignments
-                   WHERE owner_id=? AND project_id=? AND task_id=? AND status='submitted'
+                   WHERE owner_id=? AND project_id=? AND task_id=? AND round_number=(
+                       SELECT MAX(round_number) FROM annotation_independent_assignments
+                       WHERE owner_id=? AND project_id=? AND task_id=?
+                   ) AND status='submitted'
                    ORDER BY annotator_id, assignment_id""",
-                (owner_id, project_id, task_id),
+                (owner_id, project_id, task_id, owner_id, project_id, task_id),
             ).fetchall()
         return [{
             "assignment_id": row["assignment_id"], "annotator_id": row["annotator_id"],
