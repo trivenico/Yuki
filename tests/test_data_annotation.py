@@ -304,11 +304,14 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(
             reopened.get_draft("owner:alice", task.task_id).revision, 1
         )
-        second = self.store.save_draft(
+        second = reopened.save_draft(
             "owner:alice", task.task_id, payload={"boxes": [{"x": 0.1}]},
             expected_revision=first.revision,
         )
         self.assertEqual(second.revision, 2)
+        self.assertIsNone(reopened.save_draft(
+            "owner:bob", task.task_id, payload={"boxes": []}, expected_revision=0
+        ))
         with self.assertRaises(AnnotationConflict):
             self.store.save_draft(
                 "owner:alice", task.task_id, payload={"boxes": []},
