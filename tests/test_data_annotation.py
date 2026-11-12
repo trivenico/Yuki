@@ -90,6 +90,29 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(updated_task.status, "rework")
         self.assertGreater(updated_task.version, claimed.version)
 
+    def test_project_completion_requires_all_tasks_accepted_and_is_terminal(self):
+        with self.assertRaisesRegex(ValueError, "has_unreviewed_tasks"):
+            self.store.set_project_status(
+                "owner:alice", self.project.project_id, status="completed"
+            )
+        self.store.set_project_status(
+            "owner:alice", self.project.project_id, status="paused"
+        )
+        with self.assertRaisesRegex(ValueError, "invalid_annotation_project_transition"):
+            self.store.set_project_status(
+                "owner:alice", self.project.project_id, status="completed"
+            )
+        self.store.set_project_status(
+            "owner:alice", self.project.project_id, status="active"
+        )
+        self.store.set_project_status(
+            "owner:alice", self.project.project_id, status="completed"
+        )
+        with self.assertRaisesRegex(ValueError, "invalid_annotation_project_transition"):
+            self.store.set_project_status(
+                "owner:alice", self.project.project_id, status="active"
+            )
+
     def test_project_pause_prevents_new_tasks_and_submissions(self):
         self.store.set_project_status(
             "owner:alice", self.project.project_id, status="paused"
