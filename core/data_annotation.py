@@ -259,7 +259,7 @@ class SQLiteAnnotationWorkbench:
                 SELECT a.adjudication_id, a.owner_id, a.project_id, a.task_id, 1, a.adjudication_id,
                        'adjudicated', json_object('reviewer_id', a.reviewer_id, 'decision', a.decision,
                        'final_label', a.final_label, 'notes', a.notes,
-                       'source_assignment_ids_json', a.source_assignment_ids_json,
+                       'source_assignment_ids', json(a.source_assignment_ids_json),
                        'agreement', a.agreement), a.created_at
                 FROM annotation_adjudications a
                 WHERE NOT EXISTS (SELECT 1 FROM annotation_adjudication_events e
