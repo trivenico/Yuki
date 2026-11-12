@@ -48,6 +48,7 @@ Rework adjudications are excluded. Independent submissions are not exported mere
 
 - Every operation is owner/project/task scoped.
 - Built-in reviewer grants are rechecked inside the write transaction to close revoke/adjudicate races.
+- Delegated reviewers cannot adjudicate a task on which they submitted an annotation.
 - Reviewer calibration is checked from persisted gold results in the adjudication transaction.
 - The adjudication write and task-state transition are atomic.
 - Duplicate adjudications and task-state races fail closed.
