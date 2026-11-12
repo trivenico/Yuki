@@ -249,6 +249,29 @@ class DurableTaskEngine:
             raise TaskConflict("worker does not hold the current fenced lease")
         return r
 
+    def get_claim_identity(self, task_id, worker_id, lease_token):
+        """Return trusted owner/goal/task provenance for the current live claim.
+
+        The lease is verified and the owner is read in one database snapshot.
+        An unowned legacy goal deliberately returns owner_id=None; workers must
+        reject it rather than inventing or accepting caller-supplied identity.
+        """
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            task = self._owned(connection, task_id, worker_id, lease_token)
+            goal = connection.execute(
+                "SELECT owner_id FROM goals WHERE id=?",
+                (task["goal_id"],),
+            ).fetchone()
+            if goal is None:
+                raise TaskNotFound("goal not found")
+            result = {
+                "owner_id": goal["owner_id"],
+                "goal_id": task["goal_id"],
+                "task_id": task_id,
+            }
+            connection.commit()
+            return result
     def validate_lease(self, task_id, worker_id, lease_token):
         """Return whether this exact claim still owns a live task lease."""
         try:
@@ -304,6 +327,7 @@ class DurableTaskEngine:
             "unsupported_task_type": "task type is not supported by this worker",
             "unsafe_retry_policy": "side-effecting tasks must use a single attempt",
             "invalid_payload": "skill invocation payload is invalid",
+            "unowned_goal": "task goal has no authenticated owner",
         }
         if not isinstance(reason, str) or reason not in messages:
             raise ValueError("invalid task rejection reason")
