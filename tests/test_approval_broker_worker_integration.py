@@ -122,6 +122,7 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
             risk=Risk.LOW,
             run_id=context.goal_id,
             step_id=context.task_id,
+            claim_token_sha256=context.claim_token_sha256,
         )
 
     def worker(self):
