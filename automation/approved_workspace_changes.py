@@ -217,6 +217,13 @@ class ApprovedWorkspaceChanges:
         operation_id = manifest["operation_id"]
         try:
             self.journal.mark_applying(operation_id)
+            if execution_guard is not None:
+                try:
+                    claim_valid = callable(execution_guard) and execution_guard() is True
+                except Exception:
+                    claim_valid = False
+                if not claim_valid:
+                    raise WorkspaceChangeError("worker claim is no longer valid after staging.")
             for entry in manifest["entries"]:
                 relative, target = entry["path"], Path(entry["target"])
                 if execution_guard is not None:
