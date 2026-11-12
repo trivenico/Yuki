@@ -48,13 +48,13 @@ class ProviderProfileStoreTests(unittest.TestCase):
             OSKeyringVault(keyring_module=FakeKeyring)
 
     def test_os_keyring_accepts_reviewed_native_secret_service_backend(self):
-        class NativeBackend:
+        class Keyring:
             priority = 5
-        NativeBackend.__module__ = "keyring.backends.SecretService"
+        Keyring.__module__ = "keyring.backends.SecretService"
         class FakeKeyring:
             @staticmethod
             def get_keyring():
-                return NativeBackend()
+                return Keyring()
         vault = OSKeyringVault(keyring_module=FakeKeyring)
         self.assertIsNotNone(vault)
 
