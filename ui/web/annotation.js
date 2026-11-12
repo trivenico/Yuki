@@ -194,8 +194,10 @@
   };
   const loadTasks = async () => {
     if (state.task?.task_id) {
-      const saved = await flushDraftSave(state.task.task_id);
+      const previousTaskId = state.task.task_id;
+      const saved = await flushDraftSave(previousTaskId);
       if (!saved) throw new Error("Save or resolve the current draft before changing projects or refreshing tasks.");
+      draftSessions.delete(previousTaskId);
     }
     state.task = null; state.tasks = []; state.claimed = false; state.boxes = []; state.polygons = []; state.draft = [];
     clearImage();
@@ -264,6 +266,7 @@
     if (previousTaskId && previousTaskId !== nextTaskId) {
       const saved = await flushDraftSave(previousTaskId);
       if (!saved) { $("annotation-task").value = previousTaskId; return; }
+      draftSessions.delete(previousTaskId);
     }
     state.task = selectedTask();
     state.claimed = Boolean(state.task && state.project?.status === "active" &&
