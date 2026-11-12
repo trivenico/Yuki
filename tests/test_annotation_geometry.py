@@ -67,6 +67,10 @@ class AnnotationGeometryTests(unittest.TestCase):
             validate_polygon([Point(0, 0), Point(.5, .5), Point(1, 1)])
         with self.assertRaisesRegex(ValueError, "self_intersecting"):
             validate_polygon([Point(0, 0), Point(1, 1), Point(0, 1), Point(1, 0)])
+        with self.assertRaisesRegex(ValueError, "overlapping_adjacent"):
+            validate_polygon([Point(0, 0), Point(1, 0), Point(.5, 0), Point(0, 1)])
+        with self.assertRaisesRegex(ValueError, "vertex_count"):
+            validate_polygon([Point(0, 0)] * 2049)
 
 
 class SnapshotHistoryTests(unittest.TestCase):
