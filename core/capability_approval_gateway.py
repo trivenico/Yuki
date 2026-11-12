@@ -348,6 +348,16 @@ class CapabilityApprovalGateway:
             db.commit()
         return token
 
+    def _request_json_for_binding(self, request_id: str) -> str:
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT request_json FROM capability_approval_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+        if row is None:
+            raise PermissionError("approval request binding is unavailable")
+        return row["request_json"]
+
     def approval_delivery_binding(self, request_id: str, token: str) -> dict[str, Any]:
         """Return verified task metadata for trusted credential delivery only."""
         if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
@@ -376,6 +386,9 @@ class CapabilityApprovalGateway:
             "principal_id": row["principal_id"], "capability": row["capability"],
             "target": row["target"], "run_id": row["run_id"], "step_id": row["step_id"],
             "policy_version": row["policy_version"],
+            "claim_token_sha256": json.loads(
+                self._request_json_for_binding(request_id)
+            ).get("claim_token_sha256"),
             "expires_at": min(row["expires_at"], row["credential_expires_at"]),
         }
 
