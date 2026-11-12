@@ -160,7 +160,7 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
         recovery_principal = ToolPrincipal("alice", frozenset({"workspace:recover"}))
         manifest = service.journal.begin(
             actor_id="alice", operation_digest=hashlib.sha256(b"recovery").hexdigest(),
-            changes=[("sample.py", self.file, b"VALUE = 1\n", b"VALUE = 2\n")],
+            changes=[("sample.py", self.file, self.file.read_bytes(), b"VALUE = 2\n")],
         )
         service.journal.mark_applying(manifest["operation_id"])
         os.replace(manifest["entries"][0]["stage"], self.file)
