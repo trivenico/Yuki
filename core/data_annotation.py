@@ -1736,12 +1736,15 @@ class SQLiteAnnotationWorkbench:
                    LEFT JOIN annotation_adjudications a
                      ON a.task_id=t.task_id AND a.owner_id=t.owner_id
                    WHERE t.owner_id=? AND t.project_id=? AND i.project_id=?
+                     AND NOT EXISTS (SELECT 1 FROM annotation_gold_standards g WHERE g.task_id=t.task_id AND g.owner_id=t.owner_id)
                    GROUP BY t.task_id, t.status, a.decision""",
                 (owner_id, project_id, project_id),
             ).fetchall()
             task_count = db.execute(
-                "SELECT COUNT(DISTINCT task_id) FROM annotation_independent_assignments "
-                "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
+                "SELECT COUNT(DISTINCT i.task_id) FROM annotation_independent_assignments i "
+                "WHERE i.owner_id=? AND i.project_id=? AND NOT EXISTS "
+                "(SELECT 1 FROM annotation_gold_standards g WHERE g.task_id=i.task_id AND g.owner_id=i.owner_id)",
+                (owner_id, project_id),
             ).fetchone()[0]
             accepted_exports = db.execute(
                 "SELECT COUNT(*) FROM annotation_submissions WHERE owner_id=? AND project_id=? AND status='accepted'",
@@ -1782,12 +1785,14 @@ class SQLiteAnnotationWorkbench:
                 s.submission_id, s.payload_json, s.ai_assisted, s.quality_json, s.updated_at AS accepted_at
                 FROM annotation_tasks t JOIN annotation_submissions s ON s.task_id=t.task_id AND s.owner_id=t.owner_id
                 WHERE t.owner_id=? AND t.project_id=? AND s.status='accepted'
+                  AND NOT EXISTS (SELECT 1 FROM annotation_gold_standards g WHERE g.task_id=t.task_id AND g.owner_id=t.owner_id)
                 ORDER BY s.updated_at, s.submission_id LIMIT 5001""", (owner_id, project_id)).fetchall()
             independent = db.execute("""SELECT t.task_id, t.external_ref, t.asset_ref, t.input_json,
                 a.adjudication_id, a.final_label, a.agreement, a.reviewer_id,
                 a.source_assignment_ids_json, a.created_at
                 FROM annotation_adjudications a JOIN annotation_tasks t ON t.task_id=a.task_id AND t.owner_id=a.owner_id
                 WHERE a.owner_id=? AND a.project_id=? AND a.decision='accepted'
+                  AND NOT EXISTS (SELECT 1 FROM annotation_gold_standards g WHERE g.task_id=t.task_id AND g.owner_id=t.owner_id)
                 ORDER BY a.created_at, a.adjudication_id LIMIT 5001""", (owner_id, project_id)).fetchall()
             if len(ordinary) + len(independent) > 5000:
                 raise ValueError("manifest_item_limit_exceeded")
