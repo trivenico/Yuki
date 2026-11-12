@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from core.approval_credential_broker import ApprovalCredentialBroker
+from core.approval_delivery_router import ApprovalDeliveryRouter
 from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.approved_skill_wiring import SkillApprovalStore
 from core.capability_approval_gateway import CapabilityApprovalGateway
@@ -106,6 +107,7 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
         self.broker = ApprovalCredentialBroker(
             root / "broker.sqlite", self.gateway, worker_id=self.worker_id,
             seal=seal, unseal=unseal, validate_claim=self.engine.validate_lease,
+            validate_claim_digest=self.engine.validate_claim_digest,
         )
         self.broker.deliver_credential(
             self.request_id, self.approval_token, lease_token=self.lease_token
@@ -205,6 +207,55 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
         self.assertEqual(status, "revoked")
         self.assertEqual(ciphertext, b"")
         self.assertEqual(coordinator.run_once()["claimed"], 0)
+
+    def test_worker_waits_for_owner_approval_and_receives_digest_routed_credential(self):
+        import threading
+        import time
+
+        task = self.engine.submit(
+            self.goal, "skill.invoke",
+            {"skill_name": self.skill.name, "argument": "awaited-value"},
+            idempotency_key="approval-wait-flow", max_attempts=1, owner_id=self.owner,
+        )
+        worker = DurableSkillWorker(
+            self.engine, self.runtime, worker_id=self.worker_id,
+            approval_token_resolver=self.broker.resolver(),
+            approval_wait_timeout_seconds=10,
+            lease_seconds=4, heartbeat_interval_seconds=0.1,
+        )
+        outcomes = []
+        thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))
+        thread.start()
+        try:
+            deadline = time.monotonic() + 3
+            pending = ()
+            while time.monotonic() < deadline:
+                pending = tuple(
+                    item for item in self.gateway.pending_requests()
+                    if item["step_id"] == task["id"]
+                )
+                if pending:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(len(pending), 1, "worker did not persist an approval request")
+            router = ApprovalDeliveryRouter(
+                self.engine, self.gateway, {self.worker_id: self.broker}
+            )
+            token = self.gateway.approve_request(
+                pending[0]["request_id"], approved_by="owner-approved-approver"
+            )
+            router.deliver(pending[0]["request_id"], token)
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive(), "worker did not resume after credential delivery")
+            self.assertEqual(outcomes[0]["state"], "succeeded")
+            self.assertEqual(self.skill.calls, ["awaited-value"])
+        finally:
+            if thread.is_alive():
+                try:
+                    self.engine.recover_expired_leases()
+                except Exception:
+                    pass
+                thread.join(timeout=2)
 
     def test_runtime_requires_resolver_when_central_gateway_is_enabled(self):
         with self.assertRaisesRegex(ValueError, "approval_token_resolver"):
