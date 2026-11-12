@@ -35,7 +35,17 @@ def _resolve_public_addresses(host: str, port: int):
             address = ipaddress.ip_address(sockaddr[0])
         except ValueError as exc:
             raise ValueError("Cloud provider resolved an invalid network address.") from exc
-        if not address.is_global or address.is_multicast or address.is_unspecified:
+        unsafe_ipv6_transition = (
+            isinstance(address, ipaddress.IPv6Address)
+            and (
+                address.ipv4_mapped is not None
+                or address.sixtofour is not None
+                or address.teredo is not None
+                or address in ipaddress.ip_network("64:ff9b::/96")
+            )
+        )
+        if (not address.is_global or address.is_multicast or address.is_unspecified
+                or unsafe_ipv6_transition):
             raise ValueError("Cloud provider hostname resolves to a non-public address.")
         key = (family, socktype, proto, sockaddr)
         if key not in seen:
