@@ -104,6 +104,13 @@ class ProviderProfileStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_provider_profiles_owner
                     ON provider_profiles(owner_id, name);
+                CREATE TABLE IF NOT EXISTS provider_profile_selection (
+                    owner_id TEXT PRIMARY KEY,
+                    profile_name TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    FOREIGN KEY(owner_id, profile_name)
+                        REFERENCES provider_profiles(owner_id, name) ON DELETE CASCADE
+                );
             """)
 
     def _harden_permissions(self) -> None:
@@ -249,6 +256,40 @@ class ProviderProfileStore:
             raise RuntimeError("provider credential is unavailable in the OS vault")
         return {"base_url": row["base_url"], "model": row["model"],
                 "allowed_host": row["allowed_host"], "api_key": secret}
+
+    def select_profile(self, owner_id: str, name: str) -> None:
+        """Persist the selected profile for one local/remote owner."""
+        owner = self._validate_owner(owner_id)
+        profile_name = self._validate_name(name)
+        import time
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            exists = db.execute(
+                "SELECT 1 FROM provider_profiles WHERE owner_id=? AND name=?",
+                (owner, profile_name),
+            ).fetchone()
+            if exists is None:
+                db.rollback()
+                raise KeyError("provider profile not found")
+            db.execute("""
+                INSERT INTO provider_profile_selection(owner_id,profile_name,updated_at)
+                VALUES(?,?,?)
+                ON CONFLICT(owner_id) DO UPDATE SET
+                    profile_name=excluded.profile_name, updated_at=excluded.updated_at
+            """, (owner, profile_name, time.time()))
+            db.commit()
+
+    def selected_profile(self, owner_id: str) -> str | None:
+        owner = self._validate_owner(owner_id)
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT s.profile_name FROM provider_profile_selection s
+                   JOIN provider_profiles p
+                     ON p.owner_id=s.owner_id AND p.name=s.profile_name
+                   WHERE s.owner_id=?""",
+                (owner,),
+            ).fetchone()
+        return None if row is None else row["profile_name"]
 
     def delete(self, owner_id: str, name: str) -> bool:
         owner = self._validate_owner(owner_id)
