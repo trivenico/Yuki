@@ -23,6 +23,7 @@ class SkillPolicyContext:
     trigger: str
     goal_id: str
     task_id: str
+    claim_token_sha256: str | None = None
 
     def __post_init__(self) -> None:
         for field in ("principal_id", "trigger", "goal_id", "task_id"):
@@ -34,6 +35,12 @@ class SkillPolicyContext:
                 or value != value.strip()
             ):
                 raise ValueError(f"{field} must be non-empty bounded trusted text")
+        if self.claim_token_sha256 is not None and (
+            not isinstance(self.claim_token_sha256, str)
+            or len(self.claim_token_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in self.claim_token_sha256)
+        ):
+            raise ValueError("claim_token_sha256 must be a lowercase SHA-256 digest")
 
 
 @dataclass(frozen=True)
