@@ -12,6 +12,7 @@ import re
 
 from core.data_annotation import (
     AnnotationConflict,
+    AnnotationPolicyError,
     SQLiteAnnotationWorkbench,
 )
 
@@ -192,6 +193,8 @@ class AuthenticatedAnnotationAPI:
             return await self._respond(send, 404, {"error": "not_found"})
         except AnnotationConflict:
             return await self._respond(send, 409, {"error": "version_conflict"})
+        except AnnotationPolicyError:
+            return await self._respond(send, 403, {"error": "ai_assistance_not_permitted"})
         except PermissionError:
             return await self._respond(send, 403, {"error": "human_confirmation_required"})
         except LookupError:
