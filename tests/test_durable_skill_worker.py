@@ -9,7 +9,7 @@ from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.approved_skill_wiring import SkillApprovalStore
 from core.durable_skill_worker import DurableSkillWorker
 from core.durable_task_engine import DurableTaskEngine
-from core.guarded_skill_runtime import OneShotSkillApprovals
+from core.guarded_skill_runtime import OneShotSkillApprovals, SkillPolicyContext
 
 
 class Registry:
@@ -58,7 +58,8 @@ class DurableSkillWorkerTests(unittest.TestCase):
             invocation_approvals=self.approvals,
         )
         self.worker = DurableSkillWorker(self.engine, self.runtime, worker_id="test-worker")
-        self.goal = self.engine.create_goal()
+        self.owner_id = "owner-test"
+        self.goal = self.engine.create_owned_goal(self.owner_id)
 
     def submit(self, skill_name, argument="", *, task_type="skill.invoke", max_attempts=1, key="task"):
         return self.engine.submit(
@@ -88,7 +89,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
 
     def test_high_risk_skill_executes_after_exact_argument_approval(self):
         task = self.submit("write_demo", "change", key="approved-task")
-        self.approvals.approve("write_demo", "change")
+        self.approvals.approve("write_demo", "change", principal_id=self.owner_id)
         result = self.worker.run_once()
         self.assertEqual(result["state"], "succeeded")
         self.assertEqual(self.high_risk.calls, 1)
@@ -120,7 +121,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
 
     def test_worker_exception_marks_single_attempt_task_failed(self):
         class RaisingRuntime:
-            def invoke(self, _skill_name, _argument, *, execution_guard=None):
+            def invoke(self, _skill_name, _argument, *, execution_guard=None, policy_context=None):
                 if execution_guard is not None and execution_guard() is not True:
                     raise RuntimeError("execution lease lost")
                 raise RuntimeError("secret token should not be persisted")
@@ -155,7 +156,8 @@ class DurableSkillWorkerTests(unittest.TestCase):
         release = threading.Event()
 
         class SlowRuntime:
-            def invoke(self, _skill_name, _argument, *, execution_guard=None):
+            def invoke(self, _skill_name, _argument, *, execution_guard=None, policy_context=None):
+                self.assert_context = policy_context
                 started.set()
                 if not release.wait(timeout=8):
                     raise RuntimeError("test invocation timed out")
@@ -209,6 +211,37 @@ class DurableSkillWorkerTests(unittest.TestCase):
         task = self.submit("not_registered", key="missing-skill")
         result = self.worker.run_once()
         self.assertFalse(result["state"] == "succeeded")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
+
+    def test_worker_passes_owner_derived_policy_context_to_runtime(self):
+        seen = {}
+        class ContextRuntime:
+            def invoke(inner_self, _skill_name, _argument, *, execution_guard=None, policy_context=None):
+                seen["context"] = policy_context
+                if execution_guard is not None and execution_guard() is not True:
+                    raise RuntimeError("lease lost")
+                return type("Result", (), {"ok": True, "status": "completed", "message": "done"})()
+        task = self.submit("read_demo", "identity", key="owner-context")
+        worker = DurableSkillWorker(self.engine, ContextRuntime(), worker_id="context-worker")
+        result = worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertIsInstance(seen["context"], SkillPolicyContext)
+        self.assertEqual(seen["context"].principal_id, self.owner_id)
+        self.assertEqual(seen["context"].trigger, "durable_task")
+        self.assertEqual(seen["context"].goal_id, self.goal)
+        self.assertEqual(seen["context"].task_id, task["id"])
+
+    def test_worker_rejects_legacy_unowned_goal_before_runtime(self):
+        legacy_goal = self.engine.create_goal()
+        task = self.engine.submit(
+            legacy_goal, "skill.invoke",
+            {"skill_name": "read_demo", "argument": "must-not-run"},
+            idempotency_key="unowned-worker-task", max_attempts=1,
+        )
+        before = len(self.registry.skills["read_demo"].__dict__)
+        result = self.worker.run_once()
+        self.assertEqual(result["status"], "unowned_goal")
+        self.assertEqual(result["state"], "failed")
         self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
 
 
