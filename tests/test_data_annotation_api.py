@@ -194,7 +194,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
              "ai_assisted": True, "human_confirmed": True},
             self.owner_one.token,
         )
-        self.assertEqual((status, body["error"]), (403, "human_confirmation_required"))
+        self.assertEqual((status, body["error"]), (403, "ai_assistance_not_permitted"))
 
     def test_human_confirmation_required_and_version_conflict_mapped(self):
         project_id = self.create_project()
