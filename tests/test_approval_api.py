@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import tempfile
 import unittest
@@ -9,7 +10,8 @@ from core.auth import BuiltInAuthService
 from core.authenticated_capability_approval_service import AuthenticatedCapabilityApprovalService
 from core.capability_approval_gateway import CapabilityApprovalGateway
 from core.capability_approval_preview import ApprovalPreview, CapabilityApprovalPreviewRegistry
-from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine
+from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest
+from core.approval_operation import ApprovalOperation
 
 
 class _Downstream:
@@ -44,6 +46,7 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
                 target="Project A workspace",
                 impact="Project files may be changed; review the proposed change before continuing",
             ),
+            operation_type="workspace.write",
         )
         self.gateway = CapabilityApprovalGateway(
             root / "approval.sqlite", self.policy,
@@ -132,6 +135,31 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         decision = self.gateway.authorize(request, approval_token=self.delivered[0][1])
         self.assertTrue(decision.allowed)
         self.assertTrue(decision.approval_consumed)
+
+    def test_authenticated_inbox_includes_exact_typed_workspace_payload(self):
+        payload = {"changes": [{
+            "path": "README.md",
+            "expected_sha256": hashlib.sha256(b"old contents").hexdigest(),
+            "content": "new approved contents",
+        }]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.write", capability="workspace:write",
+            target="workspace:project-a", payload=payload,
+        )
+        request_data = self.payload("goal-typed-preview")
+        request_data["argument_sha256"] = argument_digest(payload)
+        request = PolicyRequest(**{**request_data, "risk": Risk.HIGH})
+        request_id = self.gateway.request_approval(
+            request, operation=operation, operation_payload=payload
+        )
+        status, body = self.request(
+            "GET", "/v1/approvals/inbox", token=self.admin.token
+        )
+        self.assertEqual(status, 200)
+        item = next(row for row in body["requests"] if row["request_id"] == request_id)
+        self.assertTrue(item["operation_payload_available"])
+        self.assertEqual(item["operation_payload"], payload)
+        self.assertEqual(item["operation"]["operation_type"], "workspace.write")
 
     def test_approval_is_blocked_when_capability_has_no_trusted_preview(self):
         gateway = CapabilityApprovalGateway(
