@@ -595,7 +595,8 @@ class SQLiteAnnotationWorkbench:
             if task["status"] not in {"in_progress", "rework"}:
                 raise ValueError("annotation_task_not_submittable")
             project = db.execute(
-                "SELECT status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                "SELECT status, ai_assistance_mode FROM annotation_projects "
+                "WHERE owner_id=? AND project_id=?",
                 (owner_id, task["project_id"]),
             ).fetchone()
             if project is None or project["status"] != "active":
