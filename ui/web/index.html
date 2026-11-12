@@ -58,8 +58,15 @@
         <section id="annotation-view" class="annotation-workspace" hidden aria-label="Data annotation workbench">
           <div class="annotation-header">
             <div><h2>Annotation workbench</h2><p>Review your project instructions, annotate clean assets, and submit work for review.</p></div>
-            <div class="annotation-toolbar"><button id="refresh-annotation" type="button">Refresh projects</button><button id="close-annotation" type="button">Back to chat</button></div>
+            <div class="annotation-toolbar"><button id="annotation-create-project-button" type="button">New project</button><button id="refresh-annotation" type="button">Refresh projects</button><button id="close-annotation" type="button">Back to chat</button></div>
           </div>
+          <form id="annotation-create-project" class="annotation-create-project" hidden>
+            <label class="annotation-field" for="annotation-new-name">Project name<input id="annotation-new-name" maxlength="120" required></label>
+            <label class="annotation-field" for="annotation-new-type">Task family<select id="annotation-new-type"><option value="image_classification">Image classification</option><option value="bounding_boxes">Bounding boxes</option><option value="polygon_segmentation">Polygon segmentation</option><option value="text_classification">Text classification</option><option value="entity_extraction">Entity extraction</option><option value="response_ranking">Response ranking</option><option value="llm_evaluation">LLM evaluation</option><option value="custom">Custom JSON</option></select></label>
+            <label class="annotation-field" for="annotation-new-instructions">Instructions<textarea id="annotation-new-instructions" rows="3" maxlength="12000" required></textarea></label>
+            <label class="annotation-field" for="annotation-new-rubric">Rubric JSON<textarea id="annotation-new-rubric" rows="3" spellcheck="false">{}</textarea></label>
+            <div class="annotation-toolbar"><button class="primary" type="submit">Create human-only project</button><button id="annotation-cancel-project" type="button">Cancel</button></div>
+          </form>
           <div class="annotation-layout">
             <section class="annotation-main" aria-label="Annotation canvas">
               <div class="annotation-controls">
