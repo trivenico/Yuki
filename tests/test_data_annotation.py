@@ -1197,7 +1197,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             "owner:alice", project.project_id, task_ids=[task.task_id],
             annotator_ids=["annotator:fresh"], idempotency_key="good",
         )
-        with self.assertRaisesRegex(ValueError, "fresh_annotator_task_pairs"):
+        with self.assertRaisesRegex(ValueError, "unassigned_gold_tasks"):
             self.store.create_calibration_session(
                 "owner:alice", project.project_id, task_ids=[task.task_id],
                 annotator_ids=["annotator:fresh"], idempotency_key="again",
