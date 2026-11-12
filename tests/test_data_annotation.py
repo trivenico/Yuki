@@ -247,6 +247,26 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
                 tasks=[{"external_ref": "batch-001/item-0001", "input_data": {}}],
             )
 
+    def test_legacy_project_schema_migrates_to_human_only_ai_policy(self):
+        import sqlite3
+        legacy_path = Path(self.directory.name) / "legacy.sqlite3"
+        db = sqlite3.connect(legacy_path)
+        db.execute("""CREATE TABLE annotation_projects (
+            project_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL,
+            task_type TEXT NOT NULL, instructions TEXT NOT NULL, rubric_json TEXT NOT NULL,
+            status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+        db.execute(
+            "INSERT INTO annotation_projects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("a" * 32, "owner:legacy", "Legacy", "custom", "Review",
+             "{}", "active", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+        )
+        db.commit()
+        db.close()
+        migrated = SQLiteAnnotationWorkbench(str(legacy_path))
+        project = migrated.get_project("owner:legacy", "a" * 32)
+        self.assertEqual(project.ai_assistance_mode, "human_only")
+
     def test_database_symlink_is_rejected(self):
         if not hasattr(Path, "symlink_to"):
             self.skipTest("symlinks are unavailable")
