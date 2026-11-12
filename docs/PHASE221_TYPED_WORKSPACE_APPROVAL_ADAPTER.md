@@ -41,3 +41,26 @@ integrity validation, bind its digest into the approval request/preview, and
 verify the exact envelope immediately before execution. It must include
 migration/restart tests and substitution/TOCTOU regression tests before the
 workspace capability can be called fully integrated.
+
+## Durable gateway binding increment
+
+The approval gateway now accepts an optional typed operation when creating a
+durable request. It verifies the operation against the policy request, stores
+the immutable envelope JSON and its digest in a dedicated table, and exposes
+only integrity-checked envelope metadata in the pending inbox. Duplicate live
+requests cannot silently switch between typed and untyped forms or substitute
+a different operation envelope.
+
+When a typed request is approved, the gateway verifies the persisted envelope
+again and binds its envelope digest to the one-shot approval credential. The
+authorization API accepts the same typed envelope and refuses to consume a
+typed credential through the untyped route or with a substituted operation.
+A nullable additive SQLite column preserves existing legacy approval records.
+Tests cover restart reads, stored-envelope tampering, request mismatch,
+idempotency substitution and token-to-envelope binding.
+
+This still does **not** complete workspace execution integration. The durable
+worker does not yet build/pass the adapter envelope at authorization and
+execution time, and the human preview does not yet display a structured exact
+file-change diff. Those are required before this capability is enabled for
+production use.
