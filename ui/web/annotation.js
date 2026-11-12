@@ -265,7 +265,9 @@
       const saved = await flushDraftSave(previousTaskId);
       if (!saved) { $("annotation-task").value = previousTaskId; return; }
     }
-    state.task = selectedTask(); state.claimed = Boolean(state.task && ["in_progress", "rework"].includes(state.task.status));
+    state.task = selectedTask();
+    state.claimed = Boolean(state.task && state.project?.status === "active" &&
+      ["in_progress", "rework"].includes(state.task.status));
     state.boxes = []; state.polygons = []; state.draft = [];
     state.undoStack = []; state.redoStack = []; state.lastHistorySnapshot = null;
     $("annotation-label").value = "";
@@ -278,7 +280,7 @@
     $("claim-annotation-task").disabled = !["pending", "rework"].includes(state.task.status) || state.project.status !== "active";
     setTool(state.project.task_type === "polygon_segmentation" ? "polygon" : state.project.task_type === "image_classification" ? "pan" : "box");
     $("submit-annotation").disabled = !state.claimed;
-    if (state.claimed) await restoreDraft(state.task.task_id);
+    if (["in_progress", "rework"].includes(state.task.status)) await restoreDraft(state.task.task_id);
     if (state.task?.task_id !== selectedTask()?.task_id) return;
     await loadImage();
     renderEditor();
