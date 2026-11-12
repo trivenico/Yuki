@@ -363,8 +363,11 @@ class AuthenticatedAnnotationAPI:
                 if not isinstance(owner_id, str) or not owner_id or owner_id == user.user_id:
                     return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 items = await asyncio.to_thread(
-                    self.workbench.list_review_queue, owner_id, project_id
+                    self.workbench.list_review_queue, owner_id, project_id,
+                    reviewer_id=user.user_id if self.reviewer_authorizer is None else None,
                 )
+                if items is None:
+                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 return await self._respond(send, 200, {
                     "submissions": [asdict(item) for item in items],
                 })
@@ -385,6 +388,7 @@ class AuthenticatedAnnotationAPI:
                 submission = await asyncio.to_thread(
                     self.workbench.review, owner_id, match.group(1),
                     reviewer_id=user.user_id, expected_project_id=project_id,
+                    require_reviewer_grant=self.reviewer_authorizer is None,
                     **{key: value for key, value in payload.items() if key != "project_id"}
                 )
                 return await self._respond(
