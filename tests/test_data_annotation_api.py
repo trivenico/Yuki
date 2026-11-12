@@ -887,6 +887,12 @@ class AnnotationRuntimeTests(unittest.TestCase):
             token=self.owner_two.token,
         )
         self.assertEqual((status, body["error"]), (404, "not_found"))
+        invalid_status, invalid_body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/calibration-sessions",
+            {"task_ids": [task_id], "annotator_user_ids": [{}],
+             "idempotency_key": "malformed"}, self.owner_one.token,
+        )
+        self.assertEqual((invalid_status, invalid_body["error"]), (400, "invalid_request"))
         status, body = self.request(
             "GET", "/v1/annotation/assignments", token=self.owner_two.token,
         )
