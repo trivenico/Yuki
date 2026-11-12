@@ -870,7 +870,10 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             "owner:alice", self.project.project_id, idempotency_key="delivery-001",
         )
         self.assertEqual(manifest["item_count"], 1)
-        self.assertEqual(manifest["snapshot"]["items"][0]["annotation"], {"label": "positive"})
+        full_manifest = self.store.get_delivery_manifest(
+            "owner:alice", self.project.project_id, manifest["manifest_id"],
+        )
+        self.assertEqual(full_manifest["snapshot"]["items"][0]["annotation"], {"label": "positive"})
         repeated = self.store.create_delivery_manifest(
             "owner:alice", self.project.project_id, idempotency_key="delivery-001",
         )
