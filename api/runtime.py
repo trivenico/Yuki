@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
+from api.data_annotation import AuthenticatedAnnotationAPI
 from api.inference import AuthenticatedInferenceAPI
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
@@ -18,6 +19,7 @@ from core.conversation_application_runtime import (
 )
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
+from core.data_annotation import SQLiteAnnotationWorkbench
 from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
@@ -68,6 +70,7 @@ def build_conversation_runtime(
     device_pairing: DevicePairingService | None = None,
     inference_jobs: InferenceJobService | None = None,
     income_opportunities: SQLiteIncomeOpportunityStore | None = None,
+    annotation_workbench: SQLiteAnnotationWorkbench | None = None,
     oauth_connections: SQLiteOAuthConnectionRegistry | None = None,
     oauth_disconnect_service_for_provider: Callable[[str], Any] | None = None,
     oauth_authorization_service_for_provider: Callable[[str], Any] | None = None,
@@ -92,6 +95,10 @@ def build_conversation_runtime(
         income_opportunities, SQLiteIncomeOpportunityStore
     ):
         raise TypeError("income_opportunities must be a SQLiteIncomeOpportunityStore")
+    if annotation_workbench is not None and not isinstance(
+        annotation_workbench, SQLiteAnnotationWorkbench
+    ):
+        raise TypeError("annotation_workbench must be a SQLiteAnnotationWorkbench")
     if oauth_connections is not None and not isinstance(
         oauth_connections, SQLiteOAuthConnectionRegistry
     ):
@@ -132,6 +139,8 @@ def build_conversation_runtime(
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:
             app = AuthenticatedIncomeOpportunityAPI(app, auth_service, income_opportunities)
+        if annotation_workbench is not None:
+            app = AuthenticatedAnnotationAPI(app, auth_service, annotation_workbench)
         if oauth_connections is not None:
             app = AuthenticatedOAuthConnectionAPI(
                 app, auth_service, oauth_connections,
