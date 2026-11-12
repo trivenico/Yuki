@@ -1231,7 +1231,11 @@ class SQLiteAnnotationWorkbench:
                     "evaluated_task_count": 0, "mean_pairwise_agreement": None,
                     "fleiss_kappa": None}
         groups: dict[str, list[str]] = {}
+        assignment_counts = {"assigned": 0, "in_progress": 0, "submitted": 0, "revoked": 0}
+        assigned_tasks = {row["task_id"] for row in rows}
         for row in rows:
+            if row["status"] in assignment_counts:
+                assignment_counts[row["status"]] += 1
             if row["status"] != "submitted" or not row["payload_json"]:
                 continue
             payload = _decode(row["payload_json"])
@@ -1269,9 +1273,12 @@ class SQLiteAnnotationWorkbench:
                 p_e = sum(value * value for value in p_j.values())
                 kappa = (p_bar - p_e) / (1 - p_e) if p_e < 1 else None
         return {
-            "project_id": project_id, "supported": True, "task_count": len(groups),
+            "project_id": project_id, "supported": True, "task_count": len(assigned_tasks),
+            "assignment_counts": assignment_counts,
+            "assignment_count": len(rows),
             "evaluated_task_count": len(agreements),
             "insufficient_annotators_task_count": sum(1 for labels in groups.values() if len(labels) < 2),
+            "not_started_task_count": len(assigned_tasks - set(groups)),
             "mean_pairwise_agreement": sum(agreements) / len(agreements) if agreements else None,
             "fleiss_kappa": kappa, "metric": "classification_label_agreement",
             "minimum_ratings_per_task": 2,
