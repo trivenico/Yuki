@@ -151,7 +151,7 @@ class ProviderProfileStore:
                 or parsed.username is not None or parsed.password is not None
                 or parsed.query or parsed.fragment or parsed.port not in (None, 443)):
             raise ValueError("endpoint must use HTTPS on the exact approved hostname and default port")
-        if not parsed.path.startswith("/") or "\\x00" in parsed.path:
+        if not parsed.path.startswith("/") or "\x00" in parsed.path:
             raise ValueError("endpoint path is invalid")
         normalized = f"https://{host}{parsed.path.rstrip('/')}"
         return normalized, host
@@ -162,9 +162,9 @@ class ProviderProfileStore:
         owner = self._validate_owner(owner_id)
         profile_name = self._validate_name(name)
         endpoint, host = self._validate_endpoint(base_url, allowed_host)
-        if not isinstance(model, str) or not model.strip() or len(model) > 256 or "\\x00" in model:
+        if not isinstance(model, str) or not model.strip() or len(model) > 256 or "\x00" in model:
             raise ValueError("model must be bounded non-empty text")
-        if not isinstance(api_key, str) or not api_key or len(api_key) > 8192 or "\\x00" in api_key:
+        if not isinstance(api_key, str) or not api_key or len(api_key) > 8192 or "\x00" in api_key:
             raise ValueError("credential must be bounded non-empty text")
         import time
         now = time.time()
