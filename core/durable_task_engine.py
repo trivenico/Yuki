@@ -429,8 +429,8 @@ class DurableTaskEngine:
                     )
                 c.execute(
                     """UPDATE task_approval_waits SET state='stale',updated_at=?
-                       WHERE task_id=? AND claim_token_sha256=? AND state IN ('pending','delivered')""",
-                    (now, r["id"], claim_digest if r["lease_token"] else ""),
+                       WHERE task_id=? AND state IN ('pending','delivered')""",
+                    (now, r["id"]),
                 )
                 c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
