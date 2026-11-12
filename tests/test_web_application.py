@@ -41,6 +41,9 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b'id="provider-label"', sent[1]["body"])
         self.assertIn(b'id="open-annotation"', sent[1]["body"])
         self.assertIn(b'id="annotation-canvas"', sent[1]["body"])
+        self.assertIn(b'id="annotation-create-project"', sent[1]["body"])
+        self.assertIn(b'id="annotation-create-task"', sent[1]["body"])
+        self.assertIn(b'id="annotation-upload-button"', sent[1]["body"])
         self.assertIn(b'/assets/annotation.js', sent[1]["body"])
         self.assertIn(b'/assets/annotation.css', sent[1]["body"])
 
@@ -69,6 +72,9 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertEqual(css[0]["status"], 200)
         self.assertIn(b"/v1/annotation/tasks/", js[1]["body"])
         self.assertIn(b"human_confirmed", js[1]["body"])
+        self.assertIn(b"scan_status", js[1]["body"])
+        self.assertIn(b"polygon_segmentation", js[1]["body"])
+        self.assertIn(b"ai_assisted: false", js[1]["body"])
         self.assertIn(b"touch-action:none", css[1]["body"])
         self.assertEqual(self.request(app, "/assets/../api/runtime.py")[0]["status"], 404)
 
