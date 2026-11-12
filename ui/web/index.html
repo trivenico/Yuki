@@ -131,6 +131,20 @@
                   <input id="annotation-calibration-age" type="number" min="1" max="3650" value="90">
                 </label>
                 <button id="annotation-calibration-policy-save" type="button">Save calibration policy</button>
+                <h4>Blinded requalification session</h4>
+                <p>Start a fresh round using registered gold tasks. Enter task IDs and annotator account IDs; expected labels stay hidden from workers.</p>
+                <label class="annotation-field" for="annotation-calibration-session-tasks">Registered gold task IDs (comma-separated)
+                  <textarea id="annotation-calibration-session-tasks" rows="2" spellcheck="false" placeholder="32-character task IDs"></textarea>
+                </label>
+                <label class="annotation-field" for="annotation-calibration-session-annotators">Annotator account IDs (comma-separated)
+                  <textarea id="annotation-calibration-session-annotators" rows="2" spellcheck="false" placeholder="Account ID 1, Account ID 2"></textarea>
+                </label>
+                <label class="annotation-field" for="annotation-calibration-session-key">Idempotency key (keep unchanged when retrying)
+                  <input id="annotation-calibration-session-key" maxlength="128" autocomplete="off" placeholder="Generated on first launch">
+                </label>
+                <button id="annotation-calibration-session-create" type="button">Launch blinded requalification</button>
+                <button id="annotation-calibration-sessions-refresh" type="button">Refresh requalification sessions</button>
+                <div id="annotation-calibration-sessions-summary" class="annotation-hint" aria-live="polite">No requalification sessions loaded.</div>
                 <div id="annotation-calibration-summary" class="annotation-hint" aria-live="polite">Calibration requires gold-standard submissions.</div>
                 <div id="annotation-agreement-summary" class="annotation-hint" aria-live="polite">Agreement metrics are available for classification tasks after independent submissions.</div>
                 <h4>Adjudication and delivery</h4>
