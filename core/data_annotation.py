@@ -1957,7 +1957,7 @@ class SQLiteAnnotationWorkbench:
         baseline_start = now_dt.timestamp() - 120 * 86400
         recent_start = now_dt.timestamp() - 30 * 86400
         minimum_baseline, minimum_recent = 20, 10
-        minimum_drop, significance = 0.10, 0.01
+        minimum_drop, false_discovery_rate = 0.10, 0.05
 
         def parse_timestamp(value: str) -> float | None:
             try:
@@ -2028,19 +2028,35 @@ class SQLiteAnnotationWorkbench:
                     else:
                         z_score = drop / math.sqrt(variance)
                         p_value = math.erfc(abs(z_score) / math.sqrt(2))
-                    status = (
-                        "drift_detected"
-                        if drop >= minimum_drop and p_value <= significance
-                        else "stable"
-                    )
+                    status = "stable"
                 assessments.append({
                     "annotator_id": annotator_id,
                     "baseline": {"sample_count": base_n, "correct_count": base_correct,
                                  "accuracy": base_accuracy, "wilson_95_ci": wilson(base_correct, base_n)},
                     "recent": {"sample_count": recent_n, "correct_count": recent_correct,
                                "accuracy": recent_accuracy, "wilson_95_ci": wilson(recent_correct, recent_n)},
-                    "accuracy_drop": drop, "two_proportion_p_value": p_value, "status": status,
+                    "accuracy_drop": drop, "two_proportion_p_value": p_value,
+                    "false_discovery_rate_q_value": None, "status": status,
                 })
+            eligible = [
+                (index, item["two_proportion_p_value"])
+                for index, item in enumerate(assessments)
+                if item["two_proportion_p_value"] is not None
+            ]
+            eligible.sort(key=lambda item: item[1])
+            adjusted = [1.0] * len(eligible)
+            running_min = 1.0
+            total_tests = len(eligible)
+            for rank_index in range(total_tests - 1, -1, -1):
+                rank = rank_index + 1
+                q_value = min(1.0, eligible[rank_index][1] * total_tests / rank)
+                running_min = min(running_min, q_value)
+                adjusted[rank_index] = running_min
+            for (assessment_index, _), q_value in zip(eligible, adjusted):
+                item = assessments[assessment_index]
+                item["false_discovery_rate_q_value"] = q_value
+                if item["accuracy_drop"] >= minimum_drop and q_value <= false_discovery_rate:
+                    item["status"] = "drift_detected"
             report = {
                 "project_id": project_id, "generated_at": now,
                 "policy": {
@@ -2048,7 +2064,8 @@ class SQLiteAnnotationWorkbench:
                     "minimum_baseline_samples": minimum_baseline,
                     "minimum_recent_samples": minimum_recent,
                     "minimum_accuracy_drop": minimum_drop,
-                    "significance_level": significance,
+                    "false_discovery_rate_q": false_discovery_rate,
+                    "multiple_comparison_correction": "Benjamini-Hochberg",
                     "confidence_interval": "Wilson 95%",
                     "test": "two-sided pooled two-proportion z-test",
                 },
@@ -2083,9 +2100,14 @@ class SQLiteAnnotationWorkbench:
     def _decode_drift_report(row) -> dict[str, Any]:
         encoded = row["report_json"]
         actual = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        try:
+            report = json.loads(encoded)
+        except (TypeError, ValueError):
+            report = None
+        valid = actual == row["sha256"] and isinstance(report, dict)
         return {
             "report_id": row["report_id"], "sha256": row["sha256"],
-            "integrity_valid": actual == row["sha256"], "report": json.loads(encoded),
+            "integrity_valid": valid, "report": report,
         }
 
     def list_quality_drift_reports(
@@ -2107,11 +2129,22 @@ class SQLiteAnnotationWorkbench:
                    WHERE owner_id=? AND project_id=? ORDER BY created_at DESC, report_id DESC LIMIT ?""",
                 (owner_id, project_id, limit),
             ).fetchall()
-        return [{
-            "report_id": row["report_id"], "sha256": row["sha256"], "created_at": row["created_at"],
-            "integrity_valid": hashlib.sha256(row["report_json"].encode("utf-8")).hexdigest() == row["sha256"],
-            "summary": json.loads(row["report_json"]).get("summary", {}),
-        } for row in rows]
+        summaries = []
+        for row in rows:
+            try:
+                decoded = json.loads(row["report_json"])
+            except (TypeError, ValueError):
+                decoded = None
+            valid = (
+                hashlib.sha256(row["report_json"].encode("utf-8")).hexdigest() == row["sha256"]
+                and isinstance(decoded, dict)
+            )
+            summaries.append({
+                "report_id": row["report_id"], "sha256": row["sha256"],
+                "created_at": row["created_at"], "integrity_valid": valid,
+                "summary": decoded.get("summary", {}) if isinstance(decoded, dict) else {},
+            })
+        return summaries
 
     def get_quality_drift_report(
         self, owner_id: str, project_id: str, report_id: str,
