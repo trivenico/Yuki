@@ -1,5 +1,6 @@
 # YAML parser used by core/config.py. No AI API key or model SDK is required.
 PyYAML>=6.0.3,<7.0
+Pillow>=11,<13
 
 # Pooled PostgreSQL backend for production deployments.
 psycopg[binary]>=3.2.3,<4
