@@ -252,6 +252,10 @@ class CapabilityApprovalGateway:
                 raise TypeError("operation must be a validated ApprovalOperation")
             if not operation.verify_policy_request(request):
                 raise ValueError("typed operation does not match the policy request")
+            if (self.preview_registry is None
+                    or self.preview_registry.operation_type_for(request.capability)
+                    != operation.operation_type):
+                raise PermissionError("typed operation kind is not registered for this capability")
         operation_json = None if operation is None else json.dumps(
             {
                 "schema_version": operation.schema_version,
@@ -575,6 +579,11 @@ class CapabilityApprovalGateway:
                 if not operation.verify_policy_request(request):
                     db.rollback()
                     raise PermissionError("typed approval operation does not match its request")
+                if (self.preview_registry is None
+                        or self.preview_registry.operation_type_for(request.capability)
+                        != operation.operation_type):
+                    db.rollback()
+                    raise PermissionError("typed approval operation kind is no longer registered")
                 operation_digest = operation_row["operation_sha256"]
             preview_row = db.execute(
                 """SELECT preview_json,preview_sha256 FROM capability_approval_previews
@@ -759,6 +768,12 @@ class CapabilityApprovalGateway:
             or not operation.verify_policy_request(request)
         ):
             raise ValueError("typed operation does not match the policy request")
+        if operation is not None and (
+            self.preview_registry is None
+            or self.preview_registry.operation_type_for(request.capability)
+            != operation.operation_type
+        ):
+            raise PermissionError("typed operation kind is not registered for this capability")
         operation_digest = self._operation_digest(operation)
         try:
             policy = self.policy_engine.evaluate(request)
