@@ -237,6 +237,22 @@ class EvaluationRunStore:
             raise RuntimeError("stored evaluation record failed integrity verification")
         return result
 
+    def get_by_idempotency(self, *, owner_id: str, idempotency_key: str) -> EvaluationRun | None:
+        """Return a verified owner-scoped result for a completed request key."""
+        owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
+        key = self._required_text(idempotency_key, "idempotency_key", _MAX_IDEMPOTENCY_CHARS)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM evaluation_runs WHERE owner_id=? AND idempotency_key=?",
+                (owner, key),
+            ).fetchone()
+        if row is None:
+            return None
+        result = self._from_row(row)
+        if not self.verify(result):
+            raise RuntimeError("stored evaluation record failed integrity verification")
+        return result
+
     def list_runs(self, *, owner_id: str, limit: int = 100) -> tuple[EvaluationRun, ...]:
         owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
         if type(limit) is not int or not 1 <= limit <= 1000:
