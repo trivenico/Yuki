@@ -60,7 +60,7 @@ class AnnotationWorkbenchCommandTests(unittest.TestCase):
             self.store, "owner:alice", "/open " + "a" * 32,
         ))
         self.assertIn("img-1", execute_annotation_command(
-            self.store, "owner:alice", "/tasks",
+            self.store, "owner:alice", "/tasks", open_project_id="a" * 32,
         ))
 
     def test_claim_uses_explicit_expected_version(self):
