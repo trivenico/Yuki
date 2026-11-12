@@ -6,6 +6,7 @@ from typing import Any, Callable
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
+from api.evaluations import AuthenticatedEvaluationAPI
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
@@ -22,6 +23,7 @@ from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
+from evaluation.service import EvaluationService
 
 
 class ConversationRuntime:
@@ -74,6 +76,7 @@ def build_conversation_runtime(
     oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
+    evaluation_service: EvaluationService | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -107,6 +110,8 @@ def build_conversation_runtime(
         oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
     if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
+    if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
+        raise TypeError("evaluation_service must be an EvaluationService")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -128,6 +133,8 @@ def build_conversation_runtime(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
         )
+        if evaluation_service is not None:
+            app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
         if device_pairing is not None:
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:
