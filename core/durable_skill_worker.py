@@ -102,16 +102,20 @@ class DurableSkillWorker:
                 "status": "claim_identity_unavailable",
                 "message": "Claim identity could not be verified; no skill was dispatched.",
             }
-        owner_id = identity.get("owner_id") if isinstance(identity, dict) else None
         if (
             not isinstance(identity, dict)
             or set(identity) != {"owner_id", "goal_id", "task_id"}
             or identity.get("task_id") != task_id
             or identity.get("goal_id") != task.get("goal_id")
-            or not isinstance(owner_id, str)
-            or not owner_id
-            or len(owner_id) > 256
         ):
+            return {
+                "task_id": task_id,
+                "state": "running",
+                "status": "invalid_claim_identity",
+                "message": "Durable claim identity did not match the claimed task; no skill was dispatched.",
+            }
+        owner_id = identity.get("owner_id")
+        if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 256:
             try:
                 rejected = self.engine.reject(
                     task_id, self.worker_id, "unowned_goal", lease_token=lease_token
