@@ -217,6 +217,33 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_worker
                 ON annotation_independent_assignments(annotator_id, status, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_standards (
+                gold_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                expected_label TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(owner_id, project_id, task_id),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id),
+                FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_gold_owner_project
+                ON annotation_gold_standards(owner_id, project_id, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_results (
+                assignment_id TEXT PRIMARY KEY,
+                gold_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                annotator_id TEXT NOT NULL,
+                correct INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(gold_id) REFERENCES annotation_gold_standards(gold_id),
+                FOREIGN KEY(assignment_id) REFERENCES annotation_independent_assignments(assignment_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_gold_results_owner
+                ON annotation_gold_results(owner_id, project_id, annotator_id, created_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_submissions (
                 submission_id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -1008,6 +1035,116 @@ class SQLiteAnnotationWorkbench:
             ).fetchall()
         return [self._submission(row) for row in rows]
 
+    def create_gold_standard(
+        self, owner_id: str, project_id: str, task_id: str, expected_label: str,
+    ) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(task_id, str) or not _ID.fullmatch(task_id)
+                or not isinstance(expected_label, str) or not expected_label.strip()
+                or len(expected_label) > 256):
+            raise ValueError("invalid_gold_standard")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute(
+                "SELECT task_type, rubric_json, status FROM annotation_projects "
+                "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            if project["status"] != "active":
+                raise ValueError("annotation_project_not_active")
+            if project["task_type"] != "text_classification":
+                raise ValueError("gold_standard_requires_text_classification")
+            label = expected_label.strip()
+            validate_annotation_payload(
+                project["task_type"], {"label": label}, _decode(project["rubric_json"])
+            )
+            task = db.execute(
+                "SELECT task_id, status FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if task is None:
+                return None
+            if task["status"] != "pending":
+                raise ValueError("gold_standard_task_must_be_pending")
+            existing_gold = db.execute(
+                "SELECT 1 FROM annotation_gold_standards WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if existing_gold is not None:
+                raise ValueError("gold_standard_already_registered")
+            assigned = db.execute(
+                "SELECT COUNT(*) FROM annotation_independent_assignments "
+                "WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()[0]
+            submitted = db.execute(
+                "SELECT COUNT(*) FROM annotation_submissions "
+                "WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()[0]
+            if assigned or submitted:
+                raise ValueError("gold_standard_must_precede_annotation")
+            gold_id, now = uuid.uuid4().hex, _now()
+            db.execute(
+                """INSERT INTO annotation_gold_standards
+                   (gold_id, owner_id, project_id, task_id, expected_label, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (gold_id, owner_id, project_id, task_id, label, now),
+            )
+            self._audit(db, owner_id, project_id, task_id, "gold_standard_created",
+                        {"gold_id": gold_id})
+        return {"gold_id": gold_id, "project_id": project_id, "task_id": task_id,
+                "created_at": now}
+
+    def gold_calibration_report(
+        self, owner_id: str, project_id: str, *, minimum_gold_tasks: int = 5,
+        passing_accuracy: float = 0.8,
+    ) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or type(minimum_gold_tasks) is not int or not 1 <= minimum_gold_tasks <= 100
+                or type(passing_accuracy) not in (int, float)
+                or not 0.5 <= passing_accuracy <= 1.0):
+            raise ValueError("invalid_calibration_policy")
+        with self._connect() as db:
+            project = db.execute(
+                "SELECT task_type FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            rows = db.execute(
+                """SELECT annotator_id, COUNT(*) AS evaluated_count,
+                          SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
+                   FROM annotation_gold_results
+                   WHERE owner_id=? AND project_id=?
+                   GROUP BY annotator_id ORDER BY annotator_id""",
+                (owner_id, project_id),
+            ).fetchall()
+            gold_count = db.execute(
+                "SELECT COUNT(*) FROM annotation_gold_standards WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()[0]
+        annotators = []
+        for row in rows:
+            count, correct = row["evaluated_count"], row["correct_count"]
+            accuracy = correct / count if count else None
+            status = ("calibrated" if count >= minimum_gold_tasks and accuracy >= passing_accuracy
+                      else "needs_review" if count >= minimum_gold_tasks else "insufficient_evidence")
+            annotators.append({
+                "annotator_id": row["annotator_id"], "evaluated_gold_tasks": count,
+                "correct_gold_tasks": correct, "accuracy": accuracy, "status": status,
+                "last_evaluated_at": row["last_evaluated_at"],
+            })
+        return {
+            "project_id": project_id, "supported": project["task_type"] == "text_classification",
+            "gold_standard_task_count": gold_count,
+            "minimum_gold_tasks": minimum_gold_tasks, "passing_accuracy": passing_accuracy,
+            "annotators": annotators,
+        }
+
     def create_independent_assignments(
         self, owner_id: str, project_id: str, task_id: str, annotator_ids: list[str],
     ) -> list[dict[str, Any]] | None:
@@ -1189,6 +1326,22 @@ class SQLiteAnnotationWorkbench:
             quality = assess_annotation_quality(project["task_type"], payload, rubric)
             quality_json = _json_object(quality, maximum=16384, field="quality_assessment")
             now = _now()
+            gold = db.execute(
+                """SELECT gold_id, expected_label FROM annotation_gold_standards
+                   WHERE owner_id=? AND project_id=? AND task_id=?""",
+                (assignment["owner_id"], assignment["project_id"], assignment["task_id"]),
+            ).fetchone()
+            if gold is not None:
+                submitted_label = payload.get("label") if isinstance(payload, Mapping) else None
+                db.execute(
+                    """INSERT INTO annotation_gold_results
+                       (assignment_id, gold_id, owner_id, project_id, task_id,
+                        annotator_id, correct, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (assignment_id, gold["gold_id"], assignment["owner_id"],
+                     assignment["project_id"], assignment["task_id"], annotator_id,
+                     int(submitted_label == gold["expected_label"]), now),
+                )
             db.execute(
                 """UPDATE annotation_independent_assignments
                    SET status='submitted', payload_json=?, quality_json=?, version=version+1, updated_at=?

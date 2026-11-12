@@ -148,6 +148,70 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(report["fleiss_kappa"], None)
         self.assertIsNone(self.store.independent_agreement_report("owner:bob", project.project_id))
 
+    def test_gold_standard_is_blinded_and_calibrates_annotators(self):
+        project = self.store.create_project(
+            "owner:alice", name="Gold calibration", task_type="text_classification",
+            instructions="Classify the sentiment.",
+            rubric={"labels": ["positive", "negative"]},
+        )
+        for index in range(5):
+            task = self.store.create_task(
+                "owner:alice", project.project_id, external_ref=f"gold-{index}",
+                input_data={"text": f"Calibration sentence {index}."},
+            )
+            self.store.create_gold_standard(
+                "owner:alice", project.project_id, task.task_id, "positive"
+            )
+            assignments = self.store.create_independent_assignments(
+                "owner:alice", project.project_id, task.task_id,
+                ["annotator:calibrated", "annotator:review"],
+            )
+            self.assertNotIn("gold", assignments[0])
+            for assignment, annotator, label in zip(
+                assignments, ("annotator:calibrated", "annotator:review"),
+                ("positive", "negative"),
+            ):
+                inbox = self.store.list_my_independent_assignments(annotator)
+                item = next(row for row in inbox if row["assignment_id"] == assignment["assignment_id"])
+                self.assertNotIn("expected_label", item)
+                claimed = self.store.claim_independent_assignment(
+                    annotator, assignment["assignment_id"], expected_version=1
+                )
+                self.store.submit_independent_assignment(
+                    annotator, assignment["assignment_id"], payload={"label": label},
+                    expected_version=claimed["version"], human_confirmed=True,
+                )
+        report = self.store.gold_calibration_report("owner:alice", project.project_id)
+        self.assertEqual(report["gold_standard_task_count"], 5)
+        calibrated = {row["annotator_id"]: row for row in report["annotators"]}
+        self.assertEqual(calibrated["annotator:calibrated"]["accuracy"], 1.0)
+        self.assertEqual(calibrated["annotator:calibrated"]["status"], "calibrated")
+        self.assertEqual(calibrated["annotator:review"]["accuracy"], 0.0)
+        self.assertEqual(calibrated["annotator:review"]["status"], "needs_review")
+        self.assertIsNone(self.store.gold_calibration_report("owner:bob", project.project_id))
+
+    def test_gold_standard_must_be_created_before_assignment_and_match_rubric(self):
+        project = self.store.create_project(
+            "owner:alice", name="Gold setup", task_type="text_classification",
+            instructions="Classify.", rubric={"labels": ["positive", "negative"]},
+        )
+        task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="gold-setup",
+            input_data={"text": "A sentence."},
+        )
+        with self.assertRaisesRegex(ValueError, "label_not_in_project_rubric"):
+            self.store.create_gold_standard(
+                "owner:alice", project.project_id, task.task_id, "unknown"
+            )
+        self.store.create_independent_assignments(
+            "owner:alice", project.project_id, task.task_id,
+            ["annotator:one", "annotator:two"],
+        )
+        with self.assertRaisesRegex(ValueError, "gold_standard_must_precede_annotation"):
+            self.store.create_gold_standard(
+                "owner:alice", project.project_id, task.task_id, "positive"
+            )
+
     def test_independent_assignment_rejects_duplicate_and_self_assignment(self):
         project = self.store.create_project(
             "owner:alice", name="Text agreement duplicate", task_type="text_classification",

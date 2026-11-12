@@ -260,6 +260,65 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, hidden["error"]), (404, "not_found"))
 
+    def test_gold_standard_api_hides_expected_answer_and_reports_calibration(self):
+        self.auth.create_account("gold-annotator", "gold-annotator-password")
+        annotator = self.auth.authenticate("gold-annotator", "gold-annotator-password")
+        status, created = self.request(
+            "POST", "/v1/annotation/projects", {
+                "name": "Gold API project", "task_type": "text_classification",
+                "instructions": "Classify the sentence.",
+                "rubric": {"labels": ["positive", "negative"]},
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        project_id = created["project"]["project_id"]
+        status, task_result = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "gold-api-001", "input_data": {"text": "A good sentence."}},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task_id = task_result["task"]["task_id"]
+        status, gold = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/gold-standard",
+            {"expected_label": "positive"}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertNotIn("expected_label", gold["gold_standard"])
+        status, assignments = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
+            {"annotator_user_ids": [annotator.user.user_id, self.owner_two.user.user_id]},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        assignment_id = assignments["assignments"][0]["assignment_id"]
+        status, inbox = self.request("GET", "/v1/annotation/assignments", token=annotator.token)
+        self.assertEqual(status, 200)
+        self.assertNotIn("expected_label", inbox["assignments"][0])
+        status, claimed = self.request(
+            "POST", f"/v1/annotation/assignments/{assignment_id}/claim",
+            {"expected_version": 1}, annotator.token,
+        )
+        self.assertEqual(status, 200)
+        status, submitted = self.request(
+            "POST", f"/v1/annotation/assignments/{assignment_id}/submit",
+            {"payload": {"label": "positive"},
+             "expected_version": claimed["assignment"]["version"], "human_confirmed": True},
+            annotator.token,
+        )
+        self.assertEqual(status, 201)
+        status, report = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/calibration-report",
+            token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(report["report"]["annotators"][0]["accuracy"], 1.0)
+        status, hidden = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/calibration-report",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, hidden["error"]), (404, "not_found"))
+
     def test_quality_report_api_is_owner_scoped_and_returns_aggregates(self):
         status, created = self.request(
             "POST", "/v1/annotation/projects", {

@@ -288,6 +288,38 @@ class AuthenticatedAnnotationAPI:
                     })
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            gold_standard = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/gold-standard",
+                path,
+            )
+            if gold_standard:
+                if method != "POST":
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                payload = await self._body(receive)
+                if set(payload) != {"expected_label"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                result = await asyncio.to_thread(
+                    self.workbench.create_gold_standard, user.user_id,
+                    gold_standard.group(1), gold_standard.group(2), payload["expected_label"],
+                )
+                return await self._respond(
+                    send, 201 if result else 404,
+                    {"gold_standard": result} if result else {"error": "not_found"},
+                )
+
+            calibration_report = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/calibration-report", path
+            )
+            if calibration_report and method == "GET":
+                report = await asyncio.to_thread(
+                    self.workbench.gold_calibration_report,
+                    user.user_id, calibration_report.group(1),
+                )
+                return await self._respond(
+                    send, 200 if report else 404,
+                    {"report": report} if report else {"error": "not_found"},
+                )
+
             independent_assignments = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/independent-assignments",
                 path,
