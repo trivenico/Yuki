@@ -466,7 +466,8 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
 
     def test_legacy_submission_schema_migrates_reviewer_identity_column(self):
         legacy_path = Path(self.directory.name) / "legacy-annotation.sqlite3"
-        with sqlite3.connect(legacy_path) as db:
+        db = sqlite3.connect(legacy_path)
+        try:
             db.execute("""CREATE TABLE annotation_submissions (
                 submission_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                 project_id TEXT NOT NULL, owner_id TEXT NOT NULL,
@@ -475,9 +476,15 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
                 reviewer_notes TEXT NOT NULL, created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )""")
+            db.commit()
+        finally:
+            db.close()
         SQLiteAnnotationWorkbench(str(legacy_path))
-        with sqlite3.connect(legacy_path) as db:
+        db = sqlite3.connect(legacy_path)
+        try:
             columns = {row[1] for row in db.execute("PRAGMA table_info(annotation_submissions)")}
+        finally:
+            db.close()
         self.assertIn("reviewer_id", columns)
         self.assertIn("quality_json", columns)
 
