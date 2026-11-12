@@ -3,7 +3,8 @@
 ## Implemented in this increment
 
 - Added `core.approval_operation.ApprovalOperation`, a frozen typed envelope with an explicit schema version, stable operation type, capability, target and canonical payload SHA-256.
-- Added deterministic canonical JSON encoding with finite-number enforcement, UTF-8 validation, object-only payloads and a 256 KB encoded payload ceiling.
+- Added deterministic canonical JSON encoding with finite-number enforcement, UTF-8 validation, object-only payloads, string-only object keys, strict JSON value types, a 32-level nesting limit and a 256 KB encoded payload ceiling.
+- Follow-up hardening rejects tuple coercion, custom object values and non-string keys rather than allowing JSON serialization to silently normalize ambiguous inputs.
 - Added exact verification helpers for payload bytes and policy-request capability, target and argument digest.
 - Added tests for mapping-order stability, payload mutation, policy-request mismatch, invalid numeric data, size limits and unsupported schema versions.
 
