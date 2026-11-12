@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import time
 import uuid
@@ -146,7 +147,7 @@ class WorkspaceTransactionJournal:
                     Path(entry["stage"]).unlink(missing_ok=True)
                 except OSError:
                     pass
-            # Keep incomplete operation directories for operator inspection.
+            shutil.rmtree(operation_dir, ignore_errors=True)
             raise
 
     def _load(self, operation_dir: Path) -> dict:
@@ -240,6 +241,21 @@ class WorkspaceTransactionJournal:
                 raise WorkspaceJournalError("staged path is unsafe")
             stage.unlink(missing_ok=True)
         self._save(operation_dir, manifest, "rolled_back")
+
+    def rollback(self, operation_id: str) -> None:
+        if not isinstance(operation_id, str) or len(operation_id) != 32:
+            raise WorkspaceJournalError("invalid operation identifier")
+        operation_dir = self.directory / operation_id
+        manifest = self._load(operation_dir)
+        if manifest["state"] in {"committed", "rolled_back"}:
+            return
+        if manifest["state"] not in {"prepared", "applying", "recovery_required"}:
+            raise WorkspaceJournalError("unknown journal state requires operator review")
+        try:
+            self._restore(operation_dir, manifest)
+        except Exception:
+            self._save(operation_dir, manifest, "recovery_required")
+            raise
 
     def recover_pending(self) -> list[str]:
         recovered = []
