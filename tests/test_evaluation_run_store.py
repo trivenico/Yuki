@@ -1,4 +1,5 @@
 import dataclasses
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -75,8 +76,12 @@ class EvaluationRunStoreTests(unittest.TestCase):
 
     def test_detects_database_tampering_on_read(self):
         run = self.store.record(**self.arguments)
-        with sqlite3.connect(self.database) as db:
+        # sqlite3's connection context manager commits/rolls back but does not
+        # close the connection. Explicitly close it so Windows can remove the
+        # temporary database during tearDown.
+        with closing(sqlite3.connect(self.database)) as db:
             db.execute("UPDATE evaluation_runs SET model_id='tampered' WHERE run_id=?", (run.run_id,))
+            db.commit()
         with self.assertRaisesRegex(RuntimeError, "integrity"):
             self.store.get(owner_id="owner-a", run_id=run.run_id)
 
