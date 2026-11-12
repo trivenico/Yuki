@@ -50,9 +50,13 @@
     });
     return session.chain.catch((error) => {
       if (error.message === "version_conflict") session.conflict = true;
+      else {
+        session.dirty = true;
+        if (!session.timer) session.timer = setTimeout(() => flushDraftSave(taskId), 1800);
+      }
       if (state.task?.task_id === taskId) setStatus(
         session.conflict ? "Draft changed in another session. Refresh before continuing to avoid overwriting it." :
-          "Draft save failed: " + error.message, true
+          "Draft save failed; your changes are retained locally and will retry: " + error.message, true
       );
     });
   };
@@ -197,6 +201,9 @@
     }
   };
   const selectTask = async () => {
+    const previousTaskId = state.task?.task_id;
+    const nextTaskId = $("annotation-task").value;
+    if (previousTaskId && previousTaskId !== nextTaskId) await flushDraftSave(previousTaskId);
     state.task = selectedTask(); state.claimed = Boolean(state.task && ["in_progress", "rework"].includes(state.task.status));
     state.boxes = []; state.polygons = []; state.draft = [];
     $("annotation-label").value = "";
@@ -346,6 +353,7 @@
       if (!point) return;
       if (state.draft.length >= 2048) { setStatus("Polygon vertex limit reached.", true); return; }
       state.draft.push(point);
+      scheduleDraftSave();
     }
     if (state.pointer) { canvas.setPointerCapture(event.pointerId); event.preventDefault(); }
     renderCanvas();
@@ -614,7 +622,11 @@
     state.resizeObserver = new ResizeObserver(resizeCanvas);
     state.resizeObserver.observe(canvas);
   } else window.addEventListener("resize", resizeCanvas);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && state.task) flushDraftSave(state.task.task_id);
+  });
   window.addEventListener("pagehide", () => {
+    if (state.task) flushDraftSave(state.task.task_id);
     if (state.imageUrl) URL.revokeObjectURL(state.imageUrl);
     if (state.resizeObserver) state.resizeObserver.disconnect();
   });
