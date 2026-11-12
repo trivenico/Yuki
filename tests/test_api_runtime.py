@@ -201,6 +201,23 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.app.service, approvals)
             runtime.close()
 
+    def test_runtime_rejects_approval_service_with_different_auth_instance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            other_auth = BuiltInAuthService(str(root / "other-auth.sqlite"), password_iterations=100_000)
+            gateway = CapabilityApprovalGateway(
+                root / "approval.sqlite",
+                ToolPolicyEngine((), policy_version="runtime-policy"),
+                authorize_approver=lambda actor, request: False,
+            )
+            approvals = AuthenticatedCapabilityApprovalService(other_auth, gateway)
+            with self.assertRaisesRegex(ValueError, "exact auth_service"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), approval_service=approvals,
+                )
+
     def test_runtime_rejects_invalid_approval_service(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
