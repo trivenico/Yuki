@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,7 +42,7 @@ class ProviderProfileStoreTests(unittest.TestCase):
         self.addCleanup(reopened.close)
         self.assertEqual(reopened.list_profiles("owner:alice")[0].name, "gateway")
         self.assertNotIn("secret-value", repr(profile))
-        with sqlite3.connect(self.root / "profiles.sqlite") as db:
+        with closing(sqlite3.connect(self.root / "profiles.sqlite")) as db:
             self.assertNotIn("secret-value", repr(db.execute(
                 "SELECT * FROM provider_profiles").fetchall()))
         self.assertEqual(reopened.resolve_for_runtime("owner:alice", "gateway")["api_key"],
