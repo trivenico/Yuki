@@ -1074,6 +1074,80 @@
   $("annotation-adjudication-accept").addEventListener("click", () => submitAdjudication("accepted"));
   $("annotation-adjudication-rework").addEventListener("click", () => submitAdjudication("rework"));
   $("annotation-delivery-refresh").addEventListener("click", refreshDeliveryReport);
+  let manifestIdempotencyKey = null;
+  const refreshDeliveryManifests = async () => {
+    const target = $("annotation-manifest-list");
+    target.replaceChildren();
+    if (!state.project) {
+      target.textContent = "Select a project to view dataset manifests.";
+      return;
+    }
+    const projectId = state.project.project_id;
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(projectId) + "/delivery-manifests");
+      if (!result.manifests.length) {
+        target.textContent = "No delivery manifests have been created.";
+        return;
+      }
+      for (const manifest of result.manifests) {
+        const row = document.createElement("div");
+        const summary = document.createElement("p");
+        summary.textContent = "Version " + manifest.version + " · " + manifest.item_count +
+          " item(s) · SHA-256 " + manifest.sha256;
+        const verify = document.createElement("button");
+        verify.type = "button";
+        verify.textContent = "Verify checksum";
+        verify.addEventListener("click", async () => {
+          verify.disabled = true;
+          try {
+            const checked = await api("/v1/annotation/projects/" +
+              encodeURIComponent(projectId) + "/delivery-manifests/" +
+              encodeURIComponent(manifest.manifest_id) + "/verify");
+            verify.textContent = checked.verification.valid ? "Checksum verified" : "Checksum mismatch";
+          } catch (error) {
+            verify.textContent = "Verification failed";
+            summary.textContent += " · " + error.message;
+          } finally {
+            verify.disabled = false;
+          }
+        });
+        row.append(summary, verify);
+        target.append(row);
+      }
+    } catch (error) {
+      target.textContent = "Manifest history unavailable: " + error.message;
+    }
+  };
+  $("annotation-manifest-refresh").addEventListener("click", refreshDeliveryManifests);
+  $("annotation-manifest-create").addEventListener("click", async () => {
+    if (!state.project) {
+      $("annotation-manifest-list").textContent = "Select a project first.";
+      return;
+    }
+    const button = $("annotation-manifest-create");
+    const projectId = state.project.project_id;
+    button.disabled = true;
+    if (!manifestIdempotencyKey || manifestIdempotencyKey.projectId !== projectId) {
+      manifestIdempotencyKey = { projectId, key: crypto.randomUUID() };
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(projectId) + "/delivery-manifests", {
+          method: "POST", body: JSON.stringify({ idempotency_key: manifestIdempotencyKey.key })
+        });
+      manifestIdempotencyKey = null;
+      $("annotation-manifest-list").textContent =
+        "Created manifest version " + result.manifest.version + " with " +
+        result.manifest.item_count + " accepted item(s).";
+      await refreshDeliveryManifests();
+    } catch (error) {
+      $("annotation-manifest-list").textContent =
+        "Manifest creation failed. Retry to reuse the same request key: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
   const loadIndependentAssignments = async () => {
     const target = $("annotation-independent-list");
     target.replaceChildren();
@@ -1137,6 +1211,30 @@
       $("annotation-independent-annotators").value = "";
     } catch (error) {
       $("annotation-independent-status").textContent = "Assignment creation failed: " + error.message;
+    }
+  });
+  $("annotation-rework-assign").addEventListener("click", async () => {
+    if (!state.project || !state.task) {
+      $("annotation-independent-status").textContent = "Select a project and a rework task first.";
+      return;
+    }
+    const annotatorIds = $("annotation-independent-annotators").value
+      .split(",").map(value => value.trim()).filter(Boolean);
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/tasks/" +
+        encodeURIComponent(state.task.task_id) + "/rework-assignments", {
+          method: "POST", body: JSON.stringify({ annotator_user_ids: annotatorIds })
+        });
+      const round = result.assignments[0] ? result.assignments[0].round_number : "new";
+      $("annotation-independent-status").textContent =
+        "Created " + result.assignments.length + " assignments for rework round " + round +
+        ". Previous submissions remain in the task history.";
+      $("annotation-independent-annotators").value = "";
+      await loadIndependentEvidence();
+      await refreshDeliveryReport();
+    } catch (error) {
+      $("annotation-independent-status").textContent = "Rework assignment failed: " + error.message;
     }
   });
   $("annotation-agreement-refresh").addEventListener("click", refreshAgreementReport);

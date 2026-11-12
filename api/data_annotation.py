@@ -334,6 +334,12 @@ class AuthenticatedAnnotationAPI:
                 annotator_ids = payload["annotator_user_ids"]
                 if not isinstance(annotator_ids, list) or not 2 <= len(annotator_ids) <= 20:
                     return await self._respond(send, 400, {"error": "invalid_request"})
+                # Authorize project ownership before querying the global account directory.
+                project = await asyncio.to_thread(
+                    self.workbench.get_project, user.user_id, project_id,
+                )
+                if project is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
                 users = await asyncio.to_thread(self.auth.list_users)
                 known = {item.user_id for item in users}
                 if any(item not in known for item in annotator_ids):
@@ -543,6 +549,80 @@ class AuthenticatedAnnotationAPI:
                     send, 200 if report else 404,
                     {"report": report} if report else {"error": "not_found"},
                 )
+
+            rework_assignments = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/rework-assignments",
+                path,
+            )
+            if rework_assignments:
+                if method != "POST":
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                project_id, task_id = rework_assignments.groups()
+                payload = await self._body(receive)
+                if set(payload) != {"annotator_user_ids"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                annotator_ids = payload["annotator_user_ids"]
+                if not isinstance(annotator_ids, list) or not 2 <= len(annotator_ids) <= 20:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                users = await asyncio.to_thread(self.auth.list_users)
+                known = {item.user_id for item in users}
+                if any(item not in known for item in annotator_ids):
+                    return await self._respond(send, 404, {"error": "annotator_not_found"})
+                assignments = await asyncio.to_thread(
+                    self.workbench.create_rework_assignments,
+                    user.user_id, project_id, task_id, annotator_ids,
+                )
+                return await self._respond(
+                    send, 201 if assignments is not None else 404,
+                    {"assignments": assignments} if assignments is not None else {"error": "not_found"},
+                )
+
+            delivery_manifests = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/delivery-manifests(?:/([0-9a-f]{32})(?:/(verify))?)?",
+                path,
+            )
+            if delivery_manifests:
+                project_id, manifest_id, action = delivery_manifests.groups()
+                if manifest_id is not None:
+                    if method != "GET":
+                        return await self._respond(send, 405, {"error": "method_not_allowed"})
+                    if action == "verify":
+                        result = await asyncio.to_thread(
+                            self.workbench.verify_delivery_manifest,
+                            user.user_id, project_id, manifest_id,
+                        )
+                        key = "verification"
+                    else:
+                        result = await asyncio.to_thread(
+                            self.workbench.get_delivery_manifest,
+                            user.user_id, project_id, manifest_id,
+                        )
+                        key = "manifest"
+                    return await self._respond(
+                        send, 200 if result else 404,
+                        {key: result} if result else {"error": "not_found"},
+                    )
+                if method == "POST":
+                    payload = await self._body(receive)
+                    if set(payload) != {"idempotency_key"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    manifest = await asyncio.to_thread(
+                        self.workbench.create_delivery_manifest,
+                        user.user_id, project_id, idempotency_key=payload["idempotency_key"],
+                    )
+                    return await self._respond(
+                        send, 201 if manifest else 404,
+                        {"manifest": manifest} if manifest else {"error": "not_found"},
+                    )
+                if method == "GET":
+                    manifests = await asyncio.to_thread(
+                        self.workbench.list_delivery_manifests, user.user_id, project_id,
+                    )
+                    return await self._respond(
+                        send, 200 if manifests is not None else 404,
+                        {"manifests": manifests} if manifests is not None else {"error": "not_found"},
+                    )
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
 
             review_queue = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/review-queue", path

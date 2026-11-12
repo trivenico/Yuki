@@ -223,6 +223,12 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         task_id = task_result["task"]["task_id"]
+        status, denied = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/rework-assignments",
+            {"annotator_user_ids": [one.user.user_id, two.user.user_id]},
+            self.owner_two.token,
+        )
+        self.assertEqual((status, denied["error"]), (404, "not_found"))
         status, result = self.request(
             "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
             {"annotator_user_ids": [one.user.user_id, two.user.user_id]}, self.owner_one.token,
@@ -647,6 +653,72 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.assertEqual((status, body["delegated"]), (200, True))
 
 
+    def test_rework_and_manifest_api_are_owner_scoped_and_idempotent(self):
+        project_id = self.create_project()
+        status, task_body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "manifest-api-001", "input_data": {"text": "Review this."}},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task_id = task_body["task"]["task_id"]
+        workers = []
+        for username in ("round-one-a", "round-one-b", "round-two-a", "round-two-b"):
+            self.auth.create_account(username, username + "-secure-password")
+            workers.append(self.auth.authenticate(username, username + "-secure-password"))
+        status, result = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
+            {"annotator_user_ids": [workers[0].user.user_id, workers[1].user.user_id]},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        for assignment, worker, label in zip(result["assignments"], workers[:2], ("positive", "negative")):
+            status, claimed = self.request(
+                "POST", f"/v1/annotation/assignments/{assignment['assignment_id']}/claim",
+                {"expected_version": 1}, worker.token,
+            )
+            self.assertEqual(status, 200)
+            status, _ = self.request(
+                "POST", f"/v1/annotation/assignments/{assignment['assignment_id']}/submit",
+                {"payload": {"label": label}, "expected_version": claimed["assignment"]["version"],
+                 "human_confirmed": True}, worker.token,
+            )
+            self.assertEqual(status, 201)
+        status, _ = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/adjudication",
+            {"decision": "rework", "notes": "Need a fresh independent pass."},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        status, reopened = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/rework-assignments",
+            {"annotator_user_ids": [workers[2].user.user_id, workers[3].user.user_id]},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual({item["round_number"] for item in reopened["assignments"]}, {2})
+        status, evidence = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-submissions",
+            token=self.owner_one.token,
+        )
+        self.assertEqual((status, evidence["submissions"]), (200, []))
+        status, rejected = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/delivery-manifests",
+            {"idempotency_key": "api-delivery-empty"}, self.owner_one.token,
+        )
+        self.assertEqual((status, rejected["error"]), (400, "invalid_request"))
+        status, manifests = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/delivery-manifests",
+            token=self.owner_one.token,
+        )
+        self.assertEqual((status, manifests["manifests"]), (200, []))
+        status, hidden = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/delivery-manifests",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, hidden["error"]), (404, "not_found"))
+
+
 class AnnotationRuntimeTests(unittest.TestCase):
     def test_runtime_mounts_annotation_api_when_configured(self):
         def model(**kwargs):
@@ -702,6 +774,9 @@ class AnnotationRuntimeTests(unittest.TestCase):
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=auth, agent_loop=loop, annotation_workbench=object(),
                 )
+
+
+
 
 
 if __name__ == "__main__":
