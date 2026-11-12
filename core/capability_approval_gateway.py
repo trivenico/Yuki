@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.tool_policy import Decision, PolicyRequest, Risk
+from core.capability_approval_preview import CapabilityApprovalPreviewRegistry
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,11 @@ class CapabilityApprovalGateway:
         self.policy_engine = policy_engine
         self.authorize_approver = authorize_approver
         self.clock = clock
+        if preview_registry is not None and not isinstance(
+            preview_registry, CapabilityApprovalPreviewRegistry
+        ):
+            raise TypeError("preview_registry must be a CapabilityApprovalPreviewRegistry")
+        self.preview_registry = preview_registry
         self.max_approval_ttl_seconds = max_approval_ttl_seconds
         with closing(self._connect()) as db:
             db.executescript("""
@@ -265,6 +271,33 @@ class CapabilityApprovalGateway:
             db.commit()
         return row["status"] if row is not None else None
 
+    def approval_preview(self, request_id: str) -> dict[str, str] | None:
+        """Render a trusted capability-owned preview for one live pending request."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        if self.preview_registry is None:
+            return None
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT request_json,status,expires_at FROM capability_approval_requests
+                   WHERE request_id=?""", (request_id,),
+            ).fetchone()
+        if row is None or row["status"] != "pending" or row["expires_at"] <= now:
+            return None
+        raw = json.loads(row["request_json"])
+        raw["risk"] = Risk(raw["risk"])
+        request = PolicyRequest(**raw)
+        preview = self.preview_registry.render(request)
+        if preview is None:
+            return None
+        return {
+            "title": preview.title,
+            "operation": preview.operation,
+            "target": preview.target,
+            "impact": preview.impact,
+        }
+
     def pending_requests(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """Return redacted inbox metadata; never expose request arguments or credentials."""
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -292,6 +325,8 @@ class CapabilityApprovalGateway:
             # Only expose review metadata; never expose argument or claim digests.
             item["risk"] = request_metadata.get("risk")
             item["trigger"] = request_metadata.get("trigger")
+            item["preview"] = self.approval_preview(item["request_id"])
+            item["preview_available"] = item["preview"] is not None
             redacted.append(item)
         return tuple(redacted)
 
