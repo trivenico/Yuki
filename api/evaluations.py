@@ -7,7 +7,7 @@ import json
 import re
 from urllib.parse import parse_qs
 
-from evaluation.run_store import EvaluationRunConflict
+from evaluation.run_store import EvaluationRunConflict, EvaluationRunInProgress
 from evaluation.service import EvaluationCapacityError, EvaluationService
 
 _MAX_BODY = 4_096
@@ -58,7 +58,7 @@ class AuthenticatedEvaluationAPI:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 headers = self._headers(scope)
                 key = headers.get(b"idempotency-key", b"").decode("latin-1")
-                if not key or len(key) > 200:
+                if not re.fullmatch(r"[A-Za-z0-9._:-]{1,200}", key):
                     return await self._respond(send, 400, {"error": "idempotency_key_required"})
                 run = await asyncio.to_thread(
                     self.evaluations.run,
@@ -94,7 +94,13 @@ class AuthenticatedEvaluationAPI:
                 )
                 return await self._respond(send, 200, {"run": self._public_run(run)})
             if path == _PREFIX or path.startswith(_PREFIX + "/"):
+                if path != _PREFIX and not re.fullmatch(
+                    re.escape(_PREFIX) + r"/[A-Za-z0-9_-]{16,100}", path
+                ):
+                    return await self._respond(send, 404, {"error": "not_found"})
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
+        except EvaluationRunInProgress:
+            return await self._respond(send, 409, {"error": "evaluation_in_progress"})
         except EvaluationCapacityError:
             return await self._respond(send, 429, {"error": "evaluation_capacity_reached"})
         except EvaluationRunConflict:
