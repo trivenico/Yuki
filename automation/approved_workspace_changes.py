@@ -19,6 +19,7 @@ import time
 from typing import Callable, Mapping, Sequence
 
 from automation.authorized_read_tools import ToolPrincipal, ToolInputError, ToolAuthorizationError
+from automation.workspace_transaction_journal import WorkspaceTransactionJournal
 
 _MAX_CHANGES = 8
 _MAX_FILE_BYTES = 256 * 1024
@@ -110,6 +111,7 @@ class ApprovedWorkspaceChanges:
         approve_change: Callable[[str, str, str], bool],
         audit: Callable[[dict], None],
         allowed_paths: Sequence[str],
+        journal_dir: str | Path | None = None,
     ):
         root = Path(workspace).expanduser().resolve()
         if not root.is_dir():
@@ -123,6 +125,7 @@ class ApprovedWorkspaceChanges:
         self.approve_change = approve_change
         self.audit = audit
         self.allowed_paths = frozenset(allowed_paths)
+        self.journal = WorkspaceTransactionJournal(root, journal_dir)
 
     def _audit(self, actor: str, action: str, outcome: str, digest: str, paths: Sequence[str]) -> None:
         try:
@@ -202,67 +205,48 @@ class ApprovedWorkspaceChanges:
             self._audit(principal.actor_id, "workspace.apply", "denied", digest, [x[0] for x in normalized])
             raise ToolAuthorizationError("explicit approval for this exact change digest is required.")
 
-        staged = []
-        replaced = []
+        manifest = self.journal.begin(
+            actor_id=principal.actor_id, operation_digest=digest,
+            changes=[(relative, target, old, new) for relative, target, old, new in normalized],
+        )
+        operation_id = manifest["operation_id"]
         try:
-            for relative, target, old, new in normalized:
-                fd, temp_name = tempfile.mkstemp(prefix=".yuki-stage-", dir=str(target.parent))
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(new)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.chmod(temp_name, target.stat().st_mode & 0o777)
-                staged.append((relative, target, old, Path(temp_name)))
-            # Revalidate the durable worker claim after staging and immediately
-            # before any workspace side effect. A lost claim must not write files.
-            if execution_guard is not None:
-                try:
-                    claim_valid = callable(execution_guard) and execution_guard() is True
-                except Exception:
-                    claim_valid = False
-                if not claim_valid:
-                    raise WorkspaceChangeError("worker claim is no longer valid; no changes applied.")
-            for relative, target, old, temp_path in staged:
-                # Revalidate the claim and path immediately before each replace.
-                # Re-resolving catches symlink or parent-path substitution after
-                # initial validation; rehashing closes the earlier TOCTOU window.
+            self.journal.mark_applying(operation_id)
+            for entry in manifest["entries"]:
+                relative, target = entry["path"], Path(entry["target"])
                 if execution_guard is not None:
                     try:
                         claim_valid = callable(execution_guard) and execution_guard() is True
                     except Exception:
                         claim_valid = False
                     if not claim_valid:
-                        raise WorkspaceChangeError("worker claim changed before file replacement; no changes applied.")
+                        raise WorkspaceChangeError("worker claim changed before file replacement.")
                 current_target = _safe_existing_file(self.root, relative)
                 if current_target != target:
-                    raise WorkspaceChangeError("workspace path changed during approval; no changes applied.")
-                if hashlib.sha256(current_target.read_bytes()).digest() != hashlib.sha256(old).digest():
-                    raise WorkspaceChangeError("file changed during approval; no changes applied.")
-                os.replace(temp_path, current_target)
-                replaced.append((relative, current_target, old))
-            # Treat failure to persist the success audit event as an operation failure.
+                    raise WorkspaceChangeError("workspace path changed during approval.")
+                if hashlib.sha256(current_target.read_bytes()).hexdigest() != entry["old_sha256"]:
+                    raise WorkspaceChangeError("file changed during approval.")
+                os.replace(entry["stage"], current_target)
+                self.journal._fsync_directory(current_target.parent)
+                self.journal.record_replacement(operation_id, relative)
+            self.journal.mark_committed(operation_id)
+        except Exception as exc:
+            try:
+                self.journal.rollback(operation_id)
+            except Exception as rollback_exc:
+                try:
+                    self._audit(principal.actor_id, "workspace.apply", "recovery_required", digest, [x[0] for x in normalized])
+                except Exception:
+                    pass
+                raise WorkspaceChangeError("change failed and durable rollback needs operator attention.") from rollback_exc
+            self._audit(principal.actor_id, "workspace.apply", "failed", digest, [x[0] for x in normalized])
+            raise WorkspaceChangeError("change failed; durable rollback completed.") from exc
+
+        # The durable commit marker is authoritative. Never roll back after it.
+        try:
             self._audit(principal.actor_id, "workspace.apply", "succeeded", digest, [x[0] for x in normalized])
         except Exception as exc:
-            rollback_errors = []
-            for _, target, old in reversed(replaced):
-                try:
-                    fd, restore_name = tempfile.mkstemp(prefix=".yuki-restore-", dir=str(target.parent))
-                    with os.fdopen(fd, "wb") as handle:
-                        handle.write(old)
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.replace(restore_name, target)
-                except Exception as rollback_exc:
-                    rollback_errors.append(type(rollback_exc).__name__)
-            for _, _, _, temp_path in staged:
-                try:
-                    temp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            self._audit(principal.actor_id, "workspace.apply", "failed", digest, [x[0] for x in normalized])
-            if rollback_errors:
-                raise WorkspaceChangeError("change failed and rollback needs operator attention.") from exc
-            raise WorkspaceChangeError("change failed; replaced files were rolled back.") from exc
+            raise WorkspaceChangeError("workspace changes committed, but success audit persistence failed; operator reconciliation required.") from exc
         return ChangeResult(change_id, principal.actor_id, tuple(x[0] for x in normalized), digest)
 
 
