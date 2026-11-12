@@ -191,7 +191,7 @@ class EvaluationRunStore:
 
     def acquire_claim(
         self, *, owner_id: str, idempotency_key: str, request_digest: str,
-        lease_seconds: int = 900,
+        lease_seconds: int = 3600,
     ) -> str | None:
         """Atomically claim a run key; None means a matching completed run won the race."""
         owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
