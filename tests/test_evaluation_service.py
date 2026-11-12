@@ -66,6 +66,16 @@ class EvaluationServiceTests(unittest.TestCase):
         self.assertEqual(result.model_id, "model-a")
         self.assertEqual(result.report["passed_count"], 1)
         self.assertEqual(self.store.get(owner_id="owner-a", run_id=result.run_id), result)
+        replay = self._service(adapter).run(
+            owner_id="owner-a",
+            idempotency_key="request-1",
+            benchmark_id="smoke",
+            benchmark_version=1,
+            benchmark_digest=self.benchmark.digest,
+            candidate_id="candidate-a",
+        )
+        self.assertEqual(replay.run_id, result.run_id)
+        self.assertEqual(len(calls), 1)
 
     def test_digest_mismatch_fails_before_provider_resolution(self):
         adapter = TrustedEvaluationAdapter("provider-a", "model-a", lambda *a, **k: "retry")
