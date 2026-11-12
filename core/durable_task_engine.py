@@ -611,6 +611,10 @@ class DurableTaskEngine:
                     "running task cannot be cancelled safely; wait for the worker to finish"
                 )
             c.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",(now,task_id))
+            c.execute(
+                """UPDATE task_approval_waits SET state='stale',updated_at=?
+                   WHERE task_id=? AND state IN ('pending','delivered')""", (now, task_id),
+            )
             self._event(c,r["goal_id"],task_id,"task.cancelled",{})
             self._fail_blocked_descendants(c, r["goal_id"], now)
             self._complete_goal_if_terminal(c,r["goal_id"],now)
