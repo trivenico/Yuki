@@ -478,6 +478,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         with sqlite3.connect(legacy_path) as db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(annotation_submissions)")}
         self.assertIn("reviewer_id", columns)
+        self.assertIn("quality_json", columns)
 
     def test_database_symlink_is_rejected(self):
         if not hasattr(Path, "symlink_to"):
