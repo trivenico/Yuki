@@ -103,7 +103,10 @@ class DurableSkillWorker:
                     decision_name = getattr(getattr(decision, "decision", None), "value", None)
                     requires_owner_approval = decision_name == "require_approval"
                     if requires_owner_approval:
-                        gateway.request_approval(policy_request)
+                        request_id = gateway.request_approval(policy_request)
+                        self.engine.record_approval_wait(
+                            task_id, self.worker_id, lease_token, request_id,
+                        )
                 if requires_owner_approval or policy_engine is None:
                     deadline = time.monotonic() + self.approval_wait_timeout_seconds
                     while True:
@@ -123,6 +126,11 @@ class DurableSkillWorker:
                         stop.wait(min(0.5, max(0.01, deadline - time.monotonic())))
                     if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
                         raise PermissionError("task claim changed during approval delivery")
+                    if requires_owner_approval:
+                        claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+                        wait = self.engine.get_approval_wait(task_id, claim_digest)
+                        if wait is None or wait["state"] != "delivered":
+                            raise PermissionError("durable approval wait has not been delivered to this claim")
             invoke_kwargs = {
                 "execution_guard": lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
                 "policy_context": policy_context,
