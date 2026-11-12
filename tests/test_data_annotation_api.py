@@ -229,6 +229,38 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, body["error"]), (409, "version_conflict"))
 
+    def test_typed_payload_validation_rejects_invalid_label_without_advancing_task(self):
+        project_id = self.create_project()
+        _, created = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "typed-1", "input_data": {"text": "A plane"}},
+            self.owner_one.token,
+        )
+        task = created["task"]
+        _, claimed = self.request(
+            "POST", f"/v1/annotation/tasks/{task["task_id"]}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        status, body = self.request(
+            "POST", f"/v1/annotation/tasks/{task["task_id"]}/submit",
+            {"payload": {"label": "airplane"},
+             "expected_version": claimed["task"]["version"],
+             "human_confirmed": True},
+            self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (400, "invalid_request"))
+        _, tasks = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/tasks",
+            token=self.owner_one.token,
+        )
+        unchanged = next(item for item in tasks["tasks"] if item["task_id"] == task["task_id"])
+        self.assertEqual((unchanged["status"], unchanged["version"]), ("in_progress", claimed["task"]["version"]))
+        _, submissions = self.request(
+            "GET", f"/v1/annotation/tasks/{task["task_id"]}/submissions",
+            token=self.owner_one.token,
+        )
+        self.assertEqual(submissions["submissions"], [])
+
     def test_unrelated_routes_are_delegated(self):
         status, body = self.request("GET", "/healthz")
         self.assertEqual((status, body["delegated"]), (200, True))
