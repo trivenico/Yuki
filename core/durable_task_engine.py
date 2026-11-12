@@ -465,7 +465,9 @@ class DurableTaskEngine:
                     c.rollback()
                     raise TaskConflict("claim already has a different approval request")
                 c.commit()
-                return dict(old)
+                return {key: old[key] for key in (
+                    "task_id", "request_id", "state", "created_at", "updated_at"
+                )}
             c.execute(
                 """INSERT INTO task_approval_waits
                    (task_id,claim_token_sha256,request_id,state,created_at,updated_at)
