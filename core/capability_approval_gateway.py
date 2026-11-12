@@ -246,6 +246,25 @@ class CapabilityApprovalGateway:
             db.commit()
         return request_id
 
+    def get_request_status(self, request_id: str) -> str | None:
+        """Return lifecycle status only; never expose request arguments or credentials."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """UPDATE capability_approval_requests SET status='expired'
+                   WHERE request_id=? AND status='pending' AND expires_at<=?""",
+                (request_id, now),
+            )
+            row = db.execute(
+                "SELECT status FROM capability_approval_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            db.commit()
+        return row["status"] if row is not None else None
+
     def pending_requests(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """Return redacted inbox metadata; never expose request arguments or credentials."""
         if type(limit) is not int or not 1 <= limit <= 100:
