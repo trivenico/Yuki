@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import hmac
+import hashlib
 import secrets
 import sqlite3
 from contextlib import closing
@@ -367,7 +368,7 @@ class DurableTaskEngine:
             for r in rows:
                 retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
                 if r["lease_owner"] and r["lease_token"]:
-                    claim_digest = __import__("hashlib").sha256(r["lease_token"].encode("ascii")).hexdigest()
+                    claim_digest = hashlib.sha256(r["lease_token"].encode("ascii")).hexdigest()
                     c.execute(
                         """INSERT OR IGNORE INTO lease_recovery_outbox
                            (task_id,worker_id,claim_token_sha256,created_at)
