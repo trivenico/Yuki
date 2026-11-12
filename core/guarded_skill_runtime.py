@@ -246,6 +246,10 @@ def invoke_registered_skill(
     expected_skill: Any = None,
     execution_guard: Callable[[], bool] | None = None,
     policy_context: SkillPolicyContext | None = None,
+    policy_engine: Any = None,
+    policy_request_factory: Callable[[str, str, Any, SkillPolicyContext], Any] | None = None,
+    approval_gateway: Any = None,
+    approval_token: str | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -298,6 +302,27 @@ def invoke_registered_skill(
             skill_name, "skill_identity_changed"
         )
 
+    central_approval_consumed = False
+    if approval_gateway is not None or policy_engine is not None:
+        if (
+            policy_context is None
+            or not callable(policy_request_factory)
+            or not callable(getattr(policy_engine, "evaluate", None))
+            or not callable(getattr(approval_gateway, "authorize", None))
+        ):
+            record("central_policy_configuration_invalid")
+            return SkillInvocationResult(False, "Skill blocked because central policy is not configured safely.", skill_name, "central_policy_error")
+        try:
+            policy_request = policy_request_factory(skill_name, argument, skill, policy_context)
+            decision = approval_gateway.authorize(policy_request, approval_token=approval_token)
+        except Exception:
+            record("central_policy_error")
+            return SkillInvocationResult(False, "Skill blocked because central policy evaluation failed.", skill_name, "central_policy_error")
+        if getattr(decision, "allowed", False) is not True:
+            status = "central_policy_" + str(getattr(decision, "status", "denied"))
+            record(status)
+            return SkillInvocationResult(False, "Skill blocked by Yuki's central security policy.", skill_name, status)
+        central_approval_consumed = getattr(decision, "approval_consumed", False) is True
     risk = str(getattr(skill, "risk", "high")).lower()
     known_risks = {"low", "medium", "high", "critical"}
     needs_approval = (
@@ -305,7 +330,7 @@ def invoke_registered_skill(
         or risk not in known_risks
         or risk in {"high", "critical"}
     )
-    if needs_approval and not approvals.consume(skill_name, argument, principal_id=principal_id):
+    if needs_approval and not central_approval_consumed and not approvals.consume(skill_name, argument, principal_id=principal_id):
         record("approval_required")
         return SkillInvocationResult(False, "Explicit one-shot approval is required.", skill_name, "approval_required")
 
