@@ -945,7 +945,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
                 evidence.append((
                     assignment["assignment_id"], f"gold-drift-{task_index:03d}", "owner:alice",
                     self.project.project_id, assignment["task_id"],
-                    assignment["annotator_id"], correct, stamp.isoformat(),
+                    annotators[index % 2], correct, stamp.isoformat(),
                 ))
             db.executemany(
                 "INSERT INTO annotation_gold_results "
