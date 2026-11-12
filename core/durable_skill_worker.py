@@ -137,6 +137,14 @@ class DurableSkillWorker:
                         raise PermissionError("task claim changed during approval delivery")
                     if requires_owner_approval:
                         claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+                        # A broker may have delivered directly before the worker
+                        # persisted its wait record. A token returned by the
+                        # worker-pinned resolver has already passed the broker's
+                        # live-claim checks, so record that delivery idempotently.
+                        if not self.engine.transition_approval_wait(
+                            task_id, claim_digest, "delivered",
+                        ):
+                            raise PermissionError("durable approval delivery could not be recorded")
                         wait = self.engine.get_approval_wait(task_id, claim_digest)
                         if wait is None or wait["state"] != "delivered":
                             raise PermissionError("durable approval wait has not been delivered to this claim")
