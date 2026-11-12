@@ -45,10 +45,10 @@ class ApprovalDeliveryRouter:
         broker = self.brokers_by_worker.get(active["worker_id"])
         if broker is None:
             raise RuntimeError("no protected credential broker is registered for the active worker")
-        broker.deliver_credential_by_digest(
-            request_id, token, claim_token_sha256=claim_digest,
-        )
         if not self.engine.transition_approval_wait(
             metadata["step_id"], claim_digest, "delivered",
         ):
             raise PermissionError("durable approval wait is no longer pending for this claim")
+        broker.deliver_credential_by_digest(
+            request_id, token, claim_token_sha256=claim_digest,
+        )
