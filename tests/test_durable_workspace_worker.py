@@ -203,6 +203,16 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
         self.assertEqual(self.target.read_text(encoding="utf-8"), "before\n")
         self.assertEqual(self.request_ids, [])
 
+    def test_stale_workspace_digest_fails_before_creating_approval(self):
+        self.submit()
+        self.target.write_text("changed by another process\\n", encoding="utf-8")
+        result = self.worker().run_once()
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "changed by another process\\n")
+        self.assertEqual(self.request_ids, [])
+        self.assertEqual(self.delivered_tokens, [])
+        self.assertEqual(self.gateway.pending_requests(), ())
+
     def test_unowned_goal_is_not_dispatched(self):
         unowned_goal = self.engine.create_goal("legacy-unowned")
         self.engine.submit(
