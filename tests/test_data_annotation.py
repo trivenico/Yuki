@@ -176,18 +176,33 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
                 expected_version=claimed.version, human_confirmed=True,
             )
 
+    def test_invalid_typed_submission_is_rejected_without_advancing_task(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        with self.assertRaisesRegex(ValueError, "label_not_in_project_rubric"):
+            self.store.submit(
+                "owner:alice", task.task_id, payload={"label": "airplane"},
+                expected_version=claimed.version, human_confirmed=True,
+            )
+        unchanged = self.store.get_task("owner:alice", task.task_id)
+        self.assertEqual(unchanged.status, "in_progress")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(self.store.list_submissions("owner:alice", task.task_id), [])
+
     def test_audit_trail_does_not_store_annotation_content(self):
         task = self._task()
         claimed = self.store.claim_task(
             "owner:alice", task.task_id, expected_version=task.version
         )
         self.store.submit(
-            "owner:alice", task.task_id, payload={"private_text": "sensitive content"},
+            "owner:alice", task.task_id, payload={"label": "bird"},
             expected_version=claimed.version, ai_assisted=False, human_confirmed=True,
         )
         events = self.store.audit_events("owner:alice")
         serialized = repr(events)
-        self.assertNotIn("sensitive content", serialized)
+        self.assertNotIn("bird", serialized)
         self.assertIn("submission_created", serialized)
 
     def test_batch_import_is_atomic_and_preserves_order(self):
