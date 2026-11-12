@@ -112,7 +112,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertGreater(updated_task.version, claimed.version)
 
     def test_review_queue_lists_only_submitted_work_and_records_reviewer_identity(self):
-        project = self.project()
+        project = self.project
         task = self.store.create_task(
             "owner:alice", project.project_id, external_ref="review-queue",
             input_data={"text": "A sample"},
