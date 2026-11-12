@@ -218,6 +218,8 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         self.assertEqual(stored["operation_type"], "workspace.write")
         self.assertEqual(stored["payload_sha256"], operation.payload_sha256)
         self.assertEqual(stored["target"], "repo:project-a")
+        inbox_row = self.gateway.pending_requests()[0]
+        self.assertEqual(inbox_row["operation"], stored)
 
         reopened = CapabilityApprovalGateway(
             Path(self.temp.name) / "approvals.sqlite", self.engine,
@@ -287,6 +289,8 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             )
             db.commit()
         self.assertIsNone(self.gateway.approval_operation(request_id))
+        with self.assertRaises(PermissionError):
+            self.gateway.approve_request(request_id, approved_by="admin")
 
     def test_inbox_rejects_non_approval_policy(self):
         allowed = self.make_request(capability="workspace:read")
