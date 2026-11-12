@@ -4,7 +4,7 @@
 
 - Adds an annotation workbench to Yuki's existing same-origin HTML/CSS/JavaScript web client; no new frontend framework or runtime dependency.
 - Uses the existing authenticated session and owner-scoped annotation project/task APIs.
-- Supports creating human-only projects and importing image assets for visual task families.
+- Supports creating human-only projects, adding generic JSON-input tasks for all supported task families, and importing image assets for visual task families.
 - Image upload uses the existing binary asset endpoint. Tasks are created only after the configured scanner returns a clean result; quarantined uploads remain unavailable.
 - Loads image content only through the authenticated safe-preview endpoint. The browser receives a metadata-stripped PNG derivative as a Blob URL; the CSP explicitly allows Blob-backed image rendering.
 - Provides image fit, cursor-anchored wheel zoom, bounded pan, keyboard pan/zoom/reset, pointer-captured bounding-box gestures, and polygon vertex editing.
