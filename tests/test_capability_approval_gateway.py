@@ -40,6 +40,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
                 title="Workspace change", operation="Apply the exact approved change",
                 target=request.target, impact=f"Request digest {request.argument_sha256[:12]}",
             ),
+            operation_type="workspace.write",
         )
         self.gateway = CapabilityApprovalGateway(
             Path(self.temp.name) / "approvals.sqlite",
