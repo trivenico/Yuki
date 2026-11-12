@@ -11,6 +11,7 @@
 - Manifest snapshots use canonical JSON serialization and SHA-256 checksums. They include task IDs, source provenance, accepted labels/payloads, quality evidence, AI-assistance status, dataset version, and creation time.
 - Manifest idempotency keys prevent accidental repeat creation on retry. Manifest verification recomputes the checksum from the stored snapshot and reports tampering.
 - Manifests are owner/project isolated and creation is audited.
+- The annotation workbench exposes a rework-round action, manifest creation/history, and checksum verification. Manifest retry keys are retained after request errors and scoped to the selected project.
 
 ## API
 
