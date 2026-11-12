@@ -10,7 +10,7 @@ Phase 250 adds an owner-scoped, auditable statistical assessment of blinded gold
 - Recent window: the 30 days immediately before assessment.
 - Minimum evidence: 20 baseline gold results and 10 recent gold results per annotator.
 - Effect-size gate: baseline accuracy must exceed recent accuracy by at least 10 percentage points.
-- Significance gate: two-sided pooled two-proportion z-test with p ≤ 0.01.
+- Statistical test: two-sided pooled two-proportion z-test, followed by Benjamini-Hochberg false-discovery-rate correction across eligible annotators; alert when q ≤ 0.05.
 - Each window reports sample count, correct count, accuracy, and a Wilson 95% confidence interval.
 - An annotator is classified as `insufficient_evidence`, `stable`, or `drift_detected`.
 
@@ -28,7 +28,7 @@ Reports are immutable SQLite snapshots containing their policy, evidence summari
 - Minimum sample counts, effect-size threshold, and significance threshold must all pass before an alert is emitted.
 - No automatic suspension, reassignment, pay adjustment, ranking, or external action.
 - Reports are project-owner scoped and append-only.
-- Fixed rolling windows do not model seasonality, task-difficulty changes, or multiple-comparison correction. Alert outcomes require human review.
+- Fixed rolling windows do not model seasonality or task-difficulty changes; Benjamini-Hochberg correction controls false discoveries across eligible annotators. Alert outcomes require human review.
 - This phase supports text classification only.
 
 ## Validation
