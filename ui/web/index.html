@@ -71,6 +71,17 @@
             <div id="annotation-review-queue" class="annotation-review-queue" aria-live="polite"><p class="annotation-hint">Enter a project ID assigned to your reviewer account.</p></div>
             <p id="annotation-review-status" class="annotation-status" role="status" aria-live="polite"></p>
           </section>
+          <section class="annotation-reviewer-admin" aria-label="Project reviewer access">
+            <h3>Manage project reviewers</h3>
+            <p class="annotation-hint">As project owner, grant review access to an existing Yuki account. Access can be revoked at any time.</p>
+            <div class="annotation-reviewer-controls">
+              <label class="annotation-field" for="annotation-reviewer-user-id">Reviewer account ID<input id="annotation-reviewer-user-id" maxlength="256" autocomplete="off" spellcheck="false"></label>
+              <button id="annotation-reviewer-grant" type="button">Grant access</button>
+              <button id="annotation-reviewer-revoke" type="button">Revoke access</button>
+            </div>
+            <div id="annotation-reviewer-members" class="annotation-hint" aria-live="polite">Select a project to manage reviewer access.</div>
+            <p id="annotation-reviewer-admin-status" class="annotation-status" role="status" aria-live="polite"></p>
+          </section>
           <form id="annotation-create-project" class="annotation-create-project" hidden>
             <label class="annotation-field" for="annotation-new-name">Project name<input id="annotation-new-name" maxlength="120" required></label>
             <label class="annotation-field" for="annotation-new-type">Task family<select id="annotation-new-type"><option value="image_classification">Image classification</option><option value="bounding_boxes">Bounding boxes</option><option value="polygon_segmentation">Polygon segmentation</option><option value="text_classification">Text classification</option><option value="video_tracking">Video tracking</option><option value="audio_transcription">Audio transcription</option><option value="speaker_diarization">Speaker diarization</option><option value="entity_extraction">Entity extraction</option><option value="response_ranking">Response ranking</option><option value="llm_evaluation">LLM evaluation</option><option value="custom">Custom JSON</option></select></label>
