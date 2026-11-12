@@ -212,6 +212,15 @@ class WorkspaceTransactionJournal:
                 raise WorkspaceJournalError("recovery target escaped workspace") from exc
             if target.is_symlink() or not target.parent.is_dir():
                 raise WorkspaceJournalError("recovery target path is unsafe")
+            cursor = self.root
+            try:
+                for part in target.relative_to(self.root).parts:
+                    cursor = cursor / part
+                    if cursor.is_symlink():
+                        raise WorkspaceJournalError("recovery path contains a symlink")
+                target.parent.resolve(strict=True).relative_to(self.root)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise WorkspaceJournalError("recovery path escaped the workspace") from exc
             backup = operation_dir / entry["backup"]
             if backup.parent != operation_dir or backup.is_symlink() or not backup.is_file():
                 raise WorkspaceJournalError("recovery backup is missing or unsafe")
