@@ -138,6 +138,11 @@ class ApprovedWorkspaceChanges:
         """Validate the owner identity and workspace-write permission without side effects."""
         _validate_principal(principal, self.trusted_principal, "workspace:write")
 
+    def recover_incomplete_transactions(self, principal: ToolPrincipal) -> list[str]:
+        """Run trusted compensating recovery; this is independent of expired worker claims."""
+        _validate_principal(principal, self.trusted_principal, "workspace:recover")
+        return self.journal.recover_pending()
+
     def validate_proposal(self, changes: Sequence[FileChange]) -> None:
         """Preflight the exact proposal before creating an owner approval request."""
         if not isinstance(changes, (tuple, list)) or not 1 <= len(changes) <= _MAX_CHANGES:
