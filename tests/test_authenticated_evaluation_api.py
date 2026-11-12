@@ -131,5 +131,32 @@ class AuthenticatedEvaluationAPITests(unittest.TestCase):
         self.assertEqual(sent[0]["status"], 400)
 
 
+    def test_active_idempotency_claim_returns_conflict(self):
+        payload = {
+            "benchmark_id": "api-smoke", "benchmark_version": 1,
+            "benchmark_digest": self.benchmark.digest, "candidate_id": "candidate-a",
+        }
+        request_digest = self.store.request_digest_for(
+            benchmark_id="api-smoke", benchmark_version=1,
+            benchmark_digest=self.benchmark.digest, candidate_id="candidate-a",
+            provider_id="provider-internal", model_id="model-internal",
+            environment={},
+        )
+        token = self.store.acquire_claim(
+            owner_id="owner-a", idempotency_key="api-request-1",
+            request_digest=request_digest,
+        )
+        try:
+            status, body = self._request("POST", "/v1/evaluations/runs", payload)
+            self.assertEqual(status, 409)
+            self.assertEqual(body["error"], "evaluation_in_progress")
+        finally:
+            self.store.release_claim(
+                owner_id="owner-a", idempotency_key="api-request-1",
+                lease_token=token,
+            )
+
+
+
 if __name__ == "__main__":
     unittest.main()
