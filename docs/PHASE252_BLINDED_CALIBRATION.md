@@ -8,7 +8,7 @@ This phase adds owner-controlled calibration sessions over already registered go
 
 - `POST /v1/annotation/projects/{project_id}/calibration-sessions`
   - Body: `task_ids`, `annotator_user_ids`, and `idempotency_key`.
-  - Requires an active text-classification project, registered gold tasks, at least the configured minimum number of tasks, known annotator accounts, and previously unused annotator/task pairs.
+  - Requires an active text-classification project, registered gold tasks, at least the configured minimum number of tasks, known annotator accounts, and previously unassigned gold tasks (not merely new annotator/task pairs).
   - Replays with the same idempotency key and identical request return the original session. Reusing the key with different inputs is rejected.
 - `GET /v1/annotation/projects/{project_id}/calibration-sessions`
   - Returns session status and assignment/submission counts only; never expected labels.
