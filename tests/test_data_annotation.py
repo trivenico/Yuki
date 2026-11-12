@@ -182,12 +182,12 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             "owner:alice", task.task_id, expected_version=task.version
         )
         self.store.submit(
-            "owner:alice", task.task_id, payload={"private_text": "sensitive content"},
+            "owner:alice", task.task_id, payload={"label": "bird"},
             expected_version=claimed.version, ai_assisted=False, human_confirmed=True,
         )
         events = self.store.audit_events("owner:alice")
         serialized = repr(events)
-        self.assertNotIn("sensitive content", serialized)
+        self.assertNotIn("bird", serialized)
         self.assertIn("submission_created", serialized)
 
     def test_batch_import_is_atomic_and_preserves_order(self):
