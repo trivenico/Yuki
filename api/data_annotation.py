@@ -16,7 +16,7 @@ from core.data_annotation import (
 )
 
 
-_MAX_BODY = 80 * 1024
+_MAX_BODY = 1024 * 1024
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _PROJECT_FIELDS = frozenset({"name", "task_type", "instructions", "rubric"})
 _TASK_FIELDS = frozenset({"external_ref", "asset_ref", "input_data"})
@@ -79,6 +79,33 @@ class AuthenticatedAnnotationAPI:
                     send, 200 if project else 404,
                     {"project": asdict(project)} if project else {"error": "not_found"},
                 )
+
+            match = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/batch", path
+            )
+            if match and method == "POST":
+                payload = await self._body(receive)
+                if set(payload) != {"tasks"} or not isinstance(payload["tasks"], list):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                tasks = await asyncio.to_thread(
+                    self.workbench.create_tasks, user.user_id, match.group(1),
+                    tasks=payload["tasks"],
+                )
+                return await self._respond(send, 201, {
+                    "tasks": [asdict(item) for item in tasks],
+                })
+
+            match = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/export", path
+            )
+            if match and method == "GET":
+                records = await asyncio.to_thread(
+                    self.workbench.export_accepted, user.user_id, match.group(1)
+                )
+                return await self._respond(send, 200, {
+                    "format": "json",
+                    "accepted_annotations": records,
+                })
 
             match = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks", path
