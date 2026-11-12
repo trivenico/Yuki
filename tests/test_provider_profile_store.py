@@ -111,6 +111,12 @@ class ProviderProfileStoreTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.save(**kwargs)
 
+    def test_owner_ids_accept_url_safe_leading_characters(self):
+        for owner_id in ("_owner-one", "-owner-two"):
+            with self.subTest(owner_id=owner_id):
+                self.save(owner_id=owner_id)
+                self.assertEqual(len(self.store.list_profiles(owner_id)), 1)
+
     def test_rejects_malformed_owner_and_profile_identifiers(self):
         for field, value in (("owner_id", "../alice"), ("name", "Gateway"), ("name", "a b")):
             with self.subTest(field=field), self.assertRaises(ValueError):
