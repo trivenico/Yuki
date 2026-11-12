@@ -14,6 +14,7 @@ from core.approval_delivery_router import ApprovalDeliveryRouter
 from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.approved_skill_wiring import SkillApprovalStore
 from core.capability_approval_gateway import CapabilityApprovalGateway
+from core.capability_approval_preview import ApprovalPreview, CapabilityApprovalPreviewRegistry
 from core.durable_skill_worker import DurableSkillWorker
 from core.durable_task_engine import DurableTaskEngine
 from core.lease_recovery_coordinator import LeaseRecoveryCoordinator
@@ -73,9 +74,18 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
                 capability="skill.invoke", target=self.skill.name, risk=Risk.LOW,
             ),
         ), policy_version="claim-bound-v1")
+        self.previews = CapabilityApprovalPreviewRegistry()
+        self.previews.register(
+            "skill.invoke",
+            lambda request: ApprovalPreview(
+                title="Skill invocation", operation="Run the approved skill",
+                target=request.target, impact=f"Exact arguments {request.argument_sha256[:12]}",
+            ),
+        )
         self.gateway = CapabilityApprovalGateway(
             root / "gateway.sqlite", self.policy,
             authorize_approver=lambda actor, request: actor == "owner-approved-approver",
+            preview_registry=self.previews,
         )
         self.worker_id = "worker-1"
         self.runtime = ApprovedSkillRuntime(
