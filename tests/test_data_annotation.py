@@ -912,33 +912,38 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
     def test_quality_drift_report_detects_significant_gold_accuracy_drop(self):
         annotators = ("annotator:drift-a", "annotator:drift-b")
         assignments = []
+        task_ids = []
         for index in range(30):
             task = self.store.create_task(
                 "owner:alice", self.project.project_id,
                 external_ref=f"drift-{index:03d}",
                 input_data={"text": f"Gold calibration sample {index}"},
             )
+            task_ids.append(task.task_id)
             created = self.store.create_independent_assignments(
                 "owner:alice", self.project.project_id, task.task_id, list(annotators),
             )
             assignments.extend(created)
         now = datetime.now(timezone.utc)
-        gold_id = "gold-drift-fixture"
         with closing(sqlite3.connect(self.database)) as db:
-            db.execute(
+            db.executemany(
                 "INSERT INTO annotation_gold_standards "
                 "(gold_id, owner_id, project_id, task_id, expected_label, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (gold_id, "owner:alice", self.project.project_id, task.task_id,
-                 "positive", now.isoformat()),
+                [
+                    (f"gold-drift-{index:03d}", "owner:alice", self.project.project_id,
+                     task_id, "positive", now.isoformat())
+                    for index, task_id in enumerate(task_ids)
+                ],
             )
             evidence = []
             for index, assignment in enumerate(assignments):
                 # 20 baseline samples at 100%, followed by 10 recent samples at 0%.
                 stamp = now - timedelta(days=60 if index // 2 < 20 else 10)
                 correct = 1 if index // 2 < 20 else 0
+                task_index = index // 2
                 evidence.append((
-                    assignment["assignment_id"], gold_id, "owner:alice",
+                    assignment["assignment_id"], f"gold-drift-{task_index:03d}", "owner:alice",
                     self.project.project_id, assignment["task_id"],
                     assignment["annotator_id"], correct, stamp.isoformat(),
                 ))
