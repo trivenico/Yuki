@@ -223,6 +223,12 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         task_id = task_result["task"]["task_id"]
+        status, denied = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/rework-assignments",
+            {"annotator_user_ids": [workers[0].user.user_id, workers[1].user.user_id]},
+            self.owner_two.token,
+        )
+        self.assertEqual((status, denied["error"]), (404, "not_found"))
         status, result = self.request(
             "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
             {"annotator_user_ids": [one.user.user_id, two.user.user_id]}, self.owner_one.token,
