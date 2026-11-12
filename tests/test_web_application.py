@@ -44,6 +44,8 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b'id="annotation-create-project"', sent[1]["body"])
         self.assertIn(b'id="annotation-create-task"', sent[1]["body"])
         self.assertIn(b'id="annotation-upload-button"', sent[1]["body"])
+        self.assertIn(b'id="annotation-undo"', sent[1]["body"])
+        self.assertIn(b'id="annotation-redo"', sent[1]["body"])
         self.assertIn(b'/assets/annotation.js', sent[1]["body"])
         self.assertIn(b'/assets/annotation.css', sent[1]["body"])
 
