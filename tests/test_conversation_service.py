@@ -84,6 +84,58 @@ class ConversationServiceTests(unittest.TestCase):
             self.send(owner="owner-b")
         self.assertEqual(self.observed, [])
 
+    def test_owner_factory_routes_each_authenticated_owner_to_isolated_loop(self):
+        loops = {}
+        invoked = []
+
+        def factory(owner_id):
+            invoked.append(owner_id)
+            if owner_id not in loops:
+                protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+                def model(**kwargs):
+                    return {"text": "answer for " + owner_id, "tool_calls": {"tool_calls": []}}
+                loops[owner_id] = AgentExecutionLoop(model, protocol)
+            return loops[owner_id]
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        first = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="first", request_id="owner-a-request", expected_version=0, tools=[],
+        )
+        other_conversation = service.create(owner_id="owner-b")
+        second = service.reply(
+            owner_id="owner-b", conversation_id=other_conversation["conversation_id"],
+            user_text="second", request_id="owner-b-request", expected_version=0, tools=[],
+        )
+        self.assertEqual(first["answer"], "answer for owner-a")
+        self.assertEqual(second["answer"], "answer for owner-b")
+        self.assertIsNot(loops["owner-a"], loops["owner-b"])
+        self.assertEqual(invoked, ["owner-a", "owner-b"])
+        self.assertEqual(self.observed, [])
+
+    def test_owner_factory_rejects_reusing_one_loop_for_multiple_owners(self):
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        shared = AgentExecutionLoop(
+            lambda **kwargs: {"text": "shared", "tool_calls": {"tool_calls": []}},
+            protocol,
+        )
+        service = ConversationService(
+            self.store, self.loop, agent_loop_for_owner=lambda owner_id: shared,
+        )
+        first = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="first", request_id="owner-a-request", expected_version=0, tools=[],
+        )
+        other_conversation = service.create(owner_id="owner-b")
+        second = service.reply(
+            owner_id="owner-b", conversation_id=other_conversation["conversation_id"],
+            user_text="second", request_id="owner-b-request", expected_version=0, tools=[],
+        )
+        self.assertEqual(first["answer"], "shared")
+        self.assertEqual(second["status"], "failed")
+        self.assertNotIn("shared", second["answer"])
+        self.assertEqual(self.observed, [])
+
     def test_model_failure_is_sanitized_and_persisted(self):
         def failing_model(**kwargs):
             raise RuntimeError("secret provider response and credentials")
