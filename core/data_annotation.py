@@ -26,6 +26,7 @@ _TASK_TYPES = frozenset({
     "llm_evaluation", "custom",
 })
 _PROJECT_STATES = frozenset({"active", "paused", "completed"})
+_AI_ASSISTANCE_MODES = frozenset({"human_only", "permitted_with_disclosure"})
 _PROJECT_TRANSITIONS = {
     "active": frozenset({"paused", "completed"}),
     "paused": frozenset({"active", "completed"}),
@@ -76,6 +77,7 @@ class AnnotationProject:
     task_type: str
     instructions: str
     rubric: dict[str, Any]
+    ai_assistance_mode: str
     status: str
     created_at: str
     updated_at: str
@@ -137,12 +139,21 @@ class SQLiteAnnotationWorkbench:
                 task_type TEXT NOT NULL,
                 instructions TEXT NOT NULL,
                 rubric_json TEXT NOT NULL,
+                ai_assistance_mode TEXT NOT NULL DEFAULT 'human_only',
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_projects_owner
                 ON annotation_projects(owner_id, status, updated_at DESC)""")
+            project_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(annotation_projects)")
+            }
+            if "ai_assistance_mode" not in project_columns:
+                db.execute(
+                    "ALTER TABLE annotation_projects ADD COLUMN "
+                    "ai_assistance_mode TEXT NOT NULL DEFAULT 'human_only'"
+                )
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_tasks (
                 task_id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -249,6 +260,7 @@ class SQLiteAnnotationWorkbench:
     def create_project(
         self, owner_id: str, *, name: str, task_type: str,
         instructions: str, rubric: Mapping[str, Any],
+        ai_assistance_mode: str = "human_only",
     ) -> AnnotationProject:
         owner_id = _owner(owner_id)
         if not isinstance(name, str) or not name.strip() or len(name) > 160:
@@ -258,6 +270,8 @@ class SQLiteAnnotationWorkbench:
         if not isinstance(instructions, str) or not instructions.strip() or len(instructions) > 12000:
             raise ValueError("invalid_project_instructions")
         rubric_json = _json_object(rubric, maximum=_MAX_RUBRIC_BYTES, field="rubric")
+        if ai_assistance_mode not in _AI_ASSISTANCE_MODES:
+            raise ValueError("invalid_ai_assistance_mode")
         now, project_id = _now(), uuid.uuid4().hex
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -267,9 +281,12 @@ class SQLiteAnnotationWorkbench:
             if count >= self.max_projects_per_owner:
                 raise ValueError("owner_project_capacity_reached")
             db.execute(
-                """INSERT INTO annotation_projects VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                """INSERT INTO annotation_projects
+                (project_id, owner_id, name, task_type, instructions, rubric_json,
+                 ai_assistance_mode, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
                 (project_id, owner_id, name.strip(), task_type, instructions,
-                 rubric_json, now, now),
+                 rubric_json, ai_assistance_mode, now, now),
             )
             self._audit(db, owner_id, project_id, None, "project_created",
                         {"task_type": task_type})
@@ -355,7 +372,7 @@ class SQLiteAnnotationWorkbench:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             project = db.execute(
-                "SELECT status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                "SELECT status, ai_assistance_mode FROM annotation_projects WHERE owner_id=? AND project_id=?",
                 (owner_id, project_id),
             ).fetchone()
             if project is None:
@@ -579,6 +596,8 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if project is None or project["status"] != "active":
                 raise ValueError("annotation_project_not_active")
+            if ai_assisted and project["ai_assistance_mode"] != "permitted_with_disclosure":
+                raise PermissionError("ai_assistance_not_permitted_for_project")
             db.execute(
                 """INSERT INTO annotation_submissions VALUES
                 (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
