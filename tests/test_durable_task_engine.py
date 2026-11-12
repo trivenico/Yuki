@@ -98,6 +98,7 @@ class DurableTaskEngineTests(unittest.TestCase):
                 "UPDATE lease_recovery_outbox SET claim_until=0 WHERE id=?",
                 (first[0]["id"],),
             )
+            db.commit()
         second = self.engine.claim_recovery_outbox("same-supervisor")
         self.assertEqual(len(second), 1)
         self.assertNotEqual(first[0]["claim_token"], second[0]["claim_token"])
