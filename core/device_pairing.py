@@ -15,6 +15,8 @@ import sqlite3
 import uuid
 from pathlib import Path
 
+from core.sqlite_file_security import prepare_private_sqlite_path
+
 
 _NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,80}$")
 
@@ -62,7 +64,7 @@ class DevicePairingService:
     def __init__(self, database_path: str | Path, *, pairing_ttl_seconds: int = 180):
         if isinstance(pairing_ttl_seconds, bool) or not isinstance(pairing_ttl_seconds, int) or not 30 <= pairing_ttl_seconds <= 600:
             raise ValueError("pairing_ttl_seconds must be between 30 and 600")
-        self.database_path = str(Path(database_path).expanduser())
+        self.database_path = prepare_private_sqlite_path(database_path)
         self.pairing_ttl_seconds = pairing_ttl_seconds
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:

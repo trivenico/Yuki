@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib, hmac, re, secrets, sqlite3, uuid
 from pathlib import Path
 from core.device_pairing import DevicePairingService
+from core.sqlite_file_security import prepare_private_sqlite_path
 _MODEL=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _DEVICE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 def _now(): return datetime.now(timezone.utc)
@@ -19,7 +20,7 @@ class InferenceJobService:
   if not isinstance(pairing,DevicePairingService): raise TypeError("pairing must be a DevicePairingService")
   if type(lease_seconds)!=int or not 15<=lease_seconds<=3600: raise ValueError("invalid_lease_seconds")
   if type(max_jobs_per_owner)!=int or not 1<=max_jobs_per_owner<=100000: raise ValueError("invalid_max_jobs_per_owner")
-  self.database_path=str(Path(database_path).expanduser().resolve()); self.pairing=pairing; self.lease_seconds=lease_seconds; self.max_jobs_per_owner=max_jobs_per_owner
+  self.database_path=prepare_private_sqlite_path(database_path); self.pairing=pairing; self.lease_seconds=lease_seconds; self.max_jobs_per_owner=max_jobs_per_owner
   if Path(self.database_path).resolve() != Path(pairing.database_path).expanduser().resolve():
    raise ValueError("inference_jobs_and_device_pairing_must_share_database")
   Path(self.database_path).parent.mkdir(parents=True,exist_ok=True)

@@ -15,6 +15,8 @@ import re
 import secrets
 import sqlite3
 
+from core.sqlite_file_security import prepare_private_sqlite_path
+
 _MIN_ITERATIONS = 100_000
 _DEFAULT_ITERATIONS = 600_000
 _MAX_PASSWORD_LENGTH = 1024
@@ -70,7 +72,7 @@ class BuiltInAuthService:
             raise ValueError("max_failed_logins must be between 3 and 20.")
         if isinstance(lockout_seconds, bool) or not isinstance(lockout_seconds, int) or not 30 <= lockout_seconds <= 86400:
             raise ValueError("lockout_seconds must be between 30 seconds and 24 hours.")
-        self.database_path = str(Path(database_path).expanduser())
+        self.database_path = prepare_private_sqlite_path(database_path)
         self.password_iterations = password_iterations
         self.session_ttl_seconds = session_ttl_seconds
         self.max_failed_logins = max_failed_logins

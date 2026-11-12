@@ -9,6 +9,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 from pathlib import Path
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 import re
 import sqlite3
 
@@ -45,8 +47,7 @@ class SQLiteMCPToolPolicyStore:
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path_required")
-        self.database_path = str(Path(database_path).expanduser().resolve())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         with self._connection() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS mcp_tool_policy_revisions (
