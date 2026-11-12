@@ -259,14 +259,22 @@ class CapabilityApprovalGateway:
             )
             rows = db.execute(
                 """SELECT request_id,principal_id,capability,target,run_id,step_id,
-                          policy_version,created_at,expires_at
+                          request_json,policy_version,created_at,expires_at
                    FROM capability_approval_requests
                    WHERE status='pending' AND expires_at>?
                    ORDER BY created_at,request_id LIMIT ?""",
                 (now, limit),
             ).fetchall()
             db.commit()
-        return tuple(dict(row) for row in rows)
+        redacted = []
+        for row in rows:
+            item = dict(row)
+            request_metadata = json.loads(item.pop("request_json"))
+            # Only expose review metadata; never expose argument or claim digests.
+            item["risk"] = request_metadata.get("risk")
+            item["trigger"] = request_metadata.get("trigger")
+            redacted.append(item)
+        return tuple(redacted)
 
     def reject_request(self, request_id: str, *, rejected_by: str) -> bool:
         """Reject one pending request after validating the authenticated approver."""
