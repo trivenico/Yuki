@@ -56,6 +56,21 @@ class ApprovalOperationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             canonical_operation_payload({"content": "x" * 256_001})
 
+    def test_rejects_ambiguous_non_string_keys_and_non_json_values(self):
+        with self.assertRaises(ValueError):
+            canonical_operation_payload({1: "coerced-key"})
+        with self.assertRaises(ValueError):
+            canonical_operation_payload({"items": ("tuple-is-not-json-list",)})
+        with self.assertRaises(ValueError):
+            canonical_operation_payload({"nested": {"key": object()}})
+
+    def test_rejects_excessive_nesting(self):
+        payload = {"leaf": "value"}
+        for _ in range(34):
+            payload = {"nested": payload}
+        with self.assertRaises(ValueError):
+            canonical_operation_payload(payload)
+
     def test_rejects_unsupported_schema_and_invalid_digest(self):
         with self.assertRaises(ValueError):
             ApprovalOperation(2, "message.send", "messages:send", "account:primary", "a" * 64)
