@@ -1731,10 +1731,13 @@ class SQLiteAnnotationWorkbench:
             task_rows = db.execute(
                 """SELECT t.task_id, t.status, a.decision
                    FROM annotation_tasks t
-                   JOIN annotation_adjudications a
+                   JOIN annotation_independent_assignments i
+                     ON i.task_id=t.task_id AND i.owner_id=t.owner_id
+                   LEFT JOIN annotation_adjudications a
                      ON a.task_id=t.task_id AND a.owner_id=t.owner_id
-                   WHERE t.owner_id=? AND t.project_id=?""",
-                (owner_id, project_id),
+                   WHERE t.owner_id=? AND t.project_id=? AND i.project_id=?
+                   GROUP BY t.task_id, t.status, a.decision""",
+                (owner_id, project_id, project_id),
             ).fetchall()
             task_count = db.execute(
                 "SELECT COUNT(DISTINCT task_id) FROM annotation_independent_assignments "
