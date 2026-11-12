@@ -538,6 +538,7 @@
       });
       draftSessions.delete(state.task.task_id);
       await loadTasks();
+      await loadQualityReport();
       setStatus("Annotation submitted for review · " + result.submission.submission_id);
     } catch (error) { setStatus(error.message, true); }
     finally { $("submit-annotation").disabled = !state.claimed; }
