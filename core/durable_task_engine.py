@@ -348,6 +348,10 @@ class DurableTaskEngine:
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_token)
             c.execute("UPDATE tasks SET state='succeeded',result_json=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",(result_json,now,task_id))
+            c.execute(
+                """UPDATE task_approval_waits SET state='completed',updated_at=?
+                   WHERE task_id=? AND state='delivered'""", (now, task_id),
+            )
             self._event(c,r["goal_id"],task_id,"task.succeeded",{"attempt":r["attempts"]})
             self._complete_goal_if_terminal(c,r["goal_id"],now); c.commit()
         return self.get_task(task_id)
@@ -363,6 +367,10 @@ class DurableTaskEngine:
             retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
             c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
+            c.execute(
+                """UPDATE task_approval_waits SET state='stale',updated_at=?
+                   WHERE task_id=? AND state IN ('pending','delivered')""", (now, task_id),
+            )
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
             if not retry:
                 self._fail_blocked_descendants(c, r["goal_id"], now)
@@ -393,6 +401,10 @@ class DurableTaskEngine:
                 """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
                    lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?""",
                 (safe_error, now, task_id),
+            )
+            c.execute(
+                """UPDATE task_approval_waits SET state='stale',updated_at=?
+                   WHERE task_id=? AND state IN ('pending','delivered')""", (now, task_id),
             )
             self._event(c, r["goal_id"], task_id, "task.rejected", {"reason": reason})
             self._fail_blocked_descendants(c, r["goal_id"], now)
