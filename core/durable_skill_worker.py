@@ -7,7 +7,8 @@ not automatically replayed.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
+import hashlib
 import math
 import threading
 
@@ -23,6 +24,7 @@ class DurableSkillWorker:
         worker_id: str,
         lease_seconds: int = 60,
         heartbeat_interval_seconds: float = 20,
+        approval_token_resolver: Callable[[SkillPolicyContext, str, str], str | None] | None = None,
     ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
@@ -38,6 +40,14 @@ class DurableSkillWorker:
             raise ValueError("heartbeat interval must be finite, positive, and no greater than half the lease or 300 seconds")
         self.engine = engine
         self.runtime = runtime
+        if approval_token_resolver is not None and not callable(approval_token_resolver):
+            raise ValueError("approval_token_resolver must be callable")
+        resolver_worker_id = getattr(approval_token_resolver, "worker_id", None)
+        if resolver_worker_id is not None and resolver_worker_id != worker_id:
+            raise ValueError("approval resolver is bound to a different worker identity")
+        if getattr(runtime, "approval_gateway", None) is not None and approval_token_resolver is None:
+            raise ValueError("durable approval gateway requires a trusted approval_token_resolver")
+        self.approval_token_resolver = approval_token_resolver
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
@@ -67,12 +77,24 @@ class DurableSkillWorker:
         )
         heartbeat_thread.start()
         try:
-            result = self.runtime.invoke(
-                skill_name,
-                argument,
-                execution_guard=lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
-                policy_context=policy_context,
-            )
+            approval_token = None
+            if self.approval_token_resolver is not None:
+                if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
+                    raise PermissionError("task claim is no longer valid before approval lookup")
+                approval_token = self.approval_token_resolver(policy_context, skill_name, lease_token)
+                if approval_token is not None and (
+                    not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256
+                ):
+                    raise PermissionError("approval resolver returned an invalid credential")
+                if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
+                    raise PermissionError("task claim changed during approval lookup")
+            invoke_kwargs = {
+                "execution_guard": lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
+                "policy_context": policy_context,
+            }
+            if approval_token is not None:
+                invoke_kwargs["approval_token"] = approval_token
+            result = self.runtime.invoke(skill_name, argument, **invoke_kwargs)
         finally:
             stop.set()
             heartbeat_thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
@@ -138,6 +160,7 @@ class DurableSkillWorker:
                 trigger="durable_task",
                 goal_id=identity["goal_id"],
                 task_id=identity["task_id"],
+                claim_token_sha256=hashlib.sha256(lease_token.encode("ascii")).hexdigest(),
             )
         except (KeyError, TypeError, ValueError):
             return {
