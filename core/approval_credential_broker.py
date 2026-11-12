@@ -178,15 +178,24 @@ class ApprovalCredentialBroker:
                 raise PermissionError("trusted task context is required")
             if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
                 raise ValueError("skill_name is invalid")
+            if not isinstance(lease_token, str) or not 40 <= len(lease_token) <= 256:
+                raise PermissionError("current claim lease token is required")
+            try:
+                lease_token.encode("ascii")
+            except UnicodeEncodeError:
+                raise PermissionError("current claim lease token is invalid") from None
+            claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+            if self.validate_claim(context.task_id, self.worker_id, lease_token) is not True:
+                return None
             now = self.clock()
             with closing(self._connect()) as db:
                 db.execute("BEGIN IMMEDIATE")
                 rows = db.execute(
                     """SELECT * FROM approval_worker_credentials
                        WHERE principal_id=? AND goal_id=? AND task_id=? AND worker_id=?
-                         AND status='available' AND expires_at>?
+                         AND claim_token_sha256=? AND status='available' AND expires_at>?
                        ORDER BY created_at DESC LIMIT 2""",
-                    (context.principal_id, context.goal_id, context.task_id, self.worker_id, now),
+                    (context.principal_id, context.goal_id, context.task_id, self.worker_id, claim_digest, now),
                 ).fetchall()
                 if len(rows) != 1:
                     db.rollback()
