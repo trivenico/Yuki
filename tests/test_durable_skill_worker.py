@@ -241,6 +241,52 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(result["state"], "failed")
         self.assertEqual(self.high_risk.calls, 0)
         self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
+    def test_claim_identity_lookup_failure_fails_closed_without_runtime_dispatch(self):
+        task = self.submit("read_demo", "must-not-run", key="identity-lookup-failure")
+        class IdentityFailureEngine:
+            def __init__(inner_self, wrapped):
+                inner_self.wrapped = wrapped
+            def __getattr__(inner_self, name):
+                return getattr(inner_self.wrapped, name)
+            def get_claim_identity(inner_self, task_id, worker_id, lease_token):
+                raise RuntimeError("identity store unavailable")
+        class RecordingRuntime:
+            called = False
+            def invoke(inner_self, *args, **kwargs):
+                inner_self.called = True
+                raise AssertionError("runtime must not be invoked")
+        runtime = RecordingRuntime()
+        worker = DurableSkillWorker(
+            IdentityFailureEngine(self.engine), runtime, worker_id="identity-failure-worker"
+        )
+        result = worker.run_once()
+        self.assertEqual(result["status"], "claim_identity_unavailable")
+        self.assertEqual(result["state"], "running")
+        self.assertFalse(runtime.called)
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
+
+    def test_malformed_claim_identity_fails_closed_without_runtime_dispatch(self):
+        task = self.submit("read_demo", "must-not-run", key="malformed-identity")
+        class MalformedIdentityEngine:
+            def __init__(inner_self, wrapped):
+                inner_self.wrapped = wrapped
+            def __getattr__(inner_self, name):
+                return getattr(inner_self.wrapped, name)
+            def get_claim_identity(inner_self, task_id, worker_id, lease_token):
+                return {"owner_id": "owner-test", "goal_id": "wrong-goal", "task_id": None}
+        class RecordingRuntime:
+            called = False
+            def invoke(inner_self, *args, **kwargs):
+                inner_self.called = True
+                raise AssertionError("runtime must not be invoked")
+        runtime = RecordingRuntime()
+        worker = DurableSkillWorker(
+            MalformedIdentityEngine(self.engine), runtime, worker_id="malformed-identity-worker"
+        )
+        result = worker.run_once()
+        self.assertEqual(result["status"], "invalid_claim_identity")
+        self.assertFalse(runtime.called)
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
     def test_worker_rejects_legacy_unowned_goal_before_runtime(self):
         legacy_goal = self.engine.create_goal()
         task = self.engine.submit(
