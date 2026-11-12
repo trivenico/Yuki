@@ -23,6 +23,29 @@ provider used by another account's request.
 - Add tests for per-owner routing, cross-owner loop reuse rejection and runtime
   composition.
 
+## Owner runtime factory
+
+The new `providers.owner_runtime_factory.OwnerAgentLoopFactory` provides the
+production composition point for the authenticated API:
+
+- Creates a new ProviderManager for each owner-loop request with an empty
+  environment mapping, preventing fallback to process-global API-key variables.
+- Loads only that owner's persisted profiles, reads that owner's selected
+  profile, and resolves its credential through the configured OS vault.
+- Builds a fresh OpenAI-compatible adapter, ProviderAgentAdapter and
+  AgentExecutionLoop for the selected profile. Profile selection changes are
+  observed on the next turn; no cross-owner adapter cache is used.
+- Accepts an optional owner-bound GuardedToolRuntime factory. Runtime and policy
+  objects are tracked weakly and cannot be reused across different owners.
+- Defaults to an empty deny-all tool runtime when no owner tool-runtime factory
+  is supplied. Provider configuration alone never grants tool access.
+
+The host must pass the factory as `agent_loop_for_owner` to
+`build_conversation_runtime`. Its tool-runtime callback must construct handlers,
+authorization policy, approval checks and audit callbacks for the authenticated
+owner. Conversation tool schemas and guarded handlers must be kept in sync by
+that host integration.
+
 ## Integration contract
 
 The host application supplies the owner-loop factory. It must derive the
