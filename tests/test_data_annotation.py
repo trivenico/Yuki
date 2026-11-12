@@ -839,6 +839,9 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             ["annotator:second-a", "annotator:second-b"],
         )
         self.assertEqual({item["round_number"] for item in second}, {2})
+        report = self.store.delivery_report("owner:alice", self.project.project_id)
+        self.assertEqual(report["pending_adjudication_count"], 1)
+        self.assertEqual(report["rework_independent_task_count"], 0)
         second_with_workers = [
             dict(item, annotator_id=worker)
             for item, worker in zip(second, ("annotator:second-a", "annotator:second-b"))
