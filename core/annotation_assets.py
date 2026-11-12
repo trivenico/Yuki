@@ -92,6 +92,7 @@ class SQLiteAnnotationAssetStore:
         db.execute("PRAGMA busy_timeout=5000")
         try:
             yield db
+            db.commit()
         except BaseException:
             db.rollback()
             raise
