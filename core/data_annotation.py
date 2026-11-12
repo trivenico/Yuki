@@ -116,6 +116,10 @@ class AnnotationConflict(RuntimeError):
     """The task changed since the caller last read it."""
 
 
+class AnnotationPolicyError(PermissionError):
+    """The requested assistance mode is prohibited by the project policy."""
+
+
 class SQLiteAnnotationWorkbench:
     """Durable owner-isolated annotation projects, tasks and review records."""
 
@@ -597,7 +601,7 @@ class SQLiteAnnotationWorkbench:
             if project is None or project["status"] != "active":
                 raise ValueError("annotation_project_not_active")
             if ai_assisted and project["ai_assistance_mode"] != "permitted_with_disclosure":
-                raise PermissionError("ai_assistance_not_permitted_for_project")
+                raise AnnotationPolicyError("ai_assistance_not_permitted_for_project")
             db.execute(
                 """INSERT INTO annotation_submissions VALUES
                 (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
