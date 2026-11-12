@@ -312,12 +312,21 @@ class ProviderProfileStore:
             if row is None:
                 db.rollback()
                 return False
+            # Confirm vault availability and remove the secret before deleting
+            # metadata. If the OS vault is locked/unavailable, keep the profile
+            # record intact rather than silently orphaning its credential.
+            try:
+                secret = self.vault.get_secret(row["credential_ref"])
+                if secret:
+                    self.vault.delete_secret(row["credential_ref"])
+            except Exception as exc:
+                db.rollback()
+                raise RuntimeError("OS credential vault is unavailable; profile was not removed") from exc
             db.execute("DELETE FROM provider_profile_selection WHERE owner_id=? AND profile_name=?",
                        (owner, profile_name))
             db.execute("DELETE FROM provider_profiles WHERE owner_id=? AND name=?",
                        (owner, profile_name))
             db.commit()
-        self.vault.delete_secret(row["credential_ref"])
         return True
 
     def close(self) -> None:
