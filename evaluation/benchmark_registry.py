@@ -5,7 +5,7 @@ decision. Registry state is process-local; durable storage is a separate adapter
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 import json
 import re
