@@ -316,6 +316,44 @@ class AuthenticatedAnnotationAPI:
                     })
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            reviewer_membership = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/reviewers", path
+            )
+            if reviewer_membership:
+                project_id = reviewer_membership.group(1)
+                if method == "GET":
+                    project = await asyncio.to_thread(
+                        self.workbench.get_project, user.user_id, project_id
+                    )
+                    if project is None:
+                        return await self._respond(send, 404, {"error": "not_found"})
+                    reviewers = await asyncio.to_thread(
+                        self.workbench.list_reviewers, user.user_id, project_id
+                    )
+                    return await self._respond(send, 200, {"reviewers": reviewers})
+                if method in {"POST", "DELETE"}:
+                    payload = await self._body(receive)
+                    if set(payload) != {"reviewer_user_id"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    reviewer_id = payload["reviewer_user_id"]
+                    if not isinstance(reviewer_id, str) or not reviewer_id:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    if method == "POST":
+                        users = await asyncio.to_thread(self.auth.list_users)
+                        if not any(item.user_id == reviewer_id for item in users):
+                            return await self._respond(send, 404, {"error": "reviewer_not_found"})
+                        granted = await asyncio.to_thread(
+                            self.workbench.grant_reviewer, user.user_id, project_id, reviewer_id
+                        )
+                        return await self._respond(send, 201 if granted else 404, {
+                            "granted": granted,
+                        })
+                    revoked = await asyncio.to_thread(
+                        self.workbench.revoke_reviewer, user.user_id, project_id, reviewer_id
+                    )
+                    return await self._respond(send, 200, {"revoked": revoked})
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             review_queue = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/review-queue", path
             )
@@ -323,7 +361,7 @@ class AuthenticatedAnnotationAPI:
                 if self.reviewer_authorizer is None:
                     return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 project_id = review_queue.group(1)
-                owner_id = await asyncio.to_thread(self.reviewer_authorizer, user, project_id)
+                owner_id = await self._reviewer_owner(user, project_id)
                 if not isinstance(owner_id, str) or not owner_id or owner_id == user.user_id:
                     return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 items = await asyncio.to_thread(
@@ -381,6 +419,13 @@ class AuthenticatedAnnotationAPI:
         if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
         return await asyncio.to_thread(self.auth.resolve_session, token)
+
+    async def _reviewer_owner(self, user, project_id):
+        if self.reviewer_authorizer is not None:
+            return await asyncio.to_thread(self.reviewer_authorizer, user, project_id)
+        return await asyncio.to_thread(
+            self.workbench.reviewer_owner, user.user_id, project_id
+        )
 
     async def _validate_task_asset_ref(self, owner_id, project_id, asset_ref):
         """Only bind a task to an existing, clean asset in this owner's project."""
