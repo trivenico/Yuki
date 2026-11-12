@@ -35,7 +35,15 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.auth.create_account("owner-two", "another-secure-password")
         self.owner_two = self.auth.authenticate("owner-two", "another-secure-password")
         self.store = SQLiteAnnotationWorkbench(str(root / "annotation.sqlite"))
-        self.app = AuthenticatedAnnotationAPI(_Downstream(), self.auth, self.store)
+        self.app = AuthenticatedAnnotationAPI(
+            _Downstream(), self.auth, self.store,
+            reviewer_authorizer=lambda user, project_id: (
+                self.owner_one.user_id
+                if user.user_id == self.owner_two.user_id
+                and self.store.get_project(self.owner_one.user_id, project_id) is not None
+                else None
+            ),
+        )
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -117,10 +125,78 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         submission_id = body["submission"]["submission_id"]
         status, body = self.request(
             "POST", f"/v1/annotation/submissions/{submission_id}/review",
-            {"decision": "accepted", "notes": "Matches rubric."},
-            self.owner_one.token,
+            {"decision": "accepted", "notes": "Matches rubric.", "project_id": project_id},
+            self.owner_two.token,
         )
         self.assertEqual((status, body["submission"]["status"]), (200, "accepted"))
+
+    def test_reviewer_queue_and_decisions_require_separate_authorized_identity(self):
+        project_id = self.create_project()
+        _, created = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "review-separation", "input_data": {"text": "Review me"}},
+            self.owner_one.token,
+        )
+        task = created["task"]
+        _, claimed = self.request(
+            "POST", f"/v1/annotation/tasks/{task["task_id"]}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        _, submitted = self.request(
+            "POST", f"/v1/annotation/tasks/{task["task_id"]}/submit",
+            {"payload": {"label": "positive"},
+             "expected_version": claimed["task"]["version"], "human_confirmed": True},
+            self.owner_one.token,
+        )
+        submission_id = submitted["submission"]["submission_id"]
+        status, body = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/review-queue",
+            token=self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (403, "reviewer_access_denied"))
+        status, body = self.request(
+            "POST", f"/v1/annotation/submissions/{submission_id}/review",
+            {"decision": "accepted", "project_id": project_id}, self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (403, "reviewer_access_denied"))
+        status, body = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/review-queue",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, len(body["submissions"])), (200, 1))
+        status, body = self.request(
+            "POST", f"/v1/annotation/submissions/{submission_id}/review",
+            {"decision": "accepted", "project_id": project_id}, self.owner_two.token,
+        )
+        self.assertEqual((status, body["submission"]["reviewer_id"]), (200, self.owner_two.user_id))
+
+    def test_reviewer_authorization_cannot_be_reused_for_another_project(self):
+        project_id = self.create_project()
+        other_project = self.create_project()
+        _, created = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "bound-review", "input_data": {"text": "Bound"}},
+            self.owner_one.token,
+        )
+        task = created["task"]
+        _, claimed = self.request(
+            "POST", f"/v1/annotation/tasks/{task["task_id"]}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        _, submitted = self.request(
+            "POST", f"/v1/annotation/tasks/{task["task_id"]}/submit",
+            {"payload": {"label": "positive"},
+             "expected_version": claimed["task"]["version"], "human_confirmed": True},
+            self.owner_one.token,
+        )
+        status, body = self.request(
+            "POST", f"/v1/annotation/submissions/{submitted["submission"]["submission_id"]}/review",
+            {"decision": "accepted", "project_id": other_project}, self.owner_two.token,
+        )
+        self.assertEqual((status, body["error"]), (404, "not_found"))
+        self.assertEqual(
+            self.store.get_task(self.owner_one.user_id, task["task_id"]).status, "submitted"
+        )
 
     def test_other_owner_cannot_read_or_submit_project_tasks(self):
         project_id = self.create_project()
