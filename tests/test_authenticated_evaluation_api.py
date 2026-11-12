@@ -63,8 +63,9 @@ class AuthenticatedEvaluationAPITests(unittest.TestCase):
         scope = {
             "type": "http", "method": method, "path": path,
             "query_string": query,
-            "headers": ([(b"authorization", f"Bearer {owner_token}".encode())]
-                        if owner_token else []),
+            "headers": (([(b"authorization", f"Bearer {owner_token}".encode())]
+                         if owner_token else [])
+                        + [(b"idempotency-key", b"api-request-1")]),
         }
         asyncio.run(self.api(scope, receive, send))
         status = sent[0]["status"]
