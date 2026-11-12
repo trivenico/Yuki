@@ -13,7 +13,7 @@ the exact JSON payload that a workspace edit must bind to:
 The adapter binds that payload to operation type `workspace.write`, capability
 `workspace:write`, and a stable workspace target identifier. It rejects
 duplicate paths, invalid digests, non-`FileChange` inputs, invalid workspace
-identifiers, NUL-containing text and oversized individual files. The common
+identifiers, actual NUL bytes and payloads exceeding the canonical 240 KB budget. The common
 canonical payload validator additionally rejects ambiguous/non-JSON values,
 non-finite numbers, excessive nesting and payloads above 256 KB.
 
@@ -28,28 +28,26 @@ paths and invalid input.
 
 ## Explicit non-completion
 
-This is an adapter foundation, **not yet end-to-end approval enforcement**.
-The gateway does not yet persist this envelope alongside an approval request;
-the inbox preview is still the Phase 219 four-field capability preview; and
-the durable worker does not yet reconstruct and verify this envelope before
-calling `ApprovedWorkspaceChanges.apply`. The adapter must not be treated as
-an authorization mechanism or used to bypass the existing gateway, owner
-identity, claim fencing, workspace allow-list, old-file digest checks or audit.
-
-The next increment must add durable operation-envelope persistence with
-integrity validation, bind its digest into the approval request/preview, and
-verify the exact envelope immediately before execution. It must include
-migration/restart tests and substitution/TOCTOU regression tests before the
-workspace capability can be called fully integrated.
+This is an adapter and gateway persistence foundation, **not yet end-to-end
+approval enforcement**. The durable worker does not yet reconstruct and verify
+this envelope before calling `ApprovedWorkspaceChanges.apply`, and the human
+inbox still lacks a structured per-file diff showing the exact proposed content.
+The adapter must not be treated as an authorization mechanism or used to bypass
+owner identity, claim fencing, workspace allow-lists, old-file digest checks or
+audit. Production workspace execution remains disabled until that integration
+and its TOCTOU tests are complete.
 
 ## Durable gateway binding increment
 
-The approval gateway now accepts an optional typed operation when creating a
-durable request. It verifies the operation against the policy request, stores
-the immutable envelope JSON and its digest in a dedicated table, and exposes
-only integrity-checked envelope metadata in the pending inbox. Duplicate live
-requests cannot silently switch between typed and untyped forms or substitute
-a different operation envelope.
+The approval gateway now accepts a typed operation and its exact canonical
+payload together. It verifies both against the policy request and envelope,
+stores the immutable envelope plus an encrypted payload envelope, and exposes
+only integrity-checked operation metadata in the pending inbox. Payload
+ciphertext is authenticated with associated data containing the request and
+operation digests. Typed requests fail closed unless an injected encryption
+adapter is configured; production requires a reviewed AEAD/KMS implementation
+with key custody and rotation. Duplicate live requests cannot silently switch
+between typed and untyped forms or substitute a different payload.
 
 When a typed request is approved, the gateway verifies the persisted envelope
 again and binds its envelope digest to the one-shot approval credential. The
