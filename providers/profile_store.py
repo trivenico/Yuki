@@ -1,0 +1,255 @@
+"""Persistent, owner-scoped provider profiles with OS-vault-only credentials.
+
+Provider metadata is stored in SQLite. Credential material is written only to an
+injected credential vault (the default adapter uses the operating-system keyring).
+No method returns credentials from list/get metadata operations.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import re
+import secrets
+import sqlite3
+from contextlib import closing
+from typing import Protocol
+from urllib.parse import urlsplit
+
+
+_OWNER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$")
+_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_ENV_REF = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+_SERVICE = "yuki.provider-profile.v1"
+
+
+class CredentialVault(Protocol):
+    def set_secret(self, reference: str, secret: str) -> None: ...
+    def get_secret(self, reference: str) -> str | None: ...
+    def delete_secret(self, reference: str) -> None: ...
+
+
+class OSKeyringVault:
+    """Use an installed OS-backed keyring; reject fail/in-memory backends."""
+
+    def __init__(self, *, keyring_module=None) -> None:
+        if keyring_module is None:
+            try:
+                import keyring as keyring_module
+            except ImportError as exc:
+                raise RuntimeError("OS credential vault is unavailable") from exc
+        self._keyring = keyring_module
+        try:
+            backend = keyring_module.get_keyring()
+            priority = backend.priority
+        except Exception as exc:
+            raise RuntimeError("OS credential vault is unavailable") from exc
+        if not isinstance(priority, (int, float)) or priority <= 0:
+            raise RuntimeError("No secure OS credential vault backend is available")
+
+    def set_secret(self, reference: str, secret: str) -> None:
+        self._keyring.set_password(_SERVICE, reference, secret)
+
+    def get_secret(self, reference: str) -> str | None:
+        return self._keyring.get_password(_SERVICE, reference)
+
+    def delete_secret(self, reference: str) -> None:
+        try:
+            self._keyring.delete_password(_SERVICE, reference)
+        except self._keyring.errors.PasswordDeleteError:
+            return
+
+
+@dataclass(frozen=True)
+class ProviderProfile:
+    owner_id: str
+    name: str
+    base_url: str
+    model: str
+    allowed_host: str
+    credential_configured: bool
+    created_at: float
+    updated_at: float
+
+
+class ProviderProfileStore:
+    """SQLite metadata + separate OS-vault credentials, scoped by owner."""
+
+    def __init__(self, database_path: str | Path, vault: CredentialVault) -> None:
+        if not all(callable(getattr(vault, method, None)) for method in
+                   ("set_secret", "get_secret", "delete_secret")):
+            raise TypeError("vault must implement the credential vault contract")
+        raw = Path(database_path).expanduser()
+        if raw.exists() and raw.is_symlink():
+            raise ValueError("provider profile database must not be a symlink")
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        if raw.parent.is_symlink():
+            raise ValueError("provider profile directory must not be a symlink")
+        self.path = raw
+        self.vault = vault
+        self._closed = False
+        self._harden_permissions()
+        with closing(self._connect()) as db:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS provider_profiles (
+                    owner_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    allowed_host TEXT NOT NULL,
+                    credential_ref TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(owner_id, name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_provider_profiles_owner
+                    ON provider_profiles(owner_id, name);
+            """)
+
+    def _harden_permissions(self) -> None:
+        if os.name == "nt":
+            return  # Windows ACLs are inherited from the private per-user config directory.
+        try:
+            os.chmod(self.path.parent, 0o700)
+            if self.path.exists():
+                os.chmod(self.path, 0o600)
+        except OSError as exc:
+            raise PermissionError("could not secure provider profile storage") from exc
+
+    def _connect(self):
+        if self._closed:
+            raise RuntimeError("provider profile store is closed")
+        db = sqlite3.connect(self.path, timeout=10)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=10000")
+        if os.name != "nt":
+            os.chmod(self.path, 0o600)
+        return db
+
+    @staticmethod
+    def _validate_owner(owner_id: str) -> str:
+        if not isinstance(owner_id, str) or not _OWNER.fullmatch(owner_id):
+            raise ValueError("owner_id is invalid")
+        return owner_id
+
+    @staticmethod
+    def _validate_name(name: str) -> str:
+        if not isinstance(name, str) or not _NAME.fullmatch(name):
+            raise ValueError("profile name must be lowercase identifier text")
+        return name
+
+    @staticmethod
+    def _validate_endpoint(base_url: str, allowed_host: str) -> tuple[str, str]:
+        if not isinstance(base_url, str) or len(base_url) > 2048:
+            raise ValueError("base_url must be bounded HTTPS URL text")
+        if not isinstance(allowed_host, str) or not allowed_host:
+            raise ValueError("an explicitly approved exact hostname is required")
+        parsed = urlsplit(base_url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        approved = allowed_host.lower().rstrip(".")
+        if (parsed.scheme != "https" or not host or host != approved
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or parsed.port not in (None, 443)):
+            raise ValueError("endpoint must use HTTPS on the exact approved hostname and default port")
+        if not parsed.path.startswith("/") or "\\x00" in parsed.path:
+            raise ValueError("endpoint path is invalid")
+        normalized = f"https://{host}{parsed.path.rstrip('/')}"
+        return normalized, host
+
+    def save(self, *, owner_id: str, name: str, base_url: str, model: str,
+             allowed_host: str, api_key: str) -> ProviderProfile:
+        """Create or rotate a profile; API key is accepted only for vault insertion."""
+        owner = self._validate_owner(owner_id)
+        profile_name = self._validate_name(name)
+        endpoint, host = self._validate_endpoint(base_url, allowed_host)
+        if not isinstance(model, str) or not model.strip() or len(model) > 256 or "\\x00" in model:
+            raise ValueError("model must be bounded non-empty text")
+        if not isinstance(api_key, str) or not api_key or len(api_key) > 8192 or "\\x00" in api_key:
+            raise ValueError("credential must be bounded non-empty text")
+        import time
+        now = time.time()
+        reference = secrets.token_urlsafe(32)
+        self.vault.set_secret(reference, api_key)
+        old_reference = None
+        try:
+            with closing(self._connect()) as db:
+                db.execute("BEGIN IMMEDIATE")
+                previous = db.execute(
+                    "SELECT credential_ref, created_at FROM provider_profiles WHERE owner_id=? AND name=?",
+                    (owner, profile_name),
+                ).fetchone()
+                old_reference = previous["credential_ref"] if previous else None
+                created = previous["created_at"] if previous else now
+                db.execute("""
+                    INSERT INTO provider_profiles
+                        (owner_id,name,base_url,model,allowed_host,credential_ref,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(owner_id,name) DO UPDATE SET
+                        base_url=excluded.base_url, model=excluded.model,
+                        allowed_host=excluded.allowed_host,
+                        credential_ref=excluded.credential_ref, updated_at=excluded.updated_at
+                """, (owner, profile_name, endpoint, model.strip(), host, reference, created, now))
+                db.commit()
+        except Exception:
+            try:
+                self.vault.delete_secret(reference)
+            except Exception:
+                pass
+            raise
+        if old_reference:
+            try:
+                self.vault.delete_secret(old_reference)
+            except Exception:
+                # New reference is committed and usable. Orphan cleanup is safe to retry.
+                pass
+        return ProviderProfile(owner, profile_name, endpoint, model.strip(), host, True, created, now)
+
+    def list_profiles(self, owner_id: str) -> tuple[ProviderProfile, ...]:
+        owner = self._validate_owner(owner_id)
+        with closing(self._connect()) as db:
+            rows = db.execute("""
+                SELECT owner_id,name,base_url,model,allowed_host,created_at,updated_at
+                FROM provider_profiles WHERE owner_id=? ORDER BY name
+            """, (owner,)).fetchall()
+        return tuple(ProviderProfile(
+            row["owner_id"], row["name"], row["base_url"], row["model"],
+            row["allowed_host"], True, row["created_at"], row["updated_at"],
+        ) for row in rows)
+
+    def resolve_for_runtime(self, owner_id: str, name: str) -> dict[str, str]:
+        """Internal runtime-only credential resolution; never use for API responses."""
+        owner = self._validate_owner(owner_id)
+        profile_name = self._validate_name(name)
+        with closing(self._connect()) as db:
+            row = db.execute("""
+                SELECT base_url,model,allowed_host,credential_ref
+                FROM provider_profiles WHERE owner_id=? AND name=?
+            """, (owner, profile_name)).fetchone()
+        if row is None:
+            raise KeyError("provider profile not found")
+        secret = self.vault.get_secret(row["credential_ref"])
+        if not isinstance(secret, str) or not secret:
+            raise RuntimeError("provider credential is unavailable in the OS vault")
+        return {"base_url": row["base_url"], "model": row["model"],
+                "allowed_host": row["allowed_host"], "api_key": secret}
+
+    def delete(self, owner_id: str, name: str) -> bool:
+        owner = self._validate_owner(owner_id)
+        profile_name = self._validate_name(name)
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT credential_ref FROM provider_profiles WHERE owner_id=? AND name=?",
+                (owner, profile_name),
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                return False
+            db.execute("DELETE FROM provider_profiles WHERE owner_id=? AND name=?",
+                       (owner, profile_name))
+            db.commit()
+        self.vault.delete_secret(row["credential_ref"])
+        return True
+
+    def close(self) -> None:
+        self._closed = True
