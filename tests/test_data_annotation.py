@@ -112,6 +112,80 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(updated_task.status, "rework")
         self.assertGreater(updated_task.version, claimed.version)
 
+    def test_independent_assignments_are_private_and_report_classification_agreement(self):
+        task = self._task()
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, task.task_id,
+            ["annotator:one", "annotator:two"],
+        )
+        self.assertEqual(len(assignments), 2)
+        self.assertEqual(self.store.list_my_independent_assignments("annotator:one")[0]["assignment_id"],
+                         assignments[0]["assignment_id"])
+        self.assertEqual(self.store.list_my_independent_assignments("annotator:other"), [])
+        for assignment, label in zip(assignments, ("bird", "bird")):
+            claimed = self.store.claim_independent_assignment(
+                "annotator:" + ("one" if assignment is assignments[0] else "two"),
+                assignment["assignment_id"], expected_version=1,
+            )
+            annotator = "annotator:one" if assignment is assignments[0] else "annotator:two"
+            submitted = self.store.submit_independent_assignment(
+                annotator, assignment["assignment_id"],
+                payload={"label": label}, expected_version=claimed["version"],
+                human_confirmed=True,
+            )
+            self.assertEqual(submitted["status"], "submitted")
+            self.assertEqual(submitted["quality"]["status"], "pass")
+        report = self.store.independent_agreement_report("owner:alice", self.project.project_id)
+        self.assertEqual(report["evaluated_task_count"], 1)
+        self.assertEqual(report["mean_pairwise_agreement"], 1.0)
+        self.assertEqual(report["fleiss_kappa"], None)
+        self.assertIsNone(self.store.independent_agreement_report("owner:bob", self.project.project_id))
+
+    def test_independent_assignment_rejects_duplicate_and_self_assignment(self):
+        task = self._task()
+        self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, task.task_id,
+            ["annotator:one", "annotator:two"],
+        )
+        with self.assertRaisesRegex(ValueError, "annotator_already_assigned"):
+            self.store.create_independent_assignments(
+                "owner:alice", self.project.project_id, task.task_id,
+                ["annotator:one", "annotator:three"],
+            )
+        with self.assertRaisesRegex(ValueError, "invalid_independent_annotators"):
+            self.store.create_independent_assignments(
+                "owner:alice", self.project.project_id, task.task_id,
+                ["owner:alice", "annotator:four"],
+            )
+
+    def test_fleiss_kappa_is_reported_for_multiple_tasks_with_constant_rater_count(self):
+        first = self._task()
+        second = self.store.create_task(
+            "owner:alice", self.project.project_id, external_ref="batch-001/item-0002",
+            input_data={"prompt": "Classify another animal."},
+        )
+        values = [(first, ("bird", "bird")), (second, ("cat", "dog"))]
+        for task, labels in values:
+            assignments = self.store.create_independent_assignments(
+                "owner:alice", self.project.project_id, task.task_id,
+                ["annotator:one", "annotator:two"],
+            )
+            for assignment, annotator, label in zip(
+                assignments, ("annotator:one", "annotator:two"), labels
+            ):
+                claimed = self.store.claim_independent_assignment(
+                    annotator, assignment["assignment_id"], expected_version=1
+                )
+                self.store.submit_independent_assignment(
+                    annotator, assignment["assignment_id"],
+                    payload={"label": label}, expected_version=claimed["version"],
+                    human_confirmed=True,
+                )
+        report = self.store.independent_agreement_report("owner:alice", self.project.project_id)
+        self.assertEqual(report["evaluated_task_count"], 2)
+        self.assertEqual(report["mean_pairwise_agreement"], 0.5)
+        self.assertAlmostEqual(report["fleiss_kappa"], 0.2)
+
     def test_quality_assessment_is_persisted_and_project_report_is_aggregated(self):
         project = self.store.create_project(
             "owner:alice", name="Quality labels", task_type="text_classification",
