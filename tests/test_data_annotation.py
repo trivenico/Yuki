@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -110,6 +111,62 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         updated_task = self.store.get_task("owner:alice", task.task_id)
         self.assertEqual(updated_task.status, "rework")
         self.assertGreater(updated_task.version, claimed.version)
+
+    def test_reviewer_grants_are_owner_scoped_persistent_and_revocable(self):
+        project = self.project
+        self.assertTrue(self.store.grant_reviewer(
+            "owner:alice", project.project_id, "owner:reviewer"
+        ))
+        reopened = SQLiteAnnotationWorkbench(str(self.database))
+        self.assertEqual(
+            reopened.reviewer_owner("owner:reviewer", project.project_id), "owner:alice"
+        )
+        self.assertEqual(
+            reopened.list_reviewers("owner:alice", project.project_id)[0]["reviewer_id"],
+            "owner:reviewer",
+        )
+        with self.assertRaisesRegex(ValueError, "project_owner_cannot_be_reviewer"):
+            reopened.grant_reviewer("owner:alice", project.project_id, "owner:alice")
+        self.assertTrue(reopened.revoke_reviewer(
+            "owner:alice", project.project_id, "owner:reviewer"
+        ))
+        self.assertIsNone(reopened.reviewer_owner("owner:reviewer", project.project_id))
+        self.assertEqual(reopened.list_reviewers("owner:alice", project.project_id), [])
+
+    def test_review_queue_lists_only_submitted_work_and_records_reviewer_identity(self):
+        project = self.project
+        task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="review-queue",
+            input_data={"text": "A sample"},
+        )
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        submission = self.store.submit(
+            "owner:alice", task.task_id, payload={"label": "bird"},
+            expected_version=claimed.version, human_confirmed=True,
+        )
+        self.store.grant_reviewer("owner:alice", project.project_id, "owner:reviewer")
+        queue = self.store.list_review_queue(
+            "owner:alice", project.project_id, reviewer_id="owner:reviewer"
+        )
+        self.assertEqual([item.submission.submission_id for item in queue], [submission.submission_id])
+        with self.assertRaisesRegex(PermissionError, "self_review_prohibited"):
+            self.store.review(
+                "owner:alice", submission.submission_id,
+                decision="accepted", reviewer_id="owner:alice",
+            )
+        reviewed = self.store.review(
+            "owner:alice", submission.submission_id,
+            decision="accepted", reviewer_id="owner:reviewer",
+            expected_project_id=project.project_id,
+        )
+        self.assertEqual(reviewed.reviewer_id, "owner:reviewer")
+        self.assertEqual(
+            self.store.list_review_queue(
+                "owner:alice", project.project_id, reviewer_id="owner:reviewer"
+            ), []
+        )
 
     def test_project_completion_requires_all_tasks_accepted_and_is_terminal(self):
         task = self._task()
@@ -362,6 +419,22 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             expected_version=claimed.version, human_confirmed=True,
         )
         self.assertIsNone(self.store.get_draft("owner:alice", task.task_id))
+
+    def test_legacy_submission_schema_migrates_reviewer_identity_column(self):
+        legacy_path = Path(self.directory.name) / "legacy-annotation.sqlite3"
+        with sqlite3.connect(legacy_path) as db:
+            db.execute("""CREATE TABLE annotation_submissions (
+                submission_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                project_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL, ai_assisted INTEGER NOT NULL,
+                human_confirmed INTEGER NOT NULL, status TEXT NOT NULL,
+                reviewer_notes TEXT NOT NULL, created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )""")
+        SQLiteAnnotationWorkbench(str(legacy_path))
+        with sqlite3.connect(legacy_path) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(annotation_submissions)")}
+        self.assertIn("reviewer_id", columns)
 
     def test_database_symlink_is_rejected(self):
         if not hasattr(Path, "symlink_to"):

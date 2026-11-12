@@ -74,6 +74,7 @@ def build_conversation_runtime(
     annotation_workbench: SQLiteAnnotationWorkbench | None = None,
     annotation_assets: SQLiteAnnotationAssetStore | None = None,
     annotation_asset_scanner: Callable[[str, bytes], bool] | None = None,
+    annotation_reviewer_authorizer: Callable[[Any, str], str | None] | None = None,
     oauth_connections: SQLiteOAuthConnectionRegistry | None = None,
     oauth_disconnect_service_for_provider: Callable[[str], Any] | None = None,
     oauth_authorization_service_for_provider: Callable[[str], Any] | None = None,
@@ -106,6 +107,10 @@ def build_conversation_runtime(
         raise TypeError("annotation_assets must be a SQLiteAnnotationAssetStore")
     if annotation_asset_scanner is not None and not callable(annotation_asset_scanner):
         raise TypeError("annotation_asset_scanner must be callable")
+    if annotation_reviewer_authorizer is not None and not callable(annotation_reviewer_authorizer):
+        raise TypeError("annotation_reviewer_authorizer must be callable")
+    if annotation_reviewer_authorizer is not None and annotation_workbench is None:
+        raise ValueError("annotation reviewer authorization requires the annotation workbench")
     if annotation_assets is not None and annotation_workbench is None:
         raise ValueError("annotation assets require the annotation workbench")
     if oauth_connections is not None and not isinstance(
@@ -152,6 +157,7 @@ def build_conversation_runtime(
             app = AuthenticatedAnnotationAPI(
                 app, auth_service, annotation_workbench,
                 asset_store=annotation_assets, asset_scanner=annotation_asset_scanner,
+                reviewer_authorizer=annotation_reviewer_authorizer,
             )
         if oauth_connections is not None:
             app = AuthenticatedOAuthConnectionAPI(

@@ -121,8 +121,18 @@ class AnnotationSubmission:
     human_confirmed: bool
     status: str
     reviewer_notes: str
+    reviewer_id: str
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class AnnotationReviewItem:
+    submission: AnnotationSubmission
+    external_ref: str
+    input_data: dict[str, Any]
+    instructions: str
+    rubric: dict[str, Any]
 
 
 class AnnotationConflict(RuntimeError):
@@ -197,12 +207,20 @@ class SQLiteAnnotationWorkbench:
                 human_confirmed INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 reviewer_notes TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id)
             )""")
+            submission_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(annotation_submissions)")
+            }
+            if "reviewer_id" not in submission_columns:
+                db.execute("ALTER TABLE annotation_submissions ADD COLUMN reviewer_id TEXT NOT NULL DEFAULT ''")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_submissions_task
                 ON annotation_submissions(owner_id, task_id, created_at DESC)""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_submissions_review_queue
+                ON annotation_submissions(owner_id, project_id, status, created_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_drafts (
                 task_id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -215,6 +233,17 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_drafts_owner
                 ON annotation_drafts(owner_id, project_id, updated_at DESC)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_project_reviewers (
+                owner_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL,
+                granted_at TEXT NOT NULL,
+                revoked_at TEXT,
+                PRIMARY KEY(owner_id, project_id, reviewer_id),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_reviewers_active
+                ON annotation_project_reviewers(reviewer_id, project_id, revoked_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_audit (
                 event_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -737,8 +766,10 @@ class SQLiteAnnotationWorkbench:
             if ai_assisted and project["ai_assistance_mode"] != "permitted_with_disclosure":
                 raise AnnotationPolicyError("ai_assistance_not_permitted_for_project")
             db.execute(
-                """INSERT INTO annotation_submissions VALUES
-                (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
+                """INSERT INTO annotation_submissions
+                (submission_id, task_id, project_id, owner_id, payload_json,
+                 ai_assisted, human_confirmed, status, reviewer_notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
                 (submission_id, task_id, task["project_id"], owner_id,
                  payload_json, int(ai_assisted), now, now),
             )
@@ -759,11 +790,86 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
         return self._submission(row)
 
+    def grant_reviewer(self, owner_id: str, project_id: str, reviewer_id: str) -> bool:
+        owner_id, reviewer_id = _owner(owner_id), _owner(reviewer_id)
+        if reviewer_id == owner_id:
+            raise ValueError("project_owner_cannot_be_reviewer")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute(
+                "SELECT status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return False
+            if project["status"] == "completed":
+                raise ValueError("project_completed")
+            db.execute(
+                """INSERT INTO annotation_project_reviewers
+                (owner_id, project_id, reviewer_id, granted_at, revoked_at)
+                VALUES (?, ?, ?, ?, NULL)
+                ON CONFLICT(owner_id, project_id, reviewer_id)
+                DO UPDATE SET granted_at=excluded.granted_at, revoked_at=NULL""",
+                (owner_id, project_id, reviewer_id, now),
+            )
+            self._audit(db, owner_id, project_id, None, "reviewer_granted", {
+                "reviewer_id": reviewer_id,
+            })
+        return True
+
+    def revoke_reviewer(self, owner_id: str, project_id: str, reviewer_id: str) -> bool:
+        owner_id, reviewer_id = _owner(owner_id), _owner(reviewer_id)
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                """UPDATE annotation_project_reviewers SET revoked_at=?
+                WHERE owner_id=? AND project_id=? AND reviewer_id=? AND revoked_at IS NULL""",
+                (now, owner_id, project_id, reviewer_id),
+            )
+            if cursor.rowcount:
+                self._audit(db, owner_id, project_id, None, "reviewer_revoked", {
+                    "reviewer_id": reviewer_id,
+                })
+        return cursor.rowcount == 1
+
+    def list_reviewers(self, owner_id: str, project_id: str) -> list[dict[str, str]]:
+        owner_id = _owner(owner_id)
+        if self.get_project(owner_id, project_id) is None:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT reviewer_id, granted_at FROM annotation_project_reviewers
+                WHERE owner_id=? AND project_id=? AND revoked_at IS NULL
+                ORDER BY granted_at, reviewer_id""",
+                (owner_id, project_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def reviewer_owner(self, reviewer_id: str, project_id: str) -> str | None:
+        reviewer_id = _owner(reviewer_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT r.owner_id FROM annotation_project_reviewers r
+                JOIN annotation_projects p ON p.project_id=r.project_id AND p.owner_id=r.owner_id
+                WHERE r.reviewer_id=? AND r.project_id=? AND r.revoked_at IS NULL""",
+                (reviewer_id, project_id),
+            ).fetchone()
+        return row["owner_id"] if row else None
+
     def review(
         self, owner_id: str, submission_id: str, *,
-        decision: str, notes: str = "",
+        decision: str, notes: str = "", reviewer_id: str | None = None,
+        expected_project_id: str | None = None,
+        require_reviewer_grant: bool = False,
     ) -> AnnotationSubmission | None:
         owner_id = _owner(owner_id)
+        reviewer_id = _owner(reviewer_id) if reviewer_id is not None else ""
+        if reviewer_id and reviewer_id == owner_id:
+            raise PermissionError("self_review_prohibited")
         if decision not in {"accepted", "rework"}:
             raise ValueError("invalid_review_decision")
         if not isinstance(notes, str) or len(notes) > 4000:
@@ -777,25 +883,88 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if row is None:
                 return None
+            if expected_project_id is not None and row["project_id"] != expected_project_id:
+                return None
+            if require_reviewer_grant:
+                grant = db.execute(
+                    """SELECT 1 FROM annotation_project_reviewers
+                    WHERE owner_id=? AND project_id=? AND reviewer_id=? AND revoked_at IS NULL""",
+                    (owner_id, row["project_id"], reviewer_id),
+                ).fetchone()
+                if grant is None:
+                    raise PermissionError("reviewer_access_revoked")
             if row["status"] != "submitted":
                 raise ValueError("submission_already_reviewed")
-            db.execute(
-                "UPDATE annotation_submissions SET status=?, reviewer_notes=?, updated_at=? "
+            updated_submission = db.execute(
+                "UPDATE annotation_submissions SET status=?, reviewer_notes=?, reviewer_id=?, updated_at=? "
                 "WHERE owner_id=? AND submission_id=? AND status='submitted'",
-                (decision, notes, now, owner_id, submission_id),
+                (decision, notes, reviewer_id, now, owner_id, submission_id),
             )
-            db.execute(
+            if updated_submission.rowcount != 1:
+                raise AnnotationConflict("submission_review_race")
+            updated_task = db.execute(
                 "UPDATE annotation_tasks SET status=?, version=version+1, updated_at=? "
                 "WHERE owner_id=? AND task_id=? AND status='submitted'",
                 (decision, now, owner_id, row["task_id"]),
             )
+            if updated_task.rowcount != 1:
+                raise AnnotationConflict("task_review_state_conflict")
             self._audit(db, owner_id, row["project_id"], row["task_id"],
-                        "submission_reviewed", {"decision": decision})
+                        "submission_reviewed", {"decision": decision, "reviewer_id": reviewer_id})
             updated = db.execute(
                 "SELECT * FROM annotation_submissions WHERE owner_id=? AND submission_id=?",
                 (owner_id, submission_id),
             ).fetchone()
         return self._submission(updated)
+
+    def list_review_queue(
+        self, owner_id: str, project_id: str, *, limit: int = 100,
+        reviewer_id: str | None = None,
+    ) -> list[AnnotationReviewItem] | None:
+        """Return review items with task and rubric context; caller authorizes access."""
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            raise ValueError("invalid_project_id")
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("invalid_limit")
+        with self._connect() as db:
+            if reviewer_id is not None:
+                reviewer_id = _owner(reviewer_id)
+                db.execute("BEGIN")
+                grant = db.execute(
+                    """SELECT 1 FROM annotation_project_reviewers
+                    WHERE owner_id=? AND project_id=? AND reviewer_id=? AND revoked_at IS NULL""",
+                    (owner_id, project_id, reviewer_id),
+                ).fetchone()
+                if grant is None:
+                    return None
+            rows = db.execute(
+                """SELECT s.*, t.external_ref, t.input_json, p.instructions, p.rubric_json
+                FROM annotation_submissions s
+                JOIN annotation_tasks t ON t.task_id=s.task_id AND t.owner_id=s.owner_id
+                JOIN annotation_projects p ON p.project_id=s.project_id AND p.owner_id=s.owner_id
+                WHERE s.owner_id=? AND s.project_id=? AND s.status='submitted'
+                ORDER BY s.created_at ASC, s.submission_id LIMIT ?""",
+                (owner_id, project_id, limit),
+            ).fetchall()
+        items = []
+        for row in rows:
+            values = dict(row)
+            submission = self._submission({
+                key: values[key] for key in (
+                    "submission_id", "task_id", "project_id", "owner_id", "payload_json",
+                    "ai_assisted", "human_confirmed", "status", "reviewer_notes",
+                    "reviewer_id", "created_at", "updated_at",
+                )
+            })
+            items.append(AnnotationReviewItem(
+                submission=submission,
+                external_ref=values["external_ref"],
+                input_data=_decode(values["input_json"]),
+                instructions=values["instructions"],
+                rubric=_decode(values["rubric_json"]),
+            ))
+        return items
 
     def list_submissions(
         self, owner_id: str, task_id: str, *, limit: int = 50,
