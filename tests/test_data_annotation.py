@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from contextlib import closing
 import tempfile
 import unittest
@@ -907,6 +908,64 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             "owner:alice", self.project.project_id, manifest["manifest_id"],
         )
         self.assertFalse(tampered["valid"])
+
+    def test_quality_drift_report_detects_significant_gold_accuracy_drop(self):
+        annotators = ("annotator:drift-a", "annotator:drift-b")
+        assignments = []
+        for index in range(30):
+            task = self.store.create_task(
+                "owner:alice", self.project.project_id,
+                external_ref=f"drift-{index:03d}",
+                input_data={"text": f"Gold calibration sample {index}"},
+            )
+            created = self.store.create_independent_assignments(
+                "owner:alice", self.project.project_id, task.task_id, list(annotators),
+            )
+            assignments.extend(created)
+        now = datetime.now(timezone.utc)
+        gold_id = "gold-drift-fixture"
+        with sqlite3.connect(self.database) as db:
+            db.execute(
+                "INSERT INTO annotation_gold_standards "
+                "(gold_id, owner_id, project_id, task_id, expected_label, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (gold_id, "owner:alice", self.project.project_id, task.task_id,
+                 "positive", now.isoformat()),
+            )
+            evidence = []
+            for index, assignment in enumerate(assignments):
+                # 20 baseline samples at 100%, followed by 10 recent samples at 0%.
+                stamp = now - timedelta(days=60 if index // 2 < 20 else 10)
+                correct = 1 if index // 2 < 20 else 0
+                evidence.append((
+                    assignment["assignment_id"], gold_id, "owner:alice",
+                    self.project.project_id, assignment["task_id"],
+                    assignment["annotator_id"], correct, stamp.isoformat(),
+                ))
+            db.executemany(
+                "INSERT INTO annotation_gold_results "
+                "(assignment_id, gold_id, owner_id, project_id, task_id, annotator_id, correct, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", evidence,
+            )
+            db.commit()
+        report = self.store.create_quality_drift_report(
+            "owner:alice", self.project.project_id, idempotency_key="drift-run-001",
+        )
+        self.assertEqual(report["report"]["summary"]["drift_detected_count"], 2)
+        self.assertTrue(all(
+            item["status"] == "drift_detected"
+            for item in report["report"]["annotators"]
+        ))
+        repeated = self.store.create_quality_drift_report(
+            "owner:alice", self.project.project_id, idempotency_key="drift-run-001",
+        )
+        self.assertEqual(repeated["report_id"], report["report_id"])
+        history = self.store.list_quality_drift_reports("owner:alice", self.project.project_id)
+        self.assertEqual(len(history), 1)
+        self.assertTrue(history[0]["integrity_valid"])
+        self.assertIsNone(self.store.get_quality_drift_report(
+            "owner:bob", self.project.project_id, report["report_id"],
+        ))
 
     def test_performance_report_uses_persisted_round_and_reviewer_evidence(self):
         assignments = self.store.create_independent_assignments(
