@@ -196,6 +196,7 @@
     await loadTasks();
     await loadReviewerMembers();
     await loadQualityReport();
+    await refreshAgreementReport();
   };
   const loadTasks = async () => {
     if (state.task?.task_id) {
@@ -539,6 +540,7 @@
       draftSessions.delete(state.task.task_id);
       await loadTasks();
       await loadQualityReport();
+    await refreshAgreementReport();
       setStatus("Annotation submitted for review · " + result.submission.submission_id);
     } catch (error) { setStatus(error.message, true); }
     finally { $("submit-annotation").disabled = !state.claimed; }
@@ -588,7 +590,8 @@
   $("annotation-project").addEventListener("change", async () => {
     const previousProjectId = state.project?.project_id;
     state.project = selectedProject();
-    try { await loadTasks(); await loadReviewerMembers(); await loadQualityReport(); }
+    try { await loadTasks(); await loadReviewerMembers(); await loadQualityReport();
+    await refreshAgreementReport(); }
     catch (error) {
       if (previousProjectId) $("annotation-project").value = previousProjectId;
       state.project = state.projects.find((item) => item.project_id === previousProjectId) || null;
