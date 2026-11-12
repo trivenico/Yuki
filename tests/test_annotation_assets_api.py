@@ -203,6 +203,59 @@ class AnnotationAssetAPITests(unittest.TestCase):
         status, _, _ = self.request("GET", preview_path, token=self.other.token)
         self.assertEqual(status, 404)
 
+    def test_preview_rejects_non_image_and_integrity_tampering(self):
+        from io import BytesIO
+        from PIL import Image
+
+        upload_path = f"/v1/annotation/projects/{self.project_id}/assets"
+        bad_data = b"\\x89PNG\\r\\n\\x1a\\n" + b"not-a-real-image"
+        status, body, _ = self.request(
+            "POST", upload_path, bad_data, self.owner.token,
+            "application/octet-stream",
+        )
+        self.assertEqual(status, 201)
+        bad_id = json.loads(body)["asset_id"]
+        status, body, _ = self.request(
+            "GET", upload_path + "/" + bad_id + "/preview",
+            token=self.owner.token,
+        )
+        self.assertEqual((status, json.loads(body)["error"]),
+                         (415, "unsupported_image_content"))
+
+        image_data = BytesIO()
+        image = Image.new("RGB", (3, 3), (1, 2, 3))
+        image.save(image_data, format="PNG")
+        image.close()
+        status, body, _ = self.request(
+            "POST", upload_path, image_data.getvalue(), self.owner.token,
+            "application/octet-stream",
+        )
+        self.assertEqual(status, 201)
+        asset_id = json.loads(body)["asset_id"]
+        asset_file = self.assets._asset_path(self.owner.user.user_id, asset_id)
+        asset_file.write_bytes(b"tampered")
+        status, body, _ = self.request(
+            "GET", upload_path + "/" + asset_id + "/preview",
+            token=self.owner.token,
+        )
+        self.assertEqual((status, json.loads(body)["error"]),
+                         (409, "asset_integrity_check_failed"))
+
+    def test_quarantined_asset_cannot_be_previewed(self):
+        self.app.asset_scanner = None
+        upload_path = f"/v1/annotation/projects/{self.project_id}/assets"
+        status, body, _ = self.request(
+            "POST", upload_path, b"GIF89a" + b"unscanned",
+            self.owner.token, "application/octet-stream",
+        )
+        self.assertEqual(status, 202)
+        asset_id = json.loads(body)["asset_id"]
+        status, body, _ = self.request(
+            "GET", upload_path + "/" + asset_id + "/preview",
+            token=self.owner.token,
+        )
+        self.assertEqual((status, json.loads(body)["error"]), (404, "not_found"))
+
     def test_rejects_wrong_content_type_and_unknown_project(self):
         path = f"/v1/annotation/projects/{self.project_id}/assets"
         status, body, _ = self.request(
