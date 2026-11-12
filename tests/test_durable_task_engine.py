@@ -92,7 +92,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.engine.recover_expired_leases()
         first = self.engine.claim_recovery_outbox("same-supervisor")
         self.assertEqual(len(first), 1)
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db:
             db.execute(
                 "UPDATE lease_recovery_outbox SET claim_until=0 WHERE id=?",
                 (first[0]["id"],),
