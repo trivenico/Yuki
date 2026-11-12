@@ -266,6 +266,18 @@ class SQLiteAnnotationWorkbench:
                 UNIQUE(owner_id, project_id, version),
                 UNIQUE(owner_id, project_id, idempotency_key)
             )""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS annotation_adjudication_events_no_update
+                BEFORE UPDATE ON annotation_adjudication_events
+                BEGIN SELECT RAISE(ABORT, 'annotation_adjudication_events_are_immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS annotation_adjudication_events_no_delete
+                BEFORE DELETE ON annotation_adjudication_events
+                BEGIN SELECT RAISE(ABORT, 'annotation_adjudication_events_are_immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS annotation_delivery_manifests_no_update
+                BEFORE UPDATE ON annotation_delivery_manifests
+                BEGIN SELECT RAISE(ABORT, 'annotation_delivery_manifests_are_immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS annotation_delivery_manifests_no_delete
+                BEFORE DELETE ON annotation_delivery_manifests
+                BEGIN SELECT RAISE(ABORT, 'annotation_delivery_manifests_are_immutable'); END""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_manifests_owner
                 ON annotation_delivery_manifests(owner_id, project_id, created_at DESC)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_standards (
