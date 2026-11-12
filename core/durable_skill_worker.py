@@ -99,7 +99,7 @@ class DurableSkillWorker:
                         raise PermissionError("registered skill is unavailable for policy review")
                     policy_request = request_factory(skill_name, argument, skill, policy_context)
                     decision = policy_engine.evaluate(policy_request)
-                    if getattr(decision, "decision", None).value == "require_approval":
+                    if getattr(getattr(decision, "decision", None), "value", None) == "require_approval":
                         gateway.request_approval(policy_request)
                 deadline = time.monotonic() + self.approval_wait_timeout_seconds
                 while True:
