@@ -198,6 +198,15 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             self.store.get_task(self.owner_one.user_id, task["task_id"]).status, "submitted"
         )
 
+    def test_reviewer_routes_fail_closed_without_authorization_service(self):
+        project_id = self.create_project()
+        self.app = AuthenticatedAnnotationAPI(_Downstream(), self.auth, self.store)
+        status, body = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/review-queue",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, body["error"]), (403, "reviewer_access_denied"))
+
     def test_other_owner_cannot_read_or_submit_project_tasks(self):
         project_id = self.create_project()
         status, body = self.request(
@@ -398,9 +407,11 @@ class AnnotationRuntimeTests(unittest.TestCase):
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=loop, annotation_workbench=store,
+                annotation_reviewer_authorizer=lambda user, project_id: None,
             )
             self.assertIsInstance(runtime.app, AuthenticatedAnnotationAPI)
             self.assertIs(runtime.app.workbench, store)
+            self.assertTrue(callable(runtime.app.reviewer_authorizer))
             runtime.close()
 
     def test_runtime_mounts_asset_store_only_with_annotation_workbench(self):
