@@ -36,6 +36,8 @@ class ApprovedSkillRuntime:
             raise TypeError("policy_request_factory must be callable")
         if approval_gateway is not None and not callable(getattr(approval_gateway, "authorize", None)):
             raise TypeError("approval_gateway must provide authorize(request, approval_token=...)")
+        if policy_engine is not None and approval_gateway is None:
+            raise ValueError("central policy execution requires a durable approval_gateway")
         if approval_gateway is not None and (policy_engine is None or getattr(approval_gateway, "policy_engine", None) is not policy_engine):
             raise ValueError("approval_gateway must use the exact configured policy_engine")
         self.audit = audit
