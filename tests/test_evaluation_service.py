@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -107,6 +108,53 @@ class EvaluationServiceTests(unittest.TestCase):
                 benchmark_id="smoke", benchmark_version=1,
                 benchmark_digest=self.benchmark.digest, candidate_id="candidate-a",
             )
+
+    def test_separate_service_instances_cannot_execute_same_live_request(self):
+        from evaluation.run_store import EvaluationRunInProgress
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def generate(prompt, *, timeout_seconds):
+            calls.append(prompt)
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test execution release timed out")
+            return "A bounded retry is safe."
+
+        adapter = TrustedEvaluationAdapter("provider-a", "model-a", generate)
+        first = self._service(adapter)
+        second = self._service(adapter)
+        result_holder = []
+        error_holder = []
+
+        def execute_first():
+            try:
+                result_holder.append(first.run(
+                    owner_id="owner-a", idempotency_key="cross-worker-key",
+                    benchmark_id="smoke", benchmark_version=1,
+                    benchmark_digest=self.benchmark.digest, candidate_id="candidate-a",
+                ))
+            except Exception as exc:
+                error_holder.append(exc)
+
+        worker = threading.Thread(target=execute_first)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(timeout=3))
+            with self.assertRaises(EvaluationRunInProgress):
+                second.run(
+                    owner_id="owner-a", idempotency_key="cross-worker-key",
+                    benchmark_id="smoke", benchmark_version=1,
+                    benchmark_digest=self.benchmark.digest, candidate_id="candidate-a",
+                )
+        finally:
+            release.set()
+            worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(error_holder, [])
+        self.assertEqual(len(result_holder), 1)
+        self.assertEqual(calls, ["Explain bounded retries"])
 
     def test_capacity_is_bounded(self):
         service = self._service(
