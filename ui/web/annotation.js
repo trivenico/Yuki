@@ -7,7 +7,7 @@
     projects: [], tasks: [], project: null, task: null, image: null, imageUrl: null,
     camera: null, tool: "box", boxes: [], polygons: [], draft: [], pointer: null,
     preview: null, claimed: false, resizeObserver: null,
-    undoStack: [], redoStack: [], lastHistorySnapshot: null
+    undoStack: [], redoStack: [], lastHistorySnapshot: null, independentAssignment: null
   };
   const draftSessions = new Map();
   const draftSession = (taskId) => {
@@ -911,6 +911,123 @@
   $("annotation-review-load").addEventListener("click", loadReviewerQueue);
   $("annotation-review-project-id").addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); loadReviewerQueue(); }
+  });
+  const refreshAgreementReport = async () => {
+    const target = $("annotation-agreement-summary");
+    target.textContent = "";
+    if (!state.project) {
+      target.textContent = "Select a project to view agreement metrics.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/agreement-report");
+      const report = result.report;
+      target.textContent = report.supported
+        ? report.evaluated_task_count + " tasks evaluated · mean pairwise agreement " +
+          (report.mean_pairwise_agreement === null ? "unavailable" :
+            Math.round(report.mean_pairwise_agreement * 100) + "%") +
+          " · Fleiss' kappa " + (report.fleiss_kappa === null ? "unavailable" :
+            report.fleiss_kappa.toFixed(3)) +
+          " · " + report.insufficient_annotators_task_count + " tasks awaiting multiple submissions."
+        : "Agreement is not yet supported for this task type.";
+    } catch (error) {
+      target.textContent = "Agreement report unavailable: " + error.message;
+    }
+  };
+  const loadIndependentAssignments = async () => {
+    const target = $("annotation-independent-list");
+    target.replaceChildren();
+    try {
+      const result = await api("/v1/annotation/assignments");
+      for (const assignment of result.assignments || []) {
+        const card = document.createElement("article");
+        card.className = "annotation-independent-card";
+        const details = document.createElement("p");
+        details.textContent = assignment.task_type + " · " + assignment.status +
+          " · " + assignment.external_ref + " · " + JSON.stringify(assignment.input_data);
+        const claim = document.createElement("button");
+        claim.type = "button";
+        claim.textContent = assignment.status === "in_progress" ? "Resume assignment" : "Claim assignment";
+        claim.disabled = assignment.status === "submitted";
+        claim.addEventListener("click", async () => {
+          claim.disabled = true;
+          try {
+            const claimed = await api("/v1/annotation/assignments/" +
+              encodeURIComponent(assignment.assignment_id) + "/claim", {
+                method: "POST", body: JSON.stringify({ expected_version: assignment.version })
+              });
+            state.independentAssignment = {
+              assignment_id: assignment.assignment_id,
+              version: claimed.assignment.version,
+              rubric: assignment.rubric,
+            };
+            $("annotation-independent-submit").disabled = false;
+            $("annotation-independent-status").textContent =
+              "Assignment claimed. Review the task and rubric, then submit your independent label.";
+          } catch (error) {
+            $("annotation-independent-status").textContent = "Claim failed: " + error.message;
+            claim.disabled = false;
+          }
+        });
+        card.append(details, claim);
+        target.append(card);
+      }
+      if (!(result.assignments || []).length) {
+        target.textContent = "No independent assignments are currently assigned to this account.";
+      }
+    } catch (error) {
+      target.textContent = "Could not load assignments: " + error.message;
+    }
+  };
+  $("annotation-independent-assign").addEventListener("click", async () => {
+    if (!state.project || !state.task) {
+      $("annotation-independent-status").textContent = "Select a project and task first.";
+      return;
+    }
+    const annotatorIds = $("annotation-independent-annotators").value
+      .split(",").map(value => value.trim()).filter(Boolean);
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/tasks/" +
+        encodeURIComponent(state.task.task_id) + "/independent-assignments", {
+          method: "POST", body: JSON.stringify({ annotator_user_ids: annotatorIds })
+        });
+      $("annotation-independent-status").textContent =
+        "Created " + result.assignments.length + " independent assignment(s).";
+      $("annotation-independent-annotators").value = "";
+    } catch (error) {
+      $("annotation-independent-status").textContent = "Assignment creation failed: " + error.message;
+    }
+  });
+  $("annotation-agreement-refresh").addEventListener("click", refreshAgreementReport);
+  $("annotation-independent-load").addEventListener("click", loadIndependentAssignments);
+  $("annotation-independent-submit").addEventListener("click", async () => {
+    const assignment = state.independentAssignment;
+    if (!assignment) return;
+    const label = $("annotation-independent-label").value.trim();
+    if (!label) {
+      $("annotation-independent-status").textContent = "Enter a classification label.";
+      return;
+    }
+    const button = $("annotation-independent-submit");
+    button.disabled = true;
+    try {
+      await api("/v1/annotation/assignments/" +
+        encodeURIComponent(assignment.assignment_id) + "/submit", {
+          method: "POST",
+          body: JSON.stringify({
+            payload: { label }, expected_version: assignment.version, human_confirmed: true
+          })
+        });
+      state.independentAssignment = null;
+      $("annotation-independent-label").value = "";
+      $("annotation-independent-status").textContent = "Independent annotation submitted.";
+      await loadIndependentAssignments();
+    } catch (error) {
+      $("annotation-independent-status").textContent = "Submission failed: " + error.message;
+      button.disabled = false;
+    }
   });
   setTool("box");
   renderCanvas();
