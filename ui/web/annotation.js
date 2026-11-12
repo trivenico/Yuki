@@ -306,11 +306,16 @@
   });
   const renderEditor = () => {
     const task = state.task;
-    $("annotation-family-editor").hidden = !task || ["bounding_boxes", "polygon_segmentation", "image_classification"].includes(state.project?.task_type);
-    $("annotation-label-wrap").hidden = !task || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(state.project?.task_type);
-    $("annotation-tools").hidden = !task || !["bounding_boxes", "polygon_segmentation"].includes(state.project?.task_type);
-    $("annotation-canvas-panel").hidden = !task || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(state.project?.task_type);
-    $("annotation-family-json").value = task ? JSON.stringify(task.input_data || {}, null, 2) : "{}";
+    const family = state.project?.task_type;
+    const classification = ["image_classification", "text_classification"].includes(family);
+    $("annotation-family-editor").hidden = !task || ["bounding_boxes", "polygon_segmentation", "image_classification", "text_classification"].includes(family);
+    $("annotation-label-wrap").hidden = !task || !(["bounding_boxes", "polygon_segmentation"].includes(family) || classification);
+    $("annotation-tools").hidden = !task || !["bounding_boxes", "polygon_segmentation"].includes(family);
+    $("annotation-canvas-panel").hidden = !task || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
+    $("annotation-family-json").value = "{}";
+    $("annotation-task-input").textContent = task
+      ? (state.project.instructions || "") + "\\n\\nInput: " + JSON.stringify(task.input_data || {}, null, 2)
+      : "Select a task to view its input.";
     $("annotation-family-json").disabled = !state.claimed;
     $("annotation-label").disabled = !state.claimed;
     $("submit-annotation").disabled = !state.claimed;
@@ -345,7 +350,7 @@
         if (state.draft.length) throw new Error("Finish or cancel the polygon draft first.");
         if (!state.polygons.length) throw new Error("Add at least one polygon.");
         payload = { polygons: state.polygons };
-      } else if (type === "image_classification") payload = { label: requiredLabel() };
+      } else if (type === "image_classification" || type === "text_classification") payload = { label: requiredLabel() };
       else {
         payload = JSON.parse($("annotation-family-json").value);
         if (!payload || Array.isArray(payload) || typeof payload !== "object") throw new Error("Annotation payload must be a JSON object.");
@@ -357,8 +362,8 @@
           payload, expected_version: state.task.version, ai_assisted: false, human_confirmed: true
         })
       });
-      setStatus("Annotation submitted for review · " + result.submission.submission_id);
       await loadTasks();
+      setStatus("Annotation submitted for review · " + result.submission.submission_id);
     } catch (error) { setStatus(error.message, true); }
     finally { $("submit-annotation").disabled = !state.claimed; }
   });
@@ -368,6 +373,21 @@
       const points = state.draft.map((p) => [p.x, p.y]);
       const area = points.reduce((sum, p, i) => sum + p[0] * points[(i + 1) % points.length][1] - points[(i + 1) % points.length][0] * p[1], 0) / 2;
       if (Math.abs(area) < 1e-8) throw new Error("Polygon area is too small.");
+      const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+      const onSegment = (a, b, p) => Math.min(a[0], b[0]) - 1e-9 <= p[0] && p[0] <= Math.max(a[0], b[0]) + 1e-9 && Math.min(a[1], b[1]) - 1e-9 <= p[1] && p[1] <= Math.max(a[1], b[1]) + 1e-9;
+      const intersects = (a, b, c, d) => {
+        const ab1 = cross(a, b, c), ab2 = cross(a, b, d), cd1 = cross(c, d, a), cd2 = cross(c, d, b);
+        if (((ab1 > 1e-9 && ab2 < -1e-9) || (ab1 < -1e-9 && ab2 > 1e-9)) && ((cd1 > 1e-9 && cd2 < -1e-9) || (cd1 < -1e-9 && cd2 > 1e-9))) return true;
+        return Math.abs(ab1) <= 1e-9 && onSegment(a, b, c) || Math.abs(ab2) <= 1e-9 && onSegment(a, b, d) || Math.abs(cd1) <= 1e-9 && onSegment(c, d, a) || Math.abs(cd2) <= 1e-9 && onSegment(c, d, b);
+      };
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i], b = points[(i + 1) % points.length];
+        if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= 1e-9) throw new Error("Polygon has duplicate adjacent vertices.");
+        for (let j = i + 1; j < points.length; j++) {
+          if (j === i + 1 || (i === 0 && j === points.length - 1)) continue;
+          if (intersects(a, b, points[j], points[(j + 1) % points.length])) throw new Error("Polygon edges intersect.");
+        }
+      }
       state.polygons.push({ label: requiredLabel(), points }); state.draft = [];
       setStatus("Polygon added. Review it before submitting."); renderCanvas();
     } catch (error) { setStatus(error.message, true); }
