@@ -85,6 +85,9 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b"Grant access", self.request(app, "/")[1]["body"])
         self.assertIn(b"annotation-review-load", self.request(app, "/")[1]["body"])
         self.assertIn(b"annotation-reviewer-admin", css[1]["body"])
+        self.assertIn(b"/quality-report", js[1]["body"])
+        self.assertIn(b"annotation-quality-refresh", self.request(app, "/")[1]["body"])
+        self.assertIn(b"annotation-quality-report", css[1]["body"])
         self.assertEqual(self.request(app, "/assets/../api/runtime.py")[0]["status"], 404)
 
     def test_provider_specific_oauth_callback_path_serves_chat_shell(self):
