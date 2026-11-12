@@ -5,7 +5,7 @@ changes model routing, or makes promotion decisions.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -38,6 +38,7 @@ class EvaluationRun:
     run_id: str
     owner_id: str
     idempotency_key: str
+    request_digest: str
     benchmark_id: str
     benchmark_version: int
     benchmark_digest: str
@@ -144,7 +145,8 @@ class EvaluationRunStore:
     def _from_row(row: sqlite3.Row) -> EvaluationRun:
         return EvaluationRun(
             run_id=row["run_id"], owner_id=row["owner_id"],
-            idempotency_key=row["idempotency_key"], benchmark_id=row["benchmark_id"],
+            idempotency_key=row["idempotency_key"], request_digest=row["request_digest"],
+            benchmark_id=row["benchmark_id"],
             benchmark_version=row["benchmark_version"], benchmark_digest=row["benchmark_digest"],
             candidate_id=row["candidate_id"], provider_id=row["provider_id"],
             model_id=row["model_id"], environment=json.loads(row["environment_json"]),
@@ -187,7 +189,8 @@ class EvaluationRunStore:
         run_id = secrets.token_urlsafe(18)
         record_fields = {
             **request_fields, "run_id": run_id, "owner_id": owner,
-            "idempotency_key": key, "report": json.loads(report_json),
+            "idempotency_key": key, "request_digest": request_digest,
+            "report": json.loads(report_json),
             "report_digest": report_digest, "created_at": now,
         }
         record_digest = self._record_digest(record_fields)
@@ -268,6 +271,7 @@ class EvaluationRunStore:
             "run_id": run.run_id,
             "owner_id": run.owner_id,
             "idempotency_key": run.idempotency_key,
+            "request_digest": run.request_digest,
             "report": run.report,
             "report_digest": run.report_digest,
             "created_at": run.created_at,
