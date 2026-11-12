@@ -18,8 +18,8 @@ _OPERATION_TYPE = "workspace.write"
 _TARGET = re.compile(r"^workspace:[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_CHANGES = 8
-_MAX_FILE_BYTES = 256 * 1024
-_MAX_TOTAL_BYTES = 1024 * 1024
+_MAX_FILE_BYTES = 240_000
+_MAX_TOTAL_BYTES = 240_000
 
 
 def workspace_change_payload(changes: Sequence[FileChange]) -> dict:
@@ -45,10 +45,10 @@ def workspace_change_payload(changes: Sequence[FileChange]) -> dict:
             raise ValueError("workspace content must be text without NUL characters")
         encoded = change.content.encode("utf-8")
         if len(encoded) > _MAX_FILE_BYTES:
-            raise ValueError("individual workspace change exceeds 256 KB")
+            raise ValueError("individual workspace change exceeds the 240 KB canonical payload budget")
         total += len(encoded)
         if total > _MAX_TOTAL_BYTES:
-            raise ValueError("workspace change set exceeds 1 MB")
+            raise ValueError("workspace change set exceeds the 240 KB canonical payload budget")
         payload_changes.append({
             "path": change.path,
             "expected_sha256": change.expected_sha256,
