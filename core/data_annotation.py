@@ -18,6 +18,8 @@ import sqlite3
 import uuid
 from typing import Any, Mapping
 
+from core.annotation_validation import validate_annotation_payload
+
 
 _TASK_TYPES = frozenset({
     "image_classification", "bounding_boxes", "polygon_segmentation",
@@ -595,12 +597,15 @@ class SQLiteAnnotationWorkbench:
             if task["status"] not in {"in_progress", "rework"}:
                 raise ValueError("annotation_task_not_submittable")
             project = db.execute(
-                "SELECT status, ai_assistance_mode FROM annotation_projects "
+                "SELECT status, ai_assistance_mode, task_type, rubric_json FROM annotation_projects "
                 "WHERE owner_id=? AND project_id=?",
                 (owner_id, task["project_id"]),
             ).fetchone()
             if project is None or project["status"] != "active":
                 raise ValueError("annotation_project_not_active")
+            validate_annotation_payload(
+                project["task_type"], payload, _decode(project["rubric_json"])
+            )
             if ai_assisted and project["ai_assistance_mode"] != "permitted_with_disclosure":
                 raise AnnotationPolicyError("ai_assistance_not_permitted_for_project")
             db.execute(
