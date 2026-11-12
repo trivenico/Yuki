@@ -162,11 +162,40 @@ class BenchmarkRegistry:
         db.execute("PRAGMA synchronous=FULL")
         return db
 
+    def _refresh_from_database(self) -> None:
+        if self.database_path is None:
+            return
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT benchmark_id, version, digest, payload FROM benchmark_revisions "
+                "ORDER BY benchmark_id, version"
+            ).fetchall()
+        refreshed: dict[tuple[str, int], BenchmarkDefinition] = {}
+        for row in rows:
+            try:
+                definition = BenchmarkDefinition.from_payload(row["payload"])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("stored benchmark revision failed integrity verification") from exc
+            if (definition.benchmark_id != row["benchmark_id"]
+                or definition.version != row["version"]
+                or not _DIGEST.fullmatch(row["digest"])
+                or definition.digest != row["digest"]):
+                raise RuntimeError("stored benchmark revision failed integrity verification")
+            key = (definition.benchmark_id, definition.version)
+            versions = [version for benchmark_id, version in refreshed if benchmark_id == definition.benchmark_id]
+            if definition.version != (max(versions) + 1 if versions else 1):
+                raise RuntimeError("stored benchmark revision sequence is inconsistent")
+            refreshed[key] = definition
+        if len(refreshed) > self._max_revisions:
+            raise RuntimeError("stored benchmark revisions exceed configured capacity")
+        self._definitions = refreshed
+
     def register(self, definition: BenchmarkDefinition) -> BenchmarkDefinition:
         if not isinstance(definition, BenchmarkDefinition):
             raise TypeError("definition must be a BenchmarkDefinition")
         key = (definition.benchmark_id, definition.version)
         with self._lock:
+            self._refresh_from_database()
             existing = self._definitions.get(key)
             if existing is not None:
                 if existing.digest != definition.digest:
@@ -188,6 +217,11 @@ class BenchmarkRegistry:
                         if row["digest"] != definition.digest or row["payload"] != definition.canonical_payload():
                             raise ValueError("benchmark revisions are immutable; increment version for changes")
                     else:
+                        count = db.execute(
+                            "SELECT COUNT(*) AS count FROM benchmark_revisions"
+                        ).fetchone()["count"]
+                        if count >= self._max_revisions:
+                            raise ValueError("benchmark registry capacity reached")
                         latest = db.execute(
                             "SELECT MAX(version) AS version FROM benchmark_revisions WHERE benchmark_id=?",
                             (definition.benchmark_id,),
@@ -206,6 +240,7 @@ class BenchmarkRegistry:
         if not isinstance(benchmark_id, str) or type(version) is not int:
             raise ValueError("benchmark ID and integer version are required")
         with self._lock:
+            self._refresh_from_database()
             definition = self._definitions.get((benchmark_id, version))
             if definition is None:
                 raise KeyError("benchmark revision not found")
@@ -220,6 +255,7 @@ class BenchmarkRegistry:
         if not isinstance(benchmark_id, str) or not _ID.fullmatch(benchmark_id):
             raise ValueError("benchmark_id must be a bounded identifier")
         with self._lock:
+            self._refresh_from_database()
             return tuple(
                 (version, self._definitions[(benchmark_id, version)].digest)
                 for version in sorted(v for key, v in self._definitions if key == benchmark_id)
