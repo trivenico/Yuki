@@ -153,6 +153,27 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         self.assertEqual(self.delivered, [])
         self.assertEqual(gateway.get_request_status(request_id), "pending")
 
+    def test_preview_snapshot_is_immutable_and_renderer_drift_blocks_approval(self):
+        request = PolicyRequest(**{**self.payload("goal-preview-drift"), "risk": Risk.HIGH})
+        request_id = self.gateway.request_approval(request)
+        original = self.gateway.approval_preview(request_id)
+        self.assertIsNotNone(original)
+        self.gateway.preview_registry._renderers["workspace:write"] = (
+            lambda request: ApprovalPreview(
+                title="Different operation",
+                operation="Delete project files",
+                target="Project A workspace",
+                impact="Destructive deletion",
+            )
+        )
+        # The inbox continues to show the exact snapshot that was created with
+        # this request; it must not silently change as capability code changes.
+        self.assertEqual(self.gateway.approval_preview(request_id), original)
+        with self.assertRaisesRegex(PermissionError, "preview changed"):
+            self.gateway.approve_request(request_id, approved_by=self.admin.user.user_id)
+        self.assertEqual(self.gateway.get_request_status(request_id), "pending")
+        self.assertEqual(self.delivered, [])
+
     def test_cross_principal_request_and_non_approver_inbox_are_rejected(self):
         payload = self.payload()
         payload["principal_id"] = "someone-else"
