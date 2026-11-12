@@ -67,6 +67,25 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
         self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
         self.assertEqual(self.audit_events[-1]["outcome"], "failed")
 
+    def test_claim_loss_between_file_replacements_rolls_back_prior_write(self):
+        second = self.root / "second.py"
+        second.write_text("SECOND = 1\n", encoding="utf-8")
+        changes = [
+            self.change(),
+            FileChange(
+                "second.py", hashlib.sha256(b"SECOND = 1\n").hexdigest(),
+                "SECOND = 2\n",
+            ),
+        ]
+        checks = iter((True, True, False))
+        with self.assertRaises(WorkspaceChangeError):
+            self.service(allowed=("sample.py", "second.py")).apply(
+                principal=self.principal, changes=changes,
+                execution_guard=lambda: next(checks),
+            )
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+        self.assertEqual(second.read_text(encoding="utf-8"), "SECOND = 1\n")
+
     def test_execution_guard_failure_fails_closed(self):
         change = self.change()
         def broken_guard():
