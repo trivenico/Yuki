@@ -488,6 +488,21 @@ class AuthenticatedAnnotationAPI:
                     return await self._respond(send, 200, {"revoked": revoked})
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            independent_submissions = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/independent-submissions",
+                path,
+            )
+            if independent_submissions and method == "GET":
+                project_id, task_id = independent_submissions.groups()
+                items = await asyncio.to_thread(
+                    self.workbench.list_independent_submissions,
+                    user.user_id, project_id, task_id,
+                )
+                return await self._respond(
+                    send, 200 if items is not None else 404,
+                    {"submissions": items} if items is not None else {"error": "not_found"},
+                )
+
             adjudication = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/adjudication",
                 path,
