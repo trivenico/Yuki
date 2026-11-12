@@ -218,8 +218,13 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
 
     def test_duplicate_external_task_reference_is_rejected(self):
         self._task()
-        with self.assertRaises(Exception):
+        with self.assertRaisesRegex(ValueError, "duplicate_external_task_reference"):
             self._task()
+        with self.assertRaisesRegex(ValueError, "duplicate_external_task_reference"):
+            self.store.create_tasks(
+                "owner:alice", self.project.project_id,
+                tasks=[{"external_ref": "batch-001/item-0001", "input_data": {}}],
+            )
 
     def test_database_symlink_is_rejected(self):
         if not hasattr(Path, "symlink_to"):
