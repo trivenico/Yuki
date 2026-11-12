@@ -26,6 +26,11 @@ _TASK_TYPES = frozenset({
     "llm_evaluation", "custom",
 })
 _PROJECT_STATES = frozenset({"active", "paused", "completed"})
+_PROJECT_TRANSITIONS = {
+    "active": frozenset({"paused", "completed"}),
+    "paused": frozenset({"active", "completed"}),
+    "completed": frozenset(),
+}
 _TASK_STATES = frozenset({"pending", "in_progress", "submitted", "accepted", "rework"})
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _ASSET_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -304,6 +309,17 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if row is None:
                 return None
+            if status not in _PROJECT_TRANSITIONS[row["status"]]:
+                raise ValueError("invalid_annotation_project_transition")
+            if status == "completed":
+                unfinished = db.execute(
+                    """SELECT COUNT(*) FROM annotation_tasks
+                       WHERE owner_id=? AND project_id=?
+                         AND status NOT IN ('accepted')""",
+                    (owner_id, project_id),
+                ).fetchone()[0]
+                if unfinished:
+                    raise ValueError("annotation_project_has_unreviewed_tasks")
             db.execute(
                 "UPDATE annotation_projects SET status=?, updated_at=? "
                 "WHERE owner_id=? AND project_id=?",
