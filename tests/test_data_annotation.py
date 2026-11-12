@@ -172,6 +172,31 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
                 ["owner:alice", "annotator:four"],
             )
 
+    def test_owner_can_revoke_unsubmitted_independent_assignment(self):
+        project = self.store.create_project(
+            "owner:alice", name="Revocable assignments", task_type="text_classification",
+            instructions="Classify.", rubric={"labels": ["positive", "negative"]},
+        )
+        task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="revoke-001",
+            input_data={"text": "Sentence."},
+        )
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", project.project_id, task.task_id,
+            ["annotator:one", "annotator:two"],
+        )
+        assignment_id = assignments[0]["assignment_id"]
+        self.assertTrue(self.store.revoke_independent_assignment(
+            "owner:alice", project.project_id, assignment_id
+        ))
+        with self.assertRaisesRegex(ValueError, "annotation_assignment_not_claimable"):
+            self.store.claim_independent_assignment(
+                "annotator:one", assignment_id, expected_version=2
+            )
+        self.assertFalse(self.store.revoke_independent_assignment(
+            "owner:bob", project.project_id, assignment_id
+        ))
+
     def test_fleiss_kappa_is_reported_for_multiple_tasks_with_constant_rater_count(self):
         project = self.store.create_project(
             "owner:alice", name="Text agreement kappa", task_type="text_classification",
