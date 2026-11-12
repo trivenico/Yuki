@@ -1402,6 +1402,33 @@ class SQLiteAnnotationWorkbench:
         result["quality"] = _decode(result.pop("quality_json"))
         return result
 
+    def list_independent_submissions(
+        self, owner_id: str, project_id: str, task_id: str,
+    ) -> list[dict[str, Any]] | None:
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(task_id, str) or not _ID.fullmatch(task_id)):
+            raise ValueError("invalid_adjudication_target")
+        with self._connect() as db:
+            task = db.execute(
+                "SELECT 1 FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if task is None:
+                return None
+            rows = db.execute(
+                """SELECT assignment_id, annotator_id, payload_json, quality_json, updated_at
+                   FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=? AND task_id=? AND status='submitted'
+                   ORDER BY annotator_id, assignment_id""",
+                (owner_id, project_id, task_id),
+            ).fetchall()
+        return [{
+            "assignment_id": row["assignment_id"], "annotator_id": row["annotator_id"],
+            "payload": _decode(row["payload_json"]),
+            "quality": _decode(row["quality_json"]), "submitted_at": row["updated_at"],
+        } for row in rows]
+
     def adjudicate_independent_task(
         self, owner_id: str, project_id: str, task_id: str, reviewer_id: str, *,
         decision: str, final_label: str | None = None, notes: str = "",
