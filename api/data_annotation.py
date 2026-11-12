@@ -550,6 +550,18 @@ class AuthenticatedAnnotationAPI:
                     {"report": report} if report else {"error": "not_found"},
                 )
 
+            performance_report = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/performance-report", path
+            )
+            if performance_report and method == "GET":
+                report = await asyncio.to_thread(
+                    self.workbench.performance_report, user.user_id, performance_report.group(1),
+                )
+                return await self._respond(
+                    send, 200 if report else 404,
+                    {"report": report} if report else {"error": "not_found"},
+                )
+
             rework_assignments = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/rework-assignments",
                 path,
