@@ -57,6 +57,16 @@ class WorkspaceApprovalOperationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             workspace_change_payload([too_large])
 
+    def test_rejects_actual_nul_bytes_in_path_and_content(self):
+        with self.assertRaises(ValueError):
+            workspace_change_payload([
+                FileChange("bad\x00path", hashlib.sha256(b"old").hexdigest(), "new")
+            ])
+        with self.assertRaises(ValueError):
+            workspace_change_payload([
+                FileChange("README.md", hashlib.sha256(b"old").hexdigest(), "bad\x00content")
+            ])
+
     def test_rejects_invalid_workspace_identity_and_change_types(self):
         with self.assertRaises(ValueError):
             build_workspace_approval_operation(workspace_id="../project", changes=[self.change])
