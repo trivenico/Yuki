@@ -133,8 +133,11 @@ class ApprovalCredentialBroker:
             raise ValueError("claim lease token must be ASCII") from None
         claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
         binding = self.gateway.approval_delivery_binding(request_id, token)
-        if self.validate_claim(binding["step_id"], self.worker_id, lease_token) is not True:
-            raise PermissionError("approval delivery requires the exact live worker claim")
+        if (
+            binding.get("claim_token_sha256") != claim_digest
+            or self.validate_claim(binding["step_id"], self.worker_id, lease_token) is not True
+        ):
+            raise PermissionError("approval delivery is not bound to the exact live worker claim")
         token_bytes = token.encode("ascii")
         ciphertext = self.seal(token_bytes, self._aad(request_id, binding, self.worker_id, claim_digest))
         if not isinstance(ciphertext, bytes) or len(ciphertext) < 16 or len(ciphertext) > 16384:
@@ -192,6 +195,9 @@ class ApprovalCredentialBroker:
                 binding = self.gateway.approval_delivery_binding_by_digest(
                     row["request_id"], row["credential_sha256"],
                 )
+                if binding.get("claim_token_sha256") != claim_digest:
+                    db.rollback()
+                    return None
                 aad = self._aad(row["request_id"], binding, self.worker_id, claim_digest)
                 plaintext = self.unseal(bytes(row["ciphertext"]), aad)
                 if not isinstance(plaintext, bytes) or not 40 <= len(plaintext) <= 256:
