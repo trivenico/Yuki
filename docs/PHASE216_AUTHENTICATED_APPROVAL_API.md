@@ -26,7 +26,7 @@
 ## Remaining production requirements
 
 - Implement and test the production credential-delivery adapter that bridges the authenticated approval service to the exact active worker's lease manager and broker.
-- Build an owner-facing approval inbox UI with clear capability, target, risk, arguments summary and consequences; do not expose raw request JSON or credentials.
+- Build an owner-facing approval inbox UI with a trusted, human-readable operation preview (capability adapters must supply this; do not trust model-generated summaries), consequences and clear risk. Current inbox metadata intentionally does not claim to explain the actual arguments.
 - Add per-route rate limiting, deployment TLS/session-cookie or bearer-token policy review, CSRF review if cookie auth is introduced, and structured security telemetry.
 - Add cross-process delivery/recovery race tests, KMS-backed AEAD and key rotation, provider-side commit fencing, backup/restore validation and release certification.
 
