@@ -163,7 +163,7 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
         )
         result = worker.run_once()
         self.assertEqual(result["state"], "failed")
-        self.assertEqual(self.target.read_text(encoding="utf-8"), "before\\n")
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "before\n")
         self.assertEqual(self.request_ids, [])
         self.assertEqual(self.delivered_tokens, [])
 
