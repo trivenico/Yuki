@@ -11,7 +11,7 @@ from typing import Any, Callable, Mapping
 
 from evaluation.benchmark_registry import BenchmarkRegistry
 from evaluation.model_eval import EvalReport, ModelEvaluator
-from evaluation.run_store import EvaluationRun, EvaluationRunStore
+from evaluation.run_store import EvaluationRun, EvaluationRunConflict, EvaluationRunStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +91,24 @@ class EvaluationService:
             adapter = self.adapter_for_candidate(owner_id, candidate_id)
             if not isinstance(adapter, TrustedEvaluationAdapter):
                 raise TypeError("candidate resolver must return a TrustedEvaluationAdapter")
+            previous = self.store.get_by_idempotency(
+                owner_id=owner_id, idempotency_key=idempotency_key,
+            )
+            if previous is not None:
+                same_request = (
+                    previous.benchmark_id == benchmark.benchmark_id
+                    and previous.benchmark_version == benchmark.version
+                    and previous.benchmark_digest == benchmark.digest
+                    and previous.candidate_id == candidate_id
+                    and previous.provider_id == adapter.provider_id
+                    and previous.model_id == adapter.model_id
+                    and previous.environment == self.environment
+                )
+                if not same_request:
+                    raise EvaluationRunConflict(
+                        "idempotency key was used for a different evaluation request"
+                    )
+                return previous
             case_index = 0
 
             def generate(prompt: str) -> str:
