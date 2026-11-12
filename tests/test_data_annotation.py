@@ -295,6 +295,10 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_draft("owner:alice", task.task_id).payload, {"boxes": []}
         )
+        reopened = SQLiteAnnotationWorkbench(str(self.database))
+        self.assertEqual(
+            reopened.get_draft("owner:alice", task.task_id).revision, 1
+        )
         second = self.store.save_draft(
             "owner:alice", task.task_id, payload={"boxes": [{"x": 0.1}]},
             expected_revision=first.revision,
