@@ -233,13 +233,19 @@
       setStatus("The task asset reference is invalid; no image was requested.", true);
       return;
     }
+    const requestedTaskId = state.task.task_id;
+    const requestedProjectId = state.project.project_id;
     try {
-      const blob = await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) +
+      const blob = await api("/v1/annotation/projects/" + encodeURIComponent(requestedProjectId) +
         "/assets/" + encodeURIComponent(state.task.asset_ref) + "/preview");
+      if (state.task?.task_id !== requestedTaskId || state.project?.project_id !== requestedProjectId) return;
       if (!(blob instanceof Blob) || blob.type !== "image/png") throw new Error("invalid_preview_response");
       const url = URL.createObjectURL(blob);
       const image = new Image();
       image.onload = () => {
+        if (state.task?.task_id !== requestedTaskId || state.project?.project_id !== requestedProjectId) {
+          URL.revokeObjectURL(url); return;
+        }
         if (state.imageUrl && state.imageUrl !== url) URL.revokeObjectURL(state.imageUrl);
         state.imageUrl = url; state.image = image;
         state.camera = fitCamera(image.naturalWidth, image.naturalHeight, canvasSize().width, canvasSize().height);
