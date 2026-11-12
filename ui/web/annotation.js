@@ -499,6 +499,7 @@
       });
       state.task = data.task; state.claimed = true;
       await restoreDraft(state.task.task_id);
+      renderCanvas();
       $("annotation-task-meta").textContent = "Task " + state.task.external_ref + " · in progress · version " + state.task.version;
       $("submit-annotation").disabled = false; setStatus("Task claimed. Complete the annotation and review it before submission.");
       renderEditor();
@@ -707,6 +708,7 @@
       state.redoStack = [];
     }
     state.lastHistorySnapshot = current;
+    renderCanvas();
     scheduleDraftSave();
   };
   $("annotation-label").addEventListener("input", () => { renderCanvas(); trackTextHistory(); });
