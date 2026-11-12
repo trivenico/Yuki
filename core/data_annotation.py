@@ -1285,6 +1285,74 @@ class SQLiteAnnotationWorkbench:
                         {"assignment_count": len(created)})
         return created
 
+    def create_rework_assignments(
+        self, owner_id: str, project_id: str, task_id: str, annotator_ids: list[str],
+    ) -> list[dict[str, Any]] | None:
+        """Open a new immutable assignment round for a task adjudicated as rework."""
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(task_id, str) or not _ID.fullmatch(task_id)):
+            raise ValueError("invalid_assignment_target")
+        if (not isinstance(annotator_ids, list) or not 2 <= len(annotator_ids) <= 20
+                or any(not isinstance(x, str) or not x or len(x) > 256 for x in annotator_ids)
+                or len(set(annotator_ids)) != len(annotator_ids) or owner_id in annotator_ids):
+            raise ValueError("invalid_independent_annotators")
+        now = _now()
+        created = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task = db.execute(
+                "SELECT status FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if task is None:
+                return None
+            if task["status"] != "rework":
+                raise ValueError("task_not_marked_for_rework")
+            current = db.execute(
+                "SELECT decision FROM annotation_adjudications WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if current is None or current["decision"] != "rework":
+                raise ValueError("rework_adjudication_required")
+            prior_round = db.execute(
+                "SELECT COALESCE(MAX(round_number), 0) FROM annotation_independent_assignments "
+                "WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()[0]
+            if prior_round < 1:
+                raise ValueError("prior_assignment_round_missing")
+            round_number = prior_round + 1
+            for annotator_id in annotator_ids:
+                prior = db.execute(
+                    "SELECT 1 FROM annotation_independent_assignments "
+                    "WHERE owner_id=? AND project_id=? AND task_id=? AND annotator_id=?",
+                    (owner_id, project_id, task_id, annotator_id),
+                ).fetchone()
+                if prior is not None:
+                    raise ValueError("rework_requires_new_annotators")
+                assignment_id = uuid.uuid4().hex
+                db.execute(
+                    """INSERT INTO annotation_independent_assignments
+                    (assignment_id, task_id, project_id, owner_id, annotator_id, round_number,
+                     status, version, payload_json, quality_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'assigned', 1, NULL, '{}', ?, ?)""",
+                    (assignment_id, task_id, project_id, owner_id, annotator_id,
+                     round_number, now, now),
+                )
+                created.append({"assignment_id": assignment_id, "task_id": task_id,
+                    "project_id": project_id, "round_number": round_number,
+                    "status": "assigned", "version": 1, "created_at": now})
+            db.execute(
+                "UPDATE annotation_tasks SET status='pending', version=version+1, updated_at=? "
+                "WHERE owner_id=? AND project_id=? AND task_id=? AND status='rework'",
+                (now, owner_id, project_id, task_id),
+            )
+            self._audit(db, owner_id, project_id, task_id, "independent_rework_round_created", {
+                "round_number": round_number, "assignment_count": len(created),
+            })
+        return created
+
     def revoke_independent_assignment(
         self, owner_id: str, project_id: str, assignment_id: str,
     ) -> bool:
@@ -1530,16 +1598,29 @@ class SQLiteAnnotationWorkbench:
                 if n < minimum_gold_tasks or accuracy < passing_accuracy:
                     raise PermissionError("reviewer_calibration_required")
             existing = db.execute(
-                "SELECT 1 FROM annotation_adjudications WHERE owner_id=? AND project_id=? AND task_id=?",
+                "SELECT * FROM annotation_adjudications WHERE owner_id=? AND project_id=? AND task_id=?",
                 (owner_id, project_id, task_id),
             ).fetchone()
+            current_round = db.execute(
+                "SELECT COALESCE(MAX(round_number), 0) FROM annotation_independent_assignments "
+                "WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()[0]
             if existing is not None:
-                raise ValueError("task_already_adjudicated")
+                if existing["decision"] != "rework" or current_round <= 1:
+                    raise ValueError("task_already_adjudicated")
+                last_event_round = db.execute(
+                    "SELECT MAX(round_number) FROM annotation_adjudication_events "
+                    "WHERE owner_id=? AND project_id=? AND task_id=?",
+                    (owner_id, project_id, task_id),
+                ).fetchone()[0]
+                if last_event_round is not None and current_round <= last_event_round:
+                    raise ValueError("rework_assignment_round_required")
             rows = db.execute(
                 "SELECT assignment_id, annotator_id, payload_json FROM annotation_independent_assignments "
-                "WHERE owner_id=? AND project_id=? AND task_id=? AND status='submitted' "
+                "WHERE owner_id=? AND project_id=? AND task_id=? AND round_number=? AND status='submitted' "
                 "ORDER BY annotator_id, assignment_id",
-                (owner_id, project_id, task_id),
+                (owner_id, project_id, task_id, current_round),
             ).fetchall()
             if len(rows) < 2:
                 raise ValueError("adjudication_requires_two_submissions")
@@ -1563,13 +1644,36 @@ class SQLiteAnnotationWorkbench:
                 raise ValueError("disagreement_requires_adjudication_notes")
             adjudication_id = uuid.uuid4().hex
             source_ids = [row["assignment_id"] for row in rows]
+            source_json = json.dumps(source_ids, separators=(",", ":"))
+            event_snapshot = json.dumps({
+                "reviewer_id": reviewer_id, "decision": decision, "final_label": chosen_label,
+                "notes": notes, "source_assignment_ids": source_ids, "agreement": agreement,
+                "round_number": current_round,
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            if existing is None:
+                db.execute(
+                    """INSERT INTO annotation_adjudications
+                       (adjudication_id, owner_id, project_id, task_id, reviewer_id, decision,
+                        final_label, notes, source_assignment_ids_json, agreement, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (adjudication_id, owner_id, project_id, task_id, reviewer_id, decision,
+                     chosen_label, notes, source_json, agreement, now),
+                )
+            else:
+                db.execute(
+                    """UPDATE annotation_adjudications SET adjudication_id=?, reviewer_id=?,
+                       decision=?, final_label=?, notes=?, source_assignment_ids_json=?,
+                       agreement=?, created_at=? WHERE owner_id=? AND project_id=? AND task_id=?""",
+                    (adjudication_id, reviewer_id, decision, chosen_label, notes, source_json,
+                     agreement, now, owner_id, project_id, task_id),
+                )
             db.execute(
-                """INSERT INTO annotation_adjudications
-                   (adjudication_id, owner_id, project_id, task_id, reviewer_id, decision,
-                    final_label, notes, source_assignment_ids_json, agreement, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (adjudication_id, owner_id, project_id, task_id, reviewer_id, decision,
-                 chosen_label, notes, json.dumps(source_ids, separators=(",", ":")), agreement, now),
+                """INSERT INTO annotation_adjudication_events
+                   (event_id, owner_id, project_id, task_id, round_number, adjudication_id,
+                    event_type, snapshot_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'adjudicated', ?, ?)""",
+                (uuid.uuid4().hex, owner_id, project_id, task_id, current_round,
+                 adjudication_id, event_snapshot, now),
             )
             updated = db.execute(
                 "UPDATE annotation_tasks SET status=?, version=version+1, updated_at=? "
@@ -1587,7 +1691,7 @@ class SQLiteAnnotationWorkbench:
             "adjudication_id": adjudication_id, "project_id": project_id, "task_id": task_id,
             "decision": decision, "final_label": chosen_label, "reviewer_id": reviewer_id,
             "source_assignment_ids": source_ids, "submission_count": len(source_ids),
-            "agreement": agreement, "created_at": now,
+            "agreement": agreement, "round_number": current_round, "created_at": now,
         }
 
     def delivery_report(self, owner_id: str, project_id: str) -> dict[str, Any] | None:
