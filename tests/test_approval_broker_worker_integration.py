@@ -3,6 +3,7 @@
 The envelope below is test-only. Production must inject a reviewed AEAD/KMS adapter.
 """
 import hashlib
+import sqlite3
 from contextlib import closing
 import hmac
 from pathlib import Path
