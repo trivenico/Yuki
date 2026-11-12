@@ -358,8 +358,6 @@ class AuthenticatedAnnotationAPI:
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/review-queue", path
             )
             if review_queue and method == "GET":
-                if self.reviewer_authorizer is None:
-                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 project_id = review_queue.group(1)
                 owner_id = await self._reviewer_owner(user, project_id)
                 if not isinstance(owner_id, str) or not owner_id or owner_id == user.user_id:
@@ -378,12 +376,10 @@ class AuthenticatedAnnotationAPI:
                 payload = await self._body(receive)
                 if set(payload) - {"decision", "notes", "project_id"} or not {"decision", "project_id"} <= set(payload):
                     return await self._respond(send, 400, {"error": "invalid_request"})
-                if self.reviewer_authorizer is None:
-                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 project_id = payload.pop("project_id")
                 if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
                     return await self._respond(send, 400, {"error": "invalid_request"})
-                owner_id = await asyncio.to_thread(self.reviewer_authorizer, user, project_id)
+                owner_id = await self._reviewer_owner(user, project_id)
                 if not isinstance(owner_id, str) or not owner_id or owner_id == user.user_id:
                     return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 submission = await asyncio.to_thread(
