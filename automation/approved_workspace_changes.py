@@ -194,13 +194,24 @@ class ApprovedWorkspaceChanges:
                     claim_valid = False
                 if not claim_valid:
                     raise WorkspaceChangeError("worker claim is no longer valid; no changes applied.")
-            # Recheck all source digests immediately before replacing any file.
-            for relative, target, old, _ in staged:
-                if hashlib.sha256(target.read_bytes()).digest() != hashlib.sha256(old).digest():
-                    raise WorkspaceChangeError("file changed during approval; no changes applied.")
             for relative, target, old, temp_path in staged:
-                os.replace(temp_path, target)
-                replaced.append((relative, target, old))
+                # Revalidate the claim and path immediately before each replace.
+                # Re-resolving catches symlink or parent-path substitution after
+                # initial validation; rehashing closes the earlier TOCTOU window.
+                if execution_guard is not None:
+                    try:
+                        claim_valid = callable(execution_guard) and execution_guard() is True
+                    except Exception:
+                        claim_valid = False
+                    if not claim_valid:
+                        raise WorkspaceChangeError("worker claim changed before file replacement; no changes applied.")
+                current_target = _safe_existing_file(self.root, relative)
+                if current_target != target:
+                    raise WorkspaceChangeError("workspace path changed during approval; no changes applied.")
+                if hashlib.sha256(current_target.read_bytes()).digest() != hashlib.sha256(old).digest():
+                    raise WorkspaceChangeError("file changed during approval; no changes applied.")
+                os.replace(temp_path, current_target)
+                replaced.append((relative, current_target, old))
             # Treat failure to persist the success audit event as an operation failure.
             self._audit(principal.actor_id, "workspace.apply", "succeeded", digest, [x[0] for x in normalized])
         except Exception as exc:
