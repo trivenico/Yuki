@@ -758,15 +758,24 @@
         empty.textContent = "No submissions are waiting for review.";
         queue.append(empty);
       }
-      for (const submission of result.submissions || []) {
+      for (const item of result.submissions || []) {
+        const submission = item.submission;
         const card = document.createElement("article");
         card.className = "annotation-review-card";
         const heading = document.createElement("h4");
         heading.textContent = "Task " + submission.task_id;
         const meta = document.createElement("p");
         meta.className = "annotation-hint";
-        meta.textContent = "Submission " + submission.submission_id + " · " +
-          (submission.ai_assisted ? "AI-assisted (disclosed)" : "Human-only");
+        meta.textContent = "Task " + item.external_ref + " · Submission " + submission.submission_id +
+          " · " + (submission.ai_assisted ? "AI-assisted (disclosed)" : "Human-only");
+        const instructions = document.createElement("p");
+        instructions.textContent = item.instructions;
+        const input = document.createElement("pre");
+        input.className = "annotation-review-payload";
+        input.textContent = "Task input\n" + JSON.stringify(item.input_data, null, 2);
+        const rubric = document.createElement("pre");
+        rubric.className = "annotation-review-payload";
+        rubric.textContent = "Rubric\n" + JSON.stringify(item.rubric, null, 2);
         const payload = document.createElement("pre");
         payload.className = "annotation-review-payload";
         payload.textContent = JSON.stringify(submission.payload, null, 2);
@@ -800,7 +809,7 @@
           });
           actions.append(button);
         }
-        card.append(heading, meta, payload, notesLabel, actions);
+        card.append(heading, meta, instructions, input, rubric, payload, notesLabel, actions);
         queue.append(card);
       }
       $("annotation-review-status").textContent = "Loaded " + (result.submissions || []).length + " pending submission(s).";
