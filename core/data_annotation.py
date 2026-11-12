@@ -1038,10 +1038,14 @@ class SQLiteAnnotationWorkbench:
             "task_type": project["task_type"],
             "submission_count": total,
             "quality": quality_counts,
+            "quality_assessed_count": quality_counts["pass"] + quality_counts["warning"],
             "review": review_counts,
             "finding_counts": dict(sorted(finding_counts.items())),
             "annotation_items": total_items,
-            "quality_pass_rate": quality_counts["pass"] / total if total else None,
+            "quality_pass_rate": (
+                quality_counts["pass"] / (quality_counts["pass"] + quality_counts["warning"])
+                if quality_counts["pass"] + quality_counts["warning"] else None
+            ),
             "policy_version": 1,
         }
 
