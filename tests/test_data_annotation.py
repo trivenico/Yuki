@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -854,7 +855,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertEqual(accepted["round_number"], 2)
         # Reopening the store must not backfill duplicate copies of later adjudication events.
         SQLiteAnnotationWorkbench(str(self.database))
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             events = db.execute(
                 "SELECT round_number, event_type FROM annotation_adjudication_events "
                 "WHERE owner_id=? AND project_id=? AND task_id=? ORDER BY round_number",
@@ -882,7 +883,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         summaries = self.store.list_delivery_manifests("owner:alice", self.project.project_id)
         self.assertEqual(len(summaries), 1)
         self.assertNotIn("snapshot", summaries[0])
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute(
                     "UPDATE annotation_adjudication_events SET snapshot_json='{}' WHERE task_id=?",
@@ -902,6 +903,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
                 "UPDATE annotation_delivery_manifests SET snapshot_json=? WHERE manifest_id=?",
                 ('{"tampered":true}', manifest["manifest_id"]),
             )
+            db.commit()
             db.commit()
         finally:
             db.close()
