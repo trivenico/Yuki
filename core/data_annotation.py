@@ -1930,6 +1930,148 @@ class SQLiteAnnotationWorkbench:
             "actual_sha256": actual, "item_count": row["item_count"],
         }
 
+
+    def performance_report(self, owner_id: str, project_id: str) -> dict[str, Any] | None:
+        """Return owner-only, evidence-backed annotator and reviewer performance aggregates."""
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        with self._connect() as db:
+            project = db.execute(
+                "SELECT project_id, task_type FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            assignments = db.execute(
+                """SELECT assignment_id, annotator_id, status, created_at, updated_at
+                   FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=? ORDER BY annotator_id, created_at""",
+                (owner_id, project_id),
+            ).fetchall()
+            gold = db.execute(
+                """SELECT annotator_id, COUNT(*) AS sample_count, SUM(correct) AS correct_count
+                   FROM annotation_gold_results
+                   WHERE owner_id=? AND project_id=? GROUP BY annotator_id""",
+                (owner_id, project_id),
+            ).fetchall()
+            events = db.execute(
+                """SELECT event_id, task_id, round_number, snapshot_json, created_at
+                   FROM annotation_adjudication_events
+                   WHERE owner_id=? AND project_id=? ORDER BY created_at, event_id""",
+                (owner_id, project_id),
+            ).fetchall()
+            reviewer_submissions = db.execute(
+                """SELECT reviewer_id, status, COUNT(*) AS decision_count
+                   FROM annotation_submissions
+                   WHERE owner_id=? AND project_id=? AND reviewer_id<>''
+                     AND status IN ('accepted','rework')
+                   GROUP BY reviewer_id, status""",
+                (owner_id, project_id),
+            ).fetchall()
+        by_assignment = {row["assignment_id"]: row["annotator_id"] for row in assignments}
+        workers: dict[str, dict[str, Any]] = {}
+        durations: dict[str, list[float]] = {}
+        for row in assignments:
+            worker = workers.setdefault(row["annotator_id"], {
+                "annotator_id": row["annotator_id"], "assigned": 0, "submitted": 0,
+                "in_progress": 0, "revoked": 0, "gold_sample_count": 0,
+                "gold_correct_count": 0, "gold_accuracy": None,
+                "rework_requested_count": 0, "median_submission_seconds": None,
+                "calibration_status": "insufficient_evidence",
+            })
+            worker[row["status"]] = worker.get(row["status"], 0) + 1
+            if row["status"] == "submitted":
+                try:
+                    start = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+                    elapsed = (end - start).total_seconds()
+                    if elapsed >= 0:
+                        durations.setdefault(row["annotator_id"], []).append(elapsed)
+                except (TypeError, ValueError):
+                    pass
+        for row in gold:
+            worker = workers.setdefault(row["annotator_id"], {
+                "annotator_id": row["annotator_id"], "assigned": 0, "submitted": 0,
+                "in_progress": 0, "revoked": 0, "gold_sample_count": 0,
+                "gold_correct_count": 0, "gold_accuracy": None,
+                "rework_requested_count": 0, "median_submission_seconds": None,
+                "calibration_status": "insufficient_evidence",
+            })
+            n, correct = row["sample_count"], row["correct_count"] or 0
+            worker["gold_sample_count"] = n
+            worker["gold_correct_count"] = correct
+            worker["gold_accuracy"] = correct / n if n else None
+            worker["calibration_status"] = (
+                "insufficient_evidence" if n < 5 else
+                "calibrated" if correct / n >= 0.8 else "needs_review"
+            )
+        reviewers: dict[str, dict[str, Any]] = {}
+        for row in reviewer_submissions:
+            reviewer = reviewers.setdefault(row["reviewer_id"], {
+                "reviewer_id": row["reviewer_id"], "accepted_submissions": 0,
+                "rework_submissions": 0, "independent_adjudications": 0,
+                "accepted_adjudications": 0, "rework_adjudications": 0,
+                "gold_sample_count": 0, "gold_accuracy": None,
+                "calibration_status": "insufficient_evidence",
+            })
+            reviewer["accepted_submissions" if row["status"] == "accepted" else "rework_submissions"] = row["decision_count"]
+        for row in events:
+            try:
+                snapshot = json.loads(row["snapshot_json"])
+            except (TypeError, ValueError):
+                continue
+            reviewer_id = snapshot.get("reviewer_id")
+            if not isinstance(reviewer_id, str) or not reviewer_id:
+                continue
+            reviewer = reviewers.setdefault(reviewer_id, {
+                "reviewer_id": reviewer_id, "accepted_submissions": 0,
+                "rework_submissions": 0, "independent_adjudications": 0,
+                "accepted_adjudications": 0, "rework_adjudications": 0,
+                "gold_sample_count": 0, "gold_accuracy": None,
+                "calibration_status": "insufficient_evidence",
+            })
+            reviewer["independent_adjudications"] += 1
+            decision = snapshot.get("decision")
+            if decision == "accepted":
+                reviewer["accepted_adjudications"] += 1
+            elif decision == "rework":
+                reviewer["rework_adjudications"] += 1
+                source_ids = snapshot.get("source_assignment_ids", [])
+                for assignment_id in source_ids if isinstance(source_ids, list) else []:
+                    annotator = by_assignment.get(assignment_id)
+                    if annotator in workers:
+                        workers[annotator]["rework_requested_count"] += 1
+        gold_by_user = {row["annotator_id"]: row for row in gold}
+        for reviewer_id, reviewer in reviewers.items():
+            row = gold_by_user.get(reviewer_id)
+            if row is not None:
+                n, correct = row["sample_count"], row["correct_count"] or 0
+                reviewer["gold_sample_count"] = n
+                reviewer["gold_accuracy"] = correct / n if n else None
+                reviewer["calibration_status"] = (
+                    "insufficient_evidence" if n < 5 else
+                    "calibrated" if correct / n >= 0.8 else "needs_review"
+                )
+        for annotator_id, values in durations.items():
+            values.sort()
+            n = len(values)
+            workers[annotator_id]["median_submission_seconds"] = (
+                values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2
+            )
+        return {
+            "project_id": project_id, "task_type": project["task_type"],
+            "annotators": sorted(workers.values(), key=lambda item: item["annotator_id"]),
+            "reviewers": sorted(reviewers.values(), key=lambda item: item["reviewer_id"]),
+            "measurement_notes": {
+                "gold_calibration_minimum_samples": 5,
+                "gold_calibration_passing_accuracy": 0.8,
+                "submission_duration": "median elapsed time from assignment creation to submission; not active working time",
+                "rework_attribution": "counts source-round annotators on rework adjudication events",
+                "limitations": ["metrics are descriptive, not a worker ranking", "only persisted events and current project records are included"],
+            },
+        }
+
     def independent_agreement_report(
         self, owner_id: str, project_id: str,
     ) -> dict[str, Any] | None:
