@@ -456,6 +456,7 @@ class CapabilityApprovalGateway:
                 item["trigger"] = request_metadata.get("trigger")
                 item["preview"] = self.approval_preview(item["request_id"])
                 item["preview_available"] = item["preview"] is not None
+                item["operation"] = self.approval_operation(item["request_id"])
                 redacted.append(item)
             db.commit()
         return tuple(redacted)
