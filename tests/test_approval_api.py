@@ -48,10 +48,20 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
             ),
             operation_type="workspace.write",
         )
+        # Test-only authenticated envelope; production requires a reviewed AEAD/KMS adapter.
+        def seal(plaintext, aad):
+            return b"test-envelope:" + hashlib.sha256(aad).digest() + plaintext
+        def unseal(ciphertext, aad):
+            prefix = b"test-envelope:" + hashlib.sha256(aad).digest()
+            if not ciphertext.startswith(prefix):
+                raise ValueError("test envelope authentication failed")
+            return ciphertext[len(prefix):]
         self.gateway = CapabilityApprovalGateway(
             root / "approval.sqlite", self.policy,
             authorize_approver=lambda actor, request: actor == self.admin.user.user_id,
             preview_registry=previews,
+            seal_operation_payload=seal,
+            unseal_operation_payload=unseal,
         )
         self.delivered = []
         self.service = AuthenticatedCapabilityApprovalService(
