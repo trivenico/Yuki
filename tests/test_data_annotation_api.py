@@ -13,6 +13,11 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
 
+class _NoApprovals:
+    def authorize_tool(self, name):
+        return False
+
+
 class _Downstream:
     async def __call__(self, scope, receive, send):
         await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -211,7 +216,7 @@ class AnnotationRuntimeTests(unittest.TestCase):
         def model(**kwargs):
             return {"text": "ready", "tool_calls": {"tool_calls": []}}
         loop = AgentExecutionLoop(
-            model, StructuredToolProtocol(GuardedToolRuntime({}, object()))
+            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
