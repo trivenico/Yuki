@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Any, Sequence
+import weakref
+from typing import Any, Callable, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
@@ -20,13 +21,20 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *,
+                 agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
+        if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
+            raise TypeError("agent_loop_for_owner must be callable")
         self.store = store
         self.agent_loop = agent_loop
+        self.agent_loop_for_owner = agent_loop_for_owner
+        # Weak keys avoid retaining obsolete adapters; one loop object may never
+        # be shared across distinct authenticated owners.
+        self._loop_owners = weakref.WeakKeyDictionary()
         self._lock = threading.RLock()
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
@@ -168,7 +176,21 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                execution_loop = self.agent_loop
+                if self.agent_loop_for_owner is not None:
+                    execution_loop = self.agent_loop_for_owner(owner_id)
+                    if not isinstance(execution_loop, AgentExecutionLoop):
+                        raise TypeError("owner agent-loop factory returned an invalid execution loop")
+                    if execution_loop is self.agent_loop:
+                        raise PermissionError("owner agent-loop factory must not return the shared default loop")
+                    previous_owner = self._loop_owners.get(execution_loop)
+                    if previous_owner is not None and previous_owner != owner_id:
+                        raise PermissionError("an agent execution loop cannot be shared across owners")
+                    self._loop_owners[execution_loop] = owner_id
+                result = execution_loop.run(
+                    user_text, on_text_delta=on_text_delta,
+                    cancellation_requested=cancellation_requested, **kwargs,
+                )
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls

@@ -89,15 +89,16 @@ class HybridProviderTests(unittest.TestCase):
     def test_cloud_provider_uses_env_key_and_parses_response(self):
         provider = OpenAICompatibleProvider("cloud-model")
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
-            with patch("urllib.request.build_opener") as mocked_builder:
-                mocked_builder.return_value.open.return_value = Response(
-                    json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
-                )
+            response = Response(
+                json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
+            )
+            with patch("providers.openai_compatible._open_pinned_https_request",
+                       return_value=response) as mocked_request:
                 self.assertTrue(provider.is_available())
                 self.assertEqual(provider.generate("question"), "answer")
-        request = mocked_builder.return_value.open.call_args.args[0]
+        request, timeout = mocked_request.call_args.args
         self.assertIn("Bearer test-secret", request.get_header("Authorization"))
-        self.assertEqual(mocked_builder.return_value.open.call_args.kwargs["timeout"], provider.timeout)
+        self.assertEqual(timeout, provider.timeout)
 
     def test_cloud_provider_missing_key_fails_closed(self):
         provider = OpenAICompatibleProvider("cloud-model", api_key_env="YUKI_TEST_MISSING_KEY")

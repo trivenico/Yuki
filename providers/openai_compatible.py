@@ -1,11 +1,15 @@
 """OpenAI-compatible cloud chat adapter with explicit endpoint trust boundaries."""
 from __future__ import annotations
+import http.client
 import ipaddress
 import json
 import os
 import re
+import socket
+import ssl
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 _DEFAULT_ALLOWED_HOSTS = frozenset({
@@ -14,10 +18,105 @@ _DEFAULT_ALLOWED_HOSTS = frozenset({
     "api.z.ai", "api.tokenrouter.io",
 })
 
-class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    """Cloud credentials and prompts must never follow redirects to another endpoint."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
+def _resolve_public_addresses(host: str, port: int):
+    """Resolve once and reject the entire answer if any destination is non-public."""
+    if not isinstance(host, str) or not host or "%" in host:
+        raise ValueError("Cloud provider hostname is invalid.")
+    try:
+        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise OSError("Cloud provider hostname could not be resolved.") from exc
+    addresses = []
+    seen = set()
+    for family, socktype, proto, _canonname, sockaddr in records:
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            continue
+        try:
+            address = ipaddress.ip_address(sockaddr[0])
+        except ValueError as exc:
+            raise ValueError("Cloud provider resolved an invalid network address.") from exc
+        unsafe_ipv6_transition = (
+            isinstance(address, ipaddress.IPv6Address)
+            and (
+                address.ipv4_mapped is not None
+                or address.sixtofour is not None
+                or address.teredo is not None
+                or address in ipaddress.ip_network("64:ff9b::/96")
+            )
+        )
+        if (not address.is_global or address.is_multicast or address.is_unspecified
+                or unsafe_ipv6_transition):
+            raise ValueError("Cloud provider hostname resolves to a non-public address.")
+        key = (family, socktype, proto, sockaddr)
+        if key not in seen:
+            seen.add(key)
+            addresses.append(key)
+    if not addresses:
+        raise OSError("Cloud provider hostname has no usable public addresses.")
+    return tuple(addresses)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection pinned to an already validated DNS answer."""
+
+    def __init__(self, host, port, addresses, *, timeout):
+        super().__init__(host, port, timeout=timeout, context=ssl.create_default_context())
+        self._pinned_addresses = addresses
+
+    def connect(self):
+        last_error = None
+        for family, socktype, proto, sockaddr in self._pinned_addresses:
+            sock = socket.socket(family, socktype, proto)
+            try:
+                sock.settimeout(self.timeout)
+                sock.connect(sockaddr)
+                self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+                return
+            except OSError as exc:
+                last_error = exc
+                sock.close()
+        if last_error is not None:
+            raise last_error
+        raise OSError("No validated provider address was available.")
+
+
+@contextmanager
+def _open_pinned_https_request(request, timeout):
+    """Send directly to a validated IP while retaining TLS hostname verification.
+
+    This intentionally bypasses ambient HTTP(S)_PROXY settings: proxy routing
+    would invalidate the destination pinning guarantee. Redirects are never
+    followed, and only the default HTTPS port is accepted.
+    """
+    parsed = urlsplit(request.full_url)
+    try:
+        port = parsed.port or 443
+    except ValueError as exc:
+        raise ValueError("Cloud provider endpoint port is invalid.") from exc
+    if parsed.scheme != "https" or port != 443 or not parsed.hostname:
+        raise ValueError("Cloud provider requests require HTTPS on port 443.")
+    addresses = _resolve_public_addresses(parsed.hostname, port)
+    connection = _PinnedHTTPSConnection(parsed.hostname, port, addresses, timeout=timeout)
+    response = None
+    try:
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        headers = dict(request.header_items())
+        headers["Connection"] = "close"
+        connection.request(request.get_method(), path, body=request.data, headers=headers)
+        response = connection.getresponse()
+        if 300 <= response.status < 400 or response.status >= 400:
+            raise urllib.error.HTTPError(
+                request.full_url, response.status, response.reason,
+                response.headers, response,
+            )
+        yield response
+    finally:
+        if response is not None:
+            response.close()
+        connection.close()
+
 
 def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
     if not isinstance(base_url, str) or not base_url.strip():
@@ -29,8 +128,9 @@ def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
         parsed.port
     except ValueError as exc:
         raise ValueError("Cloud provider endpoint URL is invalid.") from exc
-    if (parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password
-            or parsed.query or parsed.fragment):
+    if (parsed.scheme.lower() != "https" or not host
+            or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment or parsed.port not in (None, 443)):
         raise ValueError("Cloud provider endpoint must be an HTTPS URL without credentials.")
     try:
         ip = ipaddress.ip_address(host)
@@ -87,10 +187,8 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            # Deliberately disable automatic redirects: even a valid initial host must
-            # not redirect credentials/prompts to an unreviewed destination.
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            # DNS is validated and pinned to the TLS socket; redirects and ambient proxies are disabled.
+            with _open_pinned_https_request(request, self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider request failed; redirects are not followed.") from exc
@@ -160,8 +258,7 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with _open_pinned_https_request(request, self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider chat request failed; redirects are not followed.") from exc
@@ -265,8 +362,7 @@ class OpenAICompatibleProvider:
         finish_reason = None
         saw_done = False
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with _open_pinned_https_request(request, self.timeout) as response:
                 while True:
                     line = response.readline(65_537)
                     if not line:
@@ -409,8 +505,7 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with _open_pinned_https_request(request, self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider tool-call request failed; redirects are not followed.") from exc

@@ -28,6 +28,10 @@ class FakeOpener:
         self.requests.append((request, timeout))
         return FakeResponse(self.body)
 
+    def __call__(self, request, timeout):
+        self.requests.append((request, timeout))
+        return FakeResponse(self.body)
+
 
 
 class FakeStreamResponse:
@@ -45,6 +49,10 @@ class FakeStreamOpener:
         self.response = FakeStreamResponse(lines)
         self.requests = requests
     def open(self, request, timeout):
+        self.requests.append((request, timeout))
+        return self.response
+
+    def __call__(self, request, timeout):
         self.requests.append((request, timeout))
         return self.response
 
@@ -82,7 +90,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
 
     def invoke_with(self, body):
         opener = FakeOpener(body, self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+        with patch("providers.openai_compatible._open_pinned_https_request", side_effect=opener):
             return self.provider.generate_with_tools("Find the value", self.tools)
 
     def test_native_call_is_normalized_to_yuki_envelope(self):
@@ -137,7 +145,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             {"role": "user", "content": "Find it"},
             {"role": "assistant", "content": "I will look it up"},
         ]
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+        with patch("providers.openai_compatible._open_pinned_https_request", side_effect=opener):
             result = self.provider.generate_chat(messages=messages, tools=self.tools)
         payload = json.loads(self.requests[0][0].data)
         self.assertEqual(payload["messages"], messages)
@@ -184,7 +192,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         ]
         lines = [("data: " + json.dumps(item) + "\n\n") for item in chunks] + ["data: [DONE]\n\n"]
         opener = FakeStreamOpener(lines, self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+        with patch("providers.openai_compatible._open_pinned_https_request", side_effect=opener):
             events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Hi"}], tools=self.tools))
         self.assertEqual(events[:2], [{"type": "text_delta", "text": "Hello "}, {"type": "text_delta", "text": "Yuki"}])
         self.assertEqual(events[-1]["response"]["text"], "Hello Yuki")
@@ -198,7 +206,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         ]
         lines = [("data: " + json.dumps(item) + "\n") for item in chunks] + ["data: [DONE]\n"]
         opener = FakeStreamOpener(lines, self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+        with patch("providers.openai_compatible._open_pinned_https_request", side_effect=opener):
             events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
         self.assertEqual(events[-1]["response"]["tool_calls"]["tool_calls"], [
             {"id": "call_stream", "name": "lookup", "arguments": {"key": "value"}}
@@ -209,7 +217,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             {"index": 0, "id": "bad", "function": {"name": "unadvertised", "arguments": "{}"}}
         ]}, "finish_reason": "tool_calls"}]}
         opener = FakeStreamOpener(["data: " + json.dumps(chunk) + "\n", "data: [DONE]\n"], self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+        with patch("providers.openai_compatible._open_pinned_https_request", side_effect=opener):
             with self.assertRaises(RuntimeError):
                 list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
 
