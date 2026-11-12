@@ -1310,7 +1310,8 @@
         (item.recent.accuracy * 100).toFixed(1) + "% (" + item.recent.sample_count + ")";
       entry.textContent = item.annotator_id + ": " + item.status +
         "; baseline " + baseline + "; recent " + recent +
-        (item.two_proportion_p_value === null ? "" : "; p=" + item.two_proportion_p_value.toFixed(4));
+        (item.two_proportion_p_value === null ? "" : "; p=" + item.two_proportion_p_value.toFixed(4)) +
+        (item.false_discovery_rate_q_value === null ? "" : "; BH q=" + item.false_discovery_rate_q_value.toFixed(4));
       list.append(entry);
     }
     target.append(list);
