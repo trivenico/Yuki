@@ -231,6 +231,16 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(seen["context"].goal_id, self.goal)
         self.assertEqual(seen["context"].task_id, task["id"])
 
+    def test_approval_for_another_owner_cannot_authorize_task(self):
+        task = self.submit("write_demo", "owner-bound-change", key="cross-owner-approval")
+        self.approvals.approve(
+            "write_demo", "owner-bound-change", principal_id="different-owner"
+        )
+        result = self.worker.run_once()
+        self.assertEqual(result["status"], "approval_required")
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(self.high_risk.calls, 0)
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
     def test_worker_rejects_legacy_unowned_goal_before_runtime(self):
         legacy_goal = self.engine.create_goal()
         task = self.engine.submit(
@@ -238,7 +248,6 @@ class DurableSkillWorkerTests(unittest.TestCase):
             {"skill_name": "read_demo", "argument": "must-not-run"},
             idempotency_key="unowned-worker-task", max_attempts=1,
         )
-        before = len(self.registry.skills["read_demo"].__dict__)
         result = self.worker.run_once()
         self.assertEqual(result["status"], "unowned_goal")
         self.assertEqual(result["state"], "failed")
