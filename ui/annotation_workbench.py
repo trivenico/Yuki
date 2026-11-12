@@ -10,8 +10,10 @@ import json
 import shlex
 from typing import Any
 
+from core.data_annotation import AnnotationConflict
 
-def execute_annotation_command(workbench: Any, owner_id: str, command: str) -> str:
+
+def execute_annotation_command(\n    workbench: Any, owner_id: str, command: str, *, open_project_id: str = "",\n) -> str:
     """Execute one explicit local workbench command and return display-safe text."""
     if not isinstance(owner_id, str) or not owner_id.strip():
         return "Annotation workbench is not configured with an owner identity."
@@ -62,7 +64,7 @@ def execute_annotation_command(workbench: Any, owner_id: str, command: str) -> s
             )
         if action == "/tasks" and len(parts) in {1, 2}:
             status = parts[1] if len(parts) == 2 else None
-            tasks = workbench.list_tasks(owner_id, _open_project_id, status=status, limit=200)
+            tasks = workbench.list_tasks(owner_id, open_project_id, status=status, limit=200)
             if not tasks:
                 return "No matching tasks in the open project."
             return "\n".join(
