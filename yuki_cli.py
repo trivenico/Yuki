@@ -8,8 +8,10 @@ from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
+from core.local_annotation_runtime import build_local_annotation_runtime
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
+from ui.annotation_workbench import run_annotation_workbench
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start persistent local conversation chat")
+    sub.add_parser("annotation", help="Open the local data annotation workbench")
     return parser
 
 
@@ -137,6 +140,8 @@ def run_cli(
     provider_factory: Callable = create_provider,
     readiness_builder: Callable = build_readiness_report,
     conversation_runtime_factory: Callable = build_local_conversation_runtime,
+    annotation_runtime_factory: Callable = build_local_annotation_runtime,
+    annotation_ui_runner: Callable = run_annotation_workbench,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
 ) -> int:
@@ -146,6 +151,31 @@ def run_cli(
         report = readiness_builder().to_dict()
         _write_json(report, output_fn)
         return 0
+
+    if args.command == "annotation":
+        try:
+            config = config_loader()
+            runtime = annotation_runtime_factory(config)
+        except Exception as exc:
+            output_fn(
+                f"Yuki could not initialize the annotation workbench ({type(exc).__name__})."
+            )
+            return 2
+        try:
+            annotation_ui_runner(runtime.workbench, runtime.owner_id)
+            return 0
+        except RuntimeError as exc:
+            message = str(exc)
+            if message.startswith("Install the optional UI dependency"):
+                output_fn(message)
+            else:
+                output_fn("Yuki annotation workbench stopped safely (RuntimeError).")
+            return 2
+        except Exception as exc:
+            output_fn(
+                f"Yuki annotation workbench failed safely ({type(exc).__name__})."
+            )
+            return 4
 
     if args.command == "chat":
         runtime = None

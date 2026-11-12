@@ -1,5 +1,6 @@
 import json
 import unittest
+from types import SimpleNamespace
 
 from yuki_cli import run_cli
 
@@ -71,6 +72,57 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(runtime.conversations.reply_calls, 1)
         self.assertEqual(runtime.conversations.history_calls, 1)
         self.assertIn("Yuki> saved answer", output)
+
+    def test_annotation_command_uses_local_runtime_without_provider(self):
+        runtime = SimpleNamespace(workbench=object(), owner_id="local-owner")
+        received = []
+        output = []
+
+        def forbidden_provider_factory(config):
+            raise AssertionError("annotation must not initialize an AI provider")
+
+        def runner(workbench, owner_id):
+            received.append((workbench, owner_id))
+
+        code = run_cli(
+            ["annotation"],
+            config_loader=lambda: {"workspace": "/tmp/yuki-test"},
+            provider_factory=forbidden_provider_factory,
+            annotation_runtime_factory=lambda config: runtime,
+            annotation_ui_runner=runner,
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(received, [(runtime.workbench, "local-owner")])
+        self.assertEqual(output, [])
+
+    def test_annotation_command_reports_optional_ui_install_hint(self):
+        runtime = SimpleNamespace(workbench=object(), owner_id="local-owner")
+        output = []
+        code = run_cli(
+            ["annotation"],
+            config_loader=lambda: {},
+            annotation_runtime_factory=lambda config: runtime,
+            annotation_ui_runner=lambda *args: (_ for _ in ()).throw(
+                RuntimeError("Install the optional UI dependency with: pip install -r requirements-ui.txt")
+            ),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("pip install -r requirements-ui.txt", output[0])
+
+    def test_annotation_runtime_initialization_failure_is_sanitized(self):
+        output = []
+        code = run_cli(
+            ["annotation"],
+            config_loader=lambda: {},
+            annotation_runtime_factory=lambda config: (_ for _ in ()).throw(
+                RuntimeError("private database path")
+            ),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 2)
+        self.assertNotIn("private database path", output[0])
 
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
