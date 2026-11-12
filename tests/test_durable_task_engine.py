@@ -12,8 +12,10 @@ from core.durable_task_engine import DurableTaskEngine, TaskConflict, TaskNotFou
 class DurableTaskEngineTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "tasks.sqlite"
         self.engine = DurableTaskEngine(self.db)
+        self.addCleanup(self.engine.close)
         self.goal = self.engine.create_goal()
         self._install_claim_token_test_adapter(self.engine)
 
@@ -51,10 +53,6 @@ class DurableTaskEngineTests(unittest.TestCase):
         engine.complete = complete_with_token
         engine.fail = fail_with_token
         engine.reject = reject_with_token
-
-    def tearDown(self):
-        self.engine.close()
-        self.tmp.cleanup()
 
     def test_expired_claim_creates_leased_durable_revocation_outbox(self):
         task = self.engine.submit(
