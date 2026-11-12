@@ -8,6 +8,8 @@ from __future__ import annotations
 import math
 from typing import Any, Mapping
 
+from core.annotation_geometry import Point, validate_polygon
+
 
 def _object(value: Any, field: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
@@ -103,13 +105,17 @@ def validate_annotation_payload(task_type: str, payload: Mapping[str, Any],
             _keys(polygon, {"label", "points"}, set(), "polygon")
             _label(polygon["label"], rules)
             points = polygon["points"]
-            if not isinstance(points, list) or len(points) < 3 or len(points) > 10000:
+            if not isinstance(points, list) or len(points) < 3 or len(points) > 2048:
                 raise ValueError("polygon_requires_three_or_more_points")
+            normalized_points = []
             for point in points:
                 if not isinstance(point, (list, tuple)) or len(point) != 2:
                     raise ValueError("invalid_polygon_point")
-                _number(point[0], "polygon_x", minimum=0, maximum=1)
-                _number(point[1], "polygon_y", minimum=0, maximum=1)
+                normalized_points.append(Point(
+                    _number(point[0], "polygon_x", minimum=0, maximum=1),
+                    _number(point[1], "polygon_y", minimum=0, maximum=1),
+                ))
+            validate_polygon(normalized_points)
     elif task_type == "video_tracking":
         _keys(data, {"tracks"}, set(), "video_tracking")
         tracks = data["tracks"]
