@@ -56,3 +56,20 @@
 .annotation-quality-heading h3 { margin: 0; }
 #annotation-quality-summary ul { margin: .5rem 0 0; padding-left: 1.25rem; }
 #annotation-quality-summary p { margin: .5rem 0; }
+
+.annotation-independent-panel {
+  margin: 1rem 0;
+  padding: .9rem;
+  border: 1px solid var(--border, #d8dce3);
+  border-radius: 10px;
+}
+.annotation-independent-panel h3,
+.annotation-independent-panel h4 { margin: .25rem 0 .65rem; }
+.annotation-independent-panel > p { margin: .4rem 0 .75rem; }
+.annotation-independent-card {
+  margin: .6rem 0;
+  padding: .65rem;
+  border: 1px solid var(--border, #d8dce3);
+  border-radius: 8px;
+}
+.annotation-independent-card p { overflow-wrap: anywhere; }

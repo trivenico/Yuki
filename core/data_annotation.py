@@ -199,6 +199,24 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_tasks_owner_state
                 ON annotation_tasks(owner_id, project_id, status, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_independent_assignments (
+                assignment_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                annotator_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                payload_json TEXT,
+                quality_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(owner_id, task_id, annotator_id),
+                FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_worker
+                ON annotation_independent_assignments(annotator_id, status, created_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_submissions (
                 submission_id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -989,6 +1007,282 @@ class SQLiteAnnotationWorkbench:
                 (owner_id, task_id, limit),
             ).fetchall()
         return [self._submission(row) for row in rows]
+
+    def create_independent_assignments(
+        self, owner_id: str, project_id: str, task_id: str, annotator_ids: list[str],
+    ) -> list[dict[str, Any]] | None:
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(task_id, str) or not _ID.fullmatch(task_id)):
+            raise ValueError("invalid_assignment_target")
+        if (not isinstance(annotator_ids, list) or not 2 <= len(annotator_ids) <= 20
+                or any(not isinstance(x, str) or not x or len(x) > 256 for x in annotator_ids)
+                or len(set(annotator_ids)) != len(annotator_ids)
+                or owner_id in annotator_ids):
+            raise ValueError("invalid_independent_annotators")
+        now = _now()
+        created = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task = db.execute(
+                "SELECT task_id FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if task is None:
+                return None
+            project = db.execute(
+                "SELECT task_type, rubric_json, status FROM annotation_projects "
+                "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
+            ).fetchone()
+            if project is None or project["status"] != "active":
+                raise ValueError("annotation_project_not_active")
+            if project["task_type"] != "text_classification":
+                raise ValueError("independent_agreement_requires_text_classification")
+            for annotator_id in annotator_ids:
+                assignment_id = uuid.uuid4().hex
+                existing = db.execute(
+                    "SELECT assignment_id, status FROM annotation_independent_assignments "
+                    "WHERE owner_id=? AND task_id=? AND annotator_id=?",
+                    (owner_id, task_id, annotator_id),
+                ).fetchone()
+                if existing is not None:
+                    if existing["status"] != "revoked":
+                        raise ValueError("annotator_already_assigned_to_task")
+                    db.execute(
+                        """UPDATE annotation_independent_assignments
+                           SET assignment_id=?, status='assigned', version=1, payload_json=NULL,
+                               quality_json='{}', created_at=?, updated_at=?
+                           WHERE owner_id=? AND task_id=? AND annotator_id=? AND status='revoked'""",
+                        (assignment_id, now, now, owner_id, task_id, annotator_id),
+                    )
+                else:
+                    db.execute(
+                        """INSERT INTO annotation_independent_assignments
+                        (assignment_id, task_id, project_id, owner_id, annotator_id,
+                         status, version, payload_json, quality_json, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, 'assigned', 1, NULL, '{}', ?, ?)""",
+                        (assignment_id, task_id, project_id, owner_id, annotator_id, now, now),
+                    )
+                created.append({"assignment_id": assignment_id, "task_id": task_id,
+                    "project_id": project_id, "status": "assigned", "version": 1,
+                    "created_at": now})
+            self._audit(db, owner_id, project_id, task_id, "independent_assignments_created",
+                        {"assignment_count": len(created)})
+        return created
+
+    def revoke_independent_assignment(
+        self, owner_id: str, project_id: str, assignment_id: str,
+    ) -> bool:
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(assignment_id, str) or not _ID.fullmatch(assignment_id)):
+            raise ValueError("invalid_assignment_target")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT task_id, status FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=? AND assignment_id=?""",
+                (owner_id, project_id, assignment_id),
+            ).fetchone()
+            if row is None:
+                return False
+            if row["status"] == "submitted":
+                raise ValueError("submitted_assignment_cannot_be_revoked")
+            db.execute(
+                """UPDATE annotation_independent_assignments
+                   SET status='revoked', version=version+1, updated_at=?
+                   WHERE owner_id=? AND project_id=? AND assignment_id=?""",
+                (_now(), owner_id, project_id, assignment_id),
+            )
+            self._audit(db, owner_id, project_id, row["task_id"],
+                        "independent_assignment_revoked", {"assignment_id": assignment_id})
+        return True
+
+    def list_my_independent_assignments(self, annotator_id: str) -> list[dict[str, Any]]:
+        annotator_id = _owner(annotator_id)
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT a.assignment_id, a.task_id, a.project_id, a.owner_id,
+                          a.status, a.version, a.created_at, a.updated_at,
+                          t.external_ref, t.input_json, p.task_type, p.instructions, p.rubric_json
+                   FROM annotation_independent_assignments a
+                   JOIN annotation_tasks t ON t.task_id=a.task_id AND t.owner_id=a.owner_id
+                   JOIN annotation_projects p ON p.project_id=a.project_id AND p.owner_id=a.owner_id
+                   WHERE a.annotator_id=? ORDER BY a.created_at, a.assignment_id""",
+                (annotator_id,),
+            ).fetchall()
+        return [{
+            "assignment_id": row["assignment_id"], "task_id": row["task_id"],
+            "project_id": row["project_id"], "owner_id": row["owner_id"],
+            "status": row["status"], "version": row["version"],
+            "external_ref": row["external_ref"], "input_data": _decode(row["input_json"]),
+            "task_type": row["task_type"], "instructions": row["instructions"],
+            "rubric": _decode(row["rubric_json"]),
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+        } for row in rows]
+
+    def claim_independent_assignment(
+        self, annotator_id: str, assignment_id: str, *, expected_version: int,
+    ) -> dict[str, Any] | None:
+        annotator_id = _owner(annotator_id)
+        if not isinstance(assignment_id, str) or not _ID.fullmatch(assignment_id):
+            raise ValueError("invalid_assignment_id")
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("invalid_expected_version")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM annotation_independent_assignments "
+                "WHERE annotator_id=? AND assignment_id=?", (annotator_id, assignment_id),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["version"] != expected_version:
+                raise AnnotationConflict("annotation_assignment_version_conflict")
+            if row["status"] not in {"assigned", "in_progress"}:
+                raise ValueError("annotation_assignment_not_claimable")
+            db.execute(
+                "UPDATE annotation_independent_assignments SET status='in_progress', "
+                "version=version+1, updated_at=? WHERE assignment_id=? AND annotator_id=? AND version=?",
+                (_now(), assignment_id, annotator_id, expected_version),
+            )
+            updated = db.execute(
+                "SELECT assignment_id, task_id, project_id, status, version "
+                "FROM annotation_independent_assignments WHERE assignment_id=?",
+                (assignment_id,),
+            ).fetchone()
+        return dict(updated)
+
+    def submit_independent_assignment(
+        self, annotator_id: str, assignment_id: str, *, payload: Mapping[str, Any],
+        expected_version: int, human_confirmed: bool,
+    ) -> dict[str, Any] | None:
+        annotator_id = _owner(annotator_id)
+        if not isinstance(assignment_id, str) or not _ID.fullmatch(assignment_id):
+            raise ValueError("invalid_assignment_id")
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("invalid_expected_version")
+        if type(human_confirmed) is not bool or not human_confirmed:
+            raise PermissionError("human_confirmation_required_before_submission")
+        payload_json = _json_object(payload, maximum=_MAX_JSON_BYTES, field="annotation_payload")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            assignment = db.execute(
+                "SELECT * FROM annotation_independent_assignments "
+                "WHERE annotator_id=? AND assignment_id=?", (annotator_id, assignment_id),
+            ).fetchone()
+            if assignment is None:
+                return None
+            if assignment["version"] != expected_version:
+                raise AnnotationConflict("annotation_assignment_version_conflict")
+            if assignment["status"] != "in_progress":
+                raise ValueError("annotation_assignment_not_submittable")
+            project = db.execute(
+                "SELECT task_type, rubric_json, status FROM annotation_projects "
+                "WHERE owner_id=? AND project_id=?",
+                (assignment["owner_id"], assignment["project_id"]),
+            ).fetchone()
+            if project is None or project["status"] != "active":
+                raise ValueError("annotation_project_not_active")
+            rubric = _decode(project["rubric_json"])
+            validate_annotation_payload(project["task_type"], payload, rubric)
+            quality = assess_annotation_quality(project["task_type"], payload, rubric)
+            quality_json = _json_object(quality, maximum=16384, field="quality_assessment")
+            now = _now()
+            db.execute(
+                """UPDATE annotation_independent_assignments
+                   SET status='submitted', payload_json=?, quality_json=?, version=version+1, updated_at=?
+                   WHERE assignment_id=? AND annotator_id=? AND version=?""",
+                (payload_json, quality_json, now, assignment_id, annotator_id, expected_version),
+            )
+            self._audit(db, assignment["owner_id"], assignment["project_id"],
+                        assignment["task_id"], "independent_annotation_submitted",
+                        {"assignment_id": assignment_id, "annotator_id": annotator_id})
+            row = db.execute(
+                "SELECT assignment_id, task_id, project_id, status, version, quality_json, updated_at "
+                "FROM annotation_independent_assignments WHERE assignment_id=?", (assignment_id,),
+            ).fetchone()
+        result = dict(row)
+        result["quality"] = _decode(result.pop("quality_json"))
+        return result
+
+    def independent_agreement_report(
+        self, owner_id: str, project_id: str,
+    ) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        with self._connect() as db:
+            project = db.execute(
+                "SELECT task_type FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            rows = db.execute(
+                """SELECT task_id, annotator_id, status, payload_json
+                   FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=? ORDER BY task_id, annotator_id""",
+                (owner_id, project_id),
+            ).fetchall()
+        if project["task_type"] != "text_classification":
+            return {"project_id": project_id, "supported": False,
+                    "reason": "text_classification_required", "task_count": 0,
+                    "evaluated_task_count": 0, "mean_pairwise_agreement": None,
+                    "fleiss_kappa": None}
+        groups: dict[str, list[str]] = {}
+        assignment_counts = {"assigned": 0, "in_progress": 0, "submitted": 0, "revoked": 0}
+        assigned_tasks = {row["task_id"] for row in rows}
+        for row in rows:
+            if row["status"] in assignment_counts:
+                assignment_counts[row["status"]] += 1
+            if row["status"] != "submitted" or not row["payload_json"]:
+                continue
+            payload = _decode(row["payload_json"])
+            label = payload.get("label") if isinstance(payload, dict) else None
+            if isinstance(label, str):
+                groups.setdefault(row["task_id"], []).append(label)
+        agreements, fleiss_rows = [], []
+        for labels in groups.values():
+            if len(labels) < 2:
+                continue
+            n = len(labels)
+            counts: dict[str, int] = {}
+            for label in labels:
+                counts[label] = counts.get(label, 0) + 1
+            pair_total = n * (n - 1) / 2
+            agreements.append(sum(v * (v - 1) / 2 for v in counts.values()) / pair_total)
+            fleiss_rows.append((n, counts))
+        if not fleiss_rows:
+            kappa = None
+        else:
+            n_values = {n for n, _ in fleiss_rows}
+            if len(n_values) != 1:
+                kappa = None
+            else:
+                n = next(iter(n_values))
+                categories = set().union(*(set(counts) for _, counts in fleiss_rows))
+                p_i = [sum(v * v for v in counts.values()) - n for _, counts in fleiss_rows]
+                p_i = [value / (n * (n - 1)) for value in p_i]
+                total_ratings = n * len(fleiss_rows)
+                p_j = {
+                    category: sum(counts.get(category, 0) for _, counts in fleiss_rows) / total_ratings
+                    for category in categories
+                }
+                p_bar = sum(p_i) / len(p_i)
+                p_e = sum(value * value for value in p_j.values())
+                kappa = (p_bar - p_e) / (1 - p_e) if p_e < 1 else None
+        return {
+            "project_id": project_id, "supported": True, "task_count": len(assigned_tasks),
+            "assignment_counts": assignment_counts,
+            "assignment_count": len(rows),
+            "evaluated_task_count": len(agreements),
+            "insufficient_annotators_task_count": sum(1 for labels in groups.values() if len(labels) < 2),
+            "not_started_task_count": len(assigned_tasks - set(groups)),
+            "mean_pairwise_agreement": sum(agreements) / len(agreements) if agreements else None,
+            "fleiss_kappa": kappa, "metric": "classification_label_agreement",
+            "minimum_ratings_per_task": 2,
+        }
 
     def quality_report(self, owner_id: str, project_id: str) -> dict[str, Any] | None:
         """Aggregate deterministic quality findings without exposing annotation content."""

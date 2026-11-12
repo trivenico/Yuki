@@ -105,6 +105,24 @@
                 <div id="annotation-quality-summary" class="annotation-hint" aria-live="polite">Select a project to view quality metrics.</div>
               </section>
 
+              <section class="annotation-independent-panel" aria-label="Independent annotation assignments">
+                <h3>Independent annotations</h3>
+                <p>Assign the selected classification task to multiple annotators for blind, independent labels.</p>
+                <label class="annotation-field" for="annotation-independent-annotators">Annotator account IDs (comma-separated)
+                  <textarea id="annotation-independent-annotators" rows="2" spellcheck="false" placeholder="Account ID 1, Account ID 2"></textarea>
+                </label>
+                <button id="annotation-independent-assign" type="button">Create independent assignments</button>
+                <button id="annotation-agreement-refresh" type="button">Refresh agreement report</button>
+                <div id="annotation-agreement-summary" class="annotation-hint" aria-live="polite">Agreement metrics are available for classification tasks after independent submissions.</div>
+                <h4>My independent assignments</h4>
+                <button id="annotation-independent-load" type="button">Load my assignments</button>
+                <div id="annotation-independent-list" aria-live="polite"></div>
+                <label class="annotation-field" for="annotation-independent-label">Classification label
+                  <input id="annotation-independent-label" maxlength="256" autocomplete="off" placeholder="Enter the label from the project rubric">
+                </label>
+                <button id="annotation-independent-submit" type="button" disabled>Submit claimed assignment</button>
+                <div id="annotation-independent-status" class="annotation-hint" aria-live="polite"></div>
+              </section>
               <div id="annotation-manual-task-row" class="annotation-manual-task-row">
                 <label class="annotation-field" for="annotation-new-task-ref">External task reference<input id="annotation-new-task-ref" maxlength="256" placeholder="e.g. batch-001"></label>
                 <label class="annotation-field" for="annotation-new-task-input">Task input JSON<textarea id="annotation-new-task-input" rows="2" spellcheck="false">{}</textarea></label>
