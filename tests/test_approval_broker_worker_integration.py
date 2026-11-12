@@ -14,6 +14,7 @@ from core.approved_skill_wiring import SkillApprovalStore
 from core.capability_approval_gateway import CapabilityApprovalGateway
 from core.durable_skill_worker import DurableSkillWorker
 from core.durable_task_engine import DurableTaskEngine
+from core.lease_recovery_coordinator import LeaseRecoveryCoordinator
 from core.guarded_skill_runtime import SkillPolicyContext
 from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest
 
@@ -172,6 +173,38 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
             self.broker.deliver_credential(
                 self.request_id, self.approval_token, lease_token=self.lease_token
             )
+
+    def test_expired_claim_revocation_survives_engine_restart(self):
+        import sqlite3
+        with sqlite3.connect(self.engine.db_path) as db:
+            db.execute(
+                "UPDATE tasks SET lease_until=0 WHERE id=?",
+                (self.task["id"],),
+            )
+        self.assertEqual(self.engine.recover_expired_leases(), 1)
+        # The old lease is invalid immediately, before asynchronous broker cleanup.
+        self.assertIsNone(
+            self.broker.resolver()(self.context, self.skill.name, self.lease_token)
+        )
+        # Reopen the task engine to prove the revocation work is durable.
+        self.engine.close()
+        restarted = DurableTaskEngine(Path(self.temp.name) / "tasks.sqlite")
+        self.addCleanup(restarted.close)
+        coordinator = LeaseRecoveryCoordinator(
+            restarted, {self.worker_id: self.broker}, supervisor_id="recovery-supervisor"
+        )
+        result = coordinator.run_once()
+        self.assertEqual(result, {
+            "claimed": 1, "revoked": 1, "acknowledged": 1, "deferred": 0,
+        })
+        with sqlite3.connect(self.broker.database_path) as db:
+            status, ciphertext = db.execute(
+                "SELECT status,ciphertext FROM approval_worker_credentials WHERE request_id=?",
+                (self.request_id,),
+            ).fetchone()
+        self.assertEqual(status, "revoked")
+        self.assertEqual(ciphertext, b"")
+        self.assertEqual(coordinator.run_once()["claimed"], 0)
 
     def test_runtime_requires_resolver_when_central_gateway_is_enabled(self):
         with self.assertRaisesRegex(ValueError, "approval_token_resolver"):
