@@ -74,6 +74,10 @@ class ApprovalCredentialBroker:
                 CREATE INDEX IF NOT EXISTS idx_worker_credentials_lookup
                 ON approval_worker_credentials(principal_id,goal_id,task_id,worker_id,status)
             """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_worker_credentials_claim_lookup
+                ON approval_worker_credentials(task_id,worker_id,claim_token_sha256,status,expires_at)
+            """)
 
     def _prepare_private_database_file(self) -> None:
         """Create or harden the SQLite file before SQLite opens it.
