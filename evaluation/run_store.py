@@ -303,6 +303,11 @@ class EvaluationRunStore:
                 existing = self._from_row(old)
                 if not self.verify(existing):
                     raise RuntimeError("stored evaluation record failed integrity verification")
+                if lease_token is not None:
+                    db.execute(
+                        "DELETE FROM evaluation_claims WHERE owner_id=? AND idempotency_key=? AND lease_token=?",
+                        (owner, key, lease_token),
+                    )
                 return existing
             db.execute("""
                 INSERT INTO evaluation_runs (
