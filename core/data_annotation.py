@@ -1736,11 +1736,11 @@ class SQLiteAnnotationWorkbench:
                 accuracy = calibration["correct"] / n if n else 0.0
                 last_evaluated = None
                 try:
-                    last_evaluated = datetime.fromisoformat(
-                        calibration["last_evaluated_at"].replace("Z", "+00:00")
-                    )
-                    if last_evaluated.tzinfo is None:
-                        last_evaluated = last_evaluated.replace(tzinfo=timezone.utc)
+                    timestamp = calibration["last_evaluated_at"]
+                    if timestamp is not None:
+                        last_evaluated = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                        if last_evaluated.tzinfo is None:
+                            last_evaluated = last_evaluated.replace(tzinfo=timezone.utc)
                 except (TypeError, ValueError):
                     pass
                 evidence_fresh = (
