@@ -51,6 +51,22 @@ class ModelEvaluatorTests(unittest.TestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     self.evaluator.run("candidate", lambda prompt: "ok", [case])
 
+    def test_rejects_non_finite_and_extreme_numeric_limits(self):
+        for kwargs in (
+            {"max_total_duration_seconds": float("nan")},
+            {"max_total_duration_seconds": float("inf")},
+            {"max_total_duration_seconds": 10 ** 1000},
+            {"minimum_pass_rate": float("nan")},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    ModelEvaluator(**kwargs)
+        for value in (float("nan"), float("inf"), 10 ** 1000):
+            with self.subTest(value_type=type(value).__name__):
+                case = EvalCase("numeric", "general", "prompt", max_latency_seconds=value)
+                with self.assertRaises(ValueError):
+                    self.evaluator.run("candidate", lambda prompt: "ok", [case])
+
     def test_rejects_truthy_non_boolean_approval_flags(self):
         with self.assertRaises(TypeError):
             self.evaluator.run("candidate", lambda prompt: "ok", [EvalCase("case", "general", "prompt")], approval_required="yes")
