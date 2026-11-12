@@ -27,12 +27,14 @@
 - Current-round labels alone are used for the next adjudication.
 - Prior adjudications are retained in `annotation_adjudication_events`; the compatibility adjudication row represents the latest decision.
 - A manifest is a point-in-time snapshot. Later task changes or later manifests do not alter its stored snapshot.
-- Manifest creation is bounded to 5,000 items and 16 MiB of canonical snapshot data; it fails rather than silently truncating a dataset. Identical snapshot digests are deduplicated per owner/project, even when a retry uses a different idempotency key.
+- Manifest creation is bounded to 5,000 items and 16 MiB of canonical snapshot data; it fails rather than silently truncating a dataset.
+- Manifest creation rejects empty datasets, any unresolved non-gold task, incomplete task coverage, and duplicate task entries. Blinded gold-standard calibration tasks are excluded from the deliverable dataset and completeness denominator.
 - Verification detects snapshot changes; it is an integrity check, not a signature or proof against an attacker who can rewrite both the snapshot and checksum in the database.
 
 ## Deliberate limitations
 
 - Rework currently requires new annotators for the task; returning previous annotators is rejected rather than mutating historical assignment records.
+- Stale assigned/in-progress work from prior rounds is marked revoked (with the assignment record and identity retained) when a rework round is opened.
 - This phase does not automatically deliver manifests to an external client or marketplace. Export remains owner-controlled.
 - Dataset manifests are stored in SQLite and returned through the authenticated API; object-storage publication, signed attestations, retention policy, and large-dataset streaming remain separate work.
 - The manifest checksum is an integrity digest, not a cryptographic signature. External verification needs a separately protected signing key or trusted digest channel.
