@@ -118,6 +118,10 @@ class EvaluationRunStore:
                     PRIMARY KEY(owner_id, idempotency_key)
                 )
             """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_evaluation_claims_expiry "
+                "ON evaluation_claims(expires_at)"
+            )
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
@@ -204,6 +208,15 @@ class EvaluationRunStore:
         token = secrets.token_urlsafe(32)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            # Reclaim a bounded batch of abandoned leases on normal write traffic.
+            # This prevents unbounded accumulation without making each claim scan
+            # or delete the entire expired-lease backlog.
+            db.execute(
+                "DELETE FROM evaluation_claims WHERE rowid IN ("
+                "SELECT rowid FROM evaluation_claims WHERE expires_at <= ? "
+                "ORDER BY expires_at LIMIT 100)",
+                (now,),
+            )
             completed = db.execute(
                 "SELECT request_digest FROM evaluation_runs WHERE owner_id=? AND idempotency_key=?",
                 (owner, key),
