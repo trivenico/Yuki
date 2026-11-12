@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from api.conversations import YukiConversationAPI
+from api.approvals import AuthenticatedCapabilityApprovalAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
 from api.mcp_management import AuthenticatedMCPManagementAPI
@@ -12,6 +13,7 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.authenticated_capability_approval_service import AuthenticatedCapabilityApprovalService
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -74,6 +76,7 @@ def build_conversation_runtime(
     oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
+    approval_service: AuthenticatedCapabilityApprovalService | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -105,6 +108,10 @@ def build_conversation_runtime(
             prepared_oauth_provider_registry.authorization_service_for_provider
         )
         oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
+    if approval_service is not None and not isinstance(
+        approval_service, AuthenticatedCapabilityApprovalService
+    ):
+        raise TypeError("approval_service must be an AuthenticatedCapabilityApprovalService")
     if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if mcp_runtime is not None and oauth_connections is None:
@@ -147,6 +154,8 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
+        if approval_service is not None:
+            app = AuthenticatedCapabilityApprovalAPI(app, approval_service)
         return ConversationRuntime(app, application)
     except Exception:
         application.close()
