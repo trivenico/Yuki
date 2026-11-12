@@ -196,6 +196,10 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         claimed = self.store.claim_task(
             "owner:alice", task.task_id, expected_version=task.version
         )
+        self.store.save_draft(
+            "owner:alice", task.task_id, payload={"private_text": "bird"},
+            expected_revision=0,
+        )
         self.store.submit(
             "owner:alice", task.task_id, payload={"label": "bird"},
             expected_version=claimed.version, ai_assisted=False, human_confirmed=True,
@@ -204,6 +208,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         serialized = repr(events)
         self.assertNotIn("bird", serialized)
         self.assertIn("submission_created", serialized)
+        self.assertIn("draft_saved", serialized)
 
     def test_batch_import_is_atomic_and_preserves_order(self):
         tasks = [
@@ -281,6 +286,82 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         migrated = SQLiteAnnotationWorkbench(str(legacy_path))
         project = migrated.get_project("owner:legacy", "a" * 32)
         self.assertEqual(project.ai_assistance_mode, "human_only")
+
+    def test_drafts_are_owner_scoped_durable_and_revision_checked(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        first = self.store.save_draft(
+            "owner:alice", task.task_id, payload={"boxes": []}, expected_revision=0
+        )
+        self.assertEqual(first.revision, 1)
+        self.assertIsNone(self.store.get_draft("owner:bob", task.task_id))
+        self.assertEqual(
+            self.store.get_draft("owner:alice", task.task_id).payload, {"boxes": []}
+        )
+        reopened = SQLiteAnnotationWorkbench(str(self.database))
+        self.assertEqual(
+            reopened.get_draft("owner:alice", task.task_id).revision, 1
+        )
+        second = reopened.save_draft(
+            "owner:alice", task.task_id, payload={"boxes": [{"x": 0.1}]},
+            expected_revision=first.revision,
+        )
+        self.assertEqual(second.revision, 2)
+        self.assertIsNone(reopened.save_draft(
+            "owner:bob", task.task_id, payload={"boxes": []}, expected_revision=0
+        ))
+        with self.assertRaises(AnnotationConflict):
+            self.store.save_draft(
+                "owner:alice", task.task_id, payload={"boxes": []},
+                expected_revision=first.revision,
+            )
+        with self.assertRaises(AnnotationConflict):
+            self.store.delete_draft(
+                "owner:alice", task.task_id, expected_revision=first.revision
+            )
+        self.assertEqual(
+            self.store.get_task("owner:alice", task.task_id).version, claimed.version
+        )
+        self.assertTrue(self.store.delete_draft(
+            "owner:alice", task.task_id, expected_revision=second.revision
+        ))
+        self.assertIsNone(self.store.get_draft("owner:alice", task.task_id))
+
+    def test_draft_rejects_oversized_payload_and_noneditable_task(self):
+        task = self._task()
+        with self.assertRaisesRegex(ValueError, "not_editable"):
+            self.store.save_draft(
+                "owner:alice", task.task_id, payload={"label": "bird"},
+                expected_revision=0,
+            )
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        with self.assertRaisesRegex(ValueError, "too_large"):
+            self.store.save_draft(
+                "owner:alice", task.task_id, payload={"text": "x" * (70 * 1024)},
+                expected_revision=0,
+            )
+        self.assertEqual(
+            self.store.get_task("owner:alice", task.task_id).version, claimed.version
+        )
+
+    def test_successful_submission_atomically_clears_draft(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        self.store.save_draft(
+            "owner:alice", task.task_id, payload={"label": "bird"},
+            expected_revision=0,
+        )
+        self.store.submit(
+            "owner:alice", task.task_id, payload={"label": "bird"},
+            expected_version=claimed.version, human_confirmed=True,
+        )
+        self.assertIsNone(self.store.get_draft("owner:alice", task.task_id))
 
     def test_database_symlink_is_rejected(self):
         if not hasattr(Path, "symlink_to"):

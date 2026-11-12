@@ -262,6 +262,47 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual(submissions["submissions"], [])
 
+    def test_draft_api_is_authenticated_owner_scoped_and_revision_checked(self):
+        project_id = self.create_project()
+        _, created = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "draft-1", "input_data": {"text": "A bird"}},
+            self.owner_one.token,
+        )
+        task = created["task"]
+        task_id = task["task_id"]
+        self.request(
+            "POST", f"/v1/annotation/tasks/{task_id}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        status, body = self.request(
+            "GET", f"/v1/annotation/tasks/{task_id}/draft",
+            token=self.owner_one.token,
+        )
+        self.assertEqual((status, body["draft"]), (200, None))
+        status, body = self.request(
+            "PUT", f"/v1/annotation/tasks/{task_id}/draft",
+            {"payload": {"label": "in progress"}, "expected_revision": 0},
+            self.owner_one.token,
+        )
+        self.assertEqual((status, body["draft"]["revision"]), (200, 1))
+        status, body = self.request(
+            "GET", f"/v1/annotation/tasks/{task_id}/draft",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, body["draft"]), (200, None))
+        status, body = self.request(
+            "PUT", f"/v1/annotation/tasks/{task_id}/draft",
+            {"payload": {"label": "stale"}, "expected_revision": 0},
+            self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (409, "version_conflict"))
+        status, body = self.request(
+            "DELETE", f"/v1/annotation/tasks/{task_id}/draft",
+            {"expected_revision": 1}, self.owner_one.token,
+        )
+        self.assertEqual((status, body["deleted"]), (200, True))
+
     def test_unrelated_routes_are_delegated(self):
         status, body = self.request("GET", "/healthz")
         self.assertEqual((status, body["delegated"]), (200, True))

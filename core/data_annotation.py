@@ -100,6 +100,17 @@ class AnnotationTask:
 
 
 @dataclass(frozen=True)
+class AnnotationDraft:
+    task_id: str
+    project_id: str
+    owner_id: str
+    payload: dict[str, Any]
+    revision: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class AnnotationSubmission:
     submission_id: str
     task_id: str
@@ -192,6 +203,18 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_submissions_task
                 ON annotation_submissions(owner_id, task_id, created_at DESC)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_drafts (
+                task_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_drafts_owner
+                ON annotation_drafts(owner_id, project_id, updated_at DESC)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_audit (
                 event_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -570,6 +593,111 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
         return self._task(updated)
 
+    def get_draft(self, owner_id: str, task_id: str) -> AnnotationDraft | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
+            raise ValueError("invalid_task_id")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM annotation_drafts WHERE owner_id=? AND task_id=?",
+                (owner_id, task_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return AnnotationDraft(
+            task_id=row["task_id"], project_id=row["project_id"],
+            owner_id=row["owner_id"], payload=_decode(row["payload_json"]),
+            revision=row["revision"], created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def save_draft(
+        self, owner_id: str, task_id: str, *, payload: Mapping[str, Any],
+        expected_revision: int,
+    ) -> AnnotationDraft | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
+            raise ValueError("invalid_task_id")
+        if type(expected_revision) is not int or not 0 <= expected_revision < 2_147_483_647:
+            raise ValueError("invalid_expected_revision")
+        payload_json = _json_object(payload, maximum=_MAX_JSON_BYTES, field="annotation_draft")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task = db.execute(
+                "SELECT project_id, status FROM annotation_tasks WHERE owner_id=? AND task_id=?",
+                (owner_id, task_id),
+            ).fetchone()
+            if task is None:
+                return None
+            if task["status"] not in {"in_progress", "rework"}:
+                raise ValueError("annotation_task_not_editable")
+            project = db.execute(
+                "SELECT status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, task["project_id"]),
+            ).fetchone()
+            if project is None or project["status"] != "active":
+                raise ValueError("annotation_project_not_active")
+            current = db.execute(
+                "SELECT revision, created_at FROM annotation_drafts WHERE owner_id=? AND task_id=?",
+                (owner_id, task_id),
+            ).fetchone()
+            if current is None:
+                if expected_revision != 0:
+                    raise AnnotationConflict("annotation_draft_revision_conflict")
+                revision, created_at = 1, now
+                db.execute(
+                    "INSERT INTO annotation_drafts VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (task_id, task["project_id"], owner_id, payload_json, revision, created_at, now),
+                )
+            else:
+                if current["revision"] != expected_revision:
+                    raise AnnotationConflict("annotation_draft_revision_conflict")
+                revision, created_at = expected_revision + 1, current["created_at"]
+                db.execute(
+                    "UPDATE annotation_drafts SET payload_json=?, revision=?, updated_at=? "
+                    "WHERE owner_id=? AND task_id=? AND revision=?",
+                    (payload_json, revision, now, owner_id, task_id, expected_revision),
+                )
+            self._audit(db, owner_id, task["project_id"], task_id, "draft_saved",
+                        {"revision": revision})
+            row = db.execute(
+                "SELECT * FROM annotation_drafts WHERE owner_id=? AND task_id=?",
+                (owner_id, task_id),
+            ).fetchone()
+        return AnnotationDraft(
+            task_id=row["task_id"], project_id=row["project_id"],
+            owner_id=row["owner_id"], payload=_decode(row["payload_json"]),
+            revision=row["revision"], created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def delete_draft(
+        self, owner_id: str, task_id: str, *, expected_revision: int,
+    ) -> bool:
+        owner_id = _owner(owner_id)
+        if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
+            raise ValueError("invalid_task_id")
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("invalid_expected_revision")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT project_id, revision FROM annotation_drafts WHERE owner_id=? AND task_id=?",
+                (owner_id, task_id),
+            ).fetchone()
+            if row is None:
+                return False
+            if row["revision"] != expected_revision:
+                raise AnnotationConflict("annotation_draft_revision_conflict")
+            db.execute(
+                "DELETE FROM annotation_drafts WHERE owner_id=? AND task_id=? AND revision=?",
+                (owner_id, task_id, expected_revision),
+            )
+            self._audit(db, owner_id, row["project_id"], task_id, "draft_deleted",
+                        {"revision": expected_revision})
+        return True
+
     def submit(
         self, owner_id: str, task_id: str, *, payload: Mapping[str, Any],
         expected_version: int, ai_assisted: bool = False,
@@ -613,6 +741,10 @@ class SQLiteAnnotationWorkbench:
                 (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
                 (submission_id, task_id, task["project_id"], owner_id,
                  payload_json, int(ai_assisted), now, now),
+            )
+            db.execute(
+                "DELETE FROM annotation_drafts WHERE owner_id=? AND task_id=?",
+                (owner_id, task_id),
             )
             db.execute(
                 "UPDATE annotation_tasks SET status='submitted', version=version+1, updated_at=? "
