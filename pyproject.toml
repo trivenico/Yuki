@@ -42,7 +42,7 @@ email = [
 yuki = "yuki_cli:main"
 
 [tool.setuptools]
-py-modules = ["yuki_cli"]
+py-modules = ["yuki_cli", "yuki_providers"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
