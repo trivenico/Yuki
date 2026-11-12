@@ -268,6 +268,55 @@ class CapabilityApprovalGateway:
             db.commit()
         return tuple(dict(row) for row in rows)
 
+    def reject_request(self, request_id: str, *, rejected_by: str) -> bool:
+        """Reject one pending request after validating the authenticated approver."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        if not isinstance(rejected_by, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", rejected_by
+        ):
+            raise ValueError("rejected_by must be a bounded authenticated identity")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM capability_approval_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                db.commit()
+                return False
+            if row["expires_at"] <= now:
+                db.execute(
+                    """UPDATE capability_approval_requests SET status='expired',decided_at=?
+                       WHERE request_id=? AND status='pending'""", (now, request_id),
+                )
+                db.commit()
+                return False
+            raw = json.loads(row["request_json"])
+            raw["risk"] = Risk(raw["risk"])
+            request = PolicyRequest(**raw)
+            try:
+                trusted = self.authorize_approver(rejected_by, request)
+            except Exception as error:
+                db.rollback()
+                raise PermissionError("rejection authority could not be verified") from error
+            if trusted is not True:
+                db.rollback()
+                raise PermissionError("rejector is not authorized for this request")
+            changed = db.execute(
+                """UPDATE capability_approval_requests SET status='rejected',
+                   decided_at=?,decided_by=? WHERE request_id=? AND status='pending'""",
+                (now, rejected_by, request_id),
+            ).rowcount
+            if changed == 1:
+                digest = self._request_digest(request)
+                policy = self.policy_engine.evaluate(request)
+                self._audit(db, "approval_rejected", request, digest,
+                            policy.policy_version, policy.matched_rule_ids, "rejected")
+            db.commit()
+            return changed == 1
+
     def approve_request(
         self, request_id: str, *, approved_by: str, ttl_seconds: int = 300,
     ) -> str:
