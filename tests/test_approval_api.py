@@ -147,7 +147,7 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         )
         with self.assertRaisesRegex(PermissionError, "trusted capability operation preview"):
             service.approve_pending(self.admin.token, request_id)
-        self.assertEqual(self.delivered, ())
+        self.assertEqual(self.delivered, [])
         self.assertEqual(gateway.get_request_status(request_id), "pending")
 
     def test_cross_principal_request_and_non_approver_inbox_are_rejected(self):
