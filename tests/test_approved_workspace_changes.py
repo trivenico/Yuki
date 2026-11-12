@@ -150,7 +150,7 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
         )
         with self.assertRaises(WorkspaceChangeError):
             service.apply(principal=self.principal, changes=[self.change()])
-        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 2\\n")
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 2\n")
         manifests = list(service.journal.directory.glob("*/manifest.json"))
         self.assertEqual(len(manifests), 1)
         self.assertEqual(service.journal._load(manifests[0].parent)["state"], "committed")
@@ -160,14 +160,14 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
         recovery_principal = ToolPrincipal("alice", frozenset({"workspace:recover"}))
         manifest = service.journal.begin(
             actor_id="alice", operation_digest=hashlib.sha256(b"recovery").hexdigest(),
-            changes=[("sample.py", self.file, b"VALUE = 1\\n", b"VALUE = 2\\n")],
+            changes=[("sample.py", self.file, b"VALUE = 1\n", b"VALUE = 2\n")],
         )
         service.journal.mark_applying(manifest["operation_id"])
         os.replace(manifest["entries"][0]["stage"], self.file)
         with self.assertRaises(ToolAuthorizationError):
             service.recover_incomplete_transactions(self.principal)
         self.assertEqual(service.recover_incomplete_transactions(recovery_principal), [manifest["operation_id"]])
-        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\\n")
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
         self.assertEqual(service.recover_incomplete_transactions(recovery_principal), [])
 
     def test_duplicate_paths_and_excessive_changes_rejected(self):
