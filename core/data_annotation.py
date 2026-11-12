@@ -1799,6 +1799,18 @@ class SQLiteAnnotationWorkbench:
                 "ai_assisted": False, "accepted_at": row["created_at"],
                 "provenance": {"source": "independent_adjudication", "adjudication_id": row["adjudication_id"]},
             } for row in independent)
+            unresolved = db.execute(
+                "SELECT COUNT(*) FROM annotation_tasks WHERE owner_id=? AND project_id=? "
+                "AND status NOT IN ('accepted','completed')",
+                (owner_id, project_id),
+            ).fetchone()[0]
+            if unresolved:
+                raise ValueError("manifest_has_unaccepted_tasks")
+            if not items:
+                raise ValueError("manifest_has_no_accepted_items")
+            task_ids = [item["task_id"] for item in items]
+            if len(task_ids) != len(set(task_ids)):
+                raise ValueError("manifest_contains_duplicate_tasks")
             version = db.execute("SELECT COALESCE(MAX(version), 0)+1 FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=?", (owner_id, project_id)).fetchone()[0]
             snapshot = json.dumps({"schema_version": 1, "project_id": project_id, "version": version, "created_at": now, "items": items}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
             snapshot_bytes = snapshot.encode("utf-8")
