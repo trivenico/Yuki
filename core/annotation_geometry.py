@@ -140,6 +140,44 @@ def polygon_area(points: tuple[Point, ...] | list[Point]) -> float:
     )) / 2.0
 
 
+def _orientation(a: Point, b: Point, c: Point) -> float:
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+
+def _on_segment(a: Point, b: Point, point: Point) -> bool:
+    return (
+        min(a.x, b.x) - _EPSILON <= point.x <= max(a.x, b.x) + _EPSILON
+        and min(a.y, b.y) - _EPSILON <= point.y <= max(a.y, b.y) + _EPSILON
+    )
+
+
+def _segments_intersect(a: Point, b: Point, c: Point, d: Point) -> bool:
+    o1, o2 = _orientation(a, b, c), _orientation(a, b, d)
+    o3, o4 = _orientation(c, d, a), _orientation(c, d, b)
+    if ((o1 > _EPSILON and o2 < -_EPSILON or o1 < -_EPSILON and o2 > _EPSILON)
+            and (o3 > _EPSILON and o4 < -_EPSILON or o3 < -_EPSILON and o4 > _EPSILON)):
+        return True
+    return (
+        abs(o1) <= _EPSILON and _on_segment(a, b, c)
+        or abs(o2) <= _EPSILON and _on_segment(a, b, d)
+        or abs(o3) <= _EPSILON and _on_segment(c, d, a)
+        or abs(o4) <= _EPSILON and _on_segment(c, d, b)
+    )
+
+
+def _reject_self_intersections(points: tuple[Point, ...]) -> None:
+    count = len(points)
+    for first in range(count):
+        a, b = points[first], points[(first + 1) % count]
+        for second in range(first + 1, count):
+            # Adjacent edges share one intended endpoint.
+            if second == first + 1 or (first == 0 and second == count - 1):
+                continue
+            c, d = points[second], points[(second + 1) % count]
+            if _segments_intersect(a, b, c, d):
+                raise ValueError("self_intersecting_polygon")
+
+
 def validate_polygon(
     points: tuple[Point, ...] | list[Point], *, minimum_area: float = 1e-8,
 ) -> tuple[Point, ...]:
@@ -150,6 +188,10 @@ def validate_polygon(
     """
     if not isinstance(points, (tuple, list)) or not 3 <= len(points) <= 10_000:
         raise ValueError("invalid_polygon_vertex_count")
+    if (isinstance(minimum_area, bool)
+            or not isinstance(minimum_area, (int, float))
+            or not math.isfinite(minimum_area) or minimum_area <= 0):
+        raise ValueError("invalid_minimum_polygon_area")
     result = tuple(points)
     for point in result:
         _normalized_point(point)
@@ -159,6 +201,7 @@ def validate_polygon(
         for i in range(len(result))
     ):
         raise ValueError("duplicate_adjacent_polygon_vertex")
+    _reject_self_intersections(result)
     if polygon_area(result) < minimum_area:
         raise ValueError("polygon_area_too_small")
     return result
