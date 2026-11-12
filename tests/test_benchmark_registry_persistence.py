@@ -41,6 +41,21 @@ class PersistentBenchmarkRegistryTests(unittest.TestCase):
         reopened = BenchmarkRegistry(database_path=self.path)
         self.assertEqual(reopened.register(self.definition), self.definition)
 
+    def test_registry_instances_refresh_revisions_written_by_other_process(self):
+        first = BenchmarkRegistry(database_path=self.path)
+        second = BenchmarkRegistry(database_path=self.path)
+        first.register(self.definition)
+        revision_two = BenchmarkDefinition(
+            "reasoning-core", 2, "Reasoning core v2",
+            self.definition.cases,
+        )
+        first.register(revision_two)
+        loaded = second.resolve(
+            "reasoning-core", 2, expected_digest=revision_two.digest,
+        )
+        self.assertEqual(loaded, revision_two)
+        self.assertEqual(len(second.list_revisions("reasoning-core")), 2)
+
     def test_immutable_revision_rejects_changed_content(self):
         registry = BenchmarkRegistry(database_path=self.path)
         registry.register(self.definition)
