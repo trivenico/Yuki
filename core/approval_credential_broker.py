@@ -33,6 +33,7 @@ class ApprovalCredentialBroker:
         worker_id: str,
         seal: Callable[[bytes, bytes], bytes],
         unseal: Callable[[bytes, bytes], bytes],
+        validate_claim: Callable[[str, str, str], bool],
         clock: Callable[[], float] = time.time,
     ) -> None:
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
@@ -41,12 +42,12 @@ class ApprovalCredentialBroker:
             raise TypeError("gateway must be a CapabilityApprovalGateway")
         if not isinstance(worker_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", worker_id):
             raise ValueError("worker_id must be a bounded trusted identity")
-        if not callable(seal) or not callable(unseal) or not callable(clock):
-            raise TypeError("seal, unseal, and clock must be callable")
+        if not callable(seal) or not callable(unseal) or not callable(validate_claim) or not callable(clock):
+            raise TypeError("seal, unseal, validate_claim, and clock must be callable")
         self.database_path = str(Path(database_path).expanduser())
         self._prepare_private_database_file()
         self.gateway, self.worker_id = gateway, worker_id
-        self.seal, self.unseal, self.clock = seal, unseal, clock
+        self.seal, self.unseal, self.validate_claim, self.clock = seal, unseal, validate_claim, clock
         with closing(self._connect()) as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS approval_worker_credentials (
@@ -132,6 +133,8 @@ class ApprovalCredentialBroker:
             raise ValueError("claim lease token must be ASCII") from None
         claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
         binding = self.gateway.approval_delivery_binding(request_id, token)
+        if self.validate_claim(binding["step_id"], self.worker_id, lease_token) is not True:
+            raise PermissionError("approval delivery requires the exact live worker claim")
         token_bytes = token.encode("ascii")
         ciphertext = self.seal(token_bytes, self._aad(request_id, binding, self.worker_id, claim_digest))
         if not isinstance(ciphertext, bytes) or len(ciphertext) < 16 or len(ciphertext) > 16384:
@@ -157,6 +160,9 @@ class ApprovalCredentialBroker:
             except sqlite3.IntegrityError:
                 db.rollback()
                 raise PermissionError("credential delivery has already been recorded") from None
+            if self.validate_claim(binding["step_id"], self.worker_id, lease_token) is not True:
+                db.rollback()
+                raise PermissionError("worker claim changed during credential delivery")
             db.commit()
 
     def resolver(self, worker_id: str | None = None) -> Callable[[SkillPolicyContext, str, str], str | None]:
@@ -194,6 +200,9 @@ class ApprovalCredentialBroker:
                 if not secrets.compare_digest(hashlib.sha256(plaintext).hexdigest(), row["credential_sha256"]):
                     db.rollback()
                     raise PermissionError("credential integrity verification failed")
+                if self.validate_claim(context.task_id, self.worker_id, lease_token) is not True:
+                    db.rollback()
+                    return None
                 changed = db.execute(
                     """UPDATE approval_worker_credentials SET status='consumed',consumed_at=?
                        WHERE request_id=? AND status='available'""",
