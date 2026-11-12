@@ -299,6 +299,7 @@ class CapabilityApprovalGateway:
                 raise PermissionError("typed operation kind is not registered for this capability")
         if (operation is None) != (operation_payload is None):
             raise ValueError("typed operation and exact operation_payload must be supplied together")
+        operation_digest = self._operation_digest(operation)
         payload_ciphertext = None
         if operation is not None:
             encoded_payload = canonical_operation_payload(operation_payload)
