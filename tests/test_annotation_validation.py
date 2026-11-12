@@ -30,6 +30,22 @@ class AnnotationValidationTests(unittest.TestCase):
                 {"label": "road", "points": [[0, 0], [1, 0]]}
             ]}, {"labels": ["road"]})
 
+    def test_polygon_rejects_self_intersections_degenerate_edges_and_excess_vertices(self):
+        invalid = (
+            [[0, 0], [1, 1], [0, 1], [1, 0]],
+            [[0, 0], [1, 0], [1, 0], [0, 1]],
+            [[0, 0], [0.5, 0.5], [1, 1]],
+        )
+        for points in invalid:
+            with self.assertRaises(ValueError):
+                validate_annotation_payload("polygon_segmentation", {
+                    "polygons": [{"label": "road", "points": points}]
+                }, {"labels": ["road"]})
+        with self.assertRaisesRegex(ValueError, "polygon_requires_three_or_more_points"):
+            validate_annotation_payload("polygon_segmentation", {
+                "polygons": [{"label": "road", "points": [[0, 0]] * 2049}]
+            }, {"labels": ["road"]})
+
     def test_audio_segments_require_valid_timing_and_speaker_when_requested(self):
         validate_annotation_payload("speaker_diarization", {"segments": [
             {"start": 0, "end": 1.5, "text": "hello", "speaker": "speaker-1"}
