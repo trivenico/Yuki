@@ -647,63 +647,6 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.assertEqual((status, body["delegated"]), (200, True))
 
 
-class AnnotationRuntimeTests(unittest.TestCase):
-    def test_runtime_mounts_annotation_api_when_configured(self):
-        def model(**kwargs):
-            return {"text": "ready", "tool_calls": {"tool_calls": []}}
-        loop = AgentExecutionLoop(
-            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
-            store = SQLiteAnnotationWorkbench(str(root / "annotation.sqlite"))
-            runtime = build_conversation_runtime(
-                {"storage_backend": "sqlite", "workspace": directory},
-                auth_service=auth, agent_loop=loop, annotation_workbench=store,
-                annotation_reviewer_authorizer=lambda user, project_id: None,
-            )
-            self.assertIsInstance(runtime.app, AuthenticatedAnnotationAPI)
-            self.assertIs(runtime.app.workbench, store)
-            self.assertTrue(callable(runtime.app.reviewer_authorizer))
-            runtime.close()
-
-    def test_runtime_mounts_asset_store_only_with_annotation_workbench(self):
-        def model(**kwargs):
-            return {"text": "ready", "tool_calls": {"tool_calls": []}}
-        loop = AgentExecutionLoop(
-            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
-            workbench = SQLiteAnnotationWorkbench(str(root / "annotation.sqlite"))
-            assets = SQLiteAnnotationAssetStore(str(root / "assets"), str(root / "assets.sqlite"))
-            runtime = build_conversation_runtime(
-                {"storage_backend": "sqlite", "workspace": directory},
-                auth_service=auth, agent_loop=loop,
-                annotation_workbench=workbench, annotation_assets=assets,
-                annotation_asset_scanner=lambda media_type, data: True,
-            )
-            self.assertIs(runtime.app.asset_store, assets)
-            self.assertTrue(callable(runtime.app.asset_scanner))
-            runtime.close()
-
-    def test_runtime_rejects_invalid_annotation_store(self):
-        def model(**kwargs):
-            return {"text": "ready", "tool_calls": {"tool_calls": []}}
-        loop = AgentExecutionLoop(
-            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
-            with self.assertRaisesRegex(TypeError, "annotation_workbench"):
-                build_conversation_runtime(
-                    {"storage_backend": "sqlite", "workspace": directory},
-                    auth_service=auth, agent_loop=loop, annotation_workbench=object(),
-                )
-
-
     def test_rework_and_manifest_api_are_owner_scoped_and_idempotent(self):
         project_id = self.create_project()
         status, task_body = self.request(
@@ -779,6 +722,65 @@ class AnnotationRuntimeTests(unittest.TestCase):
             token=self.owner_two.token,
         )
         self.assertEqual((status, hidden["error"]), (404, "not_found"))
+
+class AnnotationRuntimeTests(unittest.TestCase):
+    def test_runtime_mounts_annotation_api_when_configured(self):
+        def model(**kwargs):
+            return {"text": "ready", "tool_calls": {"tool_calls": []}}
+        loop = AgentExecutionLoop(
+            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            store = SQLiteAnnotationWorkbench(str(root / "annotation.sqlite"))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=loop, annotation_workbench=store,
+                annotation_reviewer_authorizer=lambda user, project_id: None,
+            )
+            self.assertIsInstance(runtime.app, AuthenticatedAnnotationAPI)
+            self.assertIs(runtime.app.workbench, store)
+            self.assertTrue(callable(runtime.app.reviewer_authorizer))
+            runtime.close()
+
+    def test_runtime_mounts_asset_store_only_with_annotation_workbench(self):
+        def model(**kwargs):
+            return {"text": "ready", "tool_calls": {"tool_calls": []}}
+        loop = AgentExecutionLoop(
+            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workbench = SQLiteAnnotationWorkbench(str(root / "annotation.sqlite"))
+            assets = SQLiteAnnotationAssetStore(str(root / "assets"), str(root / "assets.sqlite"))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=loop,
+                annotation_workbench=workbench, annotation_assets=assets,
+                annotation_asset_scanner=lambda media_type, data: True,
+            )
+            self.assertIs(runtime.app.asset_store, assets)
+            self.assertTrue(callable(runtime.app.asset_scanner))
+            runtime.close()
+
+    def test_runtime_rejects_invalid_annotation_store(self):
+        def model(**kwargs):
+            return {"text": "ready", "tool_calls": {"tool_calls": []}}
+        loop = AgentExecutionLoop(
+            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "annotation_workbench"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=loop, annotation_workbench=object(),
+                )
+
+
+
 
 
 if __name__ == "__main__":
