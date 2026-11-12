@@ -76,6 +76,17 @@ class DurableTaskEngine:
               UNIQUE(task_id,claim_token_sha256));
             CREATE INDEX IF NOT EXISTS lease_recovery_pending_idx
               ON lease_recovery_outbox(claim_until,id);
+            CREATE TABLE IF NOT EXISTS task_approval_waits(
+              task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+              claim_token_sha256 TEXT NOT NULL,
+              request_id TEXT NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('pending','delivered','rejected','expired','stale','completed')),
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              PRIMARY KEY(task_id,claim_token_sha256),
+              UNIQUE(request_id));
+            CREATE INDEX IF NOT EXISTS task_approval_waits_state_idx
+              ON task_approval_waits(state,updated_at);
             """)
             # Existing databases receive additive, non-destructive migrations.
             goal_columns = {row["name"] for row in c.execute("PRAGMA table_info(goals)")}
@@ -404,6 +415,11 @@ class DurableTaskEngine:
                            VALUES(?,?,?,?)""",
                         (r["id"], r["lease_owner"], claim_digest, now),
                     )
+                c.execute(
+                    """UPDATE task_approval_waits SET state='stale',updated_at=?
+                       WHERE task_id=? AND claim_token_sha256=? AND state IN ('pending','delivered')""",
+                    (now, r["id"], claim_digest if r["lease_token"] else ""),
+                )
                 c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
                 if not retry:
@@ -413,6 +429,90 @@ class DurableTaskEngine:
             c.commit()
         return count
 
+
+    def record_approval_wait(
+        self, task_id: str, worker_id: str, lease_token: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Persist an approval wait bound to the currently owned claim generation."""
+        if not isinstance(request_id, str) or len(request_id) != 32 or any(
+            char not in "0123456789abcdef" for char in request_id
+        ):
+            raise ValueError("request_id must be a 32-character lowercase hex identifier")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            task = self._owned(c, task_id, worker_id, lease_token)
+            digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+            old = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? AND claim_token_sha256=?",
+                (task_id, digest),
+            ).fetchone()
+            if old is not None:
+                if old["request_id"] != request_id:
+                    c.rollback()
+                    raise TaskConflict("claim already has a different approval request")
+                c.commit()
+                return dict(old)
+            c.execute(
+                """INSERT INTO task_approval_waits
+                   (task_id,claim_token_sha256,request_id,state,created_at,updated_at)
+                   VALUES(?,?,?,'pending',?,?)""",
+                (task_id, digest, request_id, now, now),
+            )
+            self._event(c, task["goal_id"], task_id, "task.awaiting_approval",
+                        {"request_id": request_id, "claim_token_sha256": digest})
+            c.commit()
+        return self.get_approval_wait(task_id, digest)
+
+    def get_approval_wait(self, task_id: str, claim_token_sha256: str) -> dict[str, Any] | None:
+        if not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64:
+            raise ValueError("claim digest is invalid")
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? AND claim_token_sha256=?",
+                (task_id, claim_token_sha256),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def transition_approval_wait(
+        self, task_id: str, claim_token_sha256: str, state: str,
+    ) -> bool:
+        """Apply monotonic approval-wait lifecycle transitions."""
+        transitions = {
+            "pending": {"delivered", "rejected", "expired", "stale"},
+            "delivered": {"completed", "stale"},
+        }
+        if state not in {"delivered", "rejected", "expired", "stale", "completed"}:
+            raise ValueError("invalid approval wait state")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? AND claim_token_sha256=?",
+                (task_id, claim_token_sha256),
+            ).fetchone()
+            if row is None:
+                c.commit()
+                return False
+            if state not in transitions.get(row["state"], set()):
+                c.commit()
+                return row["state"] == state
+            c.execute(
+                """UPDATE task_approval_waits SET state=?,updated_at=?
+                   WHERE task_id=? AND claim_token_sha256=? AND state=?""",
+                (state, now, task_id, claim_token_sha256, row["state"]),
+            )
+            c.commit()
+            return True
+
+    def list_approval_waits(self, task_id: str) -> tuple[dict[str, Any], ...]:
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? ORDER BY created_at",
+                (task_id,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
 
     def claim_recovery_outbox(self, supervisor_id: str, *, limit: int = 50, lease_seconds: int = 60):
         """Lease pending credential-revocation work to one trusted supervisor."""
