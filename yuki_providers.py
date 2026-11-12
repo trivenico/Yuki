@@ -30,6 +30,7 @@ class ProviderManager:
         self._selected_adapter: Optional[BaseProvider] = None
         self._compatible_profiles: dict[str, dict] = {}
         self._vault_profiles: dict[str, dict] = {}
+        self._profile_owner_id: Optional[str] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
@@ -99,10 +100,13 @@ class ProviderManager:
         """
         if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("an authenticated owner identity is required")
+        if self._profile_owner_id is not None and self._profile_owner_id != owner_id:
+            raise PermissionError("provider manager is already bound to a different owner")
         if not callable(getattr(store, "list_profiles", None)) or not callable(
             getattr(store, "resolve_for_runtime", None)
         ):
             raise TypeError("store must implement the provider profile runtime contract")
+        self._profile_owner_id = owner_id
         loaded = []
         for profile in store.list_profiles(owner_id):
             name = getattr(profile, "name", None)
