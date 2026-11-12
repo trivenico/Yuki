@@ -188,10 +188,10 @@ def _reject_self_intersections(points: tuple[Point, ...]) -> None:
 def validate_polygon(
     points: tuple[Point, ...] | list[Point], *, minimum_area: float = 1e-8,
 ) -> tuple[Point, ...]:
-    """Validate a simple vertex sequence's basic invariants and nonzero area.
+    """Validate bounds, adjacent vertices, area, and polygon simplicity.
 
-    Self-intersection checks are deliberately left to the interactive editor;
-    this function guarantees bounds, distinct adjacent vertices, and area.
+    Non-adjacent edge intersections and adjacent collinear overlaps are rejected.
+    A degenerate zero-area polygon receives the primary area error.
     """
     if not isinstance(points, (tuple, list)) or not 3 <= len(points) <= 2_048:
         raise ValueError("invalid_polygon_vertex_count")
@@ -208,7 +208,15 @@ def validate_polygon(
         for i in range(len(result))
     ):
         raise ValueError("duplicate_adjacent_polygon_vertex")
-    _reject_self_intersections(result)
+    try:
+        _reject_self_intersections(result)
+    except ValueError as exc:
+        # A fully collinear polygon can also look like adjacent edge overlap.
+        # Report the primary geometric defect (zero area) in that case while
+        # retaining the more specific overlap error for non-degenerate shapes.
+        if str(exc) == "overlapping_adjacent_polygon_edges" and polygon_area(result) < minimum_area:
+            raise ValueError("polygon_area_too_small") from exc
+        raise
     if polygon_area(result) < minimum_area:
         raise ValueError("polygon_area_too_small")
     return result
