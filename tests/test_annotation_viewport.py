@@ -71,6 +71,8 @@ class AnnotationViewportTests(unittest.TestCase):
         invalid = (
             (0, 100, 100, 100),
             (100, 100, float("inf"), 100),
+            (2_147_483_648, 100, 100, 100),
+            (1, 1, 1e308, 1e308),
         )
         for args in invalid:
             with self.assertRaises(ValueError):
