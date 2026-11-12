@@ -206,6 +206,79 @@ def _run_persistent_chat(runtime, *, input_fn, output_fn) -> int:
             return 4
 
 
+
+def _run_provider_profile_command(args, *, config, store_factory, owner_factory,
+                                  secret_input_fn, output_fn) -> int:
+    """Handle profile lifecycle before provider initialization is attempted."""
+    store = None
+    try:
+        create = args.profile_action == "add"
+        store = store_factory(config, create=create)
+        if store is None:
+            output_fn("Yuki: Provider profile storage is not initialized.")
+            return 3
+        owner_id = owner_factory(config)
+        if args.profile_action == "add":
+            secret = secret_input_fn("Provider API key (input hidden): ")
+            profile = store.save(
+                owner_id=owner_id, name=args.name, base_url=args.endpoint,
+                model=args.model, allowed_host=args.approved_host, api_key=secret,
+            )
+            if store.credential_available(owner_id, profile.name) is not True:
+                store.delete(owner_id, profile.name)
+                output_fn("Yuki: The credential could not be verified in the OS vault.")
+                return 3
+            _write_json({"profile": {
+                "name": profile.name, "base_url": profile.base_url,
+                "model": profile.model, "approved_host": profile.allowed_host,
+                "credential_configured": True,
+            }}, output_fn)
+            return 0
+        if args.profile_action == "list":
+            selected = store.selected_profile(owner_id)
+            profiles = []
+            for profile in store.list_profiles(owner_id):
+                profiles.append({
+                    "name": profile.name, "base_url": profile.base_url,
+                    "model": profile.model, "approved_host": profile.allowed_host,
+                    "credential_configured": store.credential_available(owner_id, profile.name),
+                    "selected": profile.name == selected,
+                })
+            _write_json({"profiles": profiles, "active_profile": selected}, output_fn)
+            return 0
+        if args.profile_action == "select":
+            store.select_profile(owner_id, args.name)
+            _write_json({"active_profile": args.name}, output_fn)
+            return 0
+        if args.profile_action == "verify":
+            exists = any(p.name == args.name for p in store.list_profiles(owner_id))
+            ready = exists and store.credential_available(owner_id, args.name) is True
+            _write_json({
+                "profile": args.name, "local_ready": bool(ready),
+                "network_checked": False,
+            }, output_fn)
+            return 0 if ready else 3
+        if args.profile_action == "remove":
+            removed = store.delete(owner_id, args.name)
+            if not removed:
+                output_fn("Yuki: Provider profile was not found.")
+                return 1
+            _write_json({"removed": args.name}, output_fn)
+            return 0
+        return 2
+    except (ValueError, KeyError):
+        output_fn("Yuki: Provider profile request is invalid or the profile was not found.")
+        return 2
+    except Exception as exc:
+        output_fn(f"Yuki could not manage the provider profile ({type(exc).__name__}).")
+        return 2
+    finally:
+        if store is not None:
+            try:
+                store.close()
+            except Exception:
+                output_fn("Yuki: Provider profile storage could not close cleanly.")
+
 def run_cli(
     argv: Sequence[str] | None = None,
     *,
@@ -220,6 +293,18 @@ def run_cli(
     output_fn: Callable[[str], object] = print,
 ) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "provider-profile":
+        try:
+            config = config_loader()
+        except Exception as exc:
+            output_fn(f"Yuki could not load configuration ({type(exc).__name__}).")
+            return 2
+        return _run_provider_profile_command(
+            args, config=config, store_factory=profile_store_factory,
+            owner_factory=owner_id_factory, secret_input_fn=secret_input_fn,
+            output_fn=output_fn,
+        )
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()
