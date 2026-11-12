@@ -194,6 +194,29 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
                 expected_version=claimed["version"], human_confirmed=True,
             )
         self.store.grant_reviewer("owner:alice", project.project_id, "reviewer:calibrated")
+        self_review_task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="self-review-001",
+            input_data={"text": "A sentence for self-review."},
+        )
+        self_review_assignments = self.store.create_independent_assignments(
+            "owner:alice", project.project_id, self_review_task.task_id,
+            ["reviewer:calibrated", "annotator:peer"],
+        )
+        for assignment, annotator in zip(
+            self_review_assignments, ("reviewer:calibrated", "annotator:peer")
+        ):
+            claimed = self.store.claim_independent_assignment(
+                annotator, assignment["assignment_id"], expected_version=1
+            )
+            self.store.submit_independent_assignment(
+                annotator, assignment["assignment_id"], payload={"label": "positive"},
+                expected_version=claimed["version"], human_confirmed=True,
+            )
+        with self.assertRaisesRegex(PermissionError, "self_review_prohibited"):
+            self.store.adjudicate_independent_task(
+                "owner:alice", project.project_id, self_review_task.task_id,
+                "reviewer:calibrated", decision="accepted", final_label="positive",
+            )
         with self.assertRaisesRegex(PermissionError, "reviewer_calibration_required"):
             self.store.adjudicate_independent_task(
                 "owner:alice", project.project_id, task.task_id, "reviewer:new",
@@ -219,6 +242,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0]["annotation"], {"label": "positive"})
         self.assertEqual(exported[0]["quality"]["source"], "independent_adjudication")
+        self.assertEqual(len(exported[0]["quality"]["source_assignment_ids"]), 2)
         self.assertEqual(self.store.export_accepted("owner:bob", project.project_id), [])
         with self.assertRaisesRegex(ValueError, "task_already_adjudicated"):
             self.store.adjudicate_independent_task(
