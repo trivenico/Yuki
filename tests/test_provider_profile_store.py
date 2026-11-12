@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from providers.profile_store import ProviderProfileStore
+from providers.profile_store import OSKeyringVault, ProviderProfileStore
 
 
 class MemoryVault:
@@ -35,6 +35,28 @@ class ProviderProfileStoreTests(unittest.TestCase):
                       api_key="secret-value")
         values.update(overrides)
         return self.store.save(**values)
+
+    def test_os_keyring_rejects_positive_priority_plaintext_backend(self):
+        class PlaintextBackend:
+            priority = 1
+        PlaintextBackend.__module__ = "keyrings.alt.file"
+        class FakeKeyring:
+            @staticmethod
+            def get_keyring():
+                return PlaintextBackend()
+        with self.assertRaisesRegex(RuntimeError, "reviewed native"):
+            OSKeyringVault(keyring_module=FakeKeyring)
+
+    def test_os_keyring_accepts_reviewed_native_secret_service_backend(self):
+        class NativeBackend:
+            priority = 5
+        NativeBackend.__module__ = "keyring.backends.SecretService"
+        class FakeKeyring:
+            @staticmethod
+            def get_keyring():
+                return NativeBackend()
+        vault = OSKeyringVault(keyring_module=FakeKeyring)
+        self.assertIsNotNone(vault)
 
     def test_profile_metadata_persists_without_secret_material(self):
         profile = self.save()
