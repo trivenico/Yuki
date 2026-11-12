@@ -135,10 +135,9 @@ def execute_annotation_command(
         return "Command rejected. Check the syntax, payload schema and current task version."
     except PermissionError:
         return "Action denied by the project assistance or human-confirmation policy."
-    except Exception as exc:
-        # Avoid leaking database paths, payloads or internal exception messages.
-        if type(exc).__name__ == "AnnotationConflict":
-            return "Task version conflict: reload /task TASK_ID and retry with the current version."
+    except AnnotationConflict:
+        return "Task version conflict: reload /task TASK_ID and retry with the current version."
+    except Exception:
         return "Workbench action failed safely. Refresh the project/task before retrying."
     return "Unknown command or invalid arguments. Type /help."
 
