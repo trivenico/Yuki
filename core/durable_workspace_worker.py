@@ -126,6 +126,7 @@ class DurableWorkspaceWorker:
                 raise TypeError("workspace policy factory must return PolicyRequest")
             if (
                 request.principal_id != context.principal_id
+                or request.trigger != context.trigger
                 or request.run_id != context.goal_id
                 or request.step_id != context.task_id
                 or request.claim_token_sha256 != context.claim_token_sha256
