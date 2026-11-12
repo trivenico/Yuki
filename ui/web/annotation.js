@@ -125,6 +125,7 @@
     }
     $("annotation-task-meta").textContent = "Task " + state.task.external_ref + " · " + state.task.status + " · version " + state.task.version;
     $("claim-annotation-task").disabled = state.task.status !== "pending";
+    setTool(state.project.task_type === "polygon_segmentation" ? "polygon" : state.project.task_type === "image_classification" ? "pan" : "box");
     $("submit-annotation").disabled = !state.claimed;
     await loadImage();
     renderEditor();
@@ -249,7 +250,7 @@
     return label;
   };
   canvas.addEventListener("pointerdown", (event) => {
-    if (!state.image || !state.claimed) return;
+    if (!state.image || !state.claimed || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(state.project?.task_type)) return;
     const p = pointerPosition(event);
     if (state.tool === "pan" || event.button === 1 || event.button === 2) {
       state.pointer = { id: event.pointerId, mode: "pan", x: p.x, y: p.y };
@@ -384,8 +385,19 @@
         const a = points[i], b = points[(i + 1) % points.length];
         if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= 1e-9) throw new Error("Polygon has duplicate adjacent vertices.");
         for (let j = i + 1; j < points.length; j++) {
-          if (j === i + 1 || (i === 0 && j === points.length - 1)) continue;
-          if (intersects(a, b, points[j], points[(j + 1) % points.length])) throw new Error("Polygon edges intersect.");
+          const c = points[j], d = points[(j + 1) % points.length];
+          const adjacent = j === i + 1 || (i === 0 && j === points.length - 1);
+          if (adjacent) {
+            const shared = j === i + 1 ? b : a;
+            const otherA = j === i + 1 ? a : b;
+            const otherB = j === i + 1 ? d : c;
+            if (Math.abs(cross(otherA, shared, otherB)) <= 1e-9 &&
+                (onSegment(otherA, shared, otherB) || onSegment(shared, otherB, otherA))) {
+              throw new Error("Adjacent polygon edges overlap.");
+            }
+            continue;
+          }
+          if (intersects(a, b, c, d)) throw new Error("Polygon edges intersect.");
         }
       }
       state.polygons.push({ label: requiredLabel(), points }); state.draft = [];
@@ -433,7 +445,7 @@
     if (!state.project) { setStatus("Create or select a project first.", true); return; }
     if (!file) { setStatus("Choose an image file first.", true); return; }
     if (file.size < 1 || file.size > 25 * 1024 * 1024) { setStatus("Image must be between 1 byte and 25 MiB.", true); return; }
-    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) { setStatus("Choose a PNG, JPEG, WebP or GIF image.", true); return; }
+    if (file.type && !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) { setStatus("Choose a PNG, JPEG, WebP or GIF image.", true); return; }
     const button = $("annotation-upload-button"); button.disabled = true;
     try {
       const uploaded = await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/assets", {
