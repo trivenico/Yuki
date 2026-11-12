@@ -8,6 +8,86 @@
     camera: null, tool: "box", boxes: [], polygons: [], draft: [], pointer: null,
     preview: null, claimed: false, resizeObserver: null
   };
+  const draftSessions = new Map();
+  const draftSession = (taskId) => {
+    if (!draftSessions.has(taskId)) draftSessions.set(taskId, {
+      revision: 0, chain: Promise.resolve(), timer: null, dirty: false,
+      payload: null, conflict: false
+    });
+    return draftSessions.get(taskId);
+  };
+  const draftPayload = () => {
+    const family = state.project?.task_type;
+    let payload;
+    if (family === "bounding_boxes") payload = { boxes: state.boxes };
+    else if (family === "polygon_segmentation") payload = {
+      polygons: state.polygons, draft_points: state.draft.map((point) => [point.x, point.y])
+    };
+    else if (family === "image_classification" || family === "text_classification") {
+      payload = { label: $("annotation-label").value };
+    } else {
+      try {
+        payload = JSON.parse($("annotation-family-json").value || "{}");
+        if (!payload || Array.isArray(payload) || typeof payload !== "object") return null;
+      } catch (_) { return null; }
+    }
+    return payload;
+  };
+  const flushDraftSave = (taskId) => {
+    const session = draftSessions.get(taskId);
+    if (!session) return Promise.resolve();
+    if (session.timer) { clearTimeout(session.timer); session.timer = null; }
+    session.chain = session.chain.catch(() => {}).then(async () => {
+      while (session.dirty && !session.conflict) {
+        const payload = session.payload;
+        session.dirty = false;
+        const result = await api("/v1/annotation/tasks/" + encodeURIComponent(taskId) + "/draft", {
+          method: "PUT", body: JSON.stringify({ payload, expected_revision: session.revision })
+        });
+        session.revision = result.draft.revision;
+        if (state.task?.task_id === taskId) setStatus("Draft saved · revision " + session.revision);
+      }
+    });
+    return session.chain.catch((error) => {
+      if (error.message === "version_conflict") session.conflict = true;
+      if (state.task?.task_id === taskId) setStatus(
+        session.conflict ? "Draft changed in another session. Refresh before continuing to avoid overwriting it." :
+          "Draft save failed: " + error.message, true
+      );
+    });
+  };
+  const scheduleDraftSave = () => {
+    if (!state.task || !state.claimed) return;
+    const taskId = state.task.task_id, session = draftSession(taskId);
+    const payload = draftPayload();
+    if (!payload) {
+      setStatus("Draft not saved: finish entering valid JSON first.", true);
+      return;
+    }
+    session.payload = payload; session.dirty = true;
+    if (session.timer) clearTimeout(session.timer);
+    session.timer = setTimeout(() => flushDraftSave(taskId), 650);
+    setStatus("Changes pending autosave…");
+  };
+  const restoreDraft = async (taskId) => {
+    const result = await api("/v1/annotation/tasks/" + encodeURIComponent(taskId) + "/draft");
+    if (state.task?.task_id !== taskId) return;
+    const draft = result.draft;
+    const session = draftSession(taskId);
+    session.revision = draft ? draft.revision : 0;
+    session.conflict = false; session.dirty = false;
+    if (!draft) return;
+    const payload = draft.payload || {};
+    const family = state.project?.task_type;
+    if (family === "bounding_boxes") state.boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
+    else if (family === "polygon_segmentation") {
+      state.polygons = Array.isArray(payload.polygons) ? payload.polygons : [];
+      state.draft = Array.isArray(payload.draft_points) ? payload.draft_points.map((p) => ({ x: p[0], y: p[1] })) : [];
+    } else if (family === "image_classification" || family === "text_classification") {
+      $("annotation-label").value = typeof payload.label === "string" ? payload.label : "";
+    } else $("annotation-family-json").value = JSON.stringify(payload, null, 2);
+    setStatus("Recovered saved draft · revision " + draft.revision);
+  };
   const api = async (path, options = {}) => {
     const headers = { ...(options.headers || {}), Authorization: "Bearer " + sessionStorage.getItem("yuki_token") };
     if (options.body && !(options.body instanceof Blob)) headers["Content-Type"] = "application/json";
@@ -60,6 +140,7 @@
     await loadTasks();
   };
   const loadTasks = async () => {
+    if (state.task?.task_id) await flushDraftSave(state.task.task_id);
     state.task = null; state.tasks = []; state.claimed = false; state.boxes = []; state.polygons = []; state.draft = [];
     clearImage();
     const select = $("annotation-task");
@@ -116,9 +197,10 @@
     }
   };
   const selectTask = async () => {
-    state.task = selectedTask(); state.claimed = Boolean(state.task && state.task.status === "in_progress");
+    state.task = selectedTask(); state.claimed = Boolean(state.task && ["in_progress", "rework"].includes(state.task.status));
     state.boxes = []; state.polygons = []; state.draft = [];
     $("annotation-label").value = "";
+    $("annotation-family-json").value = "{}";
     if (!state.task) {
       clearImage(); renderEditor(); setStatus("Choose an annotation task.");
       return;
@@ -127,6 +209,8 @@
     $("claim-annotation-task").disabled = !["pending", "rework"].includes(state.task.status) || state.project.status !== "active";
     setTool(state.project.task_type === "polygon_segmentation" ? "polygon" : state.project.task_type === "image_classification" ? "pan" : "box");
     $("submit-annotation").disabled = !state.claimed;
+    if (state.claimed) await restoreDraft(state.task.task_id);
+    if (state.task?.task_id !== selectedTask()?.task_id) return;
     await loadImage();
     renderEditor();
   };
@@ -280,7 +364,7 @@
     if (!state.pointer || state.pointer.id !== event.pointerId) return;
     const pointer = state.pointer; state.pointer = null;
     if (pointer.mode === "box" && commit) {
-      try { addBox(pointer.start, pointerPosition(event)); setStatus("Bounding box added. Review it before submitting."); }
+      try { addBox(pointer.start, pointerPosition(event)); setStatus("Bounding box added. Review it before submitting."); scheduleDraftSave(); }
       catch (error) { setStatus(error.message, true); }
     }
     renderCanvas();
@@ -315,7 +399,6 @@
     $("annotation-canvas-panel").hidden = !task || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
     $("annotation-upload-row").hidden = !state.project || state.project.status !== "active" || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
     $("annotation-manual-task-row").hidden = !state.project || state.project.status !== "active";
-    $("annotation-family-json").value = "{}";
     $("annotation-task-input").textContent = task
       ? (state.project.instructions || "") + "\\n\\nRubric: " + JSON.stringify(state.project.rubric || {}, null, 2) + "\\n\\nInput: " + JSON.stringify(task.input_data || {}, null, 2)
       : "Select a task to view its input.";
@@ -334,6 +417,7 @@
         method: "POST", body: JSON.stringify({ expected_version: state.task.version })
       });
       state.task = data.task; state.claimed = true;
+      await restoreDraft(state.task.task_id);
       $("annotation-task-meta").textContent = "Task " + state.task.external_ref + " · in progress · version " + state.task.version;
       $("submit-annotation").disabled = false; setStatus("Task claimed. Complete the annotation and review it before submission.");
       renderEditor();
@@ -359,12 +443,14 @@
         if (!payload || Array.isArray(payload) || typeof payload !== "object") throw new Error("Annotation payload must be a JSON object.");
       }
       if (!window.confirm("Submit this annotation for review? This records your human confirmation. Yuki will not send it to a marketplace.")) return;
+      await flushDraftSave(state.task.task_id);
       const button = $("submit-annotation"); button.disabled = true;
       const result = await api("/v1/annotation/tasks/" + encodeURIComponent(state.task.task_id) + "/submit", {
         method: "POST", body: JSON.stringify({
           payload, expected_version: state.task.version, ai_assisted: false, human_confirmed: true
         })
       });
+      draftSessions.delete(state.task.task_id);
       await loadTasks();
       setStatus("Annotation submitted for review · " + result.submission.submission_id);
     } catch (error) { setStatus(error.message, true); }
@@ -403,12 +489,12 @@
         }
       }
       state.polygons.push({ label: requiredLabel(), points }); state.draft = [];
-      setStatus("Polygon added. Review it before submitting."); renderCanvas();
+      setStatus("Polygon added. Review it before submitting."); renderCanvas(); scheduleDraftSave();
     } catch (error) { setStatus(error.message, true); }
   });
   $("cancel-annotation-draft").addEventListener("click", () => {
     state.boxes = []; state.polygons = []; state.draft = []; state.pointer = null;
-    setStatus("Unsubmitted geometry cleared."); renderCanvas();
+    setStatus("Unsubmitted geometry cleared."); renderCanvas(); scheduleDraftSave();
   });
   $("annotation-project").addEventListener("change", async () => {
     state.project = selectedProject();
@@ -522,7 +608,8 @@
     if (state.camera) state.camera = fitCamera(state.camera.iw, state.camera.ih, canvas.clientWidth, canvas.clientHeight);
     renderCanvas();
   });
-  $("annotation-label").addEventListener("input", renderCanvas);
+  $("annotation-label").addEventListener("input", () => { renderCanvas(); scheduleDraftSave(); });
+  $("annotation-family-json").addEventListener("input", scheduleDraftSave);
   if (window.ResizeObserver) {
     state.resizeObserver = new ResizeObserver(resizeCanvas);
     state.resizeObserver.observe(canvas);
