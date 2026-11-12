@@ -931,6 +931,36 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertEqual(report["reviewers"][0]["calibration_status"], "insufficient_evidence")
         self.assertIsNone(self.store.performance_report("owner:bob", self.project.project_id))
 
+    def test_performance_report_calibration_shows_sample_size_and_threshold(self):
+        annotators = [f"annotator:gold-{index}" for index in range(5)]
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, self.task.task_id, annotators,
+        )
+        gold_id = "gold-performance-fixture"
+        now = "2026-11-12T00:00:00+00:00"
+        with sqlite3.connect(self.database) as db:
+            db.execute(
+                "INSERT INTO annotation_gold_standards "
+                "(gold_id, owner_id, project_id, task_id, expected_label, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (gold_id, "owner:alice", self.project.project_id, self.task.task_id, "positive", now),
+            )
+            db.executemany(
+                "INSERT INTO annotation_gold_results "
+                "(assignment_id, gold_id, owner_id, project_id, task_id, annotator_id, correct, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (item["assignment_id"], gold_id, "owner:alice", self.project.project_id,
+                     self.task.task_id, annotator, 1 if index < 4 else 0, now)
+                    for index, (item, annotator) in enumerate(zip(assignments, annotators))
+                ],
+            )
+        report = self.store.performance_report("owner:alice", self.project.project_id)
+        by_id = {item["annotator_id"]: item for item in report["annotators"]}
+        self.assertEqual(by_id[annotators[0]]["gold_sample_count"], 1)
+        self.assertEqual(by_id[annotators[0]]["calibration_status"], "insufficient_evidence")
+        self.assertEqual(by_id[annotators[0]]["gold_accuracy"], 1.0)
+
     def test_rework_requires_new_distinct_annotators_and_current_round(self):
         first = self.store.create_independent_assignments(
             "owner:alice", self.project.project_id, self.task.task_id,
