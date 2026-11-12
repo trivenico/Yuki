@@ -84,7 +84,7 @@ class AnnotationAssetAPITests(unittest.TestCase):
         self.assertEqual(headers[b"x-content-type-options"], b"nosniff")
         self.assertEqual(headers[b"content-disposition"], b"attachment")
         status, _, _ = self.request("DELETE", asset_path, token=self.owner.token)
-        self.assertEqual(status, 204)
+        self.assertEqual(status, 200)
         status, _, _ = self.request("GET", asset_path, token=self.owner.token)
         self.assertEqual(status, 404)
 
