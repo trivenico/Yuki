@@ -62,7 +62,7 @@
           </div>
           <form id="annotation-create-project" class="annotation-create-project" hidden>
             <label class="annotation-field" for="annotation-new-name">Project name<input id="annotation-new-name" maxlength="120" required></label>
-            <label class="annotation-field" for="annotation-new-type">Task family<select id="annotation-new-type"><option value="image_classification">Image classification</option><option value="bounding_boxes">Bounding boxes</option><option value="polygon_segmentation">Polygon segmentation</option><option value="text_classification">Text classification</option><option value="entity_extraction">Entity extraction</option><option value="response_ranking">Response ranking</option><option value="llm_evaluation">LLM evaluation</option><option value="custom">Custom JSON</option></select></label>
+            <label class="annotation-field" for="annotation-new-type">Task family<select id="annotation-new-type"><option value="image_classification">Image classification</option><option value="bounding_boxes">Bounding boxes</option><option value="polygon_segmentation">Polygon segmentation</option><option value="text_classification">Text classification</option><option value="video_tracking">Video tracking</option><option value="audio_transcription">Audio transcription</option><option value="speaker_diarization">Speaker diarization</option><option value="entity_extraction">Entity extraction</option><option value="response_ranking">Response ranking</option><option value="llm_evaluation">LLM evaluation</option><option value="custom">Custom JSON</option></select></label>
             <label class="annotation-field" for="annotation-new-instructions">Instructions<textarea id="annotation-new-instructions" rows="3" maxlength="12000" required></textarea></label>
             <label class="annotation-field" for="annotation-new-rubric">Rubric JSON<textarea id="annotation-new-rubric" rows="3" spellcheck="false">{}</textarea></label>
             <div class="annotation-toolbar"><button class="primary" type="submit">Create human-only project</button><button id="annotation-cancel-project" type="button">Cancel</button></div>
@@ -75,6 +75,11 @@
                 <button id="claim-annotation-task" type="button">Claim task</button>
               </div>
               <div id="annotation-task-meta" class="annotation-task-meta">Choose a project and task to begin.</div>
+              <div id="annotation-manual-task-row" class="annotation-manual-task-row">
+                <label class="annotation-field" for="annotation-new-task-ref">External task reference<input id="annotation-new-task-ref" maxlength="256" placeholder="e.g. batch-001"></label>
+                <label class="annotation-field" for="annotation-new-task-input">Task input JSON<textarea id="annotation-new-task-input" rows="2" spellcheck="false">{}</textarea></label>
+                <button id="annotation-create-task" type="button">Create task</button>
+              </div>
               <div id="annotation-upload-row" class="annotation-upload-row">
                 <label class="annotation-field" for="annotation-upload-file">Add image task (PNG, JPEG, WebP or GIF)<input id="annotation-upload-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
                 <button id="annotation-upload-button" type="button">Upload and create task</button>
