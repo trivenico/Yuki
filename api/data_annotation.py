@@ -160,8 +160,15 @@ class AuthenticatedAnnotationAPI:
                 payload = await self._body(receive)
                 if set(payload) != {"tasks"} or not isinstance(payload["tasks"], list):
                     return await self._respond(send, 400, {"error": "invalid_request"})
+                project_id = match.group(1)
+                for task_data in payload["tasks"]:
+                    if not isinstance(task_data, dict):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    self._validate_task_asset_ref(
+                        user.user_id, project_id, task_data.get("asset_ref")
+                    )
                 tasks = await asyncio.to_thread(
-                    self.workbench.create_tasks, user.user_id, match.group(1),
+                    self.workbench.create_tasks, user.user_id, project_id,
                     tasks=payload["tasks"],
                 )
                 return await self._respond(send, 201, {
@@ -191,6 +198,9 @@ class AuthenticatedAnnotationAPI:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     if set(payload) - _TASK_FIELDS:
                         return await self._respond(send, 400, {"error": "invalid_request"})
+                    self._validate_task_asset_ref(
+                        user.user_id, project_id, payload.get("asset_ref")
+                    )
                     task = await asyncio.to_thread(
                         self.workbench.create_task, user.user_id, project_id, **payload
                     )
@@ -282,6 +292,15 @@ class AuthenticatedAnnotationAPI:
         if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
         return await asyncio.to_thread(self.auth.resolve_session, token)
+
+    def _validate_task_asset_ref(self, owner_id, project_id, asset_ref):
+        """Only bind a task to an existing, clean asset in this owner's project."""
+        if asset_ref is None:
+            return
+        if self.asset_store is None:
+            raise ValueError("annotation_asset_store_required")
+        if self.asset_store.get_asset(owner_id, project_id, asset_ref) is None:
+            raise ValueError("annotation_asset_not_clean_or_not_found")
 
     def _read_clean_asset(self, owner_id, project_id, asset_id):
         asset = self.asset_store.get_asset(owner_id, project_id, asset_id)
