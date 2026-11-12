@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import RLock
 
 from evaluation.model_eval import EvalCase
+from core.sqlite_file_security import prepare_private_sqlite_path
 
 _ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
@@ -116,11 +117,10 @@ class BenchmarkRegistry:
         ):
             raise ValueError("database_path must be a non-empty path")
         self._max_revisions = max_revisions
-        self.database_path = str(Path(database_path).expanduser()) if database_path is not None else None
+        self.database_path = prepare_private_sqlite_path(database_path) if database_path is not None else None
         self._definitions: dict[tuple[str, int], BenchmarkDefinition] = {}
         self._lock = RLock()
         if self.database_path is not None:
-            Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
             with closing(self._connect()) as db, db:
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA synchronous=FULL")
@@ -156,6 +156,10 @@ class BenchmarkRegistry:
                 raise RuntimeError("stored benchmark revisions exceed configured capacity")
 
     def _connect(self):
+        if self.database_path is None:
+            raise RuntimeError("persistent database path is not configured")
+        # Re-check the final path before every SQLite open.
+        self.database_path = prepare_private_sqlite_path(self.database_path)
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
