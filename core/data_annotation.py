@@ -1854,12 +1854,15 @@ class SQLiteAnnotationWorkbench:
             if len(task_ids) != len(set(task_ids)):
                 raise ValueError("manifest_contains_duplicate_tasks")
             version = db.execute("SELECT COALESCE(MAX(version), 0)+1 FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=?", (owner_id, project_id)).fetchone()[0]
-            snapshot = json.dumps({"schema_version": 1, "project_id": project_id, "version": version, "created_at": now, "items": items}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            manifest_id = uuid.uuid4().hex
+            snapshot = json.dumps({
+                "schema_version": 1, "manifest_id": manifest_id, "project_id": project_id,
+                "version": version, "created_at": now, "item_count": len(items), "items": items,
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
             snapshot_bytes = snapshot.encode("utf-8")
             if len(snapshot_bytes) > 16 * 1024 * 1024:
                 raise ValueError("manifest_size_limit_exceeded")
             digest = hashlib.sha256(snapshot_bytes).hexdigest()
-            manifest_id = uuid.uuid4().hex
             db.execute("""INSERT INTO annotation_delivery_manifests
                 (manifest_id, owner_id, project_id, version, idempotency_key, snapshot_json, sha256, item_count, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (manifest_id, owner_id, project_id, version, idempotency_key, snapshot, digest, len(items), now))
@@ -1906,8 +1909,26 @@ class SQLiteAnnotationWorkbench:
             row = db.execute("SELECT * FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=? AND manifest_id=?", (owner_id, project_id, manifest_id)).fetchone()
         if row is None:
             return None
-        actual = hashlib.sha256(row["snapshot_json"].encode("utf-8")).hexdigest()
-        return {"manifest_id": manifest_id, "valid": actual == row["sha256"], "expected_sha256": row["sha256"], "actual_sha256": actual, "item_count": row["item_count"]}
+        snapshot_json = row["snapshot_json"]
+        actual = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+        try:
+            snapshot = json.loads(snapshot_json)
+            metadata_valid = (
+                snapshot.get("manifest_id") == row["manifest_id"]
+                and snapshot.get("project_id") == row["project_id"]
+                and snapshot.get("version") == row["version"]
+                and snapshot.get("created_at") == row["created_at"]
+                and snapshot.get("item_count") == row["item_count"]
+                and isinstance(snapshot.get("items"), list)
+                and len(snapshot["items"]) == row["item_count"]
+            )
+        except (TypeError, ValueError, AttributeError):
+            metadata_valid = False
+        return {
+            "manifest_id": manifest_id, "valid": actual == row["sha256"] and metadata_valid,
+            "metadata_valid": metadata_valid, "expected_sha256": row["sha256"],
+            "actual_sha256": actual, "item_count": row["item_count"],
+        }
 
     def independent_agreement_report(
         self, owner_id: str, project_id: str,
