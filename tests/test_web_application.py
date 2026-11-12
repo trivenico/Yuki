@@ -77,6 +77,9 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b"scan_status", js[1]["body"])
         self.assertIn(b"polygon_segmentation", js[1]["body"])
         self.assertIn(b"ai_assisted: false", js[1]["body"])
+        self.assertIn(b"/draft", js[1]["body"])
+        self.assertIn(b"expected_revision", js[1]["body"])
+        self.assertIn(b"Recovered saved draft", js[1]["body"])
         self.assertIn(b"touch-action:none", css[1]["body"])
         self.assertEqual(self.request(app, "/assets/../api/runtime.py")[0]["status"], 404)
 
