@@ -885,6 +885,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             "owner:bob", self.project.project_id, manifest["manifest_id"],
         ))
         with sqlite3.connect(self.database) as db:
+            db.execute("DROP TRIGGER annotation_delivery_manifests_no_update")
             db.execute(
                 "UPDATE annotation_delivery_manifests SET snapshot_json=? WHERE manifest_id=?",
                 ('{"tampered":true}', manifest["manifest_id"]),
