@@ -44,6 +44,8 @@ class CapabilityApprovalGateway:
         clock: Callable[[], float] = time.time,
         max_approval_ttl_seconds: int = 3600,
         preview_registry: CapabilityApprovalPreviewRegistry | None = None,
+        seal_operation_payload: Callable[[bytes, bytes], bytes] | None = None,
+        unseal_operation_payload: Callable[[bytes, bytes], bytes] | None = None,
     ) -> None:
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
             raise ValueError("database_path must be a non-empty path")
@@ -65,6 +67,14 @@ class CapabilityApprovalGateway:
         ):
             raise TypeError("preview_registry must be a CapabilityApprovalPreviewRegistry")
         self.preview_registry = preview_registry
+        if (seal_operation_payload is None) != (unseal_operation_payload is None):
+            raise ValueError("operation payload seal and unseal adapters must be configured together")
+        if seal_operation_payload is not None and (
+            not callable(seal_operation_payload) or not callable(unseal_operation_payload)
+        ):
+            raise TypeError("operation payload encryption adapters must be callable")
+        self.seal_operation_payload = seal_operation_payload
+        self.unseal_operation_payload = unseal_operation_payload
         self.max_approval_ttl_seconds = max_approval_ttl_seconds
         with closing(self._connect()) as db:
             db.executescript("""
@@ -115,7 +125,7 @@ class CapabilityApprovalGateway:
                     request_id TEXT PRIMARY KEY REFERENCES capability_approval_requests(request_id),
                     operation_json TEXT NOT NULL,
                     operation_sha256 TEXT NOT NULL,
-                    payload_json TEXT,
+                    payload_ciphertext BLOB,
                     created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS capability_audit (
@@ -136,8 +146,8 @@ class CapabilityApprovalGateway:
             operation_columns = {
                 row[1] for row in db.execute("PRAGMA table_info(capability_approval_operations)")
             }
-            if "payload_json" not in operation_columns:
-                db.execute("ALTER TABLE capability_approval_operations ADD COLUMN payload_json TEXT")
+            if "payload_ciphertext" not in operation_columns:
+                db.execute("ALTER TABLE capability_approval_operations ADD COLUMN payload_ciphertext BLOB")
             approval_columns = {
                 row[1] for row in db.execute("PRAGMA table_info(capability_approvals)")
             }
@@ -162,6 +172,30 @@ class CapabilityApprovalGateway:
             default=lambda value: value.value if hasattr(value, "value") else value,
         ).encode("utf-8")
         return hashlib.sha256(canonical).hexdigest()
+
+    @staticmethod
+    def _operation_payload_aad(request_digest: str, operation_digest: str) -> bytes:
+        return json.dumps(
+            {"request_sha256": request_digest, "operation_sha256": operation_digest,
+             "purpose": "yuki-approval-operation-payload-v1"},
+            sort_keys=True, separators=(",", ":"),
+        ).encode("ascii")
+
+    def _seal_operation_payload(self, payload: bytes, aad: bytes) -> bytes:
+        if self.seal_operation_payload is None:
+            raise PermissionError("encrypted typed operation payload storage is not configured")
+        ciphertext = self.seal_operation_payload(payload, aad)
+        if not isinstance(ciphertext, bytes) or not 16 <= len(ciphertext) <= 1_100_000:
+            raise ValueError("operation payload encryption adapter returned an invalid envelope")
+        return ciphertext
+
+    def _unseal_operation_payload(self, ciphertext: bytes, aad: bytes) -> bytes:
+        if self.unseal_operation_payload is None:
+            raise PermissionError("encrypted typed operation payload access is not configured")
+        plaintext = self.unseal_operation_payload(ciphertext, aad)
+        if not isinstance(plaintext, bytes) or len(plaintext) > 256_000:
+            raise ValueError("operation payload decryption adapter returned invalid data")
+        return plaintext
 
     @staticmethod
     def _operation_digest(operation: ApprovalOperation | None) -> str | None:
@@ -265,12 +299,16 @@ class CapabilityApprovalGateway:
                 raise PermissionError("typed operation kind is not registered for this capability")
         if (operation is None) != (operation_payload is None):
             raise ValueError("typed operation and exact operation_payload must be supplied together")
-        payload_json = None
+        payload_ciphertext = None
         if operation is not None:
             encoded_payload = canonical_operation_payload(operation_payload)
             if not operation.verify_payload(operation_payload):
                 raise ValueError("typed operation does not match the supplied exact payload")
-            payload_json = encoded_payload.decode("utf-8")
+            if operation_digest is None:
+                raise ValueError("typed operation digest is unavailable")
+            payload_ciphertext = self._seal_operation_payload(
+                encoded_payload, self._operation_payload_aad(digest, operation_digest)
+            )
         operation_json = None if operation is None else json.dumps(
             {
                 "schema_version": operation.schema_version,
@@ -325,11 +363,27 @@ class CapabilityApprovalGateway:
                 ).fetchone()
                 stored_digest = None if stored_operation is None else stored_operation["operation_sha256"]
                 stored_payload = db.execute(
-                    "SELECT payload_json FROM capability_approval_operations WHERE request_id=?",
+                    "SELECT payload_ciphertext FROM capability_approval_operations WHERE request_id=?",
                     (existing["request_id"],),
                 ).fetchone()
-                stored_payload_json = None if stored_payload is None else stored_payload["payload_json"]
-                if stored_digest != operation_digest or stored_payload_json != payload_json:
+                stored_payload_ciphertext = None if stored_payload is None else stored_payload["payload_ciphertext"]
+                if stored_digest != operation_digest:
+                    raise PermissionError("an existing request is bound to a different typed operation")
+                if operation is not None:
+                    if stored_payload_ciphertext is None or payload_ciphertext is None:
+                        raise PermissionError("existing typed operation payload is unavailable")
+                    try:
+                        stored_plaintext = self._unseal_operation_payload(
+                            stored_payload_ciphertext,
+                            self._operation_payload_aad(digest, operation_digest),
+                        )
+                    except Exception as error:
+                        raise PermissionError("existing typed operation payload cannot be verified") from error
+                    if not hmac.compare_digest(stored_plaintext, encoded_payload):
+                        raise PermissionError("an existing request is bound to a different operation payload")
+                elif stored_payload_ciphertext is not None:
+                    raise PermissionError("an existing request is bound to a typed operation payload")
+                if stored_digest != operation_digest:
                     raise PermissionError("an existing request is bound to a different typed operation")
                 db.commit()
                 return existing["request_id"]
@@ -353,9 +407,9 @@ class CapabilityApprovalGateway:
             if operation_json is not None and operation_digest is not None:
                 db.execute(
                     """INSERT INTO capability_approval_operations
-                       (request_id,operation_json,operation_sha256,payload_json,created_at)
+                       (request_id,operation_json,operation_sha256,payload_ciphertext,created_at)
                        VALUES(?,?,?,?,?)""",
-                    (request_id, operation_json, operation_digest, payload_json, now),
+                    (request_id, operation_json, operation_digest, payload_ciphertext, now),
                 )
             self._audit(db, "approval_requested", request, digest,
                         policy.policy_version, policy.matched_rule_ids, "pending")
@@ -443,15 +497,15 @@ class CapabilityApprovalGateway:
         now = self.clock()
         with closing(self._connect()) as db:
             row = db.execute(
-                """SELECT o.operation_json,o.operation_sha256,o.payload_json,
-                          r.status,r.expires_at
+                """SELECT o.operation_json,o.operation_sha256,o.payload_ciphertext,
+                          r.request_sha256,r.status,r.expires_at
                    FROM capability_approval_operations o
                    JOIN capability_approval_requests r ON r.request_id=o.request_id
                    WHERE o.request_id=?""", (request_id,),
             ).fetchone()
         if row is None or row["status"] != "pending" or row["expires_at"] <= now:
             return None
-        if row["payload_json"] is None:
+        if row["payload_ciphertext"] is None:
             return None
         encoded_operation = row["operation_json"]
         if not hmac.compare_digest(
@@ -461,7 +515,12 @@ class CapabilityApprovalGateway:
             return None
         try:
             operation = ApprovalOperation(**json.loads(encoded_operation))
-            payload = json.loads(row["payload_json"])
+            operation_digest = row["operation_sha256"]
+            plaintext = self._unseal_operation_payload(
+                row["payload_ciphertext"],
+                self._operation_payload_aad(row["request_sha256"], operation_digest),
+            )
+            payload = json.loads(plaintext.decode("utf-8"))
             if not operation.verify_payload(payload):
                 return None
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -632,17 +691,21 @@ class CapabilityApprovalGateway:
                     db.rollback()
                     raise PermissionError("typed approval operation does not match its request")
                 payload_row = db.execute(
-                    "SELECT payload_json FROM capability_approval_operations WHERE request_id=?",
+                    "SELECT payload_ciphertext FROM capability_approval_operations WHERE request_id=?",
                     (request_id,),
                 ).fetchone()
-                if payload_row is None or payload_row["payload_json"] is None:
+                if payload_row is None or payload_row["payload_ciphertext"] is None:
                     db.rollback()
                     raise PermissionError("exact typed operation payload is unavailable")
                 try:
-                    persisted_payload = json.loads(payload_row["payload_json"])
+                    plaintext = self._unseal_operation_payload(
+                        payload_row["payload_ciphertext"],
+                        self._operation_payload_aad(row["request_sha256"], operation_row["operation_sha256"]),
+                    )
+                    persisted_payload = json.loads(plaintext.decode("utf-8"))
                     if not operation.verify_payload(persisted_payload):
                         raise ValueError("payload digest mismatch")
-                except (TypeError, ValueError, json.JSONDecodeError):
+                except Exception:
                     db.rollback()
                     raise PermissionError("exact typed operation payload integrity check failed")
                 if (self.preview_registry is None
