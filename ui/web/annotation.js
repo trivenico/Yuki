@@ -739,6 +739,79 @@
     if (state.imageUrl) URL.revokeObjectURL(state.imageUrl);
     if (state.resizeObserver) state.resizeObserver.disconnect();
   });
+  const loadReviewerQueue = async () => {
+    const projectId = $("annotation-review-project-id").value.trim();
+    const queue = $("annotation-review-queue");
+    if (!/^[0-9a-f]{32}$/.test(projectId)) {
+      $("annotation-review-status").textContent = "Enter a valid 32-character project ID.";
+      queue.replaceChildren();
+      return;
+    }
+    $("annotation-review-status").textContent = "Loading authorized review queue…";
+    queue.replaceChildren();
+    try {
+      const result = await api("/v1/annotation/projects/" + encodeURIComponent(projectId) + "/review-queue");
+      queue.replaceChildren();
+      if (!result.submissions?.length) {
+        const empty = document.createElement("p");
+        empty.className = "annotation-hint";
+        empty.textContent = "No submissions are waiting for review.";
+        queue.append(empty);
+      }
+      for (const submission of result.submissions || []) {
+        const card = document.createElement("article");
+        card.className = "annotation-review-card";
+        const heading = document.createElement("h4");
+        heading.textContent = "Task " + submission.task_id;
+        const meta = document.createElement("p");
+        meta.className = "annotation-hint";
+        meta.textContent = "Submission " + submission.submission_id + " · " +
+          (submission.ai_assisted ? "AI-assisted (disclosed)" : "Human-only");
+        const payload = document.createElement("pre");
+        payload.className = "annotation-review-payload";
+        payload.textContent = JSON.stringify(submission.payload, null, 2);
+        const notesLabel = document.createElement("label");
+        notesLabel.className = "annotation-field";
+        notesLabel.textContent = "Reviewer notes";
+        const notes = document.createElement("textarea");
+        notes.rows = 3; notes.maxLength = 4000;
+        notes.placeholder = "Explain the decision or requested corrections";
+        notesLabel.append(notes);
+        const actions = document.createElement("div");
+        actions.className = "annotation-toolbar";
+        for (const decision of ["accepted", "rework"]) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = decision === "accepted" ? "Accept" : "Request rework";
+          button.addEventListener("click", async () => {
+            button.disabled = true;
+            try {
+              await api("/v1/annotation/submissions/" + encodeURIComponent(submission.submission_id) + "/review", {
+                method: "POST",
+                body: JSON.stringify({ decision, notes: notes.value, project_id: projectId })
+              });
+              $("annotation-review-status").textContent =
+                decision === "accepted" ? "Submission accepted." : "Rework requested.";
+              await loadReviewerQueue();
+            } catch (error) {
+              $("annotation-review-status").textContent = "Review failed: " + error.message;
+              button.disabled = false;
+            }
+          });
+          actions.append(button);
+        }
+        card.append(heading, meta, payload, notesLabel, actions);
+        queue.append(card);
+      }
+      $("annotation-review-status").textContent = "Loaded " + (result.submissions || []).length + " pending submission(s).";
+    } catch (error) {
+      $("annotation-review-status").textContent = "Reviewer access unavailable: " + error.message;
+    }
+  };
+  $("annotation-review-load").addEventListener("click", loadReviewerQueue);
+  $("annotation-review-project-id").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); loadReviewerQueue(); }
+  });
   setTool("box");
   renderCanvas();
 })();
