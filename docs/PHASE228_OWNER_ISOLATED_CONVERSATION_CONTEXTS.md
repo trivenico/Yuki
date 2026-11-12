@@ -48,36 +48,42 @@ that host integration.
 
 ## Integration contract
 
-The host application supplies the owner-loop factory. It must derive the
-provider profile only from the authenticated owner ID passed by ConversationService,
-construct a fresh or owner-cached adapter and AgentExecutionLoop, and preserve
-the same guarded tool policy, approval service, capability checks and audit
-hooks. It must never accept an owner ID from prompt text or request JSON.
+The host application passes OwnerAgentLoopFactory as
+`agent_loop_for_owner` to `build_conversation_runtime`. The factory derives
+provider selection exclusively from the authenticated owner ID supplied by
+ConversationService. It fails closed when the owner has no selected, available
+profile and never falls back to process-global credentials.
 
-The service enforces object-level separation, but cannot prove that a caller's
-factory has not embedded a shared mutable provider object inside two distinct
-AgentExecutionLoop instances. The factory implementation still requires a
-security review and integration tests before enabling profile-based chat.
+The host's `tool_runtime_for_owner` callback must construct handlers,
+authorization policy, approval checks and audit callbacks for that authenticated
+owner. Conversation tool schemas and guarded handlers must be kept in sync by
+that host integration. The default factory configuration denies all tool calls.
+
+The factory rejects cross-owner reuse of both GuardedToolRuntime and its policy,
+and creates a new provider manager, vault-resolved adapter and execution loop
+for each request. These checks establish object-level separation; the host still
+owns the correctness of handler closures, approval binding and audit routing.
 
 ## Remaining work
 
-- Implement and test the production owner-loop factory that resolves
-  ProviderProfileStore selection and OS-vault credentials for the authenticated
-  owner.
-- Apply connection-time DNS/IP destination pinning and redirect rejection to
-  custom endpoint adapters. The OpenAI-compatible adapter now resolves the approved
-  hostname, rejects the entire DNS answer if any address is non-public, connects to
-  one of those validated IPs directly, and retains TLS certificate/SNI validation
-  against the original hostname. Ambient proxy settings are bypassed because they
-  would invalidate destination pinning. Requests are limited to HTTPS port 443 and
-  no redirects are followed. The same transport is used by text, chat, streaming,
-  and tool-call request paths.
-- Add regression tests for private and mixed public/private DNS answers, pinned
-  socket destinations, TLS hostname preservation and nonstandard-port rejection.
-- Ensure per-owner tools/approval contexts are independently bound, not merely
-  per-owner model adapters.
-- Add concurrency tests across owners and benchmark worker utilization; the
-  existing ConversationService lock currently serializes turns in one process.
+- Wire OwnerAgentLoopFactory into the actual deployed API composition and add an
+  end-to-end test that creates/selects two users' profiles through the
+  authenticated API, then proves their conversation requests use different
+  models and credentials.
+- Bind the owner-specific tool runtime to the same tool schemas returned by
+  `tools_for_user`; add tests proving cross-owner tool handlers, approvals and
+  audit sinks cannot be reused or confused.
+- Add multi-owner concurrency tests and remove the process-wide conversation
+  serialization bottleneck safely. Preserve per-conversation ordering, request
+  idempotency, cancellation and durable generation leases while allowing
+  independent owners/conversations to execute concurrently.
+- Add deployment egress firewall policy and operational monitoring as defense in
+  depth for the pinned endpoint transport. DNS resolution is performed per
+  request through the operating-system resolver; it must not be treated as a
+  substitute for network-level egress controls.
+- Complete cross-platform CI for the provider transport and owner runtime, then
+  perform security review and deployment validation.
+
 
 This is an enabling isolation contract, not proof that per-user provider
 selection is fully integrated or production-ready.
