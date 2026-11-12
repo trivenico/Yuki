@@ -157,6 +157,12 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
         self.assertEqual(row[0], hashlib.sha256(self.lease_token.encode("ascii")).hexdigest())
         self.assertNotIn(self.lease_token.encode("ascii"), bytes(row[1]))
 
+    def test_approval_token_cannot_be_delivered_to_a_different_claim_generation(self):
+        with self.assertRaises(PermissionError):
+            self.broker.deliver_credential(
+                self.request_id, self.approval_token, lease_token="different-claim-token-" + "x" * 32
+            )
+
     def test_broker_refuses_delivery_for_stale_claim(self):
         self.assertTrue(self.engine.cancel_task_for_owner(
             self.owner, self.task["id"]
