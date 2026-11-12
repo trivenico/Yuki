@@ -1061,11 +1061,19 @@ class SQLiteAnnotationWorkbench:
                 project["task_type"], {"label": label}, _decode(project["rubric_json"])
             )
             task = db.execute(
-                "SELECT task_id FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                "SELECT task_id, status FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
                 (owner_id, project_id, task_id),
             ).fetchone()
             if task is None:
                 return None
+            if task["status"] != "pending":
+                raise ValueError("gold_standard_task_must_be_pending")
+            existing_gold = db.execute(
+                "SELECT 1 FROM annotation_gold_standards WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if existing_gold is not None:
+                raise ValueError("gold_standard_already_registered")
             assigned = db.execute(
                 "SELECT COUNT(*) FROM annotation_independent_assignments "
                 "WHERE owner_id=? AND project_id=? AND task_id=?",
