@@ -13,7 +13,7 @@
   const draftSession = (taskId) => {
     if (!draftSessions.has(taskId)) draftSessions.set(taskId, {
       revision: 0, chain: Promise.resolve(), timer: null, dirty: false,
-      payload: null, conflict: false
+      payload: null, history: null, conflict: false
     });
     return draftSessions.get(taskId);
   };
@@ -57,8 +57,8 @@
     renderCanvas();
     scheduleDraftSave();
   };
-  const draftStoragePayload = (payload) => {
-    const history = { undo: state.undoStack, redo: state.redoStack };
+  const draftStoragePayload = (payload, snapshot) => {
+    const history = snapshot ? cloneJson(snapshot) : { undo: [], redo: [] };
     while (JSON.stringify(history).length > 16 * 1024 && (history.undo.length || history.redo.length)) {
       if (history.undo.length) history.undo.shift(); else history.redo.shift();
     }
@@ -70,10 +70,10 @@
     if (session.timer) { clearTimeout(session.timer); session.timer = null; }
     session.chain = session.chain.catch(() => {}).then(async () => {
       while (session.dirty && !session.conflict) {
-        const payload = session.payload;
+        const payload = session.payload, history = session.history;
         session.dirty = false;
         const result = await api("/v1/annotation/tasks/" + encodeURIComponent(taskId) + "/draft", {
-          method: "PUT", body: JSON.stringify({ payload: draftStoragePayload(payload), expected_revision: session.revision })
+          method: "PUT", body: JSON.stringify({ payload: draftStoragePayload(payload, history), expected_revision: session.revision })
         });
         session.revision = result.draft.revision;
         if (state.task?.task_id === taskId) setStatus("Draft saved · revision " + session.revision);
@@ -99,7 +99,9 @@
       setStatus("Draft not saved: finish entering valid JSON first.", true);
       return;
     }
-    session.payload = payload; session.dirty = true;
+    session.payload = payload;
+    session.history = { undo: cloneJson(state.undoStack), redo: cloneJson(state.redoStack) };
+    session.dirty = true;
     if (session.timer) clearTimeout(session.timer);
     session.timer = setTimeout(() => flushDraftSave(taskId), 650);
     setStatus("Changes pending autosave…");
@@ -110,8 +112,11 @@
     const draft = result.draft;
     const session = draftSession(taskId);
     session.revision = draft ? draft.revision : 0;
-    session.conflict = false; session.dirty = false;
-    if (!draft) return;
+    session.conflict = false; session.dirty = false; session.history = { undo: [], redo: [] };
+    if (!draft) {
+      state.undoStack = []; state.redoStack = []; state.lastHistorySnapshot = historySnapshot();
+      return;
+    }
     const payload = cloneJson(draft.payload || {});
     const history = payload._history || {};
     delete payload._history;
