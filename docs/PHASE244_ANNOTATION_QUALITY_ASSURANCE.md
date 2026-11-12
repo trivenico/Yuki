@@ -13,6 +13,7 @@
 - Persists the quality result in the same SQLite transaction as the submission and task state transition.
 - Migrates existing submission databases by adding a non-null `quality_json` column with an empty-object default. Historical submissions are counted as `unknown`, never retroactively marked as passed.
 - Adds an owner-scoped project quality report with submission counts, pass/warning/unknown counts, review outcomes, finding counts, annotation item totals, and a pass rate.
+- Includes the persisted quality assessment in accepted-work exports so downstream owner-controlled delivery retains the QA evidence.
 - Adds an authenticated API endpoint and a project-level quality panel in the annotation workbench.
 
 ## Policy and result contract
@@ -40,6 +41,7 @@ A submission receives `quality.status` of `pass` or `warning`, a list of determi
 
 - `GET /v1/annotation/projects/{project_id}/quality-report` returns the authenticated owner's aggregate quality report.
 - Submission responses include the persisted `quality` assessment.
+- Accepted exports include the same assessment next to the annotation and human review timestamp.
 - Reviewer queue entries include the same assessment so reviewers can consider deterministic warnings alongside the payload, task input, and rubric.
 
 ## Security, correctness, and operational behavior
