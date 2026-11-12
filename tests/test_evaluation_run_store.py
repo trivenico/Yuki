@@ -56,6 +56,61 @@ class EvaluationRunStoreTests(unittest.TestCase):
         with self.assertRaises(EvaluationRunConflict):
             self.store.record(**changed)
 
+    def test_durable_claim_allows_only_one_live_owner_per_idempotency_key(self):
+        from evaluation.run_store import EvaluationRunInProgress
+        digest = self.store.request_digest_for(
+            benchmark_id="core-reasoning", benchmark_version=1,
+            benchmark_digest="a" * 64, candidate_id="candidate-a",
+            provider_id="local", model_id="test-model",
+            environment={"python_version": "3.11", "platform": "linux"},
+        )
+        token = self.store.acquire_claim(
+            owner_id="owner-a", idempotency_key="claim-1",
+            request_digest=digest,
+        )
+        self.assertTrue(token)
+        with self.assertRaises(EvaluationRunInProgress):
+            EvaluationRunStore(self.database).acquire_claim(
+                owner_id="owner-a", idempotency_key="claim-1",
+                request_digest=digest,
+            )
+        with self.assertRaises(EvaluationRunConflict):
+            self.store.acquire_claim(
+                owner_id="owner-a", idempotency_key="claim-1",
+                request_digest="b" * 64,
+            )
+        self.assertTrue(self.store.release_claim(
+            owner_id="owner-a", idempotency_key="claim-1", lease_token=token,
+        ))
+        replacement = self.store.acquire_claim(
+            owner_id="owner-a", idempotency_key="claim-1",
+            request_digest=digest,
+        )
+        self.assertTrue(replacement)
+        self.assertNotEqual(token, replacement)
+
+    def test_claim_token_is_required_to_commit_claimed_run(self):
+        from evaluation.run_store import EvaluationRunInProgress
+        digest = self.store.request_digest_for(
+            benchmark_id="core-reasoning", benchmark_version=1,
+            benchmark_digest="a" * 64, candidate_id="candidate-a",
+            provider_id="local", model_id="test-model",
+            environment={"python_version": "3.11", "platform": "linux"},
+        )
+        token = self.store.acquire_claim(
+            owner_id="owner-a", idempotency_key="request-1",
+            request_digest=digest,
+        )
+        with self.assertRaises(EvaluationRunInProgress):
+            self.store.record(**self.arguments, lease_token="not-the-lease")
+        committed = self.store.record(**self.arguments, lease_token=token)
+        self.assertEqual(committed.run_id, self.store.get_by_idempotency(
+            owner_id="owner-a", idempotency_key="request-1",
+        ).run_id)
+        self.assertFalse(self.store.release_claim(
+            owner_id="owner-a", idempotency_key="request-1", lease_token=token,
+        ))
+
     def test_reads_and_lists_never_cross_owner_boundaries(self):
         run = self.store.record(**self.arguments)
         with self.assertRaises(KeyError):
