@@ -202,6 +202,53 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             self.store.get_task(self.owner_one.user.user_id, task["task_id"]).status, "submitted"
         )
 
+    def test_quality_report_api_is_owner_scoped_and_returns_aggregates(self):
+        status, created = self.request(
+            "POST", "/v1/annotation/projects", {
+                "name": "Quality project", "task_type": "text_classification",
+                "instructions": "Classify the sentence.",
+                "rubric": {"labels": ["positive", "negative"], "quality": {
+                    "minimum_confidence": 0.8, "require_rationale": True,
+                }},
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        project_id = created["project"]["project_id"]
+        status, created_task = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "quality-001", "input_data": {"text": "Great work."}},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task = created_task["task"]
+        status, claimed = self.request(
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        status, submitted = self.request(
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/submit",
+            {"payload": {"label": "positive", "confidence": 0.3},
+             "expected_version": claimed["task"]["version"], "human_confirmed": True},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(submitted["submission"]["quality"]["status"], "warning")
+        status, report = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/quality-report",
+            token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(report["report"]["finding_counts"], {
+            "confidence_below_threshold": 1, "rationale_missing": 1,
+        })
+        self.assertEqual(report["report"]["quality"]["warning"], 1)
+        status, denied = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/quality-report",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, denied["error"]), (404, "not_found"))
+
     def test_owner_can_grant_list_and_revoke_reviewer_access(self):
         project_id = self.create_project()
         self.grant_reviewer(project_id)

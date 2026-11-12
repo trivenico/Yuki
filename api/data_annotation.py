@@ -91,6 +91,18 @@ class AuthenticatedAnnotationAPI:
                     })
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            quality_match = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/quality-report", path
+            )
+            if quality_match and method == "GET":
+                report = await asyncio.to_thread(
+                    self.workbench.quality_report, user.user_id, quality_match.group(1)
+                )
+                return await self._respond(
+                    send, 200 if report else 404,
+                    {"report": report} if report else {"error": "not_found"},
+                )
+
             match = re.fullmatch(re.escape(prefix) + r"/projects/([0-9a-f]{32})", path)
             if match and method == "GET":
                 project = await asyncio.to_thread(

@@ -19,6 +19,7 @@ import uuid
 from typing import Any, Mapping
 
 from core.annotation_validation import validate_annotation_payload
+from core.annotation_quality import assess_annotation_quality, validate_quality_policy
 
 
 _TASK_TYPES = frozenset({
@@ -122,6 +123,7 @@ class AnnotationSubmission:
     status: str
     reviewer_notes: str
     reviewer_id: str
+    quality: dict[str, Any]
     created_at: str
     updated_at: str
 
@@ -208,6 +210,7 @@ class SQLiteAnnotationWorkbench:
                 status TEXT NOT NULL,
                 reviewer_notes TEXT NOT NULL,
                 reviewer_id TEXT NOT NULL DEFAULT '',
+                quality_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id)
@@ -217,6 +220,8 @@ class SQLiteAnnotationWorkbench:
             }
             if "reviewer_id" not in submission_columns:
                 db.execute("ALTER TABLE annotation_submissions ADD COLUMN reviewer_id TEXT NOT NULL DEFAULT ''")
+            if "quality_json" not in submission_columns:
+                db.execute("ALTER TABLE annotation_submissions ADD COLUMN quality_json TEXT NOT NULL DEFAULT '{}'")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_submissions_task
                 ON annotation_submissions(owner_id, task_id, created_at DESC)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_submissions_review_queue
@@ -303,6 +308,7 @@ class SQLiteAnnotationWorkbench:
         value["payload"] = _decode(value.pop("payload_json"))
         value["ai_assisted"] = bool(value["ai_assisted"])
         value["human_confirmed"] = bool(value["human_confirmed"])
+        value["quality"] = _decode(value.pop("quality_json", "{}"))
         return AnnotationSubmission(**value)
 
     @staticmethod
@@ -328,6 +334,7 @@ class SQLiteAnnotationWorkbench:
         if not isinstance(instructions, str) or not instructions.strip() or len(instructions) > 12000:
             raise ValueError("invalid_project_instructions")
         rubric_json = _json_object(rubric, maximum=_MAX_RUBRIC_BYTES, field="rubric")
+        validate_quality_policy(rubric)
         if ai_assistance_mode not in _AI_ASSISTANCE_MODES:
             raise ValueError("invalid_ai_assistance_mode")
         now, project_id = _now(), uuid.uuid4().hex
@@ -543,7 +550,8 @@ class SQLiteAnnotationWorkbench:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT t.external_ref, t.asset_ref, t.input_json,
-                          s.payload_json, s.ai_assisted, s.updated_at AS accepted_at
+                          s.payload_json, s.ai_assisted, s.quality_json,
+                          s.updated_at AS accepted_at
                    FROM annotation_tasks AS t
                    JOIN annotation_submissions AS s
                      ON s.task_id=t.task_id AND s.owner_id=t.owner_id
@@ -556,6 +564,7 @@ class SQLiteAnnotationWorkbench:
             "asset_ref": row["asset_ref"],
             "input_data": _decode(row["input_json"]),
             "annotation": _decode(row["payload_json"]),
+            "quality": _decode(row["quality_json"]),
             "ai_assisted": bool(row["ai_assisted"]),
             "accepted_at": row["accepted_at"],
         } for row in rows]
@@ -760,18 +769,19 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if project is None or project["status"] != "active":
                 raise ValueError("annotation_project_not_active")
-            validate_annotation_payload(
-                project["task_type"], payload, _decode(project["rubric_json"])
-            )
+            rubric = _decode(project["rubric_json"])
+            validate_annotation_payload(project["task_type"], payload, rubric)
+            quality = assess_annotation_quality(project["task_type"], payload, rubric)
+            quality_json = _json_object(quality, maximum=16384, field="quality_assessment")
             if ai_assisted and project["ai_assistance_mode"] != "permitted_with_disclosure":
                 raise AnnotationPolicyError("ai_assistance_not_permitted_for_project")
             db.execute(
                 """INSERT INTO annotation_submissions
                 (submission_id, task_id, project_id, owner_id, payload_json,
-                 ai_assisted, human_confirmed, status, reviewer_notes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
+                 ai_assisted, human_confirmed, status, reviewer_notes, quality_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?, ?)""",
                 (submission_id, task_id, task["project_id"], owner_id,
-                 payload_json, int(ai_assisted), now, now),
+                 payload_json, int(ai_assisted), quality_json, now, now),
             )
             db.execute(
                 "DELETE FROM annotation_drafts WHERE owner_id=? AND task_id=?",
@@ -954,7 +964,7 @@ class SQLiteAnnotationWorkbench:
                 key: values[key] for key in (
                     "submission_id", "task_id", "project_id", "owner_id", "payload_json",
                     "ai_assisted", "human_confirmed", "status", "reviewer_notes",
-                    "reviewer_id", "created_at", "updated_at",
+                    "reviewer_id", "quality_json", "created_at", "updated_at",
                 )
             })
             items.append(AnnotationReviewItem(
@@ -979,6 +989,65 @@ class SQLiteAnnotationWorkbench:
                 (owner_id, task_id, limit),
             ).fetchall()
         return [self._submission(row) for row in rows]
+
+    def quality_report(self, owner_id: str, project_id: str) -> dict[str, Any] | None:
+        """Aggregate deterministic quality findings without exposing annotation content."""
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        with self._connect() as db:
+            project = db.execute(
+                "SELECT project_id, task_type, rubric_json FROM annotation_projects "
+                "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            rows = db.execute(
+                "SELECT status, quality_json FROM annotation_submissions "
+                "WHERE owner_id=? AND project_id=? ORDER BY created_at, submission_id",
+                (owner_id, project_id),
+            ).fetchall()
+        finding_counts: dict[str, int] = {}
+        quality_counts = {"pass": 0, "warning": 0, "unknown": 0}
+        review_counts = {"submitted": 0, "accepted": 0, "rework": 0}
+        total_items = 0
+        for row in rows:
+            review_status = row["status"]
+            if review_status in review_counts:
+                review_counts[review_status] += 1
+            try:
+                assessment = _decode(row["quality_json"])
+            except (ValueError, TypeError):
+                assessment = {}
+            quality_status = assessment.get("status")
+            if quality_status not in {"pass", "warning"}:
+                quality_status = "unknown"
+            quality_counts[quality_status] += 1
+            metrics = assessment.get("metrics", {})
+            if isinstance(metrics, dict) and type(metrics.get("annotation_items")) is int:
+                total_items += metrics["annotation_items"]
+            findings = assessment.get("findings", [])
+            if isinstance(findings, list):
+                for finding in findings:
+                    if isinstance(finding, dict) and isinstance(finding.get("code"), str):
+                        code = finding["code"]
+                        finding_counts[code] = finding_counts.get(code, 0) + 1
+        total = len(rows)
+        return {
+            "project_id": project_id,
+            "task_type": project["task_type"],
+            "submission_count": total,
+            "quality": quality_counts,
+            "quality_assessed_count": quality_counts["pass"] + quality_counts["warning"],
+            "review": review_counts,
+            "finding_counts": dict(sorted(finding_counts.items())),
+            "annotation_items": total_items,
+            "quality_pass_rate": (
+                quality_counts["pass"] / (quality_counts["pass"] + quality_counts["warning"])
+                if quality_counts["pass"] + quality_counts["warning"] else None
+            ),
+            "policy_version": 1,
+        }
 
     def audit_events(self, owner_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
         owner_id = _owner(owner_id)

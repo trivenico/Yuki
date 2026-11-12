@@ -97,6 +97,14 @@
                 <button id="claim-annotation-task" type="button">Claim task</button>
               </div>
               <div id="annotation-task-meta" class="annotation-task-meta">Choose a project and task to begin.</div>
+              <section class="annotation-quality-report" aria-label="Annotation quality report">
+                <div class="annotation-quality-heading">
+                  <h3>Project quality</h3>
+                  <button id="annotation-quality-refresh" type="button">Refresh quality report</button>
+                </div>
+                <div id="annotation-quality-summary" class="annotation-hint" aria-live="polite">Select a project to view quality metrics.</div>
+              </section>
+
               <div id="annotation-manual-task-row" class="annotation-manual-task-row">
                 <label class="annotation-field" for="annotation-new-task-ref">External task reference<input id="annotation-new-task-ref" maxlength="256" placeholder="e.g. batch-001"></label>
                 <label class="annotation-field" for="annotation-new-task-input">Task input JSON<textarea id="annotation-new-task-input" rows="2" spellcheck="false">{}</textarea></label>
