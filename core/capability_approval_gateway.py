@@ -132,6 +132,13 @@ class CapabilityApprovalGateway:
                     occurred_at REAL NOT NULL
                 );
             """)
+            approval_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(capability_approvals)")
+            }
+            if "operation_sha256" not in approval_columns:
+                db.execute(
+                    "ALTER TABLE capability_approvals ADD COLUMN operation_sha256 TEXT"
+                )
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10)
@@ -149,6 +156,18 @@ class CapabilityApprovalGateway:
             default=lambda value: value.value if hasattr(value, "value") else value,
         ).encode("utf-8")
         return hashlib.sha256(canonical).hexdigest()
+
+    @staticmethod
+    def _operation_digest(operation: ApprovalOperation | None) -> str | None:
+        if operation is None:
+            return None
+        if not isinstance(operation, ApprovalOperation):
+            raise TypeError("operation must be a validated ApprovalOperation")
+        encoded = json.dumps(
+            asdict(operation), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
     def _token_digest(token: str) -> str:
@@ -528,6 +547,31 @@ class CapabilityApprovalGateway:
             if not hmac.compare_digest(digest, row["request_sha256"]):
                 db.rollback()
                 raise PermissionError("approval request integrity check failed")
+            operation_row = db.execute(
+                "SELECT operation_json,operation_sha256 FROM capability_approval_operations WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            operation = None
+            operation_digest = None
+            if operation_row is not None:
+                encoded_operation = operation_row["operation_json"]
+                actual_operation_digest = hashlib.sha256(
+                    encoded_operation.encode("utf-8")
+                ).hexdigest()
+                if not hmac.compare_digest(
+                    actual_operation_digest, operation_row["operation_sha256"]
+                ):
+                    db.rollback()
+                    raise PermissionError("typed approval operation integrity check failed")
+                try:
+                    operation = ApprovalOperation(**json.loads(encoded_operation))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    db.rollback()
+                    raise PermissionError("typed approval operation is invalid")
+                if not operation.verify_policy_request(request):
+                    db.rollback()
+                    raise PermissionError("typed approval operation does not match its request")
+                operation_digest = operation_row["operation_sha256"]
             preview_row = db.execute(
                 """SELECT preview_json,preview_sha256 FROM capability_approval_previews
                    WHERE request_id=?""", (request_id,),
@@ -580,11 +624,13 @@ class CapabilityApprovalGateway:
             db.execute(
                 """INSERT INTO capability_approvals
                    (token_sha256,request_sha256,request_json,policy_version,principal_id,
-                    capability,target,run_id,step_id,created_by,created_at,expires_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    capability,target,run_id,step_id,created_by,created_at,expires_at,
+                    operation_sha256)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (token_hash, digest, row["request_json"], policy.policy_version,
                  request.principal_id, request.capability, request.target,
-                 request.run_id, request.step_id, approved_by, now, now + ttl_seconds),
+                 request.run_id, request.step_id, approved_by, now, now + ttl_seconds,
+                 operation_digest),
             )
             self._audit(db, "approval_issued", request, digest,
                         policy.policy_version, policy.matched_rule_ids, "issued_from_inbox")
@@ -700,9 +746,16 @@ class CapabilityApprovalGateway:
 
     def authorize(
         self, request: PolicyRequest, *, approval_token: str | None = None,
+        operation: ApprovalOperation | None = None,
     ) -> CapabilityDecision:
-        """Evaluate policy; consume a matching approval once, in the same transaction."""
+        """Evaluate policy; consume a matching request and typed operation once."""
         digest = self._request_digest(request)
+        if operation is not None and (
+            not isinstance(operation, ApprovalOperation)
+            or not operation.verify_policy_request(request)
+        ):
+            raise ValueError("typed operation does not match the policy request")
+        operation_digest = self._operation_digest(operation)
         try:
             policy = self.policy_engine.evaluate(request)
             if policy.decision == Decision.ALLOW:
@@ -732,6 +785,7 @@ class CapabilityApprovalGateway:
                         and row["run_id"] == request.run_id
                         and row["step_id"] == request.step_id
                         and row["policy_version"] == policy.policy_version
+                        and row["operation_sha256"] == operation_digest
                         and row["expires_at"] > now
                         and row["consumed_at"] is None
                         and row["revoked_at"] is None
