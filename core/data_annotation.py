@@ -268,6 +268,8 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_manifests_owner
                 ON annotation_delivery_manifests(owner_id, project_id, created_at DESC)""")
+            db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_annotation_manifests_digest
+                ON annotation_delivery_manifests(owner_id, project_id, sha256)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_standards (
                 gold_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -1307,6 +1309,12 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if task is None:
                 return None
+            project = db.execute(
+                "SELECT task_type, status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None or project["status"] != "active" or project["task_type"] != "text_classification":
+                raise ValueError("rework_requires_active_text_classification_project")
             if task["status"] != "rework":
                 raise ValueError("task_not_marked_for_rework")
             current = db.execute(
@@ -1323,6 +1331,12 @@ class SQLiteAnnotationWorkbench:
             if prior_round < 1:
                 raise ValueError("prior_assignment_round_missing")
             round_number = prior_round + 1
+            db.execute(
+                "UPDATE annotation_independent_assignments SET status='revoked', version=version+1, updated_at=? "
+                "WHERE owner_id=? AND project_id=? AND task_id=? AND round_number<? "
+                "AND status IN ('assigned','in_progress')",
+                (now, owner_id, project_id, task_id, round_number),
+            )
             for annotator_id in annotator_ids:
                 prior = db.execute(
                     "SELECT 1 FROM annotation_independent_assignments "
@@ -1781,7 +1795,16 @@ class SQLiteAnnotationWorkbench:
             } for row in independent)
             version = db.execute("SELECT COALESCE(MAX(version), 0)+1 FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=?", (owner_id, project_id)).fetchone()[0]
             snapshot = json.dumps({"schema_version": 1, "project_id": project_id, "version": version, "created_at": now, "items": items}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
-            digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()
+            snapshot_bytes = snapshot.encode("utf-8")
+            if len(snapshot_bytes) > 16 * 1024 * 1024:
+                raise ValueError("manifest_size_limit_exceeded")
+            digest = hashlib.sha256(snapshot_bytes).hexdigest()
+            duplicate = db.execute(
+                "SELECT * FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=? AND sha256=?",
+                (owner_id, project_id, digest),
+            ).fetchone()
+            if duplicate is not None:
+                return self._manifest_result(duplicate)
             manifest_id = uuid.uuid4().hex
             db.execute("""INSERT INTO annotation_delivery_manifests
                 (manifest_id, owner_id, project_id, version, idempotency_key, snapshot_json, sha256, item_count, created_at)
@@ -1793,8 +1816,22 @@ class SQLiteAnnotationWorkbench:
     @staticmethod
     def _manifest_result(row: sqlite3.Row) -> dict[str, Any]:
         return {"manifest_id": row["manifest_id"], "project_id": row["project_id"], "version": row["version"],
-            "sha256": row["sha256"], "item_count": row["item_count"], "created_at": row["created_at"],
-            "snapshot": json.loads(row["snapshot_json"])}
+            "sha256": row["sha256"], "item_count": row["item_count"], "created_at": row["created_at"]}
+
+    def get_delivery_manifest(self, owner_id: str, project_id: str, manifest_id: str) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id) or not isinstance(manifest_id, str) or not _ID.fullmatch(manifest_id):
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=? AND manifest_id=?",
+                (owner_id, project_id, manifest_id),
+            ).fetchone()
+        if row is None:
+            return None
+        result = self._manifest_result(row)
+        result["snapshot"] = json.loads(row["snapshot_json"])
+        return result
 
     def list_delivery_manifests(self, owner_id: str, project_id: str) -> list[dict[str, Any]] | None:
         owner_id = _owner(owner_id)
