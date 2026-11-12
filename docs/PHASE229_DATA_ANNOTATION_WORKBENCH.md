@@ -40,7 +40,8 @@ mode. Opaque asset references are accepted; arbitrary URLs and filesystem paths 
 
 ## API surface
 
-- POST /v1/annotation/projects — create a project.
+- POST /v1/annotation/projects — create a project. Optional ai_assistance_mode is
+  human_only (the default) or permitted_with_disclosure.
 - GET /v1/annotation/projects — list the current owner's projects.
 - GET /v1/annotation/projects/{project_id} — read an owned project.
 - POST /v1/annotation/projects/{project_id}/tasks — create one task.
