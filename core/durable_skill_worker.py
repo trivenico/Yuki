@@ -108,7 +108,7 @@ class DurableSkillWorker:
                         self.engine.record_approval_wait(
                             task_id, self.worker_id, lease_token, approval_request_id,
                         )
-                if requires_owner_approval or policy_engine is None:
+                if requires_owner_approval:
                     deadline = time.monotonic() + self.approval_wait_timeout_seconds
                     while True:
                         if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
@@ -140,6 +140,16 @@ class DurableSkillWorker:
                         wait = self.engine.get_approval_wait(task_id, claim_digest)
                         if wait is None or wait["state"] != "delivered":
                             raise PermissionError("durable approval wait has not been delivered to this claim")
+                elif policy_engine is None:
+                    # Legacy one-shot resolver behavior remains non-blocking;
+                    # only central durable approvals create a supervised wait.
+                    approval_token = self.approval_token_resolver(
+                        policy_context, skill_name, lease_token
+                    )
+                    if approval_token is not None and (
+                        not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256
+                    ):
+                        raise PermissionError("approval resolver returned an invalid credential")
             invoke_kwargs = {
                 "execution_guard": lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
                 "policy_context": policy_context,
