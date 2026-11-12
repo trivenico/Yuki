@@ -33,7 +33,7 @@ def workspace_change_payload(changes: Sequence[FileChange]) -> dict:
         if not isinstance(change, FileChange):
             raise ValueError("every workspace change must be a FileChange")
         if (not isinstance(change.path, str) or not change.path
-                or len(change.path) > 1000 or "\\x00" in change.path):
+                or len(change.path) > 1000 or "\x00" in change.path):
             raise ValueError("workspace path is invalid")
         if change.path in seen:
             raise ValueError("workspace change paths must be unique")
@@ -41,7 +41,7 @@ def workspace_change_payload(changes: Sequence[FileChange]) -> dict:
         if (not isinstance(change.expected_sha256, str)
                 or not _SHA256.fullmatch(change.expected_sha256)):
             raise ValueError("expected file digest is invalid")
-        if not isinstance(change.content, str) or "\\x00" in change.content:
+        if not isinstance(change.content, str) or "\x00" in change.content:
             raise ValueError("workspace content must be text without NUL characters")
         encoded = change.content.encode("utf-8")
         if len(encoded) > _MAX_FILE_BYTES:
