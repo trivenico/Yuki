@@ -170,10 +170,17 @@ def _reject_self_intersections(points: tuple[Point, ...]) -> None:
     for first in range(count):
         a, b = points[first], points[(first + 1) % count]
         for second in range(first + 1, count):
-            # Adjacent edges share one intended endpoint.
-            if second == first + 1 or (first == 0 and second == count - 1):
-                continue
             c, d = points[second], points[(second + 1) % count]
+            adjacent = second == first + 1 or (first == 0 and second == count - 1)
+            if adjacent:
+                shared = b if second == first + 1 else a
+                other_first = a if second == first + 1 else b
+                other_second = d if second == first + 1 else c
+                if (abs(_orientation(other_first, shared, other_second)) <= _EPSILON
+                        and (_on_segment(other_first, shared, other_second)
+                             or _on_segment(shared, other_second, other_first))):
+                    raise ValueError("overlapping_adjacent_polygon_edges")
+                continue
             if _segments_intersect(a, b, c, d):
                 raise ValueError("self_intersecting_polygon")
 
@@ -186,7 +193,7 @@ def validate_polygon(
     Self-intersection checks are deliberately left to the interactive editor;
     this function guarantees bounds, distinct adjacent vertices, and area.
     """
-    if not isinstance(points, (tuple, list)) or not 3 <= len(points) <= 10_000:
+    if not isinstance(points, (tuple, list)) or not 3 <= len(points) <= 2_048:
         raise ValueError("invalid_polygon_vertex_count")
     if (isinstance(minimum_area, bool)
             or not isinstance(minimum_area, (int, float))
