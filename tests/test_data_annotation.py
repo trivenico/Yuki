@@ -791,10 +791,6 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             SQLiteAnnotationWorkbench(str(link))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AnnotationReworkAndManifestTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -913,3 +909,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
                 "owner:alice", self.project.project_id, self.task.task_id,
                 ["annotator:one", "annotator:three"],
             )
+
+
+if __name__ == "__main__":
+    unittest.main()
