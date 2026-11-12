@@ -112,6 +112,49 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(updated_task.status, "rework")
         self.assertGreater(updated_task.version, claimed.version)
 
+    def test_quality_assessment_is_persisted_and_project_report_is_aggregated(self):
+        project = self.store.create_project(
+            "owner:alice", name="Quality labels", task_type="text_classification",
+            instructions="Classify the text.",
+            rubric={"labels": ["positive", "negative"], "quality": {
+                "minimum_confidence": 0.8, "require_rationale": True,
+            }},
+        )
+        task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="quality-001",
+            input_data={"text": "A positive sentence."},
+        )
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        submission = self.store.submit(
+            "owner:alice", task.task_id,
+            payload={"label": "positive", "confidence": 0.4},
+            expected_version=claimed.version, human_confirmed=True,
+        )
+        self.assertEqual(submission.quality["status"], "warning")
+        self.assertEqual(
+            {item["code"] for item in submission.quality["findings"]},
+            {"confidence_below_threshold", "rationale_missing"},
+        )
+        report = self.store.quality_report("owner:alice", project.project_id)
+        self.assertEqual(report["submission_count"], 1)
+        self.assertEqual(report["quality"], {"pass": 0, "warning": 1, "unknown": 0})
+        self.assertEqual(report["review"], {"submitted": 1, "accepted": 0, "rework": 0})
+        self.assertEqual(report["finding_counts"], {
+            "confidence_below_threshold": 1, "rationale_missing": 1,
+        })
+        self.assertIsNone(self.store.quality_report("owner:bob", project.project_id))
+
+    def test_invalid_quality_policy_is_rejected_at_project_creation(self):
+        with self.assertRaisesRegex(ValueError, "invalid_quality_item_range"):
+            self.store.create_project(
+                "owner:alice", name="Bad policy", task_type="text_classification",
+                instructions="Classify.", rubric={"quality": {
+                    "minimum_items": 3, "maximum_items": 1,
+                }},
+            )
+
     def test_reviewer_grants_are_owner_scoped_persistent_and_revocable(self):
         project = self.project
         self.assertTrue(self.store.grant_reviewer(
