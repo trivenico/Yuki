@@ -771,6 +771,7 @@ class SQLiteAnnotationWorkbench:
     def review(
         self, owner_id: str, submission_id: str, *,
         decision: str, notes: str = "", reviewer_id: str | None = None,
+        expected_project_id: str | None = None,
     ) -> AnnotationSubmission | None:
         owner_id = _owner(owner_id)
         reviewer_id = _owner(reviewer_id) if reviewer_id is not None else owner_id
@@ -788,6 +789,8 @@ class SQLiteAnnotationWorkbench:
                 (owner_id, submission_id),
             ).fetchone()
             if row is None:
+                return None
+            if expected_project_id is not None and row["project_id"] != expected_project_id:
                 return None
             if row["status"] != "submitted":
                 raise ValueError("submission_already_reviewed")
