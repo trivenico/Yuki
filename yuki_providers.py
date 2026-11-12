@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
+from providers.openai_compatible import OpenAICompatibleProvider
+from urllib.parse import urlsplit
+import re
 
 @dataclass(frozen=True)
 class ProviderInfo:
@@ -25,6 +28,7 @@ class ProviderManager:
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
+        self._compatible_profiles: dict[str, dict] = {}
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
@@ -37,6 +41,54 @@ class ProviderManager:
         ):
             self.register(item)
 
+    def register_openai_compatible(self, *, name: str, base_url: str, model: str,
+                                   api_key_env: str, allowed_hosts=None, select: bool = False) -> ProviderInfo:
+        """Register an explicitly trusted OpenAI-compatible endpoint profile.
+
+        Only the environment-variable name is stored, never a credential value.
+        Provider-native protocols require their own adapter.
+        """
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,47}", name):
+            raise ValueError("custom provider name must be a lowercase stable identifier")
+        if name in {"openai", "ollama", "gemini", "hybrid", "mock"}:
+            raise ValueError("custom provider name is reserved")
+        if not isinstance(api_key_env, str) or not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", api_key_env):
+            raise ValueError("api_key_env must be an uppercase environment variable name")
+        parsed = urlsplit(base_url if isinstance(base_url, str) else "")
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if parsed.scheme.lower() != "https" or not host:
+            raise ValueError("custom cloud endpoints must use HTTPS")
+        if allowed_hosts is not None:
+            if isinstance(allowed_hosts, (str, bytes)):
+                raise TypeError("allowed_hosts must be an iterable of exact hostnames")
+            approved = {str(item).strip().rstrip(".").lower() for item in allowed_hosts}
+            if host not in approved:
+                raise ValueError("endpoint hostname must be explicitly included in allowed_hosts")
+        else:
+            approved = {host}
+        profile = {"name": name, "base_url": base_url, "model": model,
+                   "api_key_env": api_key_env, "allowed_hosts": tuple(sorted(approved))}
+        def factory(profile=profile):
+            return OpenAICompatibleProvider(
+                profile["model"], api_key_env=profile["api_key_env"],
+                base_url=profile["base_url"], allowed_hosts=profile["allowed_hosts"],
+                environ=self._environ,
+            )
+        self.register(ProviderInfo(name, ("environment_variable",), True), factory=factory)
+        self._compatible_profiles[name] = profile
+        if select:
+            result = self.select(name)
+            if not result.startswith("Selected provider:"):
+                raise RuntimeError("custom provider could not be selected")
+        return self._providers[name]
+
+    def compatible_profiles(self) -> list[dict]:
+        """Return endpoint metadata without credentials or secret values."""
+        return [
+            {key: value for key, value in profile.items() if key != "api_key_env"}
+            | {"credential_configured": bool(self._environ.get(profile["api_key_env"], "").strip())}
+            for profile in sorted(self._compatible_profiles.values(), key=lambda item: item["name"])
+        ]
     def register(self, provider: ProviderInfo, factory=None) -> None:
         if not isinstance(provider, ProviderInfo):
             raise TypeError("provider must be a ProviderInfo instance.")
@@ -125,9 +177,24 @@ class ProviderManager:
     def catalog(self):
         """Return sanitized provider/model metadata without making network calls."""
         from providers.catalog import build_provider_catalog
-        return build_provider_catalog(
+        catalog = build_provider_catalog(
             config=self._config, environ=self._environ, provider_manager=self
         )
+        known = {item["name"] for item in catalog}
+        for profile in self.compatible_profiles():
+            if profile["name"] in known:
+                continue
+            configured = profile["credential_configured"]
+            catalog.append({
+                "name": profile["name"], "label": profile["name"],
+                "implemented": True, "ready": configured,
+                "privacy": "cloud_provider", "capabilities": ["text", "tooling_provider_dependent"],
+                "configured_model": profile["model"],
+                "credential_configured": configured,
+                "selected": profile["name"] == (self._selected or ""),
+                "status": "api_key_configured" if configured else "api_key_not_configured",
+            })
+        return catalog
 
     def routing_registry(self):
         """Return a capability-filtered registry for explicit, policy-aware routing."""
