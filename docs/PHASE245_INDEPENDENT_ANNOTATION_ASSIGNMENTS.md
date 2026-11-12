@@ -5,7 +5,7 @@
 - Adds owner-created independent assignments for the same text-classification task to 2–20 distinct Yuki accounts.
 - Adds per-assignment claim, optimistic versioning, human-confirmed submission, quality assessment, and owner revocation before submission.
 - Adds an authenticated worker inbox that returns only the signed-in annotator's assignments, task input, project instructions, and rubric.
-- Adds owner-scoped agreement reporting with mean task-level pairwise label agreement and Fleiss' kappa when the evaluated tasks have a consistent number of ratings.
+- Adds owner-scoped agreement reporting with assignment completion counts, mean task-level pairwise label agreement, and Fleiss' kappa when the evaluated tasks have a consistent number of ratings.
 - Adds workbench controls for creating assignments, loading a worker's own assignments, submitting a label, and viewing agreement metrics.
 - Records assignment creation, submission, and revocation in the existing owner audit trail.
 
