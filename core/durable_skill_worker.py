@@ -7,9 +7,11 @@ not automatically replayed.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
+import hashlib
 import math
 import threading
+import time
 
 from core.guarded_skill_runtime import SkillPolicyContext
 
@@ -23,6 +25,8 @@ class DurableSkillWorker:
         worker_id: str,
         lease_seconds: int = 60,
         heartbeat_interval_seconds: float = 20,
+        approval_token_resolver: Callable[[SkillPolicyContext, str, str], str | None] | None = None,
+        approval_wait_timeout_seconds: int = 86400,
     ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
@@ -38,9 +42,24 @@ class DurableSkillWorker:
             raise ValueError("heartbeat interval must be finite, positive, and no greater than half the lease or 300 seconds")
         self.engine = engine
         self.runtime = runtime
+        if approval_token_resolver is not None and not callable(approval_token_resolver):
+            raise ValueError("approval_token_resolver must be callable")
+        resolver_worker_id = getattr(approval_token_resolver, "worker_id", None)
+        if resolver_worker_id is not None and resolver_worker_id != worker_id:
+            raise ValueError("approval resolver is bound to a different worker identity")
+        if getattr(runtime, "approval_gateway", None) is not None and approval_token_resolver is None:
+            raise ValueError("durable approval gateway requires a trusted approval_token_resolver")
+        if (
+            isinstance(approval_wait_timeout_seconds, bool)
+            or not isinstance(approval_wait_timeout_seconds, int)
+            or not 1 <= approval_wait_timeout_seconds <= 86400
+        ):
+            raise ValueError("approval_wait_timeout_seconds must be an integer from 1 to 86400")
+        self.approval_token_resolver = approval_token_resolver
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
+        self.approval_wait_timeout_seconds = approval_wait_timeout_seconds
 
     def _invoke_with_lease_heartbeat(self, task_id: str, lease_token: str, skill_name: str, argument: str, policy_context: SkillPolicyContext):
         stop = threading.Event()
@@ -67,12 +86,85 @@ class DurableSkillWorker:
         )
         heartbeat_thread.start()
         try:
-            result = self.runtime.invoke(
-                skill_name,
-                argument,
-                execution_guard=lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
-                policy_context=policy_context,
-            )
+            approval_token = None
+            approval_request_id = None
+            if self.approval_token_resolver is not None:
+                if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
+                    raise PermissionError("task claim is no longer valid before approval lookup")
+                policy_engine = getattr(self.runtime, "policy_engine", None)
+                request_factory = getattr(self.runtime, "policy_request_factory", None)
+                gateway = getattr(self.runtime, "approval_gateway", None)
+                requires_owner_approval = False
+                if policy_engine is not None and callable(request_factory) and gateway is not None:
+                    skill = self.runtime.registry.get(skill_name)
+                    if skill is None:
+                        raise PermissionError("registered skill is unavailable for policy review")
+                    policy_request = request_factory(skill_name, argument, skill, policy_context)
+                    decision = policy_engine.evaluate(policy_request)
+                    decision_name = getattr(getattr(decision, "decision", None), "value", None)
+                    requires_owner_approval = decision_name == "require_approval"
+                    if requires_owner_approval:
+                        approval_request_id = gateway.request_approval(policy_request)
+                        self.engine.record_approval_wait(
+                            task_id, self.worker_id, lease_token, approval_request_id,
+                        )
+                if requires_owner_approval:
+                    deadline = time.monotonic() + self.approval_wait_timeout_seconds
+                    while True:
+                        if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
+                            raise PermissionError("task claim changed while awaiting owner approval")
+                        approval_token = self.approval_token_resolver(
+                            policy_context, skill_name, lease_token
+                        )
+                        if approval_request_id is not None:
+                            request_status = gateway.get_request_status(approval_request_id)
+                            if request_status in {"rejected", "expired"}:
+                                claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+                                self.engine.transition_approval_wait(
+                                    task_id, claim_digest, request_status,
+                                )
+                                raise PermissionError("owner did not approve this operation")
+                        if heartbeat_errors:
+                            raise RuntimeError("task lease heartbeat failed while awaiting approval")
+                        if approval_token is not None:
+                            if not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256:
+                                raise PermissionError("approval resolver returned an invalid credential")
+                            break
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("owner approval did not arrive before the wait deadline")
+                        stop.wait(min(0.5, max(0.01, deadline - time.monotonic())))
+                    if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
+                        raise PermissionError("task claim changed during approval delivery")
+                    if requires_owner_approval:
+                        claim_digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+                        # A broker may have delivered directly before the worker
+                        # persisted its wait record. A token returned by the
+                        # worker-pinned resolver has already passed the broker's
+                        # live-claim checks, so record that delivery idempotently.
+                        if not self.engine.transition_approval_wait(
+                            task_id, claim_digest, "delivered",
+                        ):
+                            raise PermissionError("durable approval delivery could not be recorded")
+                        wait = self.engine.get_approval_wait(task_id, claim_digest)
+                        if wait is None or wait["state"] != "delivered":
+                            raise PermissionError("durable approval wait has not been delivered to this claim")
+                elif policy_engine is None:
+                    # Legacy one-shot resolver behavior remains non-blocking;
+                    # only central durable approvals create a supervised wait.
+                    approval_token = self.approval_token_resolver(
+                        policy_context, skill_name, lease_token
+                    )
+                    if approval_token is not None and (
+                        not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256
+                    ):
+                        raise PermissionError("approval resolver returned an invalid credential")
+            invoke_kwargs = {
+                "execution_guard": lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
+                "policy_context": policy_context,
+            }
+            if approval_token is not None:
+                invoke_kwargs["approval_token"] = approval_token
+            result = self.runtime.invoke(skill_name, argument, **invoke_kwargs)
         finally:
             stop.set()
             heartbeat_thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
@@ -138,6 +230,7 @@ class DurableSkillWorker:
                 trigger="durable_task",
                 goal_id=identity["goal_id"],
                 task_id=identity["task_id"],
+                claim_token_sha256=hashlib.sha256(lease_token.encode("ascii")).hexdigest(),
             )
         except (KeyError, TypeError, ValueError):
             return {

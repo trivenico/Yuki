@@ -56,6 +56,46 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
             self.service().apply(principal=self.principal, changes=[self.change()])
         self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
 
+    def test_lost_worker_claim_after_approval_prevents_workspace_write(self):
+        change = self.change()
+        def lost_claim():
+            return False
+        with self.assertRaises(WorkspaceChangeError):
+            self.service().apply(
+                principal=self.principal, changes=[change], execution_guard=lost_claim
+            )
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+        self.assertEqual(self.audit_events[-1]["outcome"], "failed")
+
+    def test_claim_loss_between_file_replacements_rolls_back_prior_write(self):
+        second = self.root / "second.py"
+        second.write_text("SECOND = 1\n", encoding="utf-8")
+        changes = [
+            self.change(),
+            FileChange(
+                "second.py", hashlib.sha256(b"SECOND = 1\n").hexdigest(),
+                "SECOND = 2\n",
+            ),
+        ]
+        checks = iter((True, True, False))
+        with self.assertRaises(WorkspaceChangeError):
+            self.service(allowed=("sample.py", "second.py")).apply(
+                principal=self.principal, changes=changes,
+                execution_guard=lambda: next(checks),
+            )
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+        self.assertEqual(second.read_text(encoding="utf-8"), "SECOND = 1\n")
+
+    def test_execution_guard_failure_fails_closed(self):
+        change = self.change()
+        def broken_guard():
+            raise RuntimeError("claim store unavailable")
+        with self.assertRaises(WorkspaceChangeError):
+            self.service().apply(
+                principal=self.principal, changes=[change], execution_guard=broken_guard
+            )
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+
     def test_stale_content_digest_rejected(self):
         change = self.change()
         self.file.write_text("VALUE = 99\n", encoding="utf-8")
@@ -97,6 +137,38 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             broken.apply(principal=self.principal, changes=[self.change()])
         self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+
+    def test_success_audit_failure_does_not_rollback_durable_commit(self):
+        def audit(event):
+            if event["outcome"] == "succeeded":
+                raise OSError("audit backend unavailable")
+            self.audit_events.append(event)
+        service = ApprovedWorkspaceChanges(
+            self.root, trusted_principal=self.trusted, approve_change=self.approve,
+            audit=audit, allowed_paths=("sample.py",),
+            journal_dir=self.root.parent / (self.root.name + "-private-journal"),
+        )
+        with self.assertRaises(WorkspaceChangeError):
+            service.apply(principal=self.principal, changes=[self.change()])
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 2\n")
+        manifests = list(service.journal.directory.glob("*/manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(service.journal._load(manifests[0].parent)["state"], "committed")
+
+    def test_journal_recovery_requires_recovery_permission_and_is_idempotent(self):
+        service = self.service()
+        recovery_principal = ToolPrincipal("alice", frozenset({"workspace:recover"}))
+        manifest = service.journal.begin(
+            actor_id="alice", operation_digest=hashlib.sha256(b"recovery").hexdigest(),
+            changes=[("sample.py", self.file, self.file.read_bytes(), b"VALUE = 2\n")],
+        )
+        service.journal.mark_applying(manifest["operation_id"])
+        os.replace(manifest["entries"][0]["stage"], self.file)
+        with self.assertRaises(ToolAuthorizationError):
+            service.recover_incomplete_transactions(self.principal)
+        self.assertEqual(service.recover_incomplete_transactions(recovery_principal), [manifest["operation_id"]])
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+        self.assertEqual(service.recover_incomplete_transactions(recovery_principal), [])
 
     def test_duplicate_paths_and_excessive_changes_rejected(self):
         change = self.change()

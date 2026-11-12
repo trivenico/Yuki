@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import hmac
+import hashlib
 import secrets
 import sqlite3
 from contextlib import closing
@@ -62,6 +63,30 @@ class DurableTaskEngine:
               id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id TEXT NOT NULL, task_id TEXT,
               event_type TEXT NOT NULL, detail_json TEXT NOT NULL, created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS events_goal_idx ON run_events(goal_id,id);
+            CREATE TABLE IF NOT EXISTS lease_recovery_outbox(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id TEXT NOT NULL,
+              worker_id TEXT NOT NULL,
+              claim_token_sha256 TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              claimed_by TEXT,
+              claim_until REAL,
+              claim_token TEXT,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(task_id,claim_token_sha256));
+            CREATE INDEX IF NOT EXISTS lease_recovery_pending_idx
+              ON lease_recovery_outbox(claim_until,id);
+            CREATE TABLE IF NOT EXISTS task_approval_waits(
+              task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+              claim_token_sha256 TEXT NOT NULL,
+              request_id TEXT NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('pending','delivered','rejected','expired','stale','completed')),
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              PRIMARY KEY(task_id,claim_token_sha256),
+              UNIQUE(request_id));
+            CREATE INDEX IF NOT EXISTS task_approval_waits_state_idx
+              ON task_approval_waits(state,updated_at);
             """)
             # Existing databases receive additive, non-destructive migrations.
             goal_columns = {row["name"] for row in c.execute("PRAGMA table_info(goals)")}
@@ -74,6 +99,9 @@ class DurableTaskEngine:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
             if "lease_token" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN lease_token TEXT")
+            recovery_columns = {row["name"] for row in c.execute("PRAGMA table_info(lease_recovery_outbox)")}
+            if "claim_token" not in recovery_columns:
+                c.execute("ALTER TABLE lease_recovery_outbox ADD COLUMN claim_token TEXT")
 
     def close(self):
         """Release engine-owned resources. Safe to call more than once."""
@@ -272,6 +300,31 @@ class DurableTaskEngine:
             }
             connection.commit()
             return result
+    def get_active_claim_by_digest(self, task_id: str, claim_token_sha256: str):
+        """Resolve a live claim's worker identity without disclosing its lease secret."""
+        if not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64:
+            return None
+        if any(char not in "0123456789abcdef" for char in claim_token_sha256):
+            return None
+        with closing(self._connect()) as c:
+            row = c.execute(
+                """SELECT id,lease_owner,lease_until,lease_token FROM tasks
+                   WHERE id=? AND state='running'""", (task_id,)
+            ).fetchone()
+        if row is None or row["lease_until"] is None or row["lease_until"] <= self.clock():
+            return None
+        if not isinstance(row["lease_token"], str):
+            return None
+        actual = hashlib.sha256(row["lease_token"].encode("ascii")).hexdigest()
+        if not hmac.compare_digest(actual, claim_token_sha256):
+            return None
+        return {"task_id": row["id"], "worker_id": row["lease_owner"]}
+
+    def validate_claim_digest(self, task_id: str, worker_id: str, claim_token_sha256: str) -> bool:
+        """Validate a live claim using its digest; never return or accept its secret."""
+        claim = self.get_active_claim_by_digest(task_id, claim_token_sha256)
+        return claim is not None and hmac.compare_digest(claim["worker_id"], worker_id)
+
     def validate_lease(self, task_id, worker_id, lease_token):
         """Return whether this exact claim still owns a live task lease."""
         try:
@@ -295,6 +348,10 @@ class DurableTaskEngine:
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_token)
             c.execute("UPDATE tasks SET state='succeeded',result_json=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",(result_json,now,task_id))
+            c.execute(
+                """UPDATE task_approval_waits SET state='completed',updated_at=?
+                   WHERE task_id=? AND state='delivered'""", (now, task_id),
+            )
             self._event(c,r["goal_id"],task_id,"task.succeeded",{"attempt":r["attempts"]})
             self._complete_goal_if_terminal(c,r["goal_id"],now); c.commit()
         return self.get_task(task_id)
@@ -310,6 +367,10 @@ class DurableTaskEngine:
             retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
             c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
+            c.execute(
+                """UPDATE task_approval_waits SET state='stale',updated_at=?
+                   WHERE task_id=? AND state IN ('pending','delivered')""", (now, task_id),
+            )
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
             if not retry:
                 self._fail_blocked_descendants(c, r["goal_id"], now)
@@ -328,6 +389,9 @@ class DurableTaskEngine:
             "unsafe_retry_policy": "side-effecting tasks must use a single attempt",
             "invalid_payload": "skill invocation payload is invalid",
             "unowned_goal": "task goal has no authenticated owner",
+            "invalid_claim_identity": "durable task owner identity could not be verified",
+            "unsupported_or_retryable_workspace_task": "workspace task type or retry policy is not supported",
+            "invalid_workspace_payload": "workspace operation payload is invalid",
         }
         if not isinstance(reason, str) or reason not in messages:
             raise ValueError("invalid task rejection reason")
@@ -340,6 +404,10 @@ class DurableTaskEngine:
                 """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
                    lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?""",
                 (safe_error, now, task_id),
+            )
+            c.execute(
+                """UPDATE task_approval_waits SET state='stale',updated_at=?
+                   WHERE task_id=? AND state IN ('pending','delivered')""", (now, task_id),
             )
             self._event(c, r["goal_id"], task_id, "task.rejected", {"reason": reason})
             self._fail_blocked_descendants(c, r["goal_id"], now)
@@ -354,6 +422,19 @@ class DurableTaskEngine:
             rows=c.execute("SELECT * FROM tasks WHERE state='running' AND lease_until<=?",(now,)).fetchall()
             for r in rows:
                 retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
+                if r["lease_owner"] and r["lease_token"]:
+                    claim_digest = hashlib.sha256(r["lease_token"].encode("ascii")).hexdigest()
+                    c.execute(
+                        """INSERT OR IGNORE INTO lease_recovery_outbox
+                           (task_id,worker_id,claim_token_sha256,created_at)
+                           VALUES(?,?,?,?)""",
+                        (r["id"], r["lease_owner"], claim_digest, now),
+                    )
+                c.execute(
+                    """UPDATE task_approval_waits SET state='stale',updated_at=?
+                       WHERE task_id=? AND state IN ('pending','delivered')""",
+                    (now, r["id"]),
+                )
                 c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,lease_token=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
                 if not retry:
@@ -362,6 +443,167 @@ class DurableTaskEngine:
                 count+=1
             c.commit()
         return count
+
+
+    def record_approval_wait(
+        self, task_id: str, worker_id: str, lease_token: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Persist an approval wait bound to the currently owned claim generation."""
+        if not isinstance(request_id, str) or len(request_id) != 32 or any(
+            char not in "0123456789abcdef" for char in request_id
+        ):
+            raise ValueError("request_id must be a 32-character lowercase hex identifier")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            task = self._owned(c, task_id, worker_id, lease_token)
+            digest = hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+            old = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? AND claim_token_sha256=?",
+                (task_id, digest),
+            ).fetchone()
+            if old is not None:
+                if old["request_id"] != request_id:
+                    c.rollback()
+                    raise TaskConflict("claim already has a different approval request")
+                c.commit()
+                return {key: old[key] for key in (
+                    "task_id", "request_id", "state", "created_at", "updated_at"
+                )}
+            c.execute(
+                """INSERT INTO task_approval_waits
+                   (task_id,claim_token_sha256,request_id,state,created_at,updated_at)
+                   VALUES(?,?,?,'pending',?,?)""",
+                (task_id, digest, request_id, now, now),
+            )
+            self._event(c, task["goal_id"], task_id, "task.awaiting_approval",
+                        {"request_id": request_id})
+            c.commit()
+        return self.get_approval_wait(task_id, digest)
+
+    def get_approval_wait(self, task_id: str, claim_token_sha256: str) -> dict[str, Any] | None:
+        if (not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in claim_token_sha256)):
+            raise ValueError("claim digest is invalid")
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? AND claim_token_sha256=?",
+                (task_id, claim_token_sha256),
+            ).fetchone()
+        if row is None:
+            return None
+        return {key: row[key] for key in ("task_id", "request_id", "state", "created_at", "updated_at")}
+
+    def transition_approval_wait(
+        self, task_id: str, claim_token_sha256: str, state: str,
+    ) -> bool:
+        """Apply monotonic approval-wait lifecycle transitions."""
+        transitions = {
+            "pending": {"delivered", "rejected", "expired", "stale"},
+            "delivered": {"completed", "stale"},
+        }
+        if (not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in claim_token_sha256)):
+            raise ValueError("claim digest is invalid")
+        if state not in {"delivered", "rejected", "expired", "stale", "completed"}:
+            raise ValueError("invalid approval wait state")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? AND claim_token_sha256=?",
+                (task_id, claim_token_sha256),
+            ).fetchone()
+            if row is None:
+                c.commit()
+                return False
+            if state not in transitions.get(row["state"], set()):
+                c.commit()
+                return row["state"] == state
+            c.execute(
+                """UPDATE task_approval_waits SET state=?,updated_at=?
+                   WHERE task_id=? AND claim_token_sha256=? AND state=?""",
+                (state, now, task_id, claim_token_sha256, row["state"]),
+            )
+            c.commit()
+            return True
+
+    def list_approval_waits(self, task_id: str) -> tuple[dict[str, Any], ...]:
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT * FROM task_approval_waits WHERE task_id=? ORDER BY created_at",
+                (task_id,),
+            ).fetchall()
+        return tuple(
+            {key: row[key] for key in ("task_id", "request_id", "state", "created_at", "updated_at")}
+            for row in rows
+        )
+
+    def claim_recovery_outbox(self, supervisor_id: str, *, limit: int = 50, lease_seconds: int = 60):
+        """Lease pending credential-revocation work to one trusted supervisor."""
+        if not isinstance(supervisor_id, str) or not supervisor_id or len(supervisor_id) > 256:
+            raise ValueError("invalid supervisor_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit must be in 1..500")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be in 1..3600")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            rows = c.execute(
+                """SELECT * FROM lease_recovery_outbox
+                   WHERE claim_until IS NULL OR claim_until<=?
+                   ORDER BY id LIMIT ?""", (now, limit),
+            ).fetchall()
+            result = []
+            for row in rows:
+                claim_token = secrets.token_urlsafe(32)
+                changed = c.execute(
+                    """UPDATE lease_recovery_outbox
+                       SET claimed_by=?,claim_until=?,claim_token=?,attempts=attempts+1
+                       WHERE id=? AND (claim_until IS NULL OR claim_until<=?)""",
+                    (supervisor_id, now + lease_seconds, claim_token, row["id"], now),
+                ).rowcount
+                if changed == 1:
+                    item = dict(row)
+                    item["claimed_by"] = supervisor_id
+                    item["claim_until"] = now + lease_seconds
+                    item["claim_token"] = claim_token
+                    item["attempts"] = row["attempts"] + 1
+                    result.append(item)
+            c.commit()
+            return result
+
+    def acknowledge_recovery_outbox(self, event_id: int, supervisor_id: str, claim_token: str) -> bool:
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
+            raise ValueError("invalid recovery event id")
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            if not isinstance(claim_token, str) or not claim_token:
+                raise ValueError("recovery claim token is required")
+            changed = c.execute(
+                "DELETE FROM lease_recovery_outbox WHERE id=? AND claimed_by=? AND claim_token=?",
+                (event_id, supervisor_id, claim_token),
+            ).rowcount
+            c.commit()
+            return changed == 1
+
+    def release_recovery_outbox(self, event_id: int, supervisor_id: str, claim_token: str) -> bool:
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
+            raise ValueError("invalid recovery event id")
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            if not isinstance(claim_token, str) or not claim_token:
+                raise ValueError("recovery claim token is required")
+            changed = c.execute(
+                """UPDATE lease_recovery_outbox
+                   SET claimed_by=NULL,claim_until=NULL,claim_token=NULL
+                   WHERE id=? AND claimed_by=? AND claim_token=?""",
+                (event_id, supervisor_id, claim_token),
+            ).rowcount
+            c.commit()
+            return changed == 1
 
     def cancel_task(self,task_id,*,owner_id=None):
         if owner_id is not None:
@@ -383,6 +625,10 @@ class DurableTaskEngine:
                     "running task cannot be cancelled safely; wait for the worker to finish"
                 )
             c.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,lease_token=NULL,updated_at=? WHERE id=?",(now,task_id))
+            c.execute(
+                """UPDATE task_approval_waits SET state='stale',updated_at=?
+                   WHERE task_id=? AND state IN ('pending','delivered')""", (now, task_id),
+            )
             self._event(c,r["goal_id"],task_id,"task.cancelled",{})
             self._fail_blocked_descendants(c, r["goal_id"], now)
             self._complete_goal_if_terminal(c,r["goal_id"],now)

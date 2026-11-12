@@ -1,4 +1,6 @@
 import sqlite3
+from contextlib import closing
+import hashlib
 import tempfile
 import threading
 import unittest
@@ -10,8 +12,10 @@ from core.durable_task_engine import DurableTaskEngine, TaskConflict, TaskNotFou
 class DurableTaskEngineTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "tasks.sqlite"
         self.engine = DurableTaskEngine(self.db)
+        self.addCleanup(self.engine.close)
         self.goal = self.engine.create_goal()
         self._install_claim_token_test_adapter(self.engine)
 
@@ -50,8 +54,95 @@ class DurableTaskEngineTests(unittest.TestCase):
         engine.fail = fail_with_token
         engine.reject = reject_with_token
 
-    def tearDown(self):
-        self.tmp.cleanup()
+    def test_expired_claim_creates_leased_durable_revocation_outbox(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="recovery-outbox"
+        )
+        claimed = self.engine.claim("recovery-worker")
+        self.assertEqual(claimed["id"], task["id"])
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+            db.commit()
+        self.assertEqual(self.engine.recover_expired_leases(), 1)
+        first = self.engine.claim_recovery_outbox("supervisor-a")
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first[0]["task_id"], task["id"])
+        self.assertEqual(first[0]["worker_id"], "recovery-worker")
+        self.assertEqual(len(first[0]["claim_token_sha256"]), 64)
+        self.assertNotIn("lease_token", first[0])
+        # A second supervisor cannot take an item while its processing lease is live.
+        self.assertEqual(self.engine.claim_recovery_outbox("supervisor-b"), [])
+        self.assertTrue(self.engine.release_recovery_outbox(first[0]["id"], "supervisor-a", first[0]["claim_token"]))
+        second = self.engine.claim_recovery_outbox("supervisor-b")
+        self.assertEqual(len(second), 1)
+        self.assertTrue(
+            self.engine.acknowledge_recovery_outbox(second[0]["id"], "supervisor-b", second[0]["claim_token"])
+        )
+        self.assertEqual(self.engine.claim_recovery_outbox("supervisor-c"), [])
+
+    def test_recovery_outbox_rejects_stale_supervisor_claim_token(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="recovery-outbox-fence"
+        )
+        claimed = self.engine.claim("recovery-worker-fence")
+        self.assertEqual(claimed["id"], task["id"])
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+            db.commit()
+        self.engine.recover_expired_leases()
+        first = self.engine.claim_recovery_outbox("same-supervisor")
+        self.assertEqual(len(first), 1)
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute(
+                "UPDATE lease_recovery_outbox SET claim_until=0 WHERE id=?",
+                (first[0]["id"],),
+            )
+            db.commit()
+        second = self.engine.claim_recovery_outbox("same-supervisor")
+        self.assertEqual(len(second), 1)
+        self.assertNotEqual(first[0]["claim_token"], second[0]["claim_token"])
+        self.assertFalse(self.engine.acknowledge_recovery_outbox(
+            first[0]["id"], "same-supervisor", first[0]["claim_token"]
+        ))
+        self.assertTrue(self.engine.acknowledge_recovery_outbox(
+            second[0]["id"], "same-supervisor", second[0]["claim_token"]
+        ))
+
+    def test_approval_wait_is_durable_and_stale_after_claim_recovery(self):
+        task = self.engine.submit(
+            self.goal, "skill.invoke", {"skill_name": "write", "argument": "x"},
+            idempotency_key="durable-approval-wait", max_attempts=2,
+        )
+        claimed = self.engine.claim("approval-worker")
+        request_id = "a" * 32
+        wait = self.engine.record_approval_wait(
+            task["id"], "approval-worker", claimed["lease_token"], request_id,
+        )
+        self.assertEqual(wait["state"], "pending")
+        reopened = DurableTaskEngine(self.db)
+        self.addCleanup(reopened.close)
+        digest = hashlib.sha256(claimed["lease_token"].encode("ascii")).hexdigest()
+        self.assertEqual(
+            reopened.get_approval_wait(task["id"], digest)["request_id"], request_id
+        )
+        self.assertTrue(reopened.transition_approval_wait(task["id"], digest, "delivered"))
+        self.assertTrue(reopened.transition_approval_wait(task["id"], digest, "delivered"))
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+            db.commit()
+        self.assertEqual(reopened.recover_expired_leases(), 1)
+        self.assertEqual(reopened.get_approval_wait(task["id"], digest)["state"], "stale")
+        self.assertFalse(reopened.transition_approval_wait(task["id"], digest, "completed"))
+        self.assertEqual(reopened.get_task(task["id"])["state"], "queued")
+        replacement = reopened.claim("replacement-worker")
+        self.assertNotEqual(
+            __import__("hashlib").sha256(replacement["lease_token"].encode("ascii")).hexdigest(),
+            digest,
+        )
+        self.assertIsNone(reopened.get_approval_wait(
+            task["id"],
+            __import__("hashlib").sha256(replacement["lease_token"].encode("ascii")).hexdigest(),
+        ))
 
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")

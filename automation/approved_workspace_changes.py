@@ -19,6 +19,7 @@ import time
 from typing import Callable, Mapping, Sequence
 
 from automation.authorized_read_tools import ToolPrincipal, ToolInputError, ToolAuthorizationError
+from automation.workspace_transaction_journal import WorkspaceTransactionJournal
 
 _MAX_CHANGES = 8
 _MAX_FILE_BYTES = 256 * 1024
@@ -110,6 +111,7 @@ class ApprovedWorkspaceChanges:
         approve_change: Callable[[str, str, str], bool],
         audit: Callable[[dict], None],
         allowed_paths: Sequence[str],
+        journal_dir: str | Path | None = None,
     ):
         root = Path(workspace).expanduser().resolve()
         if not root.is_dir():
@@ -123,6 +125,7 @@ class ApprovedWorkspaceChanges:
         self.approve_change = approve_change
         self.audit = audit
         self.allowed_paths = frozenset(allowed_paths)
+        self.journal = WorkspaceTransactionJournal(root, journal_dir)
 
     def _audit(self, actor: str, action: str, outcome: str, digest: str, paths: Sequence[str]) -> None:
         try:
@@ -131,7 +134,43 @@ class ApprovedWorkspaceChanges:
         except Exception as exc:
             raise RuntimeError("audit unavailable; workspace operation denied.") from exc
 
-    def apply(self, *, principal: ToolPrincipal, changes: Sequence[FileChange]) -> ChangeResult:
+    def validate_principal(self, principal: ToolPrincipal) -> None:
+        """Validate the owner identity and workspace-write permission without side effects."""
+        _validate_principal(principal, self.trusted_principal, "workspace:write")
+
+    def recover_incomplete_transactions(self, principal: ToolPrincipal) -> list[str]:
+        """Run trusted compensating recovery; this is independent of expired worker claims."""
+        _validate_principal(principal, self.trusted_principal, "workspace:recover")
+        return self.journal.recover_pending()
+
+    def validate_proposal(self, changes: Sequence[FileChange]) -> None:
+        """Preflight the exact proposal before creating an owner approval request."""
+        if not isinstance(changes, (tuple, list)) or not 1 <= len(changes) <= _MAX_CHANGES:
+            raise ToolInputError("one to eight file changes are required.")
+        seen = set()
+        total = 0
+        for change in changes:
+            if not isinstance(change, FileChange):
+                raise ToolInputError("each change must be a FileChange.")
+            if not isinstance(change.path, str) or change.path not in self.allowed_paths or change.path in seen:
+                raise ToolAuthorizationError("path is not explicitly allowed or is duplicated.")
+            seen.add(change.path)
+            if not isinstance(change.expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", change.expected_sha256):
+                raise ToolInputError("expected_sha256 must be a lowercase SHA-256 digest.")
+            if not isinstance(change.content, str) or "\x00" in change.content:
+                raise ToolInputError("file content must be text without NUL bytes.")
+            encoded = change.content.encode("utf-8")
+            total += len(encoded)
+            if len(encoded) > _MAX_FILE_BYTES or total > _MAX_PATCH_BYTES:
+                raise ToolInputError("proposed changes exceed the size limit.")
+            target = _safe_existing_file(self.root, change.path)
+            if hashlib.sha256(target.read_bytes()).hexdigest() != change.expected_sha256:
+                raise WorkspaceChangeError("file changed since proposal; refresh and reapprove.")
+
+    def apply(
+        self, *, principal: ToolPrincipal, changes: Sequence[FileChange],
+        execution_guard: Callable[[], bool] | None = None,
+    ) -> ChangeResult:
         _validate_principal(principal, self.trusted_principal, "workspace:write")
         if not isinstance(changes, (tuple, list)) or not 1 <= len(changes) <= _MAX_CHANGES:
             raise ToolInputError("one to eight file changes are required.")
@@ -171,47 +210,55 @@ class ApprovedWorkspaceChanges:
             self._audit(principal.actor_id, "workspace.apply", "denied", digest, [x[0] for x in normalized])
             raise ToolAuthorizationError("explicit approval for this exact change digest is required.")
 
-        staged = []
-        replaced = []
+        manifest = self.journal.begin(
+            actor_id=principal.actor_id, operation_digest=digest,
+            changes=[(relative, target, old, new) for relative, target, old, new in normalized],
+        )
+        operation_id = manifest["operation_id"]
         try:
-            for relative, target, old, new in normalized:
-                fd, temp_name = tempfile.mkstemp(prefix=".yuki-stage-", dir=str(target.parent))
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(new)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.chmod(temp_name, target.stat().st_mode & 0o777)
-                staged.append((relative, target, old, Path(temp_name)))
-            # Recheck all source digests immediately before replacing any file.
-            for relative, target, old, _ in staged:
-                if hashlib.sha256(target.read_bytes()).digest() != hashlib.sha256(old).digest():
-                    raise WorkspaceChangeError("file changed during approval; no changes applied.")
-            for relative, target, old, temp_path in staged:
-                os.replace(temp_path, target)
-                replaced.append((relative, target, old))
-            # Treat failure to persist the success audit event as an operation failure.
+            self.journal.mark_applying(operation_id)
+            if execution_guard is not None:
+                try:
+                    claim_valid = callable(execution_guard) and execution_guard() is True
+                except Exception:
+                    claim_valid = False
+                if not claim_valid:
+                    raise WorkspaceChangeError("worker claim is no longer valid after staging.")
+            for entry in manifest["entries"]:
+                relative, target = entry["path"], Path(entry["target"])
+                if execution_guard is not None:
+                    try:
+                        claim_valid = callable(execution_guard) and execution_guard() is True
+                    except Exception:
+                        claim_valid = False
+                    if not claim_valid:
+                        raise WorkspaceChangeError("worker claim changed before file replacement.")
+                current_target = _safe_existing_file(self.root, relative)
+                if current_target != target:
+                    raise WorkspaceChangeError("workspace path changed during approval.")
+                if hashlib.sha256(current_target.read_bytes()).hexdigest() != entry["old_sha256"]:
+                    raise WorkspaceChangeError("file changed during approval.")
+                os.replace(entry["stage"], current_target)
+                self.journal._fsync_directory(current_target.parent)
+                self.journal.record_replacement(operation_id, relative)
+            self.journal.mark_committed(operation_id)
+        except Exception as exc:
+            try:
+                self.journal.rollback(operation_id)
+            except Exception as rollback_exc:
+                try:
+                    self._audit(principal.actor_id, "workspace.apply", "recovery_required", digest, [x[0] for x in normalized])
+                except Exception:
+                    pass
+                raise WorkspaceChangeError("change failed and durable rollback needs operator attention.") from rollback_exc
+            self._audit(principal.actor_id, "workspace.apply", "failed", digest, [x[0] for x in normalized])
+            raise WorkspaceChangeError("change failed; durable rollback completed.") from exc
+
+        # The durable commit marker is authoritative. Never roll back after it.
+        try:
             self._audit(principal.actor_id, "workspace.apply", "succeeded", digest, [x[0] for x in normalized])
         except Exception as exc:
-            rollback_errors = []
-            for _, target, old in reversed(replaced):
-                try:
-                    fd, restore_name = tempfile.mkstemp(prefix=".yuki-restore-", dir=str(target.parent))
-                    with os.fdopen(fd, "wb") as handle:
-                        handle.write(old)
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.replace(restore_name, target)
-                except Exception as rollback_exc:
-                    rollback_errors.append(type(rollback_exc).__name__)
-            for _, _, _, temp_path in staged:
-                try:
-                    temp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            self._audit(principal.actor_id, "workspace.apply", "failed", digest, [x[0] for x in normalized])
-            if rollback_errors:
-                raise WorkspaceChangeError("change failed and rollback needs operator attention.") from exc
-            raise WorkspaceChangeError("change failed; replaced files were rolled back.") from exc
+            raise WorkspaceChangeError("workspace changes committed, but success audit persistence failed; operator reconciliation required.") from exc
         return ChangeResult(change_id, principal.actor_id, tuple(x[0] for x in normalized), digest)
 
 
