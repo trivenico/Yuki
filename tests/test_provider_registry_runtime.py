@@ -188,6 +188,11 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         with patch("providers.openai_compatible.socket.getaddrinfo", return_value=mixed):
             with self.assertRaisesRegex(ValueError, "non-public"):
                 _resolve_public_addresses("gateway.example.test", 443)
+        nat64 = [(socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+                  ("64:ff9b::7f00:1", 443, 0, 0))]
+        with patch("providers.openai_compatible.socket.getaddrinfo", return_value=nat64):
+            with self.assertRaisesRegex(ValueError, "non-public"):
+                _resolve_public_addresses("gateway.example.test", 443)
 
     def test_provider_dns_resolution_returns_only_validated_public_targets(self):
         from providers.openai_compatible import _resolve_public_addresses
