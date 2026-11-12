@@ -129,6 +129,7 @@ class ProviderProfileStore:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
+        db.execute("PRAGMA foreign_keys=ON")
         if os.name != "nt":
             os.chmod(self.path, 0o600)
         return db
@@ -303,6 +304,8 @@ class ProviderProfileStore:
             if row is None:
                 db.rollback()
                 return False
+            db.execute("DELETE FROM provider_profile_selection WHERE owner_id=? AND profile_name=?",
+                       (owner, profile_name))
             db.execute("DELETE FROM provider_profiles WHERE owner_id=? AND name=?",
                        (owner, profile_name))
             db.commit()
