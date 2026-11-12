@@ -239,7 +239,10 @@ class CapabilityApprovalGateway:
         return token
 
 
-    def request_approval(self, request: PolicyRequest, *, ttl_seconds: int = 86400) -> str:
+    def request_approval(
+        self, request: PolicyRequest, *, ttl_seconds: int = 86400,
+        operation: ApprovalOperation | None = None,
+    ) -> str:
         """Persist an approval request; duplicate live requests are idempotent."""
         digest = self._request_digest(request)
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86400:
