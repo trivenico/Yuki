@@ -95,6 +95,8 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["requests"][0]["request_id"], request_id)
+        self.assertEqual(body["requests"][0]["risk"], "high")
+        self.assertEqual(body["requests"][0]["trigger"], "durable_task")
         self.assertNotIn("request_json", repr(body))
         self.assertNotIn("argument_sha256", repr(body))
         self.assertNotIn("claim_token_sha256", repr(body))
