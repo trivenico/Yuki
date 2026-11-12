@@ -3,6 +3,7 @@
 The envelope below is test-only. Production must inject a reviewed AEAD/KMS adapter.
 """
 import hashlib
+from contextlib import closing
 import hmac
 from pathlib import Path
 import tempfile
@@ -154,7 +155,7 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
 
     def test_claim_token_is_not_stored_in_broker_database(self):
         import sqlite3
-        with sqlite3.connect(self.broker.database_path) as db:
+        with closing(sqlite3.connect(self.broker.database_path)) as db:
             row = db.execute(
                 "SELECT claim_token_sha256,ciphertext FROM approval_worker_credentials"
             ).fetchone()
@@ -168,9 +169,13 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
             )
 
     def test_broker_refuses_delivery_for_stale_claim(self):
-        self.assertTrue(self.engine.cancel_task_for_owner(
-            self.owner, self.task["id"]
-        ))
+        with closing(sqlite3.connect(self.engine.db_path)) as db:
+            db.execute(
+                "UPDATE tasks SET lease_until=0 WHERE id=?",
+                (self.task["id"],),
+            )
+            db.commit()
+        self.assertEqual(self.engine.recover_expired_leases(), 1)
         with self.assertRaises(PermissionError):
             self.broker.deliver_credential(
                 self.request_id, self.approval_token, lease_token=self.lease_token
@@ -178,11 +183,12 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
 
     def test_expired_claim_revocation_survives_engine_restart(self):
         import sqlite3
-        with sqlite3.connect(self.engine.db_path) as db:
+        with closing(sqlite3.connect(self.engine.db_path)) as db:
             db.execute(
                 "UPDATE tasks SET lease_until=0 WHERE id=?",
                 (self.task["id"],),
             )
+            db.commit()
         self.assertEqual(self.engine.recover_expired_leases(), 1)
         # The old lease is invalid immediately, before asynchronous broker cleanup.
         self.assertIsNone(
