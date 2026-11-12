@@ -1594,6 +1594,12 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if task is None:
                 return None
+            already_adjudicated = db.execute(
+                "SELECT 1 FROM annotation_adjudications WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if already_adjudicated is not None:
+                raise ValueError("task_already_adjudicated")
             if task["status"] in {"accepted", "completed"}:
                 raise ValueError("task_already_delivered")
             if not is_owner:
