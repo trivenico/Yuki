@@ -180,7 +180,7 @@ class WorkspaceTransactionJournal:
                     or not isinstance(entry["path"], str)
                     or not isinstance(entry["target"], str)
                     or not isinstance(entry["backup"], str)
-                    or not re.fullmatch(r"backup-[0-7][0-9].bin", entry["backup"])
+                    or not re.fullmatch(r"backup-0[0-7].bin", entry["backup"])
                     or not isinstance(entry["stage"], str)
                     or not re.fullmatch(r"[0-9a-f]{64}", entry["old_sha256"])
                     or not re.fullmatch(r"[0-9a-f]{64}", entry["new_sha256"])
