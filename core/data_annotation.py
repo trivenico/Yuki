@@ -2077,8 +2077,8 @@ class SQLiteAnnotationWorkbench:
                 },
                 "limitations": [
                     "Only blinded gold-standard results are evaluated; ordinary task labels are not treated as ground truth.",
-                    "Statistical alerts require both sample thresholds and the configured effect-size and significance thresholds.",
-                    "Windows are fixed rolling periods; seasonality, task difficulty shifts, and multiple-comparison correction are not modeled.",
+                    "Statistical alerts require sample thresholds, the configured effect-size threshold, and Benjamini-Hochberg false-discovery control.",
+                    "Windows are fixed rolling periods; seasonality and task-difficulty shifts are not modeled; Benjamini-Hochberg correction is applied across eligible annotators.",
                     "An alert is a review signal, not an automatic worker suspension or routing decision.",
                 ],
             }
