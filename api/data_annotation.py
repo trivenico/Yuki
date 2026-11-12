@@ -164,7 +164,7 @@ class AuthenticatedAnnotationAPI:
                 for task_data in payload["tasks"]:
                     if not isinstance(task_data, dict):
                         return await self._respond(send, 400, {"error": "invalid_request"})
-                    self._validate_task_asset_ref(
+                    await self._validate_task_asset_ref(
                         user.user_id, project_id, task_data.get("asset_ref")
                     )
                 tasks = await asyncio.to_thread(
@@ -198,7 +198,7 @@ class AuthenticatedAnnotationAPI:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     if set(payload) - _TASK_FIELDS:
                         return await self._respond(send, 400, {"error": "invalid_request"})
-                    self._validate_task_asset_ref(
+                    await self._validate_task_asset_ref(
                         user.user_id, project_id, payload.get("asset_ref")
                     )
                     task = await asyncio.to_thread(
@@ -293,13 +293,16 @@ class AuthenticatedAnnotationAPI:
             return None
         return await asyncio.to_thread(self.auth.resolve_session, token)
 
-    def _validate_task_asset_ref(self, owner_id, project_id, asset_ref):
+    async def _validate_task_asset_ref(self, owner_id, project_id, asset_ref):
         """Only bind a task to an existing, clean asset in this owner's project."""
         if asset_ref is None:
             return
         if self.asset_store is None:
             raise ValueError("annotation_asset_store_required")
-        if self.asset_store.get_asset(owner_id, project_id, asset_ref) is None:
+        asset = await asyncio.to_thread(
+            self.asset_store.get_asset, owner_id, project_id, asset_ref
+        )
+        if asset is None:
             raise ValueError("annotation_asset_not_clean_or_not_found")
 
     def _read_clean_asset(self, owner_id, project_id, asset_id):
