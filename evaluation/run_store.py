@@ -33,6 +33,10 @@ class EvaluationRunConflict(RuntimeError):
     """An idempotency key was reused for different evaluation content."""
 
 
+class EvaluationRunInProgress(RuntimeError):
+    """Another worker currently owns the idempotency key's live lease."""
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluationRun:
     run_id: str
@@ -104,6 +108,16 @@ class EvaluationRunStore:
                 "CREATE INDEX IF NOT EXISTS idx_evaluation_runs_owner_created "
                 "ON evaluation_runs(owner_id, created_at DESC, run_id)"
             )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS evaluation_claims (
+                    owner_id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    lease_token TEXT NOT NULL,
+                    expires_at REAL NOT NULL,
+                    PRIMARY KEY(owner_id, idempotency_key)
+                )
+            """)
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
@@ -154,11 +168,85 @@ class EvaluationRunStore:
             record_digest=row["record_digest"], created_at=row["created_at"],
         )
 
+    @staticmethod
+    def request_digest_for(
+        *, benchmark_id: str, benchmark_version: int, benchmark_digest: str,
+        candidate_id: str, provider_id: str, model_id: str,
+        environment: Mapping[str, str],
+    ) -> str:
+        benchmark = EvaluationRunStore._required_text(benchmark_id, "benchmark_id", 100)
+        candidate = EvaluationRunStore._required_text(candidate_id, "candidate_id", 200)
+        provider = EvaluationRunStore._required_text(provider_id, "provider_id", 100)
+        model = EvaluationRunStore._required_text(model_id, "model_id", 200)
+        if type(benchmark_version) is not int or benchmark_version < 1:
+            raise ValueError("benchmark_version must be a positive integer")
+        if not isinstance(benchmark_digest, str) or not _DIGEST_RE.fullmatch(benchmark_digest):
+            raise ValueError("benchmark_digest must be a SHA-256 hex digest")
+        env = EvaluationRunStore._environment(environment)
+        return EvaluationRunStore._record_digest({
+            "benchmark_id": benchmark, "benchmark_version": benchmark_version,
+            "benchmark_digest": benchmark_digest, "candidate_id": candidate,
+            "provider_id": provider, "model_id": model, "environment": env,
+        })
+
+    def acquire_claim(
+        self, *, owner_id: str, idempotency_key: str, request_digest: str,
+        lease_seconds: int = 900,
+    ) -> str | None:
+        """Atomically claim a run key; None means a matching completed run won the race."""
+        owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
+        key = self._required_text(idempotency_key, "idempotency_key", _MAX_IDEMPOTENCY_CHARS)
+        if not isinstance(request_digest, str) or not _DIGEST_RE.fullmatch(request_digest):
+            raise ValueError("request_digest must be a SHA-256 hex digest")
+        if type(lease_seconds) is not int or not 30 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer between 30 and 3600")
+        now = datetime.now(timezone.utc).timestamp()
+        token = secrets.token_urlsafe(32)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            completed = db.execute(
+                "SELECT request_digest FROM evaluation_runs WHERE owner_id=? AND idempotency_key=?",
+                (owner, key),
+            ).fetchone()
+            if completed is not None:
+                if not hmac.compare_digest(completed["request_digest"], request_digest):
+                    raise EvaluationRunConflict("idempotency key was used for different evaluation content")
+                return None
+            claim = db.execute(
+                "SELECT request_digest, expires_at FROM evaluation_claims WHERE owner_id=? AND idempotency_key=?",
+                (owner, key),
+            ).fetchone()
+            if claim is not None and claim["expires_at"] > now:
+                if not hmac.compare_digest(claim["request_digest"], request_digest):
+                    raise EvaluationRunConflict("idempotency key is claimed for different evaluation content")
+                raise EvaluationRunInProgress("evaluation with this idempotency key is already running")
+            db.execute(
+                "INSERT INTO evaluation_claims(owner_id,idempotency_key,request_digest,lease_token,expires_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(owner_id,idempotency_key) DO UPDATE SET "
+                "request_digest=excluded.request_digest, lease_token=excluded.lease_token, "
+                "expires_at=excluded.expires_at",
+                (owner, key, request_digest, token, now + lease_seconds),
+            )
+        return token
+
+    def release_claim(self, *, owner_id: str, idempotency_key: str, lease_token: str) -> bool:
+        owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
+        key = self._required_text(idempotency_key, "idempotency_key", _MAX_IDEMPOTENCY_CHARS)
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("lease_token is required")
+        with self._connect() as db:
+            cursor = db.execute(
+                "DELETE FROM evaluation_claims WHERE owner_id=? AND idempotency_key=? AND lease_token=?",
+                (owner, key, lease_token),
+            )
+            return cursor.rowcount == 1
+
     def record(
         self, *, owner_id: str, idempotency_key: str, benchmark_id: str,
         benchmark_version: int, benchmark_digest: str, candidate_id: str,
         provider_id: str, model_id: str, environment: Mapping[str, str],
         report: EvalReport,
+        lease_token: str | None = None,
     ) -> EvaluationRun:
         owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
         key = self._required_text(idempotency_key, "idempotency_key", _MAX_IDEMPOTENCY_CHARS)
@@ -195,6 +283,16 @@ class EvaluationRunStore:
         record_digest = self._record_digest(record_fields)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if lease_token is not None:
+                claim = db.execute(
+                    "SELECT request_digest, lease_token, expires_at FROM evaluation_claims "
+                    "WHERE owner_id=? AND idempotency_key=?",
+                    (owner, key),
+                ).fetchone()
+                if (claim is None or not hmac.compare_digest(claim["lease_token"], lease_token)
+                    or claim["expires_at"] <= datetime.now(timezone.utc).timestamp()
+                    or not hmac.compare_digest(claim["request_digest"], request_digest)):
+                    raise EvaluationRunInProgress("evaluation lease is missing, expired, or no longer owned")
             old = db.execute(
                 "SELECT * FROM evaluation_runs WHERE owner_id=? AND idempotency_key=?",
                 (owner, key),
@@ -218,6 +316,11 @@ class EvaluationRunStore:
                 benchmark_digest, candidate, provider, model, environment_json,
                 report_json, report_digest, record_digest, now,
             ))
+            if lease_token is not None:
+                db.execute(
+                    "DELETE FROM evaluation_claims WHERE owner_id=? AND idempotency_key=? AND lease_token=?",
+                    (owner, key, lease_token),
+                )
             return self._from_row(db.execute(
                 "SELECT * FROM evaluation_runs WHERE run_id=?", (run_id,)
             ).fetchone())
