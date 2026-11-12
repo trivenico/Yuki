@@ -169,6 +169,40 @@ class AnnotationAssetAPITests(unittest.TestCase):
         )
         self.assertEqual(json.loads(body)["tasks"], [])
 
+    def test_safe_inline_preview_reencodes_clean_raster_and_is_owner_scoped(self):
+        from io import BytesIO
+        from PIL import Image
+
+        original = BytesIO()
+        source = Image.new("RGB", (8, 6), (20, 40, 60))
+        source.save(original, format="JPEG", exif=b"")
+        source.close()
+        upload_path = f"/v1/annotation/projects/{self.project_id}/assets"
+        status, body, _ = self.request(
+            "POST", upload_path, original.getvalue(), self.owner.token,
+            "application/octet-stream",
+        )
+        self.assertEqual(status, 201)
+        asset_id = json.loads(body)["asset_id"]
+        preview_path = upload_path + "/" + asset_id + "/preview"
+
+        status, preview, headers = self.request(
+            "GET", preview_path, token=self.owner.token
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b"content-type"], b"image/png")
+        self.assertEqual(headers[b"content-disposition"], b"inline")
+        self.assertEqual(headers[b"cache-control"], b"no-store")
+        self.assertEqual(headers[b"x-content-type-options"], b"nosniff")
+        self.assertIn(b"sandbox", headers[b"content-security-policy"])
+        with Image.open(BytesIO(preview)) as decoded:
+            self.assertEqual(decoded.format, "PNG")
+            self.assertEqual(decoded.size, (8, 6))
+            self.assertFalse(decoded.info)
+
+        status, _, _ = self.request("GET", preview_path, token=self.other.token)
+        self.assertEqual(status, 404)
+
     def test_rejects_wrong_content_type_and_unknown_project(self):
         path = f"/v1/annotation/projects/{self.project_id}/assets"
         status, body, _ = self.request(
