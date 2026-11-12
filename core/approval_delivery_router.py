@@ -48,3 +48,7 @@ class ApprovalDeliveryRouter:
         broker.deliver_credential_by_digest(
             request_id, token, claim_token_sha256=claim_digest,
         )
+        if not self.engine.transition_approval_wait(
+            metadata["step_id"], claim_digest, "delivered",
+        ):
+            raise PermissionError("durable approval wait is no longer pending for this claim")
