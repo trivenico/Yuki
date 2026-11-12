@@ -402,6 +402,60 @@
   });
   $("annotation-task").addEventListener("change", () => selectTask().catch((error) => setStatus(error.message, true)));
   $("refresh-annotation").addEventListener("click", () => loadProjects().then(() => setStatus("Annotation projects refreshed.")).catch((error) => setStatus(error.message, true)));
+  $("annotation-create-project-button").addEventListener("click", () => {
+    $("annotation-create-project").hidden = !$("annotation-create-project").hidden;
+    if (!$("annotation-create-project").hidden) $("annotation-new-name").focus();
+  });
+  $("annotation-cancel-project").addEventListener("click", () => { $("annotation-create-project").hidden = true; });
+  $("annotation-create-project").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const rubric = JSON.parse($("annotation-new-rubric").value);
+      if (!rubric || Array.isArray(rubric) || typeof rubric !== "object") throw new Error("Rubric must be a JSON object.");
+      const data = await api("/v1/annotation/projects", {
+        method: "POST", body: JSON.stringify({
+          name: $("annotation-new-name").value.trim(),
+          task_type: $("annotation-new-type").value,
+          instructions: $("annotation-new-instructions").value.trim(),
+          rubric, ai_assistance_mode: "human_only"
+        })
+      });
+      state.project = data.project;
+      $("annotation-create-project").reset();
+      $("annotation-new-rubric").value = "{}";
+      $("annotation-create-project").hidden = true;
+      await loadProjects();
+      setStatus("Human-only annotation project created.");
+    } catch (error) { setStatus(error.message, true); }
+  });
+  $("annotation-upload-button").addEventListener("click", async () => {
+    const file = $("annotation-upload-file").files[0];
+    if (!state.project) { setStatus("Create or select a project first.", true); return; }
+    if (!file) { setStatus("Choose an image file first.", true); return; }
+    if (file.size < 1 || file.size > 25 * 1024 * 1024) { setStatus("Image must be between 1 byte and 25 MiB.", true); return; }
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) { setStatus("Choose a PNG, JPEG, WebP or GIF image.", true); return; }
+    const button = $("annotation-upload-button"); button.disabled = true;
+    try {
+      const uploaded = await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/assets", {
+        method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file
+      });
+      if (uploaded.scan_status !== "clean") {
+        setStatus("Image stored in quarantine. A configured scanner must mark it clean before it can become a task.", true);
+        return;
+      }
+      await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/tasks", {
+        method: "POST", body: JSON.stringify({
+          external_ref: "upload-" + uploaded.asset_id.slice(0, 16),
+          asset_ref: uploaded.asset_id,
+          input_data: { filename: file.name.slice(0, 200) }
+        })
+      });
+      $("annotation-upload-file").value = "";
+      await loadTasks();
+      setStatus("Clean image uploaded and annotation task created.");
+    } catch (error) { setStatus(error.message, true); }
+    finally { button.disabled = false; }
+  });
   $("open-annotation").addEventListener("click", async () => {
     const open = root.hidden; setView(open);
     if (open) try { await loadProjects(); } catch (error) { setStatus(error.message, true); }
