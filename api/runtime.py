@@ -112,6 +112,8 @@ def build_conversation_runtime(
         approval_service, AuthenticatedCapabilityApprovalService
     ):
         raise TypeError("approval_service must be an AuthenticatedCapabilityApprovalService")
+    if approval_service is not None and approval_service.auth is not auth_service:
+        raise ValueError("approval_service must use the runtime's exact auth_service instance")
     if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if mcp_runtime is not None and oauth_connections is None:
