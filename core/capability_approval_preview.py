@@ -37,15 +37,29 @@ class CapabilityApprovalPreviewRegistry:
     def register(
         self, capability: str,
         renderer: Callable[[PolicyRequest], ApprovalPreview],
+        *, operation_type: str | None = None,
     ) -> None:
         if (not isinstance(capability, str) or not re.fullmatch(
                 r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", capability)):
             raise ValueError("capability must be a bounded identifier")
         if not callable(renderer):
             raise TypeError("renderer must be callable trusted application code")
+        if operation_type is not None and (
+            not isinstance(operation_type, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", operation_type)
+        ):
+            raise ValueError("operation_type must be a stable bounded identifier")
         if capability in self._renderers:
             raise ValueError("a preview renderer is already registered for this capability")
         self._renderers[capability] = renderer
+        if not hasattr(self, "_operation_types"):
+            self._operation_types: dict[str, str] = {}
+        if operation_type is not None:
+            self._operation_types[capability] = operation_type
+
+    def operation_type_for(self, capability: str) -> str | None:
+        """Return the explicitly registered operation type for a capability."""
+        return getattr(self, "_operation_types", {}).get(capability)
 
     def render(self, request: PolicyRequest) -> ApprovalPreview | None:
         if not isinstance(request, PolicyRequest):
