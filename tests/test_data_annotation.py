@@ -112,6 +112,27 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(updated_task.status, "rework")
         self.assertGreater(updated_task.version, claimed.version)
 
+    def test_reviewer_grants_are_owner_scoped_persistent_and_revocable(self):
+        project = self.project
+        self.assertTrue(self.store.grant_reviewer(
+            "owner:alice", project.project_id, "owner:reviewer"
+        ))
+        reopened = SQLiteAnnotationWorkbench(str(self.database))
+        self.assertEqual(
+            reopened.reviewer_owner("owner:reviewer", project.project_id), "owner:alice"
+        )
+        self.assertEqual(
+            reopened.list_reviewers("owner:alice", project.project_id)[0]["reviewer_id"],
+            "owner:reviewer",
+        )
+        with self.assertRaisesRegex(ValueError, "project_owner_cannot_be_reviewer"):
+            reopened.grant_reviewer("owner:alice", project.project_id, "owner:alice")
+        self.assertTrue(reopened.revoke_reviewer(
+            "owner:alice", project.project_id, "owner:reviewer"
+        ))
+        self.assertIsNone(reopened.reviewer_owner("owner:reviewer", project.project_id))
+        self.assertEqual(reopened.list_reviewers("owner:alice", project.project_id), [])
+
     def test_review_queue_lists_only_submitted_work_and_records_reviewer_identity(self):
         project = self.project
         task = self.store.create_task(
