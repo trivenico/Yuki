@@ -20,6 +20,7 @@ from core.conversation_application_runtime import (
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.data_annotation import SQLiteAnnotationWorkbench
+from core.annotation_assets import SQLiteAnnotationAssetStore
 from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
@@ -71,6 +72,8 @@ def build_conversation_runtime(
     inference_jobs: InferenceJobService | None = None,
     income_opportunities: SQLiteIncomeOpportunityStore | None = None,
     annotation_workbench: SQLiteAnnotationWorkbench | None = None,
+    annotation_assets: SQLiteAnnotationAssetStore | None = None,
+    annotation_asset_scanner: Callable[[str, bytes], bool] | None = None,
     oauth_connections: SQLiteOAuthConnectionRegistry | None = None,
     oauth_disconnect_service_for_provider: Callable[[str], Any] | None = None,
     oauth_authorization_service_for_provider: Callable[[str], Any] | None = None,
@@ -99,6 +102,12 @@ def build_conversation_runtime(
         annotation_workbench, SQLiteAnnotationWorkbench
     ):
         raise TypeError("annotation_workbench must be a SQLiteAnnotationWorkbench")
+    if annotation_assets is not None and not isinstance(annotation_assets, SQLiteAnnotationAssetStore):
+        raise TypeError("annotation_assets must be a SQLiteAnnotationAssetStore")
+    if annotation_asset_scanner is not None and not callable(annotation_asset_scanner):
+        raise TypeError("annotation_asset_scanner must be callable")
+    if annotation_assets is not None and annotation_workbench is None:
+        raise ValueError("annotation assets require the annotation workbench")
     if oauth_connections is not None and not isinstance(
         oauth_connections, SQLiteOAuthConnectionRegistry
     ):
@@ -140,7 +149,10 @@ def build_conversation_runtime(
         if income_opportunities is not None:
             app = AuthenticatedIncomeOpportunityAPI(app, auth_service, income_opportunities)
         if annotation_workbench is not None:
-            app = AuthenticatedAnnotationAPI(app, auth_service, annotation_workbench)
+            app = AuthenticatedAnnotationAPI(
+                app, auth_service, annotation_workbench,
+                asset_store=annotation_assets, asset_scanner=annotation_asset_scanner,
+            )
         if oauth_connections is not None:
             app = AuthenticatedOAuthConnectionAPI(
                 app, auth_service, oauth_connections,
