@@ -389,6 +389,9 @@ class DurableTaskEngine:
             "unsafe_retry_policy": "side-effecting tasks must use a single attempt",
             "invalid_payload": "skill invocation payload is invalid",
             "unowned_goal": "task goal has no authenticated owner",
+            "invalid_claim_identity": "durable task owner identity could not be verified",
+            "unsupported_or_retryable_workspace_task": "workspace task type or retry policy is not supported",
+            "invalid_workspace_payload": "workspace operation payload is invalid",
         }
         if not isinstance(reason, str) or reason not in messages:
             raise ValueError("invalid task rejection reason")
