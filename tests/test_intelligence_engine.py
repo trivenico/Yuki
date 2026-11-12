@@ -60,6 +60,7 @@ class IntelligenceEngineTests(unittest.TestCase):
         )
         self.assertTrue(result.ok)
         self.assertEqual(result.memory_ids, ("mem-1",))
+        self.assertEqual(result.memory_status, "used")
         self.assertIn("local-first inference", router.calls[0][1])
 
     def test_memory_can_be_disabled_per_request(self):
@@ -69,6 +70,55 @@ class IntelligenceEngineTests(unittest.TestCase):
         )
         self.assertTrue(result.ok)
         self.assertEqual(memory.calls, [])
+        self.assertEqual(result.memory_status, "disabled")
+
+    def test_memory_failure_degrades_without_blocking_inference(self):
+        class FailedMemory:
+            def search(self, query, *, limit=5):
+                raise RuntimeError("private backend details")
+
+        provider = FakeProvider()
+        result = YukiIntelligenceEngine(provider, memory=FailedMemory()).answer(
+            IntelligenceRequest("Say hello")
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.memory_status, "unavailable")
+        self.assertEqual(result.memory_ids, ())
+        self.assertEqual(len(provider.calls), 1)
+        self.assertNotIn("private backend details", provider.calls[0][1])
+
+    def test_memory_iteration_and_prompt_size_are_bounded(self):
+        observed = []
+
+        def many_results():
+            for index in range(1000):
+                observed.append(index)
+                yield {"id": f"m{index}", "text": "x" * 1000}
+
+        class LargeMemory:
+            def search(self, query, *, limit=5):
+                return many_results()
+
+        provider = FakeProvider()
+        result = YukiIntelligenceEngine(
+            provider, memory=LargeMemory(), max_memory_items=3, max_context_chars=1200,
+        ).answer(IntelligenceRequest("Say hello"))
+        self.assertTrue(result.ok)
+        self.assertEqual(observed, [0, 1, 2])
+        self.assertEqual(result.memory_ids, ("m0", "m1"))
+        memory_section = provider.calls[0][1].split("Retrieved Yuki memory (untrusted reference):\n", 1)[1]
+        self.assertLessEqual(len(memory_section.split("Produce the best useful answer.", 1)[0]), 1206)
+
+    def test_invalid_memory_result_degrades_safely(self):
+        class InvalidMemory:
+            def search(self, query, *, limit=5):
+                return "not-a-result-list"
+
+        result = YukiIntelligenceEngine(FakeProvider(), memory=InvalidMemory()).answer(
+            IntelligenceRequest("Say hello")
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.memory_status, "invalid_result")
 
     def test_invalid_request_does_not_call_provider(self):
         provider = FakeProvider()
@@ -83,6 +133,17 @@ class IntelligenceEngineTests(unittest.TestCase):
         result = YukiIntelligenceEngine(Failed()).answer(IntelligenceRequest("Hello"))
         self.assertEqual(result.status, "provider_error")
         self.assertIn("RuntimeError", result.message)
+
+    def test_memory_can_be_disabled_and_provider_error_status_preserves_memory_status(self):
+        class Failed:
+            def generate(self, prompt):
+                raise RuntimeError("offline")
+        memory = FakeMemory()
+        result = YukiIntelligenceEngine(Failed(), memory=memory).answer(
+            IntelligenceRequest("Research current systems")
+        )
+        self.assertEqual(result.status, "provider_error")
+        self.assertEqual(result.memory_status, "used")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ they do not own Yuki's identity, memory, policy, tools or task lifecycle.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import islice
 import re
 from typing import Any
 
@@ -25,6 +26,7 @@ class IntelligenceResponse:
     task_class: str
     memory_ids: tuple[str, ...] = ()
     status: str = "completed"
+    memory_status: str = "not_configured"
 
 
 class YukiIntelligenceEngine:
@@ -71,6 +73,35 @@ class YukiIntelligenceEngine:
             return generate_for(task_class, prompt)
         return self.provider.generate(prompt)
 
+    def _retrieve_memory(self, goal: str, *, enabled: bool) -> tuple[list[dict[str, Any]], str]:
+        if not enabled:
+            return [], "disabled"
+        if self.memory is None:
+            return [], "not_configured"
+        try:
+            results = self.memory.search(goal, limit=self.max_memory_items)
+            if results is None or isinstance(results, (str, bytes)):
+                return [], "invalid_result"
+            memories: list[dict[str, Any]] = []
+            used_chars = 0
+            for item in islice(iter(results), self.max_memory_items):
+                if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+                    continue
+                text = item["text"].strip()
+                remaining = self.max_context_chars - used_chars
+                if not text or remaining <= 0:
+                    break
+                text = text[:min(1000, remaining)]
+                if not text:
+                    continue
+                memories.append({"id": item.get("id"), "text": text})
+                used_chars += len(text)
+            return memories, "used" if memories else "empty"
+        except Exception:
+            # Memory is an optional context source. Retrieval faults must not
+            # prevent inference; status remains visible to callers for telemetry.
+            return [], "unavailable"
+
     def answer(self, request: IntelligenceRequest) -> IntelligenceResponse:
         if not isinstance(request, IntelligenceRequest):
             raise TypeError("request must be an IntelligenceRequest.")
@@ -82,16 +113,15 @@ class YukiIntelligenceEngine:
             return IntelligenceResponse(False, "use_memory must be a boolean.", "general", status="invalid_input")
 
         task_class = self.classify(request.goal)
-        memories: list[dict[str, Any]] = []
-        if request.use_memory and self.memory is not None:
-            memories = self.memory.search(request.goal, limit=self.max_memory_items)
-            memories = [item for item in memories if isinstance(item, dict) and isinstance(item.get("text"), str)]
+        memories, memory_status = self._retrieve_memory(
+            request.goal, enabled=request.use_memory,
+        )
         memory_ids = tuple(
-            str(item["id"]) for item in memories
+            item["id"] for item in memories
             if isinstance(item.get("id"), str) and len(item["id"]) <= 128
         )
         memory_text = "\n".join(
-            f"- {item['text'][:1000]}" for item in memories
+            f"- {item['text']}" for item in memories
         )
         prompt = (
             "You are Yuki, an assistant orchestrated by Yuki's own runtime. "
@@ -110,9 +140,9 @@ class YukiIntelligenceEngine:
         except Exception as exc:
             return IntelligenceResponse(
                 False, f"Selected inference route failed safely ({type(exc).__name__}).",
-                task_class, memory_ids, "provider_error",
+                task_class, memory_ids, "provider_error", memory_status,
             )
         if not isinstance(result, str) or not result.strip() or len(result) > 50000:
             return IntelligenceResponse(False, "Model returned an invalid response.", task_class,
-                                        memory_ids, "invalid_model_output")
-        return IntelligenceResponse(True, result.strip(), task_class, memory_ids, "completed")
+                                        memory_ids, "invalid_model_output", memory_status)
+        return IntelligenceResponse(True, result.strip(), task_class, memory_ids, "completed", memory_status)
