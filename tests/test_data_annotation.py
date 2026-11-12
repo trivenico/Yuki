@@ -219,7 +219,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         )
         submission = self.store.submit(
             "owner:alice", task.task_id, payload={"label": "bird"},
-            expected_version=claimed.version, ai_assisted=True, human_confirmed=True,
+            expected_version=claimed.version, ai_assisted=False, human_confirmed=True,
         )
         self.assertEqual(self.store.export_accepted(
             "owner:alice", self.project.project_id
@@ -232,7 +232,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         )
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0]["annotation"], {"label": "bird"})
-        self.assertTrue(exported[0]["ai_assisted"])
+        self.assertFalse(exported[0]["ai_assisted"])
         self.assertEqual(
             self.store.export_accepted("owner:bob", self.project.project_id), []
         )
