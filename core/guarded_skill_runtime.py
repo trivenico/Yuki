@@ -49,11 +49,11 @@ class OneShotSkillApprovals:
     """Thread-safe, process-local one-shot approvals bound to exact arguments."""
 
     def __init__(self) -> None:
-        self._approved: set[tuple[str, str]] = set()
+        self._approved: set[tuple[str, str, str]] = set()
         self._lock = threading.Lock()
 
     @staticmethod
-    def _key(skill_name: str, argument: str) -> tuple[str, str]:
+    def _key(skill_name: str, argument: str, principal_id: str | None = None) -> tuple[str, str, str]:
         import hashlib
         if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
             raise ValueError("A non-empty bounded skill name is required.")
@@ -63,17 +63,22 @@ class OneShotSkillApprovals:
             encoded_argument = argument.encode("utf-8")
         except UnicodeEncodeError as exc:
             raise ValueError("Approval argument must be valid UTF-8 text.") from exc
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id.strip()
+            or len(principal_id) > 256 or principal_id != principal_id.strip()
+        ):
+            raise ValueError("principal_id must be non-empty bounded identity text")
         digest = hashlib.sha256(encoded_argument).hexdigest()
-        return skill_name, digest
+        return principal_id or "", skill_name, digest
 
-    def approve(self, skill_name: str, argument: str = "") -> None:
-        key = self._key(skill_name, argument)
+    def approve(self, skill_name: str, argument: str = "", *, principal_id: str | None = None) -> None:
+        key = self._key(skill_name, argument, principal_id)
         with self._lock:
             self._approved.add(key)
 
-    def consume(self, skill_name: str, argument: str = "") -> bool:
+    def consume(self, skill_name: str, argument: str = "", *, principal_id: str | None = None) -> bool:
         try:
-            key = self._key(skill_name, argument)
+            key = self._key(skill_name, argument, principal_id)
         except ValueError:
             return False
         with self._lock:
@@ -240,6 +245,7 @@ def invoke_registered_skill(
     max_result_chars: int = 2000,
     expected_skill: Any = None,
     execution_guard: Callable[[], bool] | None = None,
+    policy_context: SkillPolicyContext | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -254,6 +260,11 @@ def invoke_registered_skill(
             except Exception:
                 # Audit sink failure must not change authorization semantics.
                 pass
+
+    if policy_context is not None and not isinstance(policy_context, SkillPolicyContext):
+        record("invalid_policy_context")
+        return SkillInvocationResult(False, "Trusted task identity is invalid.", str(skill_name)[:128], "invalid_policy_context")
+    principal_id = policy_context.principal_id if policy_context is not None else None
 
     if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
         record("invalid_name")
@@ -280,7 +291,7 @@ def invoke_registered_skill(
     if expected_skill is not None and skill is not expected_skill:
         # Burn any matching one-shot approval on an identity mismatch so a
         # transient registry swap cannot leave a reusable authorization behind.
-        approvals.consume(skill_name, argument)
+        approvals.consume(skill_name, argument, principal_id=principal_id)
         record("skill_identity_changed")
         return SkillInvocationResult(
             False, "Registered skill changed after approval; invocation was blocked.",
@@ -294,7 +305,7 @@ def invoke_registered_skill(
         or risk not in known_risks
         or risk in {"high", "critical"}
     )
-    if needs_approval and not approvals.consume(skill_name, argument):
+    if needs_approval and not approvals.consume(skill_name, argument, principal_id=principal_id):
         record("approval_required")
         return SkillInvocationResult(False, "Explicit one-shot approval is required.", skill_name, "approval_required")
 

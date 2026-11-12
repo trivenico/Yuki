@@ -10,7 +10,7 @@ from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, writ
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
 from skills.registry import SkillRegistry
-from core.guarded_skill_runtime import OneShotSkillApprovals
+from core.guarded_skill_runtime import OneShotSkillApprovals, SkillPolicyContext
 from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.durable_task_engine import DurableTaskEngine
@@ -52,6 +52,9 @@ def save_memory(memory):
 
 _SKILL_APPROVAL_DB = Path(__file__).with_name('.yuki') / 'skill_approvals.sqlite3'
 _DURABLE_TASK_DB = Path(__file__).with_name('.yuki') / 'durable_tasks.sqlite3'
+# The local CLI is a single-owner personal runtime. API/service deployments must
+# derive owner identity from an authenticated session instead of this constant.
+_LOCAL_OWNER_ID = "owner:local"
 
 
 def _get_durable_task_engine():
@@ -233,7 +236,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if parts[1] == "approve" and len(parts) >= 3:
             argument = parts[3] if len(parts) == 4 else ""
             try:
-                runtime.approve_invocation(parts[2], argument)
+                runtime.approve_invocation(parts[2], argument, principal_id=_LOCAL_OWNER_ID)
                 write_audit_event("skill:approval", "granted")
                 return f"One-shot invocation approval granted for {parts[2]} and the exact supplied argument."
             except ValueError:
@@ -241,7 +244,13 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return "Cannot approve an unknown skill."
         if parts[1] == "invoke" and len(parts) >= 3:
             argument = parts[3] if len(parts) == 4 else ""
-            result = runtime.invoke(parts[2], argument)
+            result = runtime.invoke(
+                parts[2], argument,
+                policy_context=SkillPolicyContext(
+                    principal_id=_LOCAL_OWNER_ID, trigger="interactive",
+                    goal_id="interactive", task_id="interactive",
+                ),
+            )
             return result.message if result.ok else f"{result.status}: {result.message}"
         return "Usage: /skill list | diagnostics | install PATH | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
 
@@ -250,7 +259,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if durable_command == "goal create":
             try:
                 with _get_durable_task_engine() as engine:
-                    goal_id = engine.create_goal()
+                    goal_id = engine.create_owned_goal(_LOCAL_OWNER_ID)
                 write_audit_event("durable:goal:create", "completed")
                 return f"Durable goal created: {goal_id}"
             except Exception as error:
@@ -269,7 +278,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 if registry.get(skill_name) is None:
                     return "Cannot queue an unregistered skill."
                 with _get_durable_task_engine() as engine:
-                    task = engine.submit(
+                    task = engine.submit_for_owner(
+                        _LOCAL_OWNER_ID,
                         goal_id,
                         "skill.invoke",
                         {"skill_name": skill_name, "argument": argument},
@@ -288,7 +298,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return "Usage: /durable task list GOAL_ID"
             try:
                 with _get_durable_task_engine() as engine:
-                    tasks = engine.list_tasks(goal_id)
+                    tasks = engine.list_tasks_for_owner(_LOCAL_OWNER_ID, goal_id)
                 if not tasks:
                     return "No durable tasks found."
                 return "\n".join(
@@ -304,7 +314,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return "Usage: /durable task cancel TASK_ID"
             try:
                 with _get_durable_task_engine() as engine:
-                    task = engine.cancel_task(task_id)
+                    task = engine.cancel_task_for_owner(_LOCAL_OWNER_ID, task_id)
                 write_audit_event("durable:task:cancel", "completed")
                 return f"Durable task {task_id}: {task['state']}."
             except Exception as error:

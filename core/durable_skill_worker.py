@@ -11,6 +11,8 @@ from typing import Any
 import math
 import threading
 
+from core.guarded_skill_runtime import SkillPolicyContext
+
 
 class DurableSkillWorker:
     def __init__(
@@ -40,7 +42,7 @@ class DurableSkillWorker:
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
 
-    def _invoke_with_lease_heartbeat(self, task_id: str, lease_token: str, skill_name: str, argument: str):
+    def _invoke_with_lease_heartbeat(self, task_id: str, lease_token: str, skill_name: str, argument: str, policy_context: SkillPolicyContext):
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
 
@@ -69,6 +71,7 @@ class DurableSkillWorker:
                 skill_name,
                 argument,
                 execution_guard=lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
+                policy_context=policy_context,
             )
         finally:
             stop.set()
@@ -86,6 +89,63 @@ class DurableSkillWorker:
         lease_token = task.get("lease_token")
         if not isinstance(lease_token, str) or len(lease_token) < 32:
             raise RuntimeError("durable task claim did not provide a valid fencing token")
+        # Derive principal identity from the durable goal while validating this
+        # exact live claim. Never trust owner IDs from task payloads or model output.
+        try:
+            identity = self.engine.get_claim_identity(task_id, self.worker_id, lease_token)
+        except Exception:
+            # A stale, expired or unreadable claim must not crash the worker loop
+            # and must never fall back to caller-supplied identity.
+            return {
+                "task_id": task_id,
+                "state": "running",
+                "status": "claim_identity_unavailable",
+                "message": "Claim identity could not be verified; no skill was dispatched.",
+            }
+        if (
+            not isinstance(identity, dict)
+            or set(identity) != {"owner_id", "goal_id", "task_id"}
+            or identity.get("task_id") != task_id
+            or identity.get("goal_id") != task.get("goal_id")
+        ):
+            return {
+                "task_id": task_id,
+                "state": "running",
+                "status": "invalid_claim_identity",
+                "message": "Durable claim identity did not match the claimed task; no skill was dispatched.",
+            }
+        owner_id = identity.get("owner_id")
+        if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 256:
+            try:
+                rejected = self.engine.reject(
+                    task_id, self.worker_id, "unowned_goal", lease_token=lease_token
+                )
+            except Exception:
+                return {
+                    "task_id": task_id,
+                    "state": "unknown",
+                    "status": "claim_lost_during_rejection",
+                    "message": "Unowned task could not be rejected under the current claim.",
+                }
+            return {
+                "task_id": task_id,
+                "state": rejected["state"],
+                "status": "unowned_goal",
+            }
+        try:
+            policy_context = SkillPolicyContext(
+                principal_id=owner_id,
+                trigger="durable_task",
+                goal_id=identity["goal_id"],
+                task_id=identity["task_id"],
+            )
+        except (KeyError, TypeError, ValueError):
+            return {
+                "task_id": task_id,
+                "state": "running",
+                "status": "invalid_claim_identity",
+                "message": "Durable claim identity was malformed; no skill was dispatched.",
+            }
         # Side-effecting skill calls must not be automatically retried after an
         # ambiguous failure. Require the submitter to set max_attempts=1.
         if task.get("task_type") != "skill.invoke":
@@ -129,7 +189,7 @@ class DurableSkillWorker:
         skill_name = payload["skill_name"]
         argument = payload["argument"]
         try:
-            result = self._invoke_with_lease_heartbeat(task_id, lease_token, skill_name, argument)
+            result = self._invoke_with_lease_heartbeat(task_id, lease_token, skill_name, argument, policy_context)
             if result.ok:
                 # Persist only status metadata, never skill output which may
                 # contain private data or credentials.
