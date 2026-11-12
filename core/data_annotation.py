@@ -1731,6 +1731,90 @@ class SQLiteAnnotationWorkbench:
             "accepted_delivery_count": accepted_exports + decisions.get("accepted", 0),
         }
 
+
+    def create_delivery_manifest(self, owner_id: str, project_id: str, *, idempotency_key: str) -> dict[str, Any] | None:
+        """Create an immutable snapshot of accepted work with a canonical SHA-256 digest."""
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 128:
+            raise ValueError("invalid_manifest_idempotency_key")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute("SELECT 1 FROM annotation_projects WHERE owner_id=? AND project_id=?", (owner_id, project_id)).fetchone()
+            if project is None:
+                return None
+            prior = db.execute("SELECT * FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=? AND idempotency_key=?", (owner_id, project_id, idempotency_key)).fetchone()
+            if prior is not None:
+                return self._manifest_result(prior)
+            ordinary = db.execute("""SELECT t.task_id, t.external_ref, t.asset_ref, t.input_json,
+                s.submission_id, s.payload_json, s.ai_assisted, s.quality_json, s.updated_at AS accepted_at
+                FROM annotation_tasks t JOIN annotation_submissions s ON s.task_id=t.task_id AND s.owner_id=t.owner_id
+                WHERE t.owner_id=? AND t.project_id=? AND s.status='accepted'
+                ORDER BY s.updated_at, s.submission_id LIMIT 5001""", (owner_id, project_id)).fetchall()
+            independent = db.execute("""SELECT t.task_id, t.external_ref, t.asset_ref, t.input_json,
+                a.adjudication_id, a.final_label, a.agreement, a.reviewer_id,
+                a.source_assignment_ids_json, a.created_at
+                FROM annotation_adjudications a JOIN annotation_tasks t ON t.task_id=a.task_id AND t.owner_id=a.owner_id
+                WHERE a.owner_id=? AND a.project_id=? AND a.decision='accepted'
+                ORDER BY a.created_at, a.adjudication_id LIMIT 5001""", (owner_id, project_id)).fetchall()
+            if len(ordinary) + len(independent) > 5000:
+                raise ValueError("manifest_item_limit_exceeded")
+            items = [{
+                "task_id": row["task_id"], "external_ref": row["external_ref"], "asset_ref": row["asset_ref"],
+                "input_data": _decode(row["input_json"]), "annotation": _decode(row["payload_json"]),
+                "quality": _decode(row["quality_json"]), "ai_assisted": bool(row["ai_assisted"]),
+                "accepted_at": row["accepted_at"],
+                "provenance": {"source": "accepted_submission", "submission_id": row["submission_id"]},
+            } for row in ordinary]
+            items.extend({
+                "task_id": row["task_id"], "external_ref": row["external_ref"], "asset_ref": row["asset_ref"],
+                "input_data": _decode(row["input_json"]), "annotation": {"label": row["final_label"]},
+                "quality": {"source": "independent_adjudication", "annotator_agreement": row["agreement"],
+                    "reviewer_id": row["reviewer_id"], "source_assignment_ids": json.loads(row["source_assignment_ids_json"])},
+                "ai_assisted": False, "accepted_at": row["created_at"],
+                "provenance": {"source": "independent_adjudication", "adjudication_id": row["adjudication_id"]},
+            } for row in independent)
+            version = db.execute("SELECT COALESCE(MAX(version), 0)+1 FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=?", (owner_id, project_id)).fetchone()[0]
+            snapshot = json.dumps({"schema_version": 1, "project_id": project_id, "version": version, "created_at": now, "items": items}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()
+            manifest_id = uuid.uuid4().hex
+            db.execute("""INSERT INTO annotation_delivery_manifests
+                (manifest_id, owner_id, project_id, version, idempotency_key, snapshot_json, sha256, item_count, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (manifest_id, owner_id, project_id, version, idempotency_key, snapshot, digest, len(items), now))
+            self._audit(db, owner_id, project_id, None, "delivery_manifest_created", {"manifest_id": manifest_id, "version": version, "item_count": len(items), "sha256": digest})
+            row = db.execute("SELECT * FROM annotation_delivery_manifests WHERE manifest_id=?", (manifest_id,)).fetchone()
+        return self._manifest_result(row)
+
+    @staticmethod
+    def _manifest_result(row: sqlite3.Row) -> dict[str, Any]:
+        return {"manifest_id": row["manifest_id"], "project_id": row["project_id"], "version": row["version"],
+            "sha256": row["sha256"], "item_count": row["item_count"], "created_at": row["created_at"],
+            "snapshot": json.loads(row["snapshot_json"])}
+
+    def list_delivery_manifests(self, owner_id: str, project_id: str) -> list[dict[str, Any]] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        with self._connect() as db:
+            exists = db.execute("SELECT 1 FROM annotation_projects WHERE owner_id=? AND project_id=?", (owner_id, project_id)).fetchone()
+            if exists is None:
+                return None
+            rows = db.execute("SELECT * FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=? ORDER BY version DESC", (owner_id, project_id)).fetchall()
+        return [self._manifest_result(row) for row in rows]
+
+    def verify_delivery_manifest(self, owner_id: str, project_id: str, manifest_id: str) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id) or not isinstance(manifest_id, str) or not _ID.fullmatch(manifest_id):
+            return None
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=? AND manifest_id=?", (owner_id, project_id, manifest_id)).fetchone()
+        if row is None:
+            return None
+        actual = hashlib.sha256(row["snapshot_json"].encode("utf-8")).hexdigest()
+        return {"manifest_id": manifest_id, "valid": actual == row["sha256"], "expected_sha256": row["sha256"], "actual_sha256": actual, "item_count": row["item_count"]}
+
     def independent_agreement_report(
         self, owner_id: str, project_id: str,
     ) -> dict[str, Any] | None:
