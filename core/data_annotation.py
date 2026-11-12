@@ -1954,7 +1954,7 @@ class SQLiteAnnotationWorkbench:
             raise ValueError("invalid_idempotency_key")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
-        baseline_start = now_dt.timestamp() - 90 * 86400
+        baseline_start = now_dt.timestamp() - 120 * 86400
         recent_start = now_dt.timestamp() - 30 * 86400
         minimum_baseline, minimum_recent = 20, 10
         minimum_drop, significance = 0.10, 0.01
