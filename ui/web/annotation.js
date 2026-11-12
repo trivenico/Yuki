@@ -339,7 +339,7 @@
       renderEditor();
       $("annotation-task").value = state.task.task_id;
     } catch (error) { setStatus(error.message, true); await loadTasks(); }
-    finally { button.disabled = !state.task || !["pending", "rework"].includes(state.task.status); }
+    finally { button.disabled = !state.task || state.project?.status !== "active" || !["pending", "rework"].includes(state.task.status); }
   });
   $("submit-annotation").addEventListener("click", async () => {
     if (!state.task || !state.claimed) return;
