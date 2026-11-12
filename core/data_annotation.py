@@ -766,8 +766,10 @@ class SQLiteAnnotationWorkbench:
             if ai_assisted and project["ai_assistance_mode"] != "permitted_with_disclosure":
                 raise AnnotationPolicyError("ai_assistance_not_permitted_for_project")
             db.execute(
-                """INSERT INTO annotation_submissions VALUES
-                (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
+                """INSERT INTO annotation_submissions
+                (submission_id, task_id, project_id, owner_id, payload_json,
+                 ai_assisted, human_confirmed, status, reviewer_notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 'submitted', '', ?, ?)""",
                 (submission_id, task_id, task["project_id"], owner_id,
                  payload_json, int(ai_assisted), now, now),
             )
