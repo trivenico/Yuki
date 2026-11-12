@@ -103,6 +103,11 @@ class AuthenticatedCapabilityApprovalService:
         if not isinstance(request, PolicyRequest):
             raise TypeError("request must be a validated PolicyRequest")
         user = self._principal(session_token, "workflow:approve")
+        registry = self.gateway.preview_registry
+        if registry is None or registry.render(request) is None:
+            raise PermissionError(
+                "approval is blocked because no trusted capability operation preview is available"
+            )
         return self.gateway.issue_approval(
             request, approved_by=user.user_id, ttl_seconds=ttl_seconds,
         )
