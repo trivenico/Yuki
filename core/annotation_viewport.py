@@ -40,7 +40,8 @@ class AnnotationViewport:
         visible_margin: float = 32.0,
     ) -> "AnnotationViewport":
         if (type(image_width) is not int or type(image_height) is not int
-                or image_width <= 0 or image_height <= 0):
+                or not 1 <= image_width <= 2_147_483_647
+                or not 1 <= image_height <= 2_147_483_647):
             raise ValueError("invalid_image_dimensions")
         _positive_finite(viewport_width, "invalid_viewport_dimensions")
         _positive_finite(viewport_height, "invalid_viewport_dimensions")
@@ -50,6 +51,11 @@ class AnnotationViewport:
         if min_zoom > 1 or max_zoom < 1 or min_zoom > max_zoom:
             raise ValueError("zoom_limits_must_include_fit")
         base_scale = min(viewport_width / image_width, viewport_height / image_height)
+        maximum_scale = base_scale * max_zoom
+        if (not math.isfinite(maximum_scale)
+                or not math.isfinite(image_width * maximum_scale)
+                or not math.isfinite(image_height * maximum_scale)):
+            raise ValueError("viewport_scale_overflow")
         rendered_width = image_width * base_scale
         rendered_height = image_height * base_scale
         camera = cls(
