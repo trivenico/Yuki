@@ -225,7 +225,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         task_id = task_result["task"]["task_id"]
         status, result = self.request(
             "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
-            {"annotator_user_ids": [one.user_id, two.user_id]}, self.owner_one.token,
+            {"annotator_user_ids": [one.user.user_id, two.user.user_id]}, self.owner_one.token,
         )
         self.assertEqual(status, 201)
         assignment_id = result["assignments"][0]["assignment_id"]
@@ -287,7 +287,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.assertNotIn("expected_label", gold["gold_standard"])
         status, assignments = self.request(
             "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
-            {"annotator_user_ids": [annotator.user_id, self.owner_two.user_id]},
+            {"annotator_user_ids": [annotator.user.user_id, self.owner_two.user.user_id]},
             self.owner_one.token,
         )
         self.assertEqual(status, 201)
