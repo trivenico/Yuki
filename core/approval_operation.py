@@ -1,8 +1,8 @@
 """Typed, canonical operation contracts for exact approval binding.
 
-This module deliberately contains no executor. Capability adapters construct an
-ApprovalOperation from validated arguments; the execution boundary recomputes
-the digest from the same canonical payload before dispatch.
+Capability adapters construct an ApprovalOperation from validated arguments.
+The execution boundary must verify the same normalized payload immediately
+before dispatch; this module intentionally contains no executor.
 """
 from __future__ import annotations
 
@@ -15,26 +15,54 @@ from typing import Any, Mapping
 
 _OPERATION_ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_MAX_PAYLOAD_BYTES = 256_000
+_MAX_DEPTH = 32
+
+
+def _validate_json_value(value: Any, *, depth: int = 0) -> None:
+    """Accept only unambiguous JSON primitives, lists and string-keyed dicts."""
+    if depth > _MAX_DEPTH:
+        raise ValueError("operation payload exceeds the maximum nesting depth")
+    if value is None or type(value) in (bool, int, str):
+        return
+    if type(value) is float:
+        import math
+        if not math.isfinite(value):
+            raise ValueError("operation payload numbers must be finite")
+        return
+    if type(value) is list:
+        for item in value:
+            _validate_json_value(item, depth=depth + 1)
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("operation payload object keys must be strings")
+            _validate_json_value(item, depth=depth + 1)
+        return
+    raise ValueError("operation payload contains a non-JSON value")
 
 
 def canonical_operation_payload(payload: Mapping[str, Any]) -> bytes:
     """Encode a bounded JSON object deterministically, rejecting ambiguous data."""
     if not isinstance(payload, Mapping) or not payload:
         raise ValueError("operation payload must be a non-empty mapping")
+    # Copy only a plain dict after validating all nested values. This prevents
+    # custom encoders, tuple coercion, non-string key coercion and object hooks
+    # from changing the operation represented by the approval digest.
+    normalized = dict(payload)
+    if any(type(key) is not str for key in normalized):
+        raise ValueError("operation payload object keys must be strings")
+    _validate_json_value(normalized)
     try:
         encoded = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError, UnicodeEncodeError) as error:
-        raise ValueError("operation payload must contain finite JSON values") from error
-    if len(encoded) > 256_000:
+        raise ValueError("operation payload must contain valid finite JSON values") from error
+    if len(encoded) > _MAX_PAYLOAD_BYTES:
         raise ValueError("operation payload exceeds the 256 KB limit")
-    # Round-trip prevents custom Mapping implementations and non-string keys
-    # from producing a representation different from the one being hashed.
-    decoded = json.loads(encoded)
-    if not isinstance(decoded, dict):
-        raise ValueError("operation payload must encode as a JSON object")
     return encoded
 
 
