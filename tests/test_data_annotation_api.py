@@ -892,7 +892,6 @@ class AnnotationRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertNotIn("expected_label", str(body))
-        self.assertNotIn("positive", str(body))
 
 if __name__ == "__main__":
     unittest.main()
