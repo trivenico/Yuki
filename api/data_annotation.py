@@ -562,6 +562,44 @@ class AuthenticatedAnnotationAPI:
                     {"report": report} if report else {"error": "not_found"},
                 )
 
+            quality_drift_reports = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/quality-drift-reports(?:/([0-9a-f]{32}))?",
+                path,
+            )
+            if quality_drift_reports:
+                project_id, report_id = quality_drift_reports.groups()
+                if report_id is not None:
+                    if method != "GET":
+                        return await self._respond(send, 405, {"error": "method_not_allowed"})
+                    report = await asyncio.to_thread(
+                        self.workbench.get_quality_drift_report, user.user_id, project_id, report_id,
+                    )
+                    return await self._respond(
+                        send, 200 if report else 404,
+                        {"report": report} if report else {"error": "not_found"},
+                    )
+                if method == "GET":
+                    reports = await asyncio.to_thread(
+                        self.workbench.list_quality_drift_reports, user.user_id, project_id,
+                    )
+                    return await self._respond(
+                        send, 200 if reports is not None else 404,
+                        {"reports": reports} if reports is not None else {"error": "not_found"},
+                    )
+                if method == "POST":
+                    payload = await self._body(receive)
+                    if set(payload) != {"idempotency_key"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    report = await asyncio.to_thread(
+                        self.workbench.create_quality_drift_report,
+                        user.user_id, project_id, idempotency_key=payload["idempotency_key"],
+                    )
+                    return await self._respond(
+                        send, 201 if report else 404,
+                        {"report": report} if report else {"error": "not_found"},
+                    )
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             rework_assignments = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/rework-assignments",
                 path,
