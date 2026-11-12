@@ -1294,7 +1294,11 @@ class SQLiteAnnotationWorkbench:
                 else:
                     db.execute(
                         """INSERT INTO annotation_independent_assignments
-undefined
+                        (assignment_id, task_id, project_id, owner_id, annotator_id, round_number,
+                         status, version, payload_json, quality_json, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 'assigned', 1, NULL, '{}', ?, ?)""",
+                        (assignment_id, task_id, project_id, owner_id, annotator_id,
+                         current_round, now, now),
                     )
                 created.append({"assignment_id": assignment_id, "task_id": task_id,
                     "project_id": project_id, "round_number": current_round, "status": "assigned", "version": 1,
