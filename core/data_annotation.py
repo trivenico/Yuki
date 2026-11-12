@@ -1036,8 +1036,8 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if project is None or project["status"] != "active":
                 raise ValueError("annotation_project_not_active")
-            if project["task_type"] not in {"image_classification", "text_classification"}:
-                raise ValueError("independent_agreement_unsupported_task_type")
+            if project["task_type"] != "text_classification":
+                raise ValueError("independent_agreement_requires_text_classification")
             for annotator_id in annotator_ids:
                 assignment_id = uuid.uuid4().hex
                 try:
@@ -1184,9 +1184,9 @@ class SQLiteAnnotationWorkbench:
                    WHERE owner_id=? AND project_id=? ORDER BY task_id, annotator_id""",
                 (owner_id, project_id),
             ).fetchall()
-        if project["task_type"] not in {"image_classification", "text_classification"}:
+        if project["task_type"] != "text_classification":
             return {"project_id": project_id, "supported": False,
-                    "reason": "task_type_not_supported", "task_count": 0,
+                    "reason": "text_classification_required", "task_count": 0,
                     "evaluated_task_count": 0, "mean_pairwise_agreement": None,
                     "fleiss_kappa": None}
         groups: dict[str, list[str]] = {}
