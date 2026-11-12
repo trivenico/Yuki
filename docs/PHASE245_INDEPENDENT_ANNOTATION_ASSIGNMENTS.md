@@ -31,7 +31,7 @@ The agreement metric is exact label agreement for classification labels. It is n
 - Worker reads and writes are scoped by the authenticated annotator identity; assignment IDs alone do not grant access.
 - Assignment transitions use SQLite immediate write transactions and optimistic versions.
 - Submission revalidates the project rubric and canonical task-family payload validator before persisting the result.
-- Owner revocation and worker submission serialize through SQLite write transactions; submitted assignments cannot be revoked.
+- Owner revocation and worker submission serialize through SQLite write transactions; submitted assignments cannot be revoked. Revoking invalidates the old assignment ID, and a later reissue receives a new ID and clean state.
 - Agreement reports expose aggregate metrics only and never disclose annotator identities or individual labels.
 - Assignment data is kept separate from the existing single-worker task lifecycle and accepted-work export until multi-rater adjudication is explicitly designed.
 
