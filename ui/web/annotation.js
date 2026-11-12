@@ -456,13 +456,22 @@
         setStatus("Image stored in quarantine. A configured scanner must mark it clean before it can become a task.", true);
         return;
       }
-      const created = await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/tasks", {
-        method: "POST", body: JSON.stringify({
-          external_ref: "upload-" + uploaded.asset_id.slice(0, 16),
-          asset_ref: uploaded.asset_id,
-          input_data: { filename: file.name.slice(0, 200) }
-        })
-      });
+      let created;
+      try {
+        created = await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/tasks", {
+          method: "POST", body: JSON.stringify({
+            external_ref: "upload-" + uploaded.asset_id.slice(0, 16),
+            asset_ref: uploaded.asset_id,
+            input_data: { filename: file.name.slice(0, 200) }
+          })
+        });
+      } catch (error) {
+        try {
+          await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) +
+            "/assets/" + encodeURIComponent(uploaded.asset_id), { method: "DELETE" });
+        } catch (_) {}
+        throw error;
+      }
       $("annotation-upload-file").value = "";
       await loadTasks();
       if (created.task?.task_id) {
