@@ -3,9 +3,10 @@ import unittest
 from pathlib import Path
 
 from core.capability_approval_gateway import CapabilityApprovalGateway
+from core.approval_operation import ApprovalOperation
 from core.capability_approval_preview import ApprovalPreview, CapabilityApprovalPreviewRegistry
 from core.tool_policy import (
-    Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine,
+    Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest,
 )
 
 
@@ -200,6 +201,58 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         self.assertFalse(self.gateway.pending_requests())
         with self.assertRaises(PermissionError):
             self.gateway.approve_request(request_id, approved_by="admin")
+
+    def test_typed_operation_is_persisted_and_integrity_checked(self):
+        payload = {"changes": [{
+            "path": "README.md", "expected_sha256": "b" * 64,
+            "content": "approved content",
+        }]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.write", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        request = self.make_request(argument_sha256=argument_digest(payload))
+        request_id = self.gateway.request_approval(request, operation=operation)
+        stored = self.gateway.approval_operation(request_id)
+        self.assertEqual(stored["operation_type"], "workspace.write")
+        self.assertEqual(stored["payload_sha256"], operation.payload_sha256)
+        self.assertEqual(stored["target"], "repo:project-a")
+
+        reopened = CapabilityApprovalGateway(
+            Path(self.temp.name) / "approvals.sqlite", self.engine,
+            authorize_approver=lambda actor, request: actor == "admin",
+            clock=lambda: self.now[0], preview_registry=self.previews,
+        )
+        self.assertEqual(reopened.approval_operation(request_id), stored)
+
+    def test_typed_operation_rejects_request_mismatch_and_idempotency_substitution(self):
+        payload = {"changes": [{"path": "README.md", "content": "approved"}]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.write", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        with self.assertRaises(ValueError):
+            self.gateway.request_approval(self.request, operation=operation)
+        request = self.make_request(argument_sha256=argument_digest(payload))
+        request_id = self.gateway.request_approval(request, operation=operation)
+        with self.assertRaises(PermissionError):
+            self.gateway.request_approval(request)
+
+    def test_typed_operation_metadata_fails_closed_after_storage_tampering(self):
+        payload = {"changes": [{"path": "README.md", "content": "approved"}]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.write", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        request = self.make_request(argument_sha256=argument_digest(payload))
+        request_id = self.gateway.request_approval(request, operation=operation)
+        with self.gateway._connect() as db:
+            db.execute(
+                "UPDATE capability_approval_operations SET operation_json=? WHERE request_id=?",
+                ('{"schema_version":1,"operation_type":"workspace.delete"}', request_id),
+            )
+            db.commit()
+        self.assertIsNone(self.gateway.approval_operation(request_id))
 
     def test_inbox_rejects_non_approval_policy(self):
         allowed = self.make_request(capability="workspace:read")
