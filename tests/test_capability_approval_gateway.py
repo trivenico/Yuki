@@ -349,8 +349,8 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         )
         with closing(self.gateway._connect()) as db:
             db.execute(
-                "UPDATE capability_approval_operations SET payload_json=? WHERE request_id=?",
-                ('{"changes":[{"path":"README.md","content":"substituted"}]}', request_id),
+                "UPDATE capability_approval_operations SET payload_ciphertext=? WHERE request_id=?",
+                (b"tampered-envelope-content", request_id),
             )
             db.commit()
         self.assertIsNone(self.gateway.approval_operation_payload(request_id))
