@@ -70,6 +70,10 @@ class AuthenticatedCapabilityApprovalService:
         user = self._principal(session_token, "workflow:approve")
         if self.deliver_credential is None:
             raise RuntimeError("protected credential delivery is not configured")
+        if self.gateway.approval_preview(request_id) is None:
+            raise PermissionError(
+                "approval is blocked because no trusted capability operation preview is available"
+            )
         token = self.gateway.approve_request(
             request_id, approved_by=user.user_id, ttl_seconds=ttl_seconds,
         )
