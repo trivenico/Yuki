@@ -233,6 +233,17 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_drafts_owner
                 ON annotation_drafts(owner_id, project_id, updated_at DESC)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_project_reviewers (
+                owner_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL,
+                granted_at TEXT NOT NULL,
+                revoked_at TEXT,
+                PRIMARY KEY(owner_id, project_id, reviewer_id),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_reviewers_active
+                ON annotation_project_reviewers(reviewer_id, project_id, revoked_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_audit (
                 event_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -776,6 +787,76 @@ class SQLiteAnnotationWorkbench:
                 (submission_id,),
             ).fetchone()
         return self._submission(row)
+
+    def grant_reviewer(self, owner_id: str, project_id: str, reviewer_id: str) -> bool:
+        owner_id, reviewer_id = _owner(owner_id), _owner(reviewer_id)
+        if reviewer_id == owner_id:
+            raise ValueError("project_owner_cannot_be_reviewer")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute(
+                "SELECT status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return False
+            if project["status"] == "completed":
+                raise ValueError("project_completed")
+            db.execute(
+                """INSERT INTO annotation_project_reviewers
+                (owner_id, project_id, reviewer_id, granted_at, revoked_at)
+                VALUES (?, ?, ?, ?, NULL)
+                ON CONFLICT(owner_id, project_id, reviewer_id)
+                DO UPDATE SET granted_at=excluded.granted_at, revoked_at=NULL""",
+                (owner_id, project_id, reviewer_id, now),
+            )
+            self._audit(db, owner_id, project_id, None, "reviewer_granted", {
+                "reviewer_id": reviewer_id,
+            })
+        return True
+
+    def revoke_reviewer(self, owner_id: str, project_id: str, reviewer_id: str) -> bool:
+        owner_id, reviewer_id = _owner(owner_id), _owner(reviewer_id)
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                """UPDATE annotation_project_reviewers SET revoked_at=?
+                WHERE owner_id=? AND project_id=? AND reviewer_id=? AND revoked_at IS NULL""",
+                (now, owner_id, project_id, reviewer_id),
+            )
+            if cursor.rowcount:
+                self._audit(db, owner_id, project_id, None, "reviewer_revoked", {
+                    "reviewer_id": reviewer_id,
+                })
+        return cursor.rowcount == 1
+
+    def list_reviewers(self, owner_id: str, project_id: str) -> list[dict[str, str]]:
+        owner_id = _owner(owner_id)
+        if self.get_project(owner_id, project_id) is None:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT reviewer_id, granted_at FROM annotation_project_reviewers
+                WHERE owner_id=? AND project_id=? AND revoked_at IS NULL
+                ORDER BY granted_at, reviewer_id""",
+                (owner_id, project_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def reviewer_owner(self, reviewer_id: str, project_id: str) -> str | None:
+        reviewer_id = _owner(reviewer_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT r.owner_id FROM annotation_project_reviewers r
+                JOIN annotation_projects p ON p.project_id=r.project_id AND p.owner_id=r.owner_id
+                WHERE r.reviewer_id=? AND r.project_id=? AND r.revoked_at IS NULL""",
+                (reviewer_id, project_id),
+            ).fetchone()
+        return row["owner_id"] if row else None
 
     def review(
         self, owner_id: str, submission_id: str, *,
