@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from core.capability_approval_gateway import CapabilityApprovalGateway
+from core.capability_approval_preview import ApprovalPreview, CapabilityApprovalPreviewRegistry
 from core.tool_policy import (
     Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine,
 )
@@ -30,11 +31,19 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             ),
         )
         self.engine = ToolPolicyEngine(rules, policy_version="policy-v7")
+        self.previews = CapabilityApprovalPreviewRegistry()
+        self.previews.register(
+            "workspace:write",
+            lambda request: ApprovalPreview(
+                title="Workspace change", operation="Apply the exact approved change",
+                target=request.target, impact=f"Request digest {request.argument_sha256[:12]}",
+            ),
+        )
         self.gateway = CapabilityApprovalGateway(
             Path(self.temp.name) / "approvals.sqlite",
             self.engine,
             authorize_approver=lambda actor, request: actor == "admin",
-            clock=lambda: self.now[0],
+            clock=lambda: self.now[0], preview_registry=self.previews,
         )
         self.request = self.make_request()
 
@@ -139,7 +148,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         reopened = CapabilityApprovalGateway(
             Path(self.temp.name) / "approvals.sqlite", self.engine,
             authorize_approver=lambda actor, request: actor == "admin",
-            clock=lambda: self.now[0],
+            clock=lambda: self.now[0], preview_registry=self.previews,
         )
         result = reopened.authorize(self.request, approval_token=token)
         self.assertTrue(result.allowed)
