@@ -13,7 +13,9 @@ from typing import Any
 from core.data_annotation import AnnotationConflict
 
 
-def execute_annotation_command(\n    workbench: Any, owner_id: str, command: str, *, open_project_id: str = "",\n) -> str:
+def execute_annotation_command(
+    workbench: Any, owner_id: str, command: str, *, open_project_id: str = "",
+) -> str:
     """Execute one explicit local workbench command and return display-safe text."""
     if not isinstance(owner_id, str) or not owner_id.strip():
         return "Annotation workbench is not configured with an owner identity."
@@ -141,8 +143,6 @@ def execute_annotation_command(\n    workbench: Any, owner_id: str, command: str
     return "Unknown command or invalid arguments. Type /help."
 
 
-_open_project_id = ""
-
 
 def _positive_version(value: str) -> int:
     version = int(value)
@@ -210,13 +210,9 @@ def run_annotation_workbench(workbench: Any, owner_id: str) -> None:
                         self.open_project_id = candidate[1]
                 except (ValueError, TypeError):
                     pass
-            global _open_project_id
-            previous = _open_project_id
-            _open_project_id = self.open_project_id
-            try:
-                result = execute_annotation_command(workbench, owner_id, command)
-            finally:
-                _open_project_id = previous
+            result = execute_annotation_command(
+                workbench, owner_id, command, open_project_id=self.open_project_id,
+            )
             log.write(f"> {command}\n{result}")
 
     AnnotationApp().run()
