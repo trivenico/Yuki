@@ -181,10 +181,10 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         )
         assignments = self.store.create_independent_assignments(
             "owner:alice", project.project_id, task.task_id,
-            ["reviewer:calibrated", "annotator:other"],
+            ["annotator:first", "annotator:second"],
         )
         for assignment, annotator, label in zip(
-            assignments, ("reviewer:calibrated", "annotator:other"), ("positive", "negative")
+            assignments, ("annotator:first", "annotator:second"), ("positive", "negative")
         ):
             claimed = self.store.claim_independent_assignment(
                 annotator, assignment["assignment_id"], expected_version=1
