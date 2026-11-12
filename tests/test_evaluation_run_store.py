@@ -47,6 +47,11 @@ class EvaluationRunStoreTests(unittest.TestCase):
         other_owner = dict(self.arguments, owner_id="owner-b")
         second = self.store.record(**other_owner)
         self.assertNotEqual(first.run_id, second.run_id)
+        replay_report = dataclasses.replace(
+            self.report, generated_at="2030-01-01T00:00:00+00:00",
+        )
+        replayed_result = self.store.record(**dict(self.arguments, report=replay_report))
+        self.assertEqual(first.run_id, replayed_result.run_id)
         changed = dict(self.arguments, model_id="different-model")
         with self.assertRaises(EvaluationRunConflict):
             self.store.record(**changed)
