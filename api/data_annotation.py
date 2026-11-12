@@ -363,7 +363,10 @@ class AuthenticatedAnnotationAPI:
                     if project is None:
                         return await self._respond(send, 404, {"error": "not_found"})
                     annotator_ids = payload["annotator_user_ids"]
-                    if not isinstance(annotator_ids, list):
+                    if (not isinstance(annotator_ids, list) or not 1 <= len(annotator_ids) <= 20
+                            or any(not isinstance(item, str) or not item.strip() or len(item) > 256
+                                   for item in annotator_ids)
+                            or len(set(annotator_ids)) != len(annotator_ids)):
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     users = await asyncio.to_thread(self.auth.list_users)
                     known = {item.user_id for item in users}
