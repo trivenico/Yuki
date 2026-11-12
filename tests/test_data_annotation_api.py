@@ -192,11 +192,12 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             self.owner_one.token,
         )
         self.grant_reviewer(project_id)
+        self.grant_reviewer(other_project)
         status, body = self.request(
             "POST", f"/v1/annotation/submissions/{submitted['submission']['submission_id']}/review",
             {"decision": "accepted", "project_id": other_project}, self.owner_two.token,
         )
-        self.assertEqual((status, body["error"]), (403, "reviewer_access_denied"))
+        self.assertEqual((status, body["error"]), (404, "not_found"))
         self.assertEqual(
             self.store.get_task(self.owner_one.user_id, task["task_id"]).status, "submitted"
         )
