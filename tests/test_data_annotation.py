@@ -129,7 +129,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(self.store.list_my_independent_assignments("annotator:one")[0]["assignment_id"],
                          assignments[0]["assignment_id"])
         self.assertEqual(self.store.list_my_independent_assignments("annotator:other"), [])
-        for assignment, label in zip(assignments, ("bird", "bird")):
+        for assignment, label in zip(assignments, ("positive", "positive")):
             claimed = self.store.claim_independent_assignment(
                 "annotator:" + ("one" if assignment is assignments[0] else "two"),
                 assignment["assignment_id"], expected_version=1,
