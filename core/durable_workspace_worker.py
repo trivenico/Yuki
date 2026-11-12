@@ -118,6 +118,11 @@ class DurableWorkspaceWorker:
             operation, operation_payload = build_workspace_approval_operation(
                 workspace_id=payload["workspace_id"], changes=changes,
             )
+            principal = self.principal_factory(context)
+            if not isinstance(principal, ToolPrincipal) or principal.actor_id != context.principal_id:
+                raise PermissionError("workspace principal does not match the durable owner")
+            self.executor.validate_principal(principal)
+            self.executor.validate_proposal(changes)
             request = self.policy_request_factory(
                 context, payload["workspace_id"], changes, operation,
             )
@@ -188,9 +193,6 @@ class DurableWorkspaceWorker:
                 wait = self.engine.get_approval_wait(task_id, claim_digest)
                 if wait is None or wait["state"] != "delivered" or wait["request_id"] != request_id:
                     raise PermissionError("approval delivery is not bound to this claim")
-                principal = self.principal_factory(context)
-                if not isinstance(principal, ToolPrincipal) or principal.actor_id != context.principal_id:
-                    raise PermissionError("workspace principal does not match the durable owner")
                 result = apply_claim_bound_workspace_changes(
                     gateway=self.gateway, executor=self.executor, request=request,
                     approval_token=token, principal=principal,
