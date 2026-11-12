@@ -112,6 +112,7 @@
                   <textarea id="annotation-independent-annotators" rows="2" spellcheck="false" placeholder="Account ID 1, Account ID 2"></textarea>
                 </label>
                 <button id="annotation-independent-assign" type="button">Create independent assignments</button>
+                <button id="annotation-rework-assign" type="button">Create next rework round</button>
                 <button id="annotation-agreement-refresh" type="button">Refresh agreement report</button>
                 <h4>Gold-standard calibration</h4>
                 <p>Register a known-answer text task before assigning it. Expected answers are never included in annotator task data.</p>
@@ -136,6 +137,11 @@
                 <button id="annotation-adjudication-rework" type="button">Mark for rework</button>
                 <button id="annotation-delivery-refresh" type="button">Refresh delivery report</button>
                 <div id="annotation-delivery-summary" class="annotation-hint" aria-live="polite">Accepted delivery metrics appear here.</div>
+                <h4>Immutable dataset manifests</h4>
+                <p>Create a versioned snapshot only when every non-gold task is accepted. Reuse the same request key for safe retries.</p>
+                <button id="annotation-manifest-create" type="button">Create delivery manifest</button>
+                <button id="annotation-manifest-refresh" type="button">Refresh manifest history</button>
+                <div id="annotation-manifest-list" class="annotation-hint" aria-live="polite">No manifest history loaded.</div>
                 <h4>My independent assignments</h4>
                 <button id="annotation-independent-load" type="button">Load my assignments</button>
                 <div id="annotation-independent-list" aria-live="polite"></div>
