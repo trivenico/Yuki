@@ -135,6 +135,53 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertNotIn("sensitive content", serialized)
         self.assertIn("submission_created", serialized)
 
+    def test_batch_import_is_atomic_and_preserves_order(self):
+        tasks = [
+            {"external_ref": "batch-a", "input_data": {"text": "one"}},
+            {"external_ref": "batch-b", "asset_ref": "asset:two",
+             "input_data": {"text": "two"}},
+        ]
+        created = self.store.create_tasks(
+            "owner:alice", self.project.project_id, tasks=tasks
+        )
+        self.assertEqual([item.external_ref for item in created], ["batch-a", "batch-b"])
+        with self.assertRaisesRegex(ValueError, "duplicate_external_task_reference_in_batch"):
+            self.store.create_tasks(
+                "owner:alice", self.project.project_id,
+                tasks=[
+                    {"external_ref": "batch-c", "input_data": {}},
+                    {"external_ref": "batch-c", "input_data": {}},
+                ],
+            )
+        self.assertEqual(len(self.store.list_tasks(
+            "owner:alice", self.project.project_id
+        )), 2)
+
+    def test_accepted_export_excludes_unreviewed_and_other_owners(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        submission = self.store.submit(
+            "owner:alice", task.task_id, payload={"label": "bird"},
+            expected_version=claimed.version, ai_assisted=True, human_confirmed=True,
+        )
+        self.assertEqual(self.store.export_accepted(
+            "owner:alice", self.project.project_id
+        ), [])
+        self.store.review(
+            "owner:alice", submission.submission_id, decision="accepted"
+        )
+        exported = self.store.export_accepted(
+            "owner:alice", self.project.project_id
+        )
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0]["annotation"], {"label": "bird"})
+        self.assertTrue(exported[0]["ai_assisted"])
+        self.assertEqual(
+            self.store.export_accepted("owner:bob", self.project.project_id), []
+        )
+
     def test_duplicate_external_task_reference_is_rejected(self):
         self._task()
         with self.assertRaises(Exception):
