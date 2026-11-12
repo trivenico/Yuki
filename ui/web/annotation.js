@@ -193,7 +193,10 @@
     await loadTasks();
   };
   const loadTasks = async () => {
-    if (state.task?.task_id) await flushDraftSave(state.task.task_id);
+    if (state.task?.task_id) {
+      const saved = await flushDraftSave(state.task.task_id);
+      if (!saved) throw new Error("Save or resolve the current draft before changing projects or refreshing tasks.");
+    }
     state.task = null; state.tasks = []; state.claimed = false; state.boxes = []; state.polygons = []; state.draft = [];
     clearImage();
     const select = $("annotation-task");
@@ -563,8 +566,14 @@
     setStatus("Unsubmitted geometry cleared."); renderCanvas(); scheduleDraftSave();
   });
   $("annotation-project").addEventListener("change", async () => {
+    const previousProjectId = state.project?.project_id;
     state.project = selectedProject();
-    try { await loadTasks(); } catch (error) { setStatus(error.message, true); }
+    try { await loadTasks(); }
+    catch (error) {
+      if (previousProjectId) $("annotation-project").value = previousProjectId;
+      state.project = state.projects.find((item) => item.project_id === previousProjectId) || null;
+      setStatus(error.message, true);
+    }
   });
   $("annotation-task").addEventListener("change", () => selectTask().catch((error) => setStatus(error.message, true)));
   $("refresh-annotation").addEventListener("click", () => loadProjects().then(() => setStatus("Annotation projects refreshed.")).catch((error) => setStatus(error.message, true)));
