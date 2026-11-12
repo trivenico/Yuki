@@ -82,7 +82,7 @@ Yuki commands:
   /help                           Show this help
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
-  /provider select NAME           Select an implemented provider adapter
+  /provider select NAME           Select an implemented provider adapter\n  /provider add-compatible NAME | HTTPS_URL | MODEL | KEY_ENV | APPROVED_HOST\n                                  Add a session-only OpenAI-compatible endpoint
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
@@ -129,9 +129,39 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         current = providers.current()
         return f"Agent status: {agent.status()} Selected provider: {current.name if current else 'none'}."
     if command == "/provider" or command.startswith("/provider "):
+        if command.startswith("/provider add-compatible "):
+            encoded = command[len("/provider add-compatible "):]
+            fields = [part.strip() for part in encoded.split("|")]
+            if len(fields) != 5 or any(not item for item in fields):
+                return "Usage: /provider add-compatible NAME | HTTPS_URL | MODEL | KEY_ENV | APPROVED_HOST"
+            name, base_url, model, key_env, approved_host = fields
+            try:
+                from urllib.parse import urlsplit
+                endpoint_host = (urlsplit(base_url).hostname or "").rstrip(".").lower()
+                if endpoint_host != approved_host.rstrip(".").lower():
+                    return "Approved host must exactly match the HTTPS endpoint hostname."
+                providers.register_openai_compatible(
+                    name=name, base_url=base_url, model=model, api_key_env=key_env,
+                    allowed_hosts={approved_host}, select=False,
+                )
+                adapter = providers._build_adapter(name)
+                if adapter.is_available() is not True:
+                    return f"Provider profile '{name}' registered for this session, but its credential is unavailable. Set {key_env}; the active model was not changed."
+                result = providers.select(name)
+                if not result.startswith("Selected provider:"):
+                    return "Provider profile was registered, but selection failed; the active model was not changed."
+                adapter = providers.create_selected_adapter()
+                if adapter is None:
+                    return "Provider profile was registered, but no adapter could be selected."
+                agent.set_provider(adapter)
+                write_audit_event("provider:add-compatible", "completed")
+                return f"Selected session-only provider '{name}' using model '{model}'. The API key value was not stored by Yuki."
+            except (TypeError, ValueError, RuntimeError):
+                write_audit_event("provider:add-compatible", "rejected")
+                return "Custom provider profile rejected. Check the HTTPS URL, model ID, host approval and environment variable name."
         parts = command.split(maxsplit=2)
         if len(parts) != 3 or parts[1] != "select":
-            return "Usage: /provider select NAME"
+            return "Usage: /provider select NAME | /provider add-compatible NAME | HTTPS_URL | MODEL | KEY_ENV | APPROVED_HOST"
         result = providers.select(parts[2])
         if result.startswith("Selected provider:"):
             try:
