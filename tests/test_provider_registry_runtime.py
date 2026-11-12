@@ -2,6 +2,7 @@ import unittest
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
+from providers.openai_compatible import OpenAICompatibleProvider
 from yuki_providers import ProviderManager
 
 class ProviderRegistryRuntimeTests(unittest.TestCase):
@@ -61,6 +62,49 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertIn("not implemented", message)
         self.assertEqual(manager.current().name, "openai")
 
+    def test_custom_openai_compatible_endpoint_registers_and_routes_to_agent_runtime(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        manager = ProviderManager(environ={"CUSTOM_LLM_KEY": "secret-test-value"})
+        manager.register_openai_compatible(
+            name="my_gateway", base_url="https://gateway.example.test/v1",
+            model="vendor/model-x", api_key_env="CUSTOM_LLM_KEY",
+            allowed_hosts={"gateway.example.test"}, select=True,
+        )
+        adapter = manager.create_selected_adapter()
+        self.assertIsInstance(adapter, OpenAICompatibleProvider)
+        self.assertTrue(adapter.is_available())
+        self.assertIsInstance(manager.create_selected_agent_model(), ProviderAgentAdapter)
+        catalog = {item["name"]: item for item in manager.catalog()}
+        self.assertTrue(catalog["my_gateway"]["implemented"])
+        self.assertTrue(catalog["my_gateway"]["ready"])
+        self.assertNotIn("secret-test-value", repr(catalog["my_gateway"]))
+
+    def test_custom_endpoint_requires_https_and_exact_host_approval(self):
+        manager = ProviderManager(environ={})
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            manager.register_openai_compatible(
+                name="bad_http", base_url="http://gateway.example.test/v1",
+                model="model-x", api_key_env="CUSTOM_LLM_KEY",
+            )
+        with self.assertRaisesRegex(ValueError, "explicitly included"):
+            manager.register_openai_compatible(
+                name="bad_host", base_url="https://gateway.example.test/v1",
+                model="model-x", api_key_env="CUSTOM_LLM_KEY",
+                allowed_hosts={"other.example.test"},
+            )
+
+    def test_custom_endpoint_does_not_accept_reserved_or_invalid_secret_names(self):
+        manager = ProviderManager(environ={})
+        with self.assertRaisesRegex(ValueError, "reserved"):
+            manager.register_openai_compatible(
+                name="openai", base_url="https://gateway.example.test/v1",
+                model="model-x", api_key_env="CUSTOM_LLM_KEY",
+            )
+        with self.assertRaisesRegex(ValueError, "environment variable"):
+            manager.register_openai_compatible(
+                name="my_gateway", base_url="https://gateway.example.test/v1",
+                model="model-x", api_key_env="secret-value",
+            )
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
