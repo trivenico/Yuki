@@ -927,7 +927,8 @@
         encodeURIComponent(state.project.project_id) + "/agreement-report");
       const report = result.report;
       target.textContent = report.supported
-        ? report.evaluated_task_count + " tasks evaluated · mean pairwise agreement " +
+        ? report.assignment_count + " assignments · " + report.assignment_counts.submitted +
+          " submitted · " + report.evaluated_task_count + " tasks evaluated · mean pairwise agreement " +
           (report.mean_pairwise_agreement === null ? "unavailable" :
             Math.round(report.mean_pairwise_agreement * 100) + "%") +
           " · Fleiss' kappa " + (report.fleiss_kappa === null ? "unavailable" :
