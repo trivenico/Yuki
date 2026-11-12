@@ -106,7 +106,7 @@ def _open_pinned_https_request(request, timeout):
         headers["Connection"] = "close"
         connection.request(request.get_method(), path, body=request.data, headers=headers)
         response = connection.getresponse()
-        if response.status >= 400:
+        if 300 <= response.status < 400 or response.status >= 400:
             raise urllib.error.HTTPError(
                 request.full_url, response.status, response.reason,
                 response.headers, response,
