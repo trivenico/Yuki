@@ -1291,12 +1291,14 @@ class SQLiteAnnotationWorkbench:
             count, correct = row["evaluated_count"], row["correct_count"]
             accuracy = correct / count if count else None
             last_dt = None
-            try:
-                last_dt = datetime.fromisoformat(row["last_evaluated_at"].replace("Z", "+00:00"))
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-            except (TypeError, ValueError):
-                pass
+            timestamp = row["last_evaluated_at"]
+            if timestamp is not None:
+                try:
+                    last_dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    pass
             age_days = max(0.0, (now_dt - last_dt).total_seconds() / 86400) if last_dt else None
             expired = age_days is None or age_days > maximum_age_days
             status = (
