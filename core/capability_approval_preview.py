@@ -33,6 +33,7 @@ class CapabilityApprovalPreviewRegistry:
 
     def __init__(self) -> None:
         self._renderers: dict[str, Callable[[PolicyRequest], ApprovalPreview]] = {}
+        self._operation_types: dict[str, str] = {}
 
     def register(
         self, capability: str,
@@ -52,14 +53,12 @@ class CapabilityApprovalPreviewRegistry:
         if capability in self._renderers:
             raise ValueError("a preview renderer is already registered for this capability")
         self._renderers[capability] = renderer
-        if not hasattr(self, "_operation_types"):
-            self._operation_types: dict[str, str] = {}
         if operation_type is not None:
             self._operation_types[capability] = operation_type
 
     def operation_type_for(self, capability: str) -> str | None:
         """Return the explicitly registered operation type for a capability."""
-        return getattr(self, "_operation_types", {}).get(capability)
+        return self._operation_types.get(capability)
 
     def render(self, request: PolicyRequest) -> ApprovalPreview | None:
         if not isinstance(request, PolicyRequest):
