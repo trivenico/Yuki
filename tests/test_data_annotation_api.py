@@ -202,6 +202,64 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             self.store.get_task(self.owner_one.user.user_id, task["task_id"]).status, "submitted"
         )
 
+    def test_independent_annotation_assignment_api_is_owner_and_worker_scoped(self):
+        self.auth.create_account("annotator-one", "annotator-one-password")
+        self.auth.create_account("annotator-two", "annotator-two-password")
+        one = self.auth.authenticate("annotator-one", "annotator-one-password")
+        two = self.auth.authenticate("annotator-two", "annotator-two-password")
+        status, created = self.request(
+            "POST", "/v1/annotation/projects", {
+                "name": "Independent labels", "task_type": "image_classification",
+                "instructions": "Classify the animal.",
+                "rubric": {"labels": ["bird", "cat", "dog"]},
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        project_id = created["project"]["project_id"]
+        status, task_result = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "independent-001", "input_data": {"prompt": "Classify."}},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task_id = task_result["task"]["task_id"]
+        status, result = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
+            {"annotator_user_ids": [one.user_id, two.user_id]}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        assignment_id = result["assignments"][0]["assignment_id"]
+        status, listing = self.request("GET", "/v1/annotation/assignments", token=one.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(listing["assignments"]), 1)
+        status, claimed = self.request(
+            "POST", f"/v1/annotation/assignments/{assignment_id}/claim",
+            {"expected_version": 1}, one.token,
+        )
+        self.assertEqual(status, 200)
+        status, submitted = self.request(
+            "POST", f"/v1/annotation/assignments/{assignment_id}/submit",
+            {"payload": {"label": "bird"}, "expected_version": claimed["assignment"]["version"],
+             "human_confirmed": True}, one.token,
+        )
+        self.assertEqual(status, 201)
+        status, denied = self.request(
+            "POST", f"/v1/annotation/assignments/{assignment_id}/claim",
+            {"expected_version": 1}, two.token,
+        )
+        self.assertEqual(status, 404)
+        status, report = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/agreement-report",
+            token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(report["report"]["evaluated_task_count"], 0)
+        status, hidden = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/agreement-report",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, hidden["error"]), (404, "not_found"))
+
     def test_quality_report_api_is_owner_scoped_and_returns_aggregates(self):
         status, created = self.request(
             "POST", "/v1/annotation/projects", {
