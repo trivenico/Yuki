@@ -115,6 +115,7 @@ class AuthenticatedAnnotationAPI:
                 asset = await asyncio.to_thread(
                     self.asset_store.upload, user.user_id, project_id, data
                 )
+                scan_status = "quarantined"
                 if self.asset_scanner is not None:
                     try:
                         clean = await asyncio.to_thread(self.asset_scanner, asset.media_type, data)
@@ -123,15 +124,13 @@ class AuthenticatedAnnotationAPI:
                                 self.asset_store.mark_scan_result, user.user_id,
                                 project_id, asset.asset_id, clean=clean
                             )
+                            scan_status = "clean" if clean else "blocked"
                     except Exception:
                         pass
-                current = await asyncio.to_thread(
-                    self.asset_store.get_asset, user.user_id, project_id, asset.asset_id
-                )
-                return await self._respond(send, 201 if current else 202, {
+                return await self._respond(send, 201 if scan_status == "clean" else (422 if scan_status == "blocked" else 202), {
                     "asset_id": asset.asset_id, "media_type": asset.media_type,
                     "size_bytes": asset.size_bytes, "sha256": asset.sha256,
-                    "scan_status": "clean" if current else "quarantined",
+                    "scan_status": scan_status,
                 })
 
             asset_access = re.fullmatch(
@@ -151,7 +150,7 @@ class AuthenticatedAnnotationAPI:
                     deleted = await asyncio.to_thread(
                         self.asset_store.delete, user.user_id, project_id, asset_id
                     )
-                    return await self._respond(send, 204 if deleted else 404, {})
+                    return await self._respond(send, 200 if deleted else 404, {"deleted": bool(deleted)})
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
             match = re.fullmatch(
