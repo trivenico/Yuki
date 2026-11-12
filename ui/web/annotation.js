@@ -124,7 +124,7 @@
       return;
     }
     $("annotation-task-meta").textContent = "Task " + state.task.external_ref + " · " + state.task.status + " · version " + state.task.version;
-    $("claim-annotation-task").disabled = state.task.status !== "pending";
+    $("claim-annotation-task").disabled = state.task.status !== "pending" || state.project.status !== "active";
     setTool(state.project.task_type === "polygon_segmentation" ? "polygon" : state.project.task_type === "image_classification" ? "pan" : "box");
     $("submit-annotation").disabled = !state.claimed;
     await loadImage();
@@ -313,10 +313,10 @@
     $("annotation-label-wrap").hidden = !task || !(["bounding_boxes", "polygon_segmentation"].includes(family) || classification);
     $("annotation-tools").hidden = !task || !["bounding_boxes", "polygon_segmentation"].includes(family);
     $("annotation-canvas-panel").hidden = !task || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
-    $("annotation-upload-row").hidden = !state.project || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
+    $("annotation-upload-row").hidden = !state.project || state.project.status !== "active" || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
     $("annotation-family-json").value = "{}";
     $("annotation-task-input").textContent = task
-      ? (state.project.instructions || "") + "\\n\\nInput: " + JSON.stringify(task.input_data || {}, null, 2)
+      ? (state.project.instructions || "") + "\\n\\nRubric: " + JSON.stringify(state.project.rubric || {}, null, 2) + "\\n\\nInput: " + JSON.stringify(task.input_data || {}, null, 2)
       : "Select a task to view its input.";
     $("annotation-family-json").disabled = !state.claimed;
     $("annotation-label").disabled = !state.claimed;
