@@ -42,10 +42,22 @@ class OSKeyringVault:
         try:
             backend = keyring_module.get_keyring()
             priority = backend.priority
+            backend_identity = (backend.__class__.__module__, backend.__class__.__name__)
         except Exception as exc:
             raise RuntimeError("OS credential vault is unavailable") from exc
-        if not isinstance(priority, (int, float)) or priority <= 0:
-            raise RuntimeError("No secure OS credential vault backend is available")
+        # A positive keyring priority is not proof of secure storage: third-party
+        # backends can store credentials in plaintext files. Allow only reviewed
+        # native OS vault implementations and fail closed for every other backend.
+        secure_native_backends = {
+            ("keyring.backends.Windows", "WinVaultKeyring"),
+            ("keyring.backends.macOS", "Keyring"),
+            ("keyring.backends.SecretService", "Keyring"),
+            ("keyring.backends.kwallet", "DBusKeyring"),
+            ("keyring.backends.kwallet", "KWallet4"),
+        }
+        if (not isinstance(priority, (int, float)) or priority <= 0
+                or backend_identity not in secure_native_backends):
+            raise RuntimeError("No reviewed native OS credential vault backend is available")
 
     def set_secret(self, reference: str, secret: str) -> None:
         self._keyring.set_password(_SERVICE, reference, secret)
