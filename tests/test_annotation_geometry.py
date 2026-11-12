@@ -84,8 +84,9 @@ class SnapshotHistoryTests(unittest.TestCase):
         self.assertEqual(history.current, {"points": [1]})
         history.push({"points": [4]})
         history.push({"points": [5]})
-        self.assertFalse(history.can_undo)
-        self.assertEqual(history.current, {"points": [5]})
+        self.assertTrue(history.can_undo)
+        self.assertEqual(history.undo(), {"points": [4]})
+        self.assertEqual(history.current, {"points": [4]})
 
 
 if __name__ == "__main__":
