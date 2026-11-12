@@ -240,6 +240,22 @@ class ApprovalCredentialBroker:
         resolve.worker_id = self.worker_id
         return resolve
 
+    def revoke_claim_digest(self, task_id: str, claim_token_sha256: str) -> int:
+        """Revoke unused credentials using a digest from the durable recovery outbox."""
+        if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
+            raise ValueError("task_id is invalid")
+        if not isinstance(claim_token_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", claim_token_sha256):
+            raise ValueError("claim_token_sha256 is invalid")
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute(
+                """UPDATE approval_worker_credentials SET status='revoked',ciphertext=X''
+                   WHERE task_id=? AND worker_id=? AND claim_token_sha256=? AND status='available'""",
+                (task_id, self.worker_id, claim_token_sha256),
+            ).rowcount
+            db.commit()
+            return changed
+
     def revoke_claim(self, task_id: str, lease_token: str) -> int:
         """Revoke all undelivered credentials for one exact claim generation."""
         if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
