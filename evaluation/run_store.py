@@ -17,6 +17,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from evaluation.model_eval import EvalReport
+from core.sqlite_file_security import prepare_private_sqlite_path
 
 _MAX_REPORT_BYTES = 512 * 1024
 _MAX_ENVIRONMENT_BYTES = 8 * 1024
@@ -79,8 +80,7 @@ class EvaluationRunStore:
     def __init__(self, database_path: str | Path):
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
             raise ValueError("database_path must be a non-empty path")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
@@ -124,6 +124,9 @@ class EvaluationRunStore:
             )
 
     def _connect(self):
+        # Re-check the final path before every SQLite open so replacement by a
+        # symlink or hard link is detected between store operations.
+        self.database_path = prepare_private_sqlite_path(self.database_path)
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
