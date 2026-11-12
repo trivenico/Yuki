@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import time
@@ -116,6 +117,7 @@ class WorkspaceTransactionJournal:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.chmod(stage_name, resolved.stat().st_mode & 0o777)
+                _fsync_directory(resolved.parent)
                 entries.append({
                     "path": relative,
                     "target": str(resolved),
@@ -163,8 +165,35 @@ class WorkspaceTransactionJournal:
         if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1
                 or manifest.get("workspace") != str(self.root)
                 or manifest.get("operation_id") != operation_dir.name
-                or not isinstance(manifest.get("entries"), list)):
+                or not re.fullmatch(r"[0-9a-f]{32}", operation_dir.name)
+                or manifest.get("state") not in {"prepared", "applying", "committed", "rolled_back", "recovery_required"}
+                or not isinstance(manifest.get("actor_id"), str)
+                or not isinstance(manifest.get("operation_digest"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest["operation_digest"])
+                or not isinstance(manifest.get("entries"), list)
+                or not 1 <= len(manifest["entries"]) <= 8
+                or not isinstance(manifest.get("applied_paths"), list)):
             raise WorkspaceJournalError("journal manifest identity or schema is invalid")
+        for entry in manifest["entries"]:
+            if (not isinstance(entry, dict)
+                    or set(entry) != {"path", "target", "backup", "stage", "old_sha256", "new_sha256", "mode"}
+                    or not isinstance(entry["path"], str)
+                    or not isinstance(entry["target"], str)
+                    or not isinstance(entry["backup"], str)
+                    or not re.fullmatch(r"backup-[0-7][0-9].bin", entry["backup"])
+                    or not isinstance(entry["stage"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", entry["old_sha256"])
+                    or not re.fullmatch(r"[0-9a-f]{64}", entry["new_sha256"])
+                    or type(entry["mode"]) is not int or not 0 <= entry["mode"] <= 0o777):
+                raise WorkspaceJournalError("journal entry schema is invalid")
+            target = Path(entry["target"])
+            stage = Path(entry["stage"])
+            try:
+                target.relative_to(self.root)
+            except ValueError as exc:
+                raise WorkspaceJournalError("journal target escaped workspace") from exc
+            if stage.parent != target.parent or not stage.name.startswith(".yuki-stage-"):
+                raise WorkspaceJournalError("journal stage path is invalid")
         return manifest
 
     def _save(self, operation_dir: Path, manifest: dict, state: str | None = None) -> None:
