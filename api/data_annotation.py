@@ -307,6 +307,39 @@ class AuthenticatedAnnotationAPI:
                     {"gold_standard": result} if result else {"error": "not_found"},
                 )
 
+            calibration_policy = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/calibration-policy", path
+            )
+            if calibration_policy:
+                project_id = calibration_policy.group(1)
+                if method == "GET":
+                    report = await asyncio.to_thread(
+                        self.workbench.gold_calibration_report, user.user_id, project_id,
+                    )
+                    if report is None:
+                        return await self._respond(send, 404, {"error": "not_found"})
+                    return await self._respond(send, 200, {"policy": {
+                        "minimum_gold_tasks": report["minimum_gold_tasks"],
+                        "passing_accuracy": report["passing_accuracy"],
+                        "maximum_age_days": report["maximum_age_days"],
+                    }})
+                if method == "PUT":
+                    payload = await self._body(receive)
+                    allowed = {"minimum_gold_tasks", "passing_accuracy", "maximum_age_days"}
+                    if set(payload) - allowed or not payload:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    try:
+                        policy = await asyncio.to_thread(
+                            self.workbench.set_calibration_policy, user.user_id, project_id, **payload,
+                        )
+                    except ValueError as exc:
+                        return await self._respond(send, 400, {"error": str(exc)})
+                    return await self._respond(
+                        send, 200 if policy else 404,
+                        {"policy": policy} if policy else {"error": "not_found"},
+                    )
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             calibration_report = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/calibration-report", path
             )

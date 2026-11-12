@@ -324,6 +324,15 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_gold_results_owner
                 ON annotation_gold_results(owner_id, project_id, annotator_id, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_calibration_policies (
+                owner_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                minimum_gold_tasks INTEGER NOT NULL DEFAULT 5,
+                passing_accuracy REAL NOT NULL DEFAULT 0.8,
+                maximum_age_days INTEGER NOT NULL DEFAULT 90,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, project_id),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id)
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_submissions (
                 submission_id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -1222,6 +1231,13 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if project is None:
                 return None
+            policy = db.execute(
+                "SELECT minimum_gold_tasks, passing_accuracy, maximum_age_days FROM annotation_calibration_policies "
+                "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
+            ).fetchone()
+            effective_minimum = policy["minimum_gold_tasks"] if policy else minimum_gold_tasks
+            effective_accuracy = policy["passing_accuracy"] if policy else passing_accuracy
+            maximum_age_days = policy["maximum_age_days"] if policy else 90
             rows = db.execute(
                 """SELECT annotator_id, COUNT(*) AS evaluated_count,
                           SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
@@ -1235,21 +1251,76 @@ class SQLiteAnnotationWorkbench:
                 (owner_id, project_id),
             ).fetchone()[0]
         annotators = []
+        now_dt = datetime.now(timezone.utc)
         for row in rows:
             count, correct = row["evaluated_count"], row["correct_count"]
             accuracy = correct / count if count else None
-            status = ("calibrated" if count >= minimum_gold_tasks and accuracy >= passing_accuracy
-                      else "needs_review" if count >= minimum_gold_tasks else "insufficient_evidence")
+            last_dt = None
+            try:
+                last_dt = datetime.fromisoformat(row["last_evaluated_at"].replace("Z", "+00:00"))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                pass
+            age_days = max(0.0, (now_dt - last_dt).total_seconds() / 86400) if last_dt else None
+            expired = age_days is None or age_days > maximum_age_days
+            status = (
+                "insufficient_evidence" if count < effective_minimum else
+                "needs_review" if accuracy < effective_accuracy else
+                "expired" if expired else "calibrated"
+            )
             annotators.append({
                 "annotator_id": row["annotator_id"], "evaluated_gold_tasks": count,
                 "correct_gold_tasks": correct, "accuracy": accuracy, "status": status,
-                "last_evaluated_at": row["last_evaluated_at"],
+                "last_evaluated_at": row["last_evaluated_at"], "evidence_age_days": age_days,
+                "maximum_age_days": maximum_age_days, "expired": expired,
             })
         return {
             "project_id": project_id, "supported": project["task_type"] == "text_classification",
             "gold_standard_task_count": gold_count,
-            "minimum_gold_tasks": minimum_gold_tasks, "passing_accuracy": passing_accuracy,
-            "annotators": annotators,
+            "minimum_gold_tasks": effective_minimum, "passing_accuracy": effective_accuracy,
+            "maximum_age_days": maximum_age_days, "annotators": annotators,
+        }
+
+    def set_calibration_policy(
+        self, owner_id: str, project_id: str, *, minimum_gold_tasks: int = 5,
+        passing_accuracy: float = 0.8, maximum_age_days: int = 90,
+    ) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        if (type(minimum_gold_tasks) is not int or not 1 <= minimum_gold_tasks <= 100
+                or type(passing_accuracy) not in (int, float) or not 0.5 <= passing_accuracy <= 1.0
+                or type(maximum_age_days) is not int or not 1 <= maximum_age_days <= 3650):
+            raise ValueError("invalid_calibration_policy")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone() is None:
+                return None
+            db.execute(
+                """INSERT INTO annotation_calibration_policies
+                   (owner_id, project_id, minimum_gold_tasks, passing_accuracy, maximum_age_days, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(owner_id, project_id) DO UPDATE SET
+                     minimum_gold_tasks=excluded.minimum_gold_tasks,
+                     passing_accuracy=excluded.passing_accuracy,
+                     maximum_age_days=excluded.maximum_age_days,
+                     updated_at=excluded.updated_at""",
+                (owner_id, project_id, minimum_gold_tasks, float(passing_accuracy), maximum_age_days, now),
+            )
+            self._audit(db, owner_id, project_id, None, "calibration_policy_updated", {
+                "minimum_gold_tasks": minimum_gold_tasks,
+                "passing_accuracy": float(passing_accuracy),
+                "maximum_age_days": maximum_age_days,
+            })
+        return {
+            "project_id": project_id, "minimum_gold_tasks": minimum_gold_tasks,
+            "passing_accuracy": float(passing_accuracy), "maximum_age_days": maximum_age_days,
+            "updated_at": now,
         }
 
     def create_independent_assignments(
@@ -1648,15 +1719,39 @@ class SQLiteAnnotationWorkbench:
                     ).fetchone()
                     if grant is None:
                         raise PermissionError("reviewer_access_revoked")
+                policy = db.execute(
+                    "SELECT minimum_gold_tasks, passing_accuracy, maximum_age_days "
+                    "FROM annotation_calibration_policies WHERE owner_id=? AND project_id=?",
+                    (owner_id, project_id),
+                ).fetchone()
+                required_samples = policy["minimum_gold_tasks"] if policy else minimum_gold_tasks
+                required_accuracy = policy["passing_accuracy"] if policy else passing_accuracy
+                maximum_age_days = policy["maximum_age_days"] if policy else 90
                 calibration = db.execute(
-                    "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct "
+                    "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
                     "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=?",
                     (owner_id, project_id, reviewer_id),
                 ).fetchone()
                 n = calibration["n"]
                 accuracy = calibration["correct"] / n if n else 0.0
-                if n < minimum_gold_tasks or accuracy < passing_accuracy:
+                last_evaluated = None
+                try:
+                    timestamp = calibration["last_evaluated_at"]
+                    if timestamp is not None:
+                        last_evaluated = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                        if last_evaluated.tzinfo is None:
+                            last_evaluated = last_evaluated.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    pass
+                evidence_fresh = (
+                    last_evaluated is not None
+                    and (datetime.now(timezone.utc) - last_evaluated).total_seconds()
+                    <= maximum_age_days * 86400
+                )
+                if n < required_samples or accuracy < required_accuracy:
                     raise PermissionError("reviewer_calibration_required")
+                if not evidence_fresh:
+                    raise PermissionError("reviewer_calibration_expired")
             existing = db.execute(
                 "SELECT * FROM annotation_adjudications WHERE owner_id=? AND project_id=? AND task_id=?",
                 (owner_id, project_id, task_id),

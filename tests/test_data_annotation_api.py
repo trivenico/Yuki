@@ -390,6 +390,26 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, hidden["error"]), (404, "not_found"))
 
+    def test_calibration_policy_api_is_owner_scoped_and_validated(self):
+        project_id = self.create_project()
+        path = f"/v1/annotation/projects/{project_id}/calibration-policy"
+        status, default = self.request("GET", path, token=self.owner_one.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(default["policy"]["maximum_age_days"], 90)
+        status, updated = self.request(
+            "PUT", path,
+            {"minimum_gold_tasks": 7, "passing_accuracy": 0.85, "maximum_age_days": 45},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["policy"]["maximum_age_days"], 45)
+        status, invalid = self.request(
+            "PUT", path, {"maximum_age_days": 0}, self.owner_one.token,
+        )
+        self.assertEqual((status, invalid["error"]), (400, "invalid_calibration_policy"))
+        status, hidden = self.request("GET", path, token=self.owner_two.token)
+        self.assertEqual((status, hidden["error"]), (404, "not_found"))
+
     def test_quality_report_api_is_owner_scoped_and_returns_aggregates(self):
         status, created = self.request(
             "POST", "/v1/annotation/projects", {
