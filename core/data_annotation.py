@@ -862,6 +862,7 @@ class SQLiteAnnotationWorkbench:
         self, owner_id: str, submission_id: str, *,
         decision: str, notes: str = "", reviewer_id: str | None = None,
         expected_project_id: str | None = None,
+        require_reviewer_grant: bool = False,
     ) -> AnnotationSubmission | None:
         owner_id = _owner(owner_id)
         reviewer_id = _owner(reviewer_id) if reviewer_id is not None else ""
@@ -882,6 +883,14 @@ class SQLiteAnnotationWorkbench:
                 return None
             if expected_project_id is not None and row["project_id"] != expected_project_id:
                 return None
+            if require_reviewer_grant:
+                grant = db.execute(
+                    """SELECT 1 FROM annotation_project_reviewers
+                    WHERE owner_id=? AND project_id=? AND reviewer_id=? AND revoked_at IS NULL""",
+                    (owner_id, row["project_id"], reviewer_id),
+                ).fetchone()
+                if grant is None:
+                    raise PermissionError("reviewer_access_revoked")
             if row["status"] != "submitted":
                 raise ValueError("submission_already_reviewed")
             updated_submission = db.execute(
@@ -908,7 +917,8 @@ class SQLiteAnnotationWorkbench:
 
     def list_review_queue(
         self, owner_id: str, project_id: str, *, limit: int = 100,
-    ) -> list[AnnotationReviewItem]:
+        reviewer_id: str | None = None,
+    ) -> list[AnnotationReviewItem] | None:
         """Return review items with task and rubric context; caller authorizes access."""
         owner_id = _owner(owner_id)
         if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
@@ -916,6 +926,16 @@ class SQLiteAnnotationWorkbench:
         if type(limit) is not int or not 1 <= limit <= 200:
             raise ValueError("invalid_limit")
         with self._connect() as db:
+            if reviewer_id is not None:
+                reviewer_id = _owner(reviewer_id)
+                db.execute("BEGIN")
+                grant = db.execute(
+                    """SELECT 1 FROM annotation_project_reviewers
+                    WHERE owner_id=? AND project_id=? AND reviewer_id=? AND revoked_at IS NULL""",
+                    (owner_id, project_id, reviewer_id),
+                ).fetchone()
+                if grant is None:
+                    return None
             rows = db.execute(
                 """SELECT s.*, t.external_ref, t.input_json, p.instructions, p.rubric_json
                 FROM annotation_submissions s
