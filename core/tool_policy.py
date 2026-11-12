@@ -59,6 +59,7 @@ class PolicyRequest:
     risk: Risk
     run_id: str
     step_id: str
+    claim_token_sha256: str | None = None
 
     def __post_init__(self) -> None:
         for field in ("principal_id", "trigger", "capability", "target", "run_id", "step_id"):
@@ -67,6 +68,10 @@ class PolicyRequest:
             raise ValueError("argument_sha256 must be a lowercase SHA-256 digest")
         if not isinstance(self.risk, Risk):
             raise ValueError("risk must be a Risk value")
+        if self.claim_token_sha256 is not None and (
+            not isinstance(self.claim_token_sha256, str) or not _DIGEST.fullmatch(self.claim_token_sha256)
+        ):
+            raise ValueError("claim_token_sha256 must be a lowercase SHA-256 digest")
 
 
 @dataclass(frozen=True)
