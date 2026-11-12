@@ -56,6 +56,27 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
             self.service().apply(principal=self.principal, changes=[self.change()])
         self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
 
+    def test_lost_worker_claim_after_approval_prevents_workspace_write(self):
+        change = self.change()
+        def lost_claim():
+            return False
+        with self.assertRaises(WorkspaceChangeError):
+            self.service().apply(
+                principal=self.principal, changes=[change], execution_guard=lost_claim
+            )
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+        self.assertEqual(self.audit_events[-1]["outcome"], "failed")
+
+    def test_execution_guard_failure_fails_closed(self):
+        change = self.change()
+        def broken_guard():
+            raise RuntimeError("claim store unavailable")
+        with self.assertRaises(WorkspaceChangeError):
+            self.service().apply(
+                principal=self.principal, changes=[change], execution_guard=broken_guard
+            )
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
+
     def test_stale_content_digest_rejected(self):
         change = self.change()
         self.file.write_text("VALUE = 99\n", encoding="utf-8")
