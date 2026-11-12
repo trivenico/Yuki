@@ -636,7 +636,8 @@ class SQLiteAnnotationWorkbench:
             with self._connect() as db:
                 adjudicated = db.execute(
                     """SELECT t.external_ref, t.asset_ref, t.input_json,
-                              a.final_label, a.agreement, a.reviewer_id, a.created_at
+                              a.final_label, a.agreement, a.reviewer_id,
+                              a.source_assignment_ids_json, a.created_at
                        FROM annotation_adjudications a
                        JOIN annotation_tasks t
                          ON t.task_id=a.task_id AND t.owner_id=a.owner_id
@@ -651,7 +652,8 @@ class SQLiteAnnotationWorkbench:
                 "annotation": {"label": row["final_label"]},
                 "quality": {"source": "independent_adjudication",
                             "annotator_agreement": row["agreement"],
-                            "reviewer_id": row["reviewer_id"]},
+                            "reviewer_id": row["reviewer_id"],
+                            "source_assignment_ids": json.loads(row["source_assignment_ids_json"])},
                 "ai_assisted": False,
                 "accepted_at": row["created_at"],
             } for row in adjudicated)
@@ -1569,7 +1571,8 @@ class SQLiteAnnotationWorkbench:
                 (owner_id, project_id),
             ).fetchall()
             task_count = db.execute(
-                "SELECT COUNT(*) FROM annotation_tasks WHERE owner_id=? AND project_id=?",
+                """SELECT COUNT(DISTINCT task_id) FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=?""",
                 (owner_id, project_id),
             ).fetchone()[0]
             accepted_exports = db.execute(
