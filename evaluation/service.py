@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
+import time
 from typing import Any, Callable, Mapping
 
 from evaluation.benchmark_registry import BenchmarkRegistry
@@ -132,19 +133,24 @@ class EvaluationService:
                 return completed
             try:
                 case_index = 0
+                suite_started = time.monotonic()
 
                 def generate(prompt: str) -> str:
                     nonlocal case_index
                     case = benchmark.cases[case_index]
                     case_index += 1
-                    # The adapter owns the hard timeout; ModelEvaluator measures and
-                    # reports latency but cannot safely kill a blocked Python call.
+                    # Pass the remaining suite budget, not the original total
+                    # budget, so later cases cannot each consume a fresh full
+                    # deadline. The adapter must enforce this at the transport.
+                    remaining = (
+                        self.evaluator.max_total_duration_seconds
+                        - (time.monotonic() - suite_started)
+                    )
+                    timeout_seconds = min(float(case.max_latency_seconds), remaining)
+                    if timeout_seconds <= 0:
+                        raise TimeoutError("evaluation suite deadline exhausted")
                     return adapter.generate_with_timeout(
-                        prompt,
-                        timeout_seconds=min(
-                            float(case.max_latency_seconds),
-                            self.evaluator.max_total_duration_seconds,
-                        ),
+                        prompt, timeout_seconds=timeout_seconds,
                     )
 
                 report = self.evaluator.run(
