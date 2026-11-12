@@ -550,7 +550,8 @@ class SQLiteAnnotationWorkbench:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT t.external_ref, t.asset_ref, t.input_json,
-                          s.payload_json, s.ai_assisted, s.updated_at AS accepted_at
+                          s.payload_json, s.ai_assisted, s.quality_json,
+                          s.updated_at AS accepted_at
                    FROM annotation_tasks AS t
                    JOIN annotation_submissions AS s
                      ON s.task_id=t.task_id AND s.owner_id=t.owner_id
@@ -563,6 +564,7 @@ class SQLiteAnnotationWorkbench:
             "asset_ref": row["asset_ref"],
             "input_data": _decode(row["input_json"]),
             "annotation": _decode(row["payload_json"]),
+            "quality": _decode(row["quality_json"]),
             "ai_assisted": bool(row["ai_assisted"]),
             "accepted_at": row["accepted_at"],
         } for row in rows]
