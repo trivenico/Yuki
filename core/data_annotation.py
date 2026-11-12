@@ -217,6 +217,24 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_worker
                 ON annotation_independent_assignments(annotator_id, status, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_adjudications (
+                adjudication_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                final_label TEXT,
+                notes TEXT NOT NULL,
+                source_assignment_ids_json TEXT NOT NULL,
+                agreement REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(owner_id, project_id, task_id),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id),
+                FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_adjudications_delivery
+                ON annotation_adjudications(owner_id, project_id, decision, created_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_standards (
                 gold_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
