@@ -350,10 +350,9 @@ class AuthenticatedAnnotationAPI:
                     return await self._respond(send, 403, {"error": "reviewer_access_denied"})
                 submission = await asyncio.to_thread(
                     self.workbench.review, owner_id, match.group(1),
-                    reviewer_id=user.user_id, **{key: value for key, value in payload.items() if key != "project_id"}
+                    reviewer_id=user.user_id, expected_project_id=project_id,
+                    **{key: value for key, value in payload.items() if key != "project_id"}
                 )
-                if submission is not None and submission.project_id != project_id:
-                    return await self._respond(send, 404, {"error": "not_found"})
                 return await self._respond(
                     send, 200 if submission else 404,
                     {"submission": asdict(submission)} if submission else {"error": "not_found"},
