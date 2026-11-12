@@ -6,7 +6,7 @@
 - Rework can be reopened only after the current adjudication is `rework`. The task is returned to `pending` as the new round is issued.
 - A rework round requires 2–20 distinct annotators who have not previously worked on that task. This prevents the existing per-task/per-annotator uniqueness constraint from forcing historical assignment mutation.
 - Adjudication evidence and decisions are scoped to the current assignment round.
-- Every adjudication is copied to an append-only event history with the round, reviewer, decision, final label, notes, source assignment IDs, agreement, and timestamp. The existing adjudication row remains the current decision pointer for compatibility with Phase 247 exports.
+- Every adjudication is copied to an append-only event history with the round, reviewer, decision, final label, notes, source assignment IDs, agreement, and timestamp. SQLite triggers reject update/delete attempts against adjudication events and manifests. The existing adjudication row remains the current decision pointer for compatibility with Phase 247 exports.
 - Owner-created delivery manifests snapshot accepted single-submission and adjudicated work in one SQLite write transaction.
 - Manifest snapshots use canonical JSON serialization and SHA-256 checksums. They include task IDs, source provenance, accepted labels/payloads, quality evidence, AI-assistance status, dataset version, and creation time.
 - Manifest idempotency keys prevent accidental repeat creation on retry. Manifest verification recomputes the checksum from the stored snapshot and reports tampering.
@@ -26,7 +26,7 @@
 - Rework requires a prior persisted rework adjudication; it cannot reopen accepted/completed work.
 - Current-round labels alone are used for the next adjudication.
 - Prior adjudications are retained in `annotation_adjudication_events`; the compatibility adjudication row represents the latest decision.
-- A manifest is a point-in-time snapshot. Later task changes or later manifests do not alter its stored snapshot.
+- A manifest is a point-in-time snapshot. Later task changes or later manifests do not alter its stored snapshot. Database triggers reject normal SQL update/delete attempts; checksum verification still detects out-of-band edits that bypass those guards.
 - Manifest creation is bounded to 5,000 items and 16 MiB of canonical snapshot data; it fails rather than silently truncating a dataset.
 - Manifest creation rejects empty datasets, any unresolved non-gold task, incomplete task coverage, and duplicate task entries. Blinded gold-standard calibration tasks are excluded from the deliverable dataset and completeness denominator.
 - Verification detects snapshot changes; it is an integrity check, not a signature or proof against an attacker who can rewrite both the snapshot and checksum in the database.
