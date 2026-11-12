@@ -122,6 +122,20 @@
                 <button id="annotation-calibration-refresh" type="button">Refresh annotator calibration</button>
                 <div id="annotation-calibration-summary" class="annotation-hint" aria-live="polite">Calibration requires gold-standard submissions.</div>
                 <div id="annotation-agreement-summary" class="annotation-hint" aria-live="polite">Agreement metrics are available for classification tasks after independent submissions.</div>
+                <h4>Adjudication and delivery</h4>
+                <p>Review submitted labels for the selected task. Accepted adjudications are eligible for client export; original annotations remain unchanged.</p>
+                <button id="annotation-independent-evidence" type="button">Load selected task submissions</button>
+                <div id="annotation-independent-evidence-list" aria-live="polite"></div>
+                <label class="annotation-field" for="annotation-adjudication-label">Final classification label
+                  <input id="annotation-adjudication-label" maxlength="256" autocomplete="off" placeholder="Final rubric label">
+                </label>
+                <label class="annotation-field" for="annotation-adjudication-notes">Adjudication notes
+                  <textarea id="annotation-adjudication-notes" rows="2" maxlength="4000" placeholder="Explain how disagreements were resolved"></textarea>
+                </label>
+                <button id="annotation-adjudication-accept" type="button">Accept final label</button>
+                <button id="annotation-adjudication-rework" type="button">Mark for rework</button>
+                <button id="annotation-delivery-refresh" type="button">Refresh delivery report</button>
+                <div id="annotation-delivery-summary" class="annotation-hint" aria-live="polite">Accepted delivery metrics appear here.</div>
                 <h4>My independent assignments</h4>
                 <button id="annotation-independent-load" type="button">Load my assignments</button>
                 <div id="annotation-independent-list" aria-live="polite"></div>

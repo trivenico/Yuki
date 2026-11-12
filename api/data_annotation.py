@@ -488,6 +488,62 @@ class AuthenticatedAnnotationAPI:
                     return await self._respond(send, 200, {"revoked": revoked})
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            independent_submissions = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/independent-submissions",
+                path,
+            )
+            if independent_submissions and method == "GET":
+                project_id, task_id = independent_submissions.groups()
+                items = await asyncio.to_thread(
+                    self.workbench.list_independent_submissions,
+                    user.user_id, project_id, task_id,
+                )
+                return await self._respond(
+                    send, 200 if items is not None else 404,
+                    {"submissions": items} if items is not None else {"error": "not_found"},
+                )
+
+            adjudication = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/adjudication",
+                path,
+            )
+            if adjudication and method == "POST":
+                project_id, task_id = adjudication.groups()
+                project = await asyncio.to_thread(
+                    self.workbench.get_project, user.user_id, project_id
+                )
+                owner_id = user.user_id if project is not None else await self._reviewer_owner(user, project_id)
+                if not isinstance(owner_id, str) or not owner_id:
+                    return await self._respond(send, 403, {"error": "reviewer_access_denied"})
+                if owner_id == user.user_id:
+                    require_grant = False
+                else:
+                    require_grant = self.reviewer_authorizer is None
+                payload = await self._body(receive)
+                if set(payload) - {"decision", "final_label", "notes"} or "decision" not in payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                result = await asyncio.to_thread(
+                    self.workbench.adjudicate_independent_task,
+                    owner_id, project_id, task_id, user.user_id,
+                    require_reviewer_grant=require_grant, **payload,
+                )
+                return await self._respond(
+                    send, 201 if result else 404,
+                    {"adjudication": result} if result else {"error": "not_found"},
+                )
+
+            delivery_report = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/delivery-report", path
+            )
+            if delivery_report and method == "GET":
+                report = await asyncio.to_thread(
+                    self.workbench.delivery_report, user.user_id, delivery_report.group(1)
+                )
+                return await self._respond(
+                    send, 200 if report else 404,
+                    {"report": report} if report else {"error": "not_found"},
+                )
+
             review_queue = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/review-queue", path
             )

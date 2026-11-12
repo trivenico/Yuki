@@ -148,6 +148,108 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         self.assertEqual(report["fleiss_kappa"], None)
         self.assertIsNone(self.store.independent_agreement_report("owner:bob", project.project_id))
 
+    def test_independent_adjudication_requires_calibrated_reviewer_and_gates_export(self):
+        project = self.store.create_project(
+            "owner:alice", name="Adjudication", task_type="text_classification",
+            instructions="Classify sentiment.", rubric={"labels": ["positive", "negative"]},
+        )
+        for index in range(5):
+            gold_task = self.store.create_task(
+                "owner:alice", project.project_id, external_ref=f"calibration-{index}",
+                input_data={"text": f"Known calibration text {index}."},
+            )
+            self.store.create_gold_standard(
+                "owner:alice", project.project_id, gold_task.task_id, "positive"
+            )
+            gold_assignments = self.store.create_independent_assignments(
+                "owner:alice", project.project_id, gold_task.task_id,
+                ["reviewer:calibrated", f"gold-peer:{index}"],
+            )
+            for assignment, annotator in zip(
+                gold_assignments, ("reviewer:calibrated", f"gold-peer:{index}")
+            ):
+                claimed = self.store.claim_independent_assignment(
+                    annotator, assignment["assignment_id"], expected_version=1
+                )
+                self.store.submit_independent_assignment(
+                    annotator, assignment["assignment_id"], payload={"label": "positive"},
+                    expected_version=claimed["version"], human_confirmed=True,
+                )
+        task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="disputed-001",
+            input_data={"text": "A disputed sentence."},
+        )
+        assignments = self.store.create_independent_assignments(
+            "owner:alice", project.project_id, task.task_id,
+            ["annotator:first", "annotator:second"],
+        )
+        for assignment, annotator, label in zip(
+            assignments, ("annotator:first", "annotator:second"), ("positive", "negative")
+        ):
+            claimed = self.store.claim_independent_assignment(
+                annotator, assignment["assignment_id"], expected_version=1
+            )
+            self.store.submit_independent_assignment(
+                annotator, assignment["assignment_id"], payload={"label": label},
+                expected_version=claimed["version"], human_confirmed=True,
+            )
+        self.store.grant_reviewer("owner:alice", project.project_id, "reviewer:calibrated")
+        self_review_task = self.store.create_task(
+            "owner:alice", project.project_id, external_ref="self-review-001",
+            input_data={"text": "A sentence for self-review."},
+        )
+        self_review_assignments = self.store.create_independent_assignments(
+            "owner:alice", project.project_id, self_review_task.task_id,
+            ["reviewer:calibrated", "annotator:peer"],
+        )
+        for assignment, annotator in zip(
+            self_review_assignments, ("reviewer:calibrated", "annotator:peer")
+        ):
+            claimed = self.store.claim_independent_assignment(
+                annotator, assignment["assignment_id"], expected_version=1
+            )
+            self.store.submit_independent_assignment(
+                annotator, assignment["assignment_id"], payload={"label": "positive"},
+                expected_version=claimed["version"], human_confirmed=True,
+            )
+        with self.assertRaisesRegex(PermissionError, "self_review_prohibited"):
+            self.store.adjudicate_independent_task(
+                "owner:alice", project.project_id, self_review_task.task_id,
+                "reviewer:calibrated", decision="accepted", final_label="positive",
+            )
+        with self.assertRaisesRegex(PermissionError, "reviewer_calibration_required"):
+            self.store.adjudicate_independent_task(
+                "owner:alice", project.project_id, task.task_id, "reviewer:new",
+                decision="accepted", final_label="positive", notes="Reviewed.",
+                require_reviewer_grant=False,
+            )
+        with self.assertRaisesRegex(ValueError, "disagreement_requires_adjudication_notes"):
+            self.store.adjudicate_independent_task(
+                "owner:alice", project.project_id, task.task_id, "reviewer:calibrated",
+                decision="accepted", final_label="positive",
+            )
+        result = self.store.adjudicate_independent_task(
+            "owner:alice", project.project_id, task.task_id, "reviewer:calibrated",
+            decision="accepted", final_label="positive", notes="Resolved after evidence review.",
+        )
+        self.assertEqual(result["submission_count"], 2)
+        self.assertEqual(result["agreement"], 0.5)
+        self.assertEqual(len(result["source_assignment_ids"]), 2)
+        report = self.store.delivery_report("owner:alice", project.project_id)
+        self.assertEqual(report["accepted_independent_task_count"], 1)
+        self.assertEqual(report["accepted_delivery_count"], 1)
+        exported = self.store.export_accepted("owner:alice", project.project_id)
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0]["annotation"], {"label": "positive"})
+        self.assertEqual(exported[0]["quality"]["source"], "independent_adjudication")
+        self.assertEqual(len(exported[0]["quality"]["source_assignment_ids"]), 2)
+        self.assertEqual(self.store.export_accepted("owner:bob", project.project_id), [])
+        with self.assertRaisesRegex(ValueError, "task_already_adjudicated"):
+            self.store.adjudicate_independent_task(
+                "owner:alice", project.project_id, task.task_id, "owner:alice",
+                decision="accepted", final_label="positive",
+            )
+
     def test_gold_standard_is_blinded_and_calibrates_annotators(self):
         project = self.store.create_project(
             "owner:alice", name="Gold calibration", task_type="text_classification",

@@ -217,6 +217,24 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_worker
                 ON annotation_independent_assignments(annotator_id, status, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_adjudications (
+                adjudication_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                final_label TEXT,
+                notes TEXT NOT NULL,
+                source_assignment_ids_json TEXT NOT NULL,
+                agreement REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(owner_id, project_id, task_id),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id),
+                FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_adjudications_delivery
+                ON annotation_adjudications(owner_id, project_id, decision, created_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_standards (
                 gold_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -604,7 +622,7 @@ class SQLiteAnnotationWorkbench:
                    ORDER BY s.updated_at, s.submission_id LIMIT ?""",
                 (owner_id, project_id, limit),
             ).fetchall()
-        return [{
+        result = [{
             "external_ref": row["external_ref"],
             "asset_ref": row["asset_ref"],
             "input_data": _decode(row["input_json"]),
@@ -613,6 +631,33 @@ class SQLiteAnnotationWorkbench:
             "ai_assisted": bool(row["ai_assisted"]),
             "accepted_at": row["accepted_at"],
         } for row in rows]
+        remaining = max(0, limit - len(result))
+        if remaining:
+            with self._connect() as db:
+                adjudicated = db.execute(
+                    """SELECT t.external_ref, t.asset_ref, t.input_json,
+                              a.final_label, a.agreement, a.reviewer_id,
+                              a.source_assignment_ids_json, a.created_at
+                       FROM annotation_adjudications a
+                       JOIN annotation_tasks t
+                         ON t.task_id=a.task_id AND t.owner_id=a.owner_id
+                       WHERE a.owner_id=? AND a.project_id=? AND a.decision='accepted'
+                       ORDER BY a.created_at, a.adjudication_id LIMIT ?""",
+                    (owner_id, project_id, remaining),
+                ).fetchall()
+            result.extend({
+                "external_ref": row["external_ref"],
+                "asset_ref": row["asset_ref"],
+                "input_data": _decode(row["input_json"]),
+                "annotation": {"label": row["final_label"]},
+                "quality": {"source": "independent_adjudication",
+                            "annotator_agreement": row["agreement"],
+                            "reviewer_id": row["reviewer_id"],
+                            "source_assignment_ids": json.loads(row["source_assignment_ids_json"])},
+                "ai_assisted": False,
+                "accepted_at": row["created_at"],
+            } for row in adjudicated)
+        return result
 
     def get_task(self, owner_id: str, task_id: str) -> AnnotationTask | None:
         owner_id = _owner(owner_id)
@@ -1358,6 +1403,196 @@ class SQLiteAnnotationWorkbench:
         result = dict(row)
         result["quality"] = _decode(result.pop("quality_json"))
         return result
+
+    def list_independent_submissions(
+        self, owner_id: str, project_id: str, task_id: str,
+    ) -> list[dict[str, Any]] | None:
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(task_id, str) or not _ID.fullmatch(task_id)):
+            raise ValueError("invalid_adjudication_target")
+        with self._connect() as db:
+            task = db.execute(
+                "SELECT 1 FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if task is None:
+                return None
+            rows = db.execute(
+                """SELECT assignment_id, annotator_id, payload_json, quality_json, updated_at
+                   FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=? AND task_id=? AND status='submitted'
+                   ORDER BY annotator_id, assignment_id""",
+                (owner_id, project_id, task_id),
+            ).fetchall()
+        return [{
+            "assignment_id": row["assignment_id"], "annotator_id": row["annotator_id"],
+            "payload": _decode(row["payload_json"]),
+            "quality": _decode(row["quality_json"]), "submitted_at": row["updated_at"],
+        } for row in rows]
+
+    def adjudicate_independent_task(
+        self, owner_id: str, project_id: str, task_id: str, reviewer_id: str, *,
+        decision: str, final_label: str | None = None, notes: str = "",
+        require_reviewer_grant: bool = True, minimum_gold_tasks: int = 5,
+        passing_accuracy: float = 0.8,
+    ) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        reviewer_id = _owner(reviewer_id)
+        if reviewer_id == owner_id:
+            is_owner = True
+        else:
+            is_owner = False
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(task_id, str) or not _ID.fullmatch(task_id)):
+            raise ValueError("invalid_adjudication_target")
+        if decision not in {"accepted", "rework"}:
+            raise ValueError("invalid_adjudication_decision")
+        if not isinstance(notes, str) or len(notes) > 4000:
+            raise ValueError("invalid_adjudication_notes")
+        if type(minimum_gold_tasks) is not int or not 1 <= minimum_gold_tasks <= 100:
+            raise ValueError("invalid_calibration_policy")
+        if type(passing_accuracy) not in (int, float) or not 0.5 <= passing_accuracy <= 1.0:
+            raise ValueError("invalid_calibration_policy")
+        if decision == "accepted" and (not isinstance(final_label, str) or not final_label.strip()):
+            raise ValueError("final_label_required")
+        if decision == "rework" and final_label is not None:
+            raise ValueError("final_label_not_allowed_for_rework")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute(
+                "SELECT task_type, rubric_json, status FROM annotation_projects "
+                "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            if project["status"] != "active" or project["task_type"] != "text_classification":
+                raise ValueError("adjudication_requires_active_text_classification_project")
+            task = db.execute(
+                "SELECT external_ref, input_json, status FROM annotation_tasks "
+                "WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if task is None:
+                return None
+            if task["status"] in {"accepted", "completed"}:
+                raise ValueError("task_already_delivered")
+            if not is_owner:
+                if require_reviewer_grant:
+                    grant = db.execute(
+                        "SELECT 1 FROM annotation_project_reviewers WHERE owner_id=? "
+                        "AND project_id=? AND reviewer_id=? AND revoked_at IS NULL",
+                        (owner_id, project_id, reviewer_id),
+                    ).fetchone()
+                    if grant is None:
+                        raise PermissionError("reviewer_access_revoked")
+                calibration = db.execute(
+                    "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct "
+                    "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=?",
+                    (owner_id, project_id, reviewer_id),
+                ).fetchone()
+                n = calibration["n"]
+                accuracy = calibration["correct"] / n if n else 0.0
+                if n < minimum_gold_tasks or accuracy < passing_accuracy:
+                    raise PermissionError("reviewer_calibration_required")
+            existing = db.execute(
+                "SELECT 1 FROM annotation_adjudications WHERE owner_id=? AND project_id=? AND task_id=?",
+                (owner_id, project_id, task_id),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError("task_already_adjudicated")
+            rows = db.execute(
+                "SELECT assignment_id, annotator_id, payload_json FROM annotation_independent_assignments "
+                "WHERE owner_id=? AND project_id=? AND task_id=? AND status='submitted' "
+                "ORDER BY annotator_id, assignment_id",
+                (owner_id, project_id, task_id),
+            ).fetchall()
+            if len(rows) < 2:
+                raise ValueError("adjudication_requires_two_submissions")
+            if not is_owner and any(row["annotator_id"] == reviewer_id for row in rows):
+                raise PermissionError("self_review_prohibited")
+            labels = []
+            for row in rows:
+                payload = _decode(row["payload_json"])
+                label = payload.get("label")
+                if not isinstance(label, str):
+                    raise ValueError("submitted_classification_label_missing")
+                labels.append(label)
+            agreement = max(labels.count(label) for label in set(labels)) / len(labels)
+            chosen_label = final_label.strip() if final_label is not None else None
+            if decision == "accepted":
+                validate_annotation_payload(
+                    project["task_type"], {"label": chosen_label}, _decode(project["rubric_json"])
+                )
+            if (len(set(labels)) > 1
+                    or (decision == "accepted" and chosen_label not in labels)) and not notes.strip():
+                raise ValueError("disagreement_requires_adjudication_notes")
+            adjudication_id = uuid.uuid4().hex
+            source_ids = [row["assignment_id"] for row in rows]
+            db.execute(
+                """INSERT INTO annotation_adjudications
+                   (adjudication_id, owner_id, project_id, task_id, reviewer_id, decision,
+                    final_label, notes, source_assignment_ids_json, agreement, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (adjudication_id, owner_id, project_id, task_id, reviewer_id, decision,
+                 chosen_label, notes, json.dumps(source_ids, separators=(",", ":")), agreement, now),
+            )
+            updated = db.execute(
+                "UPDATE annotation_tasks SET status=?, version=version+1, updated_at=? "
+                "WHERE owner_id=? AND project_id=? AND task_id=? AND status NOT IN ('accepted','completed')",
+                (decision, now, owner_id, project_id, task_id),
+            )
+            if updated.rowcount != 1:
+                raise AnnotationConflict("adjudication_task_state_conflict")
+            self._audit(db, owner_id, project_id, task_id, "independent_task_adjudicated", {
+                "adjudication_id": adjudication_id, "decision": decision,
+                "reviewer_id": reviewer_id, "source_assignment_count": len(source_ids),
+                "agreement": agreement,
+            })
+        return {
+            "adjudication_id": adjudication_id, "project_id": project_id, "task_id": task_id,
+            "decision": decision, "final_label": chosen_label, "reviewer_id": reviewer_id,
+            "source_assignment_ids": source_ids, "submission_count": len(source_ids),
+            "agreement": agreement, "created_at": now,
+        }
+
+    def delivery_report(self, owner_id: str, project_id: str) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        with self._connect() as db:
+            project = db.execute(
+                "SELECT project_id FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            rows = db.execute(
+                "SELECT decision, COUNT(*) AS count FROM annotation_adjudications "
+                "WHERE owner_id=? AND project_id=? GROUP BY decision",
+                (owner_id, project_id),
+            ).fetchall()
+            task_count = db.execute(
+                """SELECT COUNT(DISTINCT task_id) FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=?""",
+                (owner_id, project_id),
+            ).fetchone()[0]
+            accepted_exports = db.execute(
+                "SELECT COUNT(*) FROM annotation_submissions WHERE owner_id=? AND project_id=? AND status='accepted'",
+                (owner_id, project_id),
+            ).fetchone()[0]
+        decisions = {row["decision"]: row["count"] for row in rows}
+        adjudicated = sum(decisions.values())
+        return {
+            "project_id": project_id, "task_count": task_count,
+            "adjudicated_task_count": adjudicated,
+            "pending_adjudication_count": max(0, task_count - adjudicated),
+            "accepted_independent_task_count": decisions.get("accepted", 0),
+            "rework_independent_task_count": decisions.get("rework", 0),
+            "accepted_single_submission_count": accepted_exports,
+            "accepted_delivery_count": accepted_exports + decisions.get("accepted", 0),
+        }
 
     def independent_agreement_report(
         self, owner_id: str, project_id: str,
