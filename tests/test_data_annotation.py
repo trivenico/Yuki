@@ -199,7 +199,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             "owner:alice", project.project_id, external_ref="gold-setup",
             input_data={"text": "A sentence."},
         )
-        with self.assertRaisesRegex(ValueError, "invalid_annotation_payload"):
+        with self.assertRaisesRegex(ValueError, "label_not_in_project_rubric"):
             self.store.create_gold_standard(
                 "owner:alice", project.project_id, task.task_id, "unknown"
             )
