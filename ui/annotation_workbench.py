@@ -162,7 +162,7 @@ def run_annotation_workbench(workbench: Any, owner_id: str) -> None:
         from textual.app import App, ComposeResult
         from textual.containers import Vertical, VerticalScroll
         from textual.screen import ModalScreen
-        from textual.widgets import Button, Footer, Header, Input, RichLog, Static, TextArea
+        from textual.widgets import Button, Footer, Header, Input, RichLog, Select, Static, TextArea
     except ImportError as exc:
         raise RuntimeError(
             "Install the optional UI dependency with: pip install -r requirements-ui.txt"
@@ -189,7 +189,14 @@ def run_annotation_workbench(workbench: Any, owner_id: str) -> None:
                 for field in self.fields:
                     choices = (" Choices: " + ", ".join(field.options)) if field.options else ""
                     yield Static(f"{field.label}{' *' if field.required else ''} — {field.help_text}{choices}")
-                    if field.kind.startswith("json-"):
+                    if field.kind == "choice":
+                        yield Select(
+                            [(option, option) for option in field.options],
+                            prompt=f"Select {field.label.lower()}",
+                            allow_blank=True,
+                            id=f"field-{field.name}",
+                        )
+                    elif field.kind.startswith("json-"):
                         yield TextArea(id=f"field-{field.name}", soft_wrap=True)
                     else:
                         yield Input(placeholder=field.placeholder or field.label,
@@ -217,7 +224,12 @@ def run_annotation_workbench(workbench: Any, owner_id: str) -> None:
                 values = {}
                 for field in self.fields:
                     widget = self.query_one(f"#field-{field.name}")
-                    values[field.name] = widget.text if isinstance(widget, TextArea) else widget.value
+                    if isinstance(widget, TextArea):
+                        values[field.name] = widget.text
+                    elif isinstance(widget, Select):
+                        values[field.name] = "" if widget.value is Select.BLANK else widget.value
+                    else:
+                        values[field.name] = widget.value
                 try:
                     self.payload = build_annotation_payload(
                         self.project.task_type, values, self.project.rubric,
