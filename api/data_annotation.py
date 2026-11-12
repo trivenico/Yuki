@@ -18,7 +18,9 @@ from core.data_annotation import (
 
 _MAX_BODY = 1024 * 1024
 _ID = re.compile(r"^[0-9a-f]{32}$")
-_PROJECT_FIELDS = frozenset({"name", "task_type", "instructions", "rubric"})
+_PROJECT_FIELDS = frozenset({
+    "name", "task_type", "instructions", "rubric", "ai_assistance_mode",
+})
 _TASK_FIELDS = frozenset({"external_ref", "asset_ref", "input_data"})
 _SUBMIT_FIELDS = frozenset({
     "payload", "expected_version", "ai_assisted", "human_confirmed",
@@ -55,7 +57,9 @@ class AuthenticatedAnnotationAPI:
             if path == prefix + "/projects":
                 if method == "POST":
                     payload = await self._body(receive)
-                    if set(payload) != _PROJECT_FIELDS:
+                    if not {"name", "task_type", "instructions", "rubric"} <= set(payload):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    if set(payload) - _PROJECT_FIELDS:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     project = await asyncio.to_thread(
                         self.workbench.create_project, user.user_id, **payload
