@@ -10,7 +10,7 @@ from dataclasses import asdict
 import json
 import re
 
-from core.annotation_assets import SQLiteAnnotationAssetStore
+from core.annotation_assets import AnnotationAssetError, SQLiteAnnotationAssetStore
 from core.annotation_image_preview import (
     AnnotationImagePreviewError,
     create_safe_png_preview,
@@ -149,9 +149,12 @@ class AuthenticatedAnnotationAPI:
                 if self.asset_store is None:
                     return await self._respond(send, 404, {"error": "not_found"})
                 project_id, asset_id = asset_preview.groups()
-                source = await asyncio.to_thread(
-                    self.asset_store.read, user.user_id, project_id, asset_id
-                )
+                try:
+                    source = await asyncio.to_thread(
+                        self.asset_store.read, user.user_id, project_id, asset_id
+                    )
+                except AnnotationAssetError:
+                    return await self._respond(send, 409, {"error": "asset_integrity_check_failed"})
                 try:
                     preview = await asyncio.to_thread(create_safe_png_preview, source)
                 except RuntimeError:
