@@ -1238,6 +1238,61 @@
     }
   });
   $("annotation-agreement-refresh").addEventListener("click", refreshAgreementReport);
+  const refreshPerformanceReport = async () => {
+    const target = $("annotation-performance-summary");
+    target.replaceChildren();
+    if (!state.project) {
+      target.textContent = "Select a project first.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/performance-report");
+      const report = result.report;
+      const renderGroup = (heading, entries, idField, fields) => {
+        const title = document.createElement("h5");
+        title.textContent = heading;
+        target.append(title);
+        if (!entries.length) {
+          const empty = document.createElement("p");
+          empty.textContent = "No persisted evidence yet.";
+          target.append(empty);
+          return;
+        }
+        const list = document.createElement("ul");
+        for (const entry of entries) {
+          const item = document.createElement("li");
+          const values = fields.map(([key, label, format]) =>
+            label + ": " + (format ? format(entry[key]) : (entry[key] ?? "—"))
+          );
+          item.textContent = entry[idField] + " — " + values.join(" · ");
+          list.append(item);
+        }
+        target.append(list);
+      };
+      renderGroup("Annotators", report.annotators, "annotator_id", [
+        ["submitted", "Submitted"], ["assigned", "Assigned"], ["in_progress", "In progress"],
+        ["revoked", "Revoked"], ["gold_sample_count", "Gold samples"],
+        ["gold_accuracy", "Gold accuracy", value => value == null ? "insufficient evidence" : Math.round(value * 100) + "%"],
+        ["rework_requested_count", "Rework requests"],
+        ["median_submission_seconds", "Median elapsed seconds", value => value == null ? "—" : Math.round(value)],
+      ]);
+      renderGroup("Reviewers", report.reviewers, "reviewer_id", [
+        ["independent_adjudications", "Independent adjudications"],
+        ["accepted_adjudications", "Accepted"], ["rework_adjudications", "Rework"],
+        ["accepted_submissions", "Accepted submissions"], ["rework_submissions", "Rework submissions"],
+        ["gold_sample_count", "Gold samples"],
+        ["gold_accuracy", "Gold accuracy", value => value == null ? "insufficient evidence" : Math.round(value * 100) + "%"],
+        ["calibration_status", "Calibration"],
+      ]);
+      const note = document.createElement("p");
+      note.textContent = "Elapsed time is assignment creation to submission, not active work time. Metrics describe recorded evidence and are not a ranking.";
+      target.append(note);
+    } catch (error) {
+      target.textContent = "Performance report unavailable: " + error.message;
+    }
+  };
+  $("annotation-performance-refresh").addEventListener("click", refreshPerformanceReport);
   $("annotation-independent-load").addEventListener("click", loadIndependentAssignments);
   $("annotation-independent-submit").addEventListener("click", async () => {
     const assignment = state.independentAssignment;
