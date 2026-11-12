@@ -289,6 +289,31 @@ class DurableTaskEngine:
             }
             connection.commit()
             return result
+    def get_active_claim_by_digest(self, task_id: str, claim_token_sha256: str):
+        """Resolve a live claim's worker identity without disclosing its lease secret."""
+        if not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64:
+            return None
+        if any(char not in "0123456789abcdef" for char in claim_token_sha256):
+            return None
+        with closing(self._connect()) as c:
+            row = c.execute(
+                """SELECT id,lease_owner,lease_until,lease_token FROM tasks
+                   WHERE id=? AND state='running'""", (task_id,)
+            ).fetchone()
+        if row is None or row["lease_until"] is None or row["lease_until"] <= self.clock():
+            return None
+        if not isinstance(row["lease_token"], str):
+            return None
+        actual = hashlib.sha256(row["lease_token"].encode("ascii")).hexdigest()
+        if not hmac.compare_digest(actual, claim_token_sha256):
+            return None
+        return {"task_id": row["id"], "worker_id": row["lease_owner"]}
+
+    def validate_claim_digest(self, task_id: str, worker_id: str, claim_token_sha256: str) -> bool:
+        """Validate a live claim using its digest; never return or accept its secret."""
+        claim = self.get_active_claim_by_digest(task_id, claim_token_sha256)
+        return claim is not None and hmac.compare_digest(claim["worker_id"], worker_id)
+
     def validate_lease(self, task_id, worker_id, lease_token):
         """Return whether this exact claim still owns a live task lease."""
         try:
