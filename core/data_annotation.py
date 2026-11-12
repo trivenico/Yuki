@@ -962,7 +962,7 @@ class SQLiteAnnotationWorkbench:
                 key: values[key] for key in (
                     "submission_id", "task_id", "project_id", "owner_id", "payload_json",
                     "ai_assisted", "human_confirmed", "status", "reviewer_notes",
-                    "reviewer_id", "created_at", "updated_at",
+                    "reviewer_id", "quality_json", "created_at", "updated_at",
                 )
             })
             items.append(AnnotationReviewItem(
