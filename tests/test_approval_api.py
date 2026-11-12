@@ -8,6 +8,7 @@ from api.approvals import AuthenticatedCapabilityApprovalAPI
 from core.auth import BuiltInAuthService
 from core.authenticated_capability_approval_service import AuthenticatedCapabilityApprovalService
 from core.capability_approval_gateway import CapabilityApprovalGateway
+from core.capability_approval_preview import ApprovalPreview, CapabilityApprovalPreviewRegistry
 from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine
 
 
@@ -34,9 +35,20 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
                 target="workspace:project-a", risk=Risk.HIGH,
             ),
         ), policy_version="policy-v1")
+        previews = CapabilityApprovalPreviewRegistry()
+        previews.register(
+            "workspace:write",
+            lambda request: ApprovalPreview(
+                title="Write to project workspace",
+                operation="Create or update project files",
+                target="Project A workspace",
+                impact="Project files may be changed; review the proposed change before continuing",
+            ),
+        )
         self.gateway = CapabilityApprovalGateway(
             root / "approval.sqlite", self.policy,
             authorize_approver=lambda actor, request: actor == self.admin.user.user_id,
+            preview_registry=previews,
         )
         self.delivered = []
         self.service = AuthenticatedCapabilityApprovalService(
@@ -97,6 +109,11 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         self.assertEqual(body["requests"][0]["request_id"], request_id)
         self.assertEqual(body["requests"][0]["risk"], "high")
         self.assertEqual(body["requests"][0]["trigger"], "durable_task")
+        self.assertTrue(body["requests"][0]["preview_available"])
+        self.assertEqual(
+            body["requests"][0]["preview"]["operation"],
+            "Create or update project files",
+        )
         self.assertNotIn("request_json", repr(body))
         self.assertNotIn("argument_sha256", repr(body))
         self.assertNotIn("claim_token_sha256", repr(body))
@@ -115,6 +132,23 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         decision = self.gateway.authorize(request, approval_token=self.delivered[0][1])
         self.assertTrue(decision.allowed)
         self.assertTrue(decision.approval_consumed)
+
+    def test_approval_is_blocked_when_capability_has_no_trusted_preview(self):
+        gateway = CapabilityApprovalGateway(
+            Path(self.tmp.name) / "no-preview.sqlite",
+            self.policy,
+            authorize_approver=lambda actor, request: actor == self.admin.user.user_id,
+        )
+        request = PolicyRequest(**{**self.payload(), "risk": Risk.HIGH})
+        request_id = gateway.request_approval(request)
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, gateway,
+            deliver_credential=lambda request_id, token: self.delivered.append((request_id, token)),
+        )
+        with self.assertRaisesRegex(PermissionError, "trusted capability operation preview"):
+            service.approve_pending(self.admin.token, request_id)
+        self.assertEqual(self.delivered, ())
+        self.assertEqual(gateway.get_request_status(request_id), "pending")
 
     def test_cross_principal_request_and_non_approver_inbox_are_rejected(self):
         payload = self.payload()
