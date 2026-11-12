@@ -39,6 +39,10 @@ class YukiWebApplicationTests(unittest.TestCase):
     def test_web_shell_contains_provider_status_indicator(self):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/")
         self.assertIn(b'id="provider-label"', sent[1]["body"])
+        self.assertIn(b'id="open-annotation"', sent[1]["body"])
+        self.assertIn(b'id="annotation-canvas"', sent[1]["body"])
+        self.assertIn(b'/assets/annotation.js', sent[1]["body"])
+        self.assertIn(b'/assets/annotation.css', sent[1]["body"])
 
     def test_chat_script_loads_authenticated_provider_status_and_oauth_callback(self):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.js")
