@@ -143,7 +143,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             "owner:alice", task.task_id, expected_version=task.version
         )
         submission = self.store.submit(
-            "owner:alice", task.task_id, payload={"label": "positive"},
+            "owner:alice", task.task_id, payload={"label": "bird"},
             expected_version=claimed.version, human_confirmed=True,
         )
         self.store.grant_reviewer("owner:alice", project.project_id, "owner:reviewer")
