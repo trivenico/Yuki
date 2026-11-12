@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import hashlib
 import tempfile
 import threading
@@ -52,6 +53,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         engine.reject = reject_with_token
 
     def tearDown(self):
+        self.engine.close()
         self.tmp.cleanup()
 
     def test_expired_claim_creates_leased_durable_revocation_outbox(self):
@@ -60,8 +62,9 @@ class DurableTaskEngineTests(unittest.TestCase):
         )
         claimed = self.engine.claim("recovery-worker")
         self.assertEqual(claimed["id"], task["id"])
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db:
             db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+            db.commit()
         self.assertEqual(self.engine.recover_expired_leases(), 1)
         first = self.engine.claim_recovery_outbox("supervisor-a")
         self.assertEqual(len(first), 1)
@@ -95,6 +98,7 @@ class DurableTaskEngineTests(unittest.TestCase):
                 "UPDATE lease_recovery_outbox SET claim_until=0 WHERE id=?",
                 (first[0]["id"],),
             )
+            db.commit()
         second = self.engine.claim_recovery_outbox("same-supervisor")
         self.assertEqual(len(second), 1)
         self.assertNotEqual(first[0]["claim_token"], second[0]["claim_token"])
@@ -117,6 +121,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         )
         self.assertEqual(wait["state"], "pending")
         reopened = DurableTaskEngine(self.db)
+        self.addCleanup(reopened.close)
         digest = hashlib.sha256(claimed["lease_token"].encode("ascii")).hexdigest()
         self.assertEqual(
             reopened.get_approval_wait(task["id"], digest)["request_id"], request_id
