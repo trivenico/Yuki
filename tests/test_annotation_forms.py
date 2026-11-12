@@ -50,6 +50,10 @@ class AnnotationEditorFormTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unexpected_editor_field"):
             build_annotation_payload("image_classification", {"label": "cat", "shell": "true"})
 
+    def test_structured_fields_reject_unpaired_unicode_surrogates(self):
+        with self.assertRaisesRegex(ValueError, "invalid_editor_field_boxes"):
+            build_annotation_payload("bounding_boxes", {"boxes": "\\ud800"})
+
     def test_custom_payload_remains_object_and_validates_size(self):
         self.assertEqual(build_annotation_payload("custom", {"payload": '{"answer":42}'}), {"answer": 42})
         with self.assertRaisesRegex(ValueError, "invalid_editor_json_type"):
