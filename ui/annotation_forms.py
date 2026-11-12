@@ -103,7 +103,13 @@ def annotation_editor_fields(
 
 
 def _json_field(value: Any, name: str, *, expected: type) -> Any:
-    if not isinstance(value, str) or len(value.encode("utf-8")) > _MAX_EDITOR_FIELD_CHARS:
+    if not isinstance(value, str):
+        raise ValueError("invalid_editor_field_" + name)
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("invalid_editor_field_" + name) from None
+    if len(encoded) > _MAX_EDITOR_FIELD_CHARS:
         raise ValueError("invalid_editor_field_" + name)
     try:
         parsed = json.loads(value)
