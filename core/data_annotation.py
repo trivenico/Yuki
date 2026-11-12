@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -205,6 +206,7 @@ class SQLiteAnnotationWorkbench:
                 project_id TEXT NOT NULL,
                 owner_id TEXT NOT NULL,
                 annotator_id TEXT NOT NULL,
+                round_number INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL,
                 version INTEGER NOT NULL DEFAULT 1,
                 payload_json TEXT,
@@ -215,8 +217,15 @@ class SQLiteAnnotationWorkbench:
                 FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id),
                 FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id)
             )""")
+            assignment_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(annotation_independent_assignments)")
+            }
+            if "round_number" not in assignment_columns:
+                db.execute("ALTER TABLE annotation_independent_assignments ADD COLUMN round_number INTEGER NOT NULL DEFAULT 1")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_worker
                 ON annotation_independent_assignments(annotator_id, status, created_at)""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_round
+                ON annotation_independent_assignments(owner_id, project_id, task_id, round_number, status)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_adjudications (
                 adjudication_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -235,6 +244,30 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_adjudications_delivery
                 ON annotation_adjudications(owner_id, project_id, decision, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_adjudication_events (
+                event_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                task_id TEXT NOT NULL, round_number INTEGER NOT NULL, adjudication_id TEXT NOT NULL,
+                event_type TEXT NOT NULL, snapshot_json TEXT NOT NULL, created_at TEXT NOT NULL
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_adjudication_events_task
+                ON annotation_adjudication_events(owner_id, project_id, task_id, round_number, created_at)""")
+            db.execute("""INSERT OR IGNORE INTO annotation_adjudication_events
+                (event_id, owner_id, project_id, task_id, round_number, adjudication_id,
+                 event_type, snapshot_json, created_at)
+                SELECT adjudication_id, owner_id, project_id, task_id, 1, adjudication_id,
+                       'adjudicated', json_object('reviewer_id', reviewer_id, 'decision', decision,
+                       'final_label', final_label, 'notes', notes,
+                       'source_assignment_ids_json', source_assignment_ids_json,
+                       'agreement', agreement), created_at FROM annotation_adjudications""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_delivery_manifests (
+                manifest_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                version INTEGER NOT NULL, idempotency_key TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+                sha256 TEXT NOT NULL, item_count INTEGER NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE(owner_id, project_id, version),
+                UNIQUE(owner_id, project_id, idempotency_key)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_manifests_owner
+                ON annotation_delivery_manifests(owner_id, project_id, created_at DESC)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_standards (
                 gold_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
