@@ -80,7 +80,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
     def grant_reviewer(self, project_id):
         status, body = self.request(
             "POST", f"/v1/annotation/projects/{project_id}/reviewers",
-            {"reviewer_user_id": self.owner_two.user_id}, self.owner_one.token,
+            {"reviewer_user_id": self.owner_two.user.user_id}, self.owner_one.token,
         )
         self.assertEqual((status, body["granted"]), (201, True))
 
@@ -170,7 +170,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             "POST", f"/v1/annotation/submissions/{submission_id}/review",
             {"decision": "accepted", "project_id": project_id}, self.owner_two.token,
         )
-        self.assertEqual((status, body["submission"]["reviewer_id"]), (200, self.owner_two.user_id))
+        self.assertEqual((status, body["submission"]["reviewer_id"]), (200, self.owner_two.user.user_id))
 
     def test_reviewer_authorization_cannot_be_reused_for_another_project(self):
         project_id = self.create_project()
@@ -199,7 +199,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, body["error"]), (404, "not_found"))
         self.assertEqual(
-            self.store.get_task(self.owner_one.user_id, task["task_id"]).status, "submitted"
+            self.store.get_task(self.owner_one.user.user_id, task["task_id"]).status, "submitted"
         )
 
     def test_owner_can_grant_list_and_revoke_reviewer_access(self):
@@ -210,10 +210,10 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             token=self.owner_one.token,
         )
         self.assertEqual((status, body["reviewers"][0]["reviewer_id"]),
-                         (200, self.owner_two.user_id))
+                         (200, self.owner_two.user.user_id))
         status, body = self.request(
             "DELETE", f"/v1/annotation/projects/{project_id}/reviewers",
-            {"reviewer_user_id": self.owner_two.user_id}, self.owner_one.token,
+            {"reviewer_user_id": self.owner_two.user.user_id}, self.owner_one.token,
         )
         self.assertEqual((status, body["revoked"]), (200, True))
         status, body = self.request(
