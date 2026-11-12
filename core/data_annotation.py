@@ -1747,7 +1747,8 @@ class SQLiteAnnotationWorkbench:
                 (owner_id, project_id),
             ).fetchone()[0]
             accepted_exports = db.execute(
-                "SELECT COUNT(*) FROM annotation_submissions WHERE owner_id=? AND project_id=? AND status='accepted'",
+                "SELECT COUNT(*) FROM annotation_submissions s WHERE owner_id=? AND project_id=? AND status='accepted' "
+                "AND NOT EXISTS (SELECT 1 FROM annotation_gold_standards g WHERE g.task_id=s.task_id AND g.owner_id=s.owner_id)",
                 (owner_id, project_id),
             ).fetchone()[0]
         accepted_independent = sum(1 for row in task_rows if row["status"] == "accepted" and row["decision"] == "accepted")
@@ -1814,7 +1815,8 @@ class SQLiteAnnotationWorkbench:
             task_totals = db.execute(
                 "SELECT COUNT(*) AS total, SUM(CASE WHEN status NOT IN ('accepted','completed') "
                 "THEN 1 ELSE 0 END) AS unresolved FROM annotation_tasks "
-                "WHERE owner_id=? AND project_id=?",
+                "WHERE owner_id=? AND project_id=? AND NOT EXISTS "
+                "(SELECT 1 FROM annotation_gold_standards g WHERE g.task_id=annotation_tasks.task_id AND g.owner_id=annotation_tasks.owner_id)",
                 (owner_id, project_id),
             ).fetchone()
             if task_totals["unresolved"]:
