@@ -28,5 +28,4 @@ canvas or a desktop rendering surface.
   submitted, bound to the current task version.
 - Geometry editing must remain separate from explicit human review/confirmation.
 - Next phase: integrate the primitives into a real desktop image canvas and add
-  polygon self-intersection checks, pointer capture, keyboard accessibility,
-  and end-to-end task submission tests.
+  pointer capture, keyboard accessibility, and end-to-end task submission tests.
