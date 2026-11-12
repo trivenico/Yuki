@@ -118,6 +118,36 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
             approval_wait_timeout_seconds=5,
         )
 
+    def test_policy_trigger_must_match_trusted_durable_context(self):
+        def mismatched_trigger(context, workspace_id, changes, operation):
+            request = self.request_factory(context, workspace_id, changes, operation)
+            return PolicyRequest(
+                principal_id=request.principal_id,
+                trigger="interactive",
+                capability=request.capability,
+                target=request.target,
+                argument_sha256=request.argument_sha256,
+                risk=request.risk,
+                run_id=request.run_id,
+                step_id=request.step_id,
+                claim_token_sha256=request.claim_token_sha256,
+            )
+
+        self.submit()
+        result = DurableWorkspaceWorker(
+            self.engine, gateway=self.gateway, executor=self.executor,
+            worker_id="workspace-worker",
+            policy_request_factory=mismatched_trigger,
+            principal_factory=self.principal_factory,
+            approval_token_resolver=self.approve_from_test_resolver,
+            lease_seconds=30, heartbeat_interval_seconds=10,
+            approval_wait_timeout_seconds=5,
+        ).run_once()
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "before\\n")
+        self.assertEqual(self.request_ids, [])
+        self.assertEqual(self.gateway.pending_requests(), [])
+
     def test_owner_approved_workspace_task_executes_exact_change(self):
         task = self.submit()
         result = self.worker().run_once()
