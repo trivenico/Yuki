@@ -126,6 +126,15 @@ class AnnotationSubmission:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class AnnotationReviewItem:
+    submission: AnnotationSubmission
+    external_ref: str
+    input_data: dict[str, Any]
+    instructions: str
+    rubric: dict[str, Any]
+
+
 class AnnotationConflict(RuntimeError):
     """The task changed since the caller last read it."""
 
@@ -814,8 +823,8 @@ class SQLiteAnnotationWorkbench:
 
     def list_review_queue(
         self, owner_id: str, project_id: str, *, limit: int = 100,
-    ) -> list[AnnotationSubmission]:
-        """Return submitted work for a project; caller must authorize reviewer access."""
+    ) -> list[AnnotationReviewItem]:
+        """Return review items with task and rubric context; caller authorizes access."""
         owner_id = _owner(owner_id)
         if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
             raise ValueError("invalid_project_id")
@@ -823,11 +832,32 @@ class SQLiteAnnotationWorkbench:
             raise ValueError("invalid_limit")
         with self._connect() as db:
             rows = db.execute(
-                "SELECT * FROM annotation_submissions WHERE owner_id=? AND project_id=? "
-                "AND status='submitted' ORDER BY created_at ASC, submission_id LIMIT ?",
+                """SELECT s.*, t.external_ref, t.input_json, p.instructions, p.rubric_json
+                FROM annotation_submissions s
+                JOIN annotation_tasks t ON t.task_id=s.task_id AND t.owner_id=s.owner_id
+                JOIN annotation_projects p ON p.project_id=s.project_id AND p.owner_id=s.owner_id
+                WHERE s.owner_id=? AND s.project_id=? AND s.status='submitted'
+                ORDER BY s.created_at ASC, s.submission_id LIMIT ?""",
                 (owner_id, project_id, limit),
             ).fetchall()
-        return [self._submission(row) for row in rows]
+        items = []
+        for row in rows:
+            values = dict(row)
+            submission = self._submission({
+                key: values[key] for key in (
+                    "submission_id", "task_id", "project_id", "owner_id", "payload_json",
+                    "ai_assisted", "human_confirmed", "status", "reviewer_notes",
+                    "reviewer_id", "created_at", "updated_at",
+                )
+            })
+            items.append(AnnotationReviewItem(
+                submission=submission,
+                external_ref=values["external_ref"],
+                input_data=_decode(values["input_json"]),
+                instructions=values["instructions"],
+                rubric=_decode(values["rubric_json"]),
+            ))
+        return items
 
     def list_submissions(
         self, owner_id: str, task_id: str, *, limit: int = 50,
