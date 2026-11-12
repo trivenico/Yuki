@@ -104,6 +104,12 @@ class CapabilityApprovalGateway:
                 );
                 CREATE INDEX IF NOT EXISTS idx_approval_requests_status_expiry
                     ON capability_approval_requests(status, expires_at);
+                CREATE TABLE IF NOT EXISTS capability_approval_previews (
+                    request_id TEXT PRIMARY KEY REFERENCES capability_approval_requests(request_id),
+                    preview_json TEXT NOT NULL,
+                    preview_sha256 TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS capability_audit (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_type TEXT NOT NULL,
@@ -213,6 +219,15 @@ class CapabilityApprovalGateway:
         policy = self.policy_engine.evaluate(request)
         if policy.decision != Decision.REQUIRE_APPROVAL:
             raise PermissionError("the current policy does not permit an approval request")
+        preview = self.preview_registry.render(request) if self.preview_registry is not None else None
+        preview_json = None if preview is None else json.dumps(
+            {"title": preview.title, "operation": preview.operation,
+             "target": preview.target, "impact": preview.impact},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        )
+        preview_digest = None if preview_json is None else hashlib.sha256(
+            preview_json.encode("utf-8")
+        ).hexdigest()
         now = self.clock()
         request_json = json.dumps(
             asdict(request), sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -248,6 +263,13 @@ class CapabilityApprovalGateway:
                  request.principal_id, request.capability, request.target,
                  request.run_id, request.step_id, now, now + ttl_seconds),
             )
+            if preview_json is not None and preview_digest is not None:
+                db.execute(
+                    """INSERT INTO capability_approval_previews
+                       (request_id,preview_json,preview_sha256,created_at)
+                       VALUES(?,?,?,?)""",
+                    (request_id, preview_json, preview_digest, now),
+                )
             self._audit(db, "approval_requested", request, digest,
                         policy.policy_version, policy.matched_rule_ids, "pending")
             db.commit()
@@ -273,31 +295,27 @@ class CapabilityApprovalGateway:
         return row["status"] if row is not None else None
 
     def approval_preview(self, request_id: str) -> dict[str, str] | None:
-        """Render a trusted capability-owned preview for one live pending request."""
+        """Return the immutable preview snapshot bound when the request was created."""
         if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
             raise ValueError("request_id is invalid")
-        if self.preview_registry is None:
-            return None
         now = self.clock()
         with closing(self._connect()) as db:
             row = db.execute(
-                """SELECT request_json,status,expires_at FROM capability_approval_requests
-                   WHERE request_id=?""", (request_id,),
+                """SELECT p.preview_json,p.preview_sha256,r.status,r.expires_at
+                   FROM capability_approval_previews p
+                   JOIN capability_approval_requests r ON r.request_id=p.request_id
+                   WHERE p.request_id=?""", (request_id,),
             ).fetchone()
         if row is None or row["status"] != "pending" or row["expires_at"] <= now:
             return None
-        raw = json.loads(row["request_json"])
-        raw["risk"] = Risk(raw["risk"])
-        request = PolicyRequest(**raw)
-        preview = self.preview_registry.render(request)
-        if preview is None:
+        encoded = row["preview_json"]
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(digest, row["preview_sha256"]):
             return None
-        return {
-            "title": preview.title,
-            "operation": preview.operation,
-            "target": preview.target,
-            "impact": preview.impact,
-        }
+        value = json.loads(encoded)
+        if not isinstance(value, dict) or set(value) != {"title", "operation", "target", "impact"}:
+            return None
+        return value
 
     def pending_requests(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """Return redacted inbox metadata; never expose request arguments or credentials."""
@@ -418,6 +436,27 @@ class CapabilityApprovalGateway:
             if not hmac.compare_digest(digest, row["request_sha256"]):
                 db.rollback()
                 raise PermissionError("approval request integrity check failed")
+            preview_row = db.execute(
+                """SELECT preview_json,preview_sha256 FROM capability_approval_previews
+                   WHERE request_id=?""", (request_id,),
+            ).fetchone()
+            if preview_row is None or self.preview_registry is None:
+                db.rollback()
+                raise PermissionError("trusted operation preview is unavailable")
+            current_preview = self.preview_registry.render(request)
+            if current_preview is None:
+                db.rollback()
+                raise PermissionError("trusted operation preview is unavailable")
+            current_preview_json = json.dumps(
+                {"title": current_preview.title, "operation": current_preview.operation,
+                 "target": current_preview.target, "impact": current_preview.impact},
+                sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            )
+            current_preview_digest = hashlib.sha256(current_preview_json.encode("utf-8")).hexdigest()
+            if (not hmac.compare_digest(current_preview_digest, preview_row["preview_sha256"])
+                    or not hmac.compare_digest(current_preview_json, preview_row["preview_json"])):
+                db.rollback()
+                raise PermissionError("trusted operation preview changed; a new approval request is required")
             policy = self.policy_engine.evaluate(request)
             if (policy.decision != Decision.REQUIRE_APPROVAL
                     or policy.policy_version != row["policy_version"]):
