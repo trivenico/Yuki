@@ -1,5 +1,7 @@
 import unittest
-from evaluation.model_eval import EvalCase, ModelEvaluator\nfrom evaluation.benchmark_registry import BenchmarkDefinition, BenchmarkRegistry\n
+from evaluation.model_eval import EvalCase, ModelEvaluator
+from evaluation.benchmark_registry import BenchmarkDefinition, BenchmarkRegistry
+
 
 class ModelEvaluatorTests(unittest.TestCase):
     def setUp(self): self.evaluator = ModelEvaluator(minimum_pass_rate=0.75)
