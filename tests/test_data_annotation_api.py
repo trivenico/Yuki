@@ -256,7 +256,7 @@ class AnnotationRuntimeTests(unittest.TestCase):
         def model(**kwargs):
             return {"text": "ready", "tool_calls": {"tool_calls": []}}
         loop = AgentExecutionLoop(
-            model, StructuredToolProtocol(GuardedToolRuntime({}, object()))
+            model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
         )
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
