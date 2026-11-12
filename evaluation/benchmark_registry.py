@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from contextlib import closing
 import json
 import re
 import sqlite3
@@ -120,7 +121,7 @@ class BenchmarkRegistry:
         self._lock = RLock()
         if self.database_path is not None:
             Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-            with self._connect() as db:
+            with closing(self._connect()) as db, db:
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA synchronous=FULL")
                 db.execute("""
