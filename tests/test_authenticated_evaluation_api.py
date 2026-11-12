@@ -91,6 +91,15 @@ class AuthenticatedEvaluationAPITests(unittest.TestCase):
         status, listed = self._request("GET", "/v1/evaluations/runs")
         self.assertEqual(status, 200)
         self.assertEqual(len(listed["runs"]), 1)
+        replay_status, replay_body = self._request("POST", "/v1/evaluations/runs", payload)
+        self.assertEqual(replay_status, 201)
+        self.assertEqual(replay_body["run"]["run_id"], run["run_id"])
+        self.api.auth.owner = "owner-b"
+        other_owner_status, _ = self._request(
+            "GET", "/v1/evaluations/runs/" + run["run_id"],
+        )
+        self.assertEqual(other_owner_status, 404)
+        self.api.auth.owner = "owner-a"
         status, missing = self._request(
             "GET", "/v1/evaluations/runs/" + run["run_id"], owner_token="invalid-token",
         )
