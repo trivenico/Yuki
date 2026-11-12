@@ -1149,6 +1149,10 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             "owner:alice", project.project_id, task_ids=[task.task_id],
             annotator_ids=["annotator:fresh"], idempotency_key="round-001",
         )
+        pending_report = self.store.gold_calibration_report("owner:alice", project.project_id)
+        self.assertEqual(pending_report["annotators"][0]["annotator_id"], "annotator:fresh")
+        self.assertEqual(pending_report["annotators"][0]["evaluated_gold_tasks"], 0)
+        self.assertEqual(pending_report["annotators"][0]["status"], "insufficient_evidence")
         replay = self.store.create_calibration_session(
             "owner:alice", project.project_id, task_ids=[task.task_id],
             annotator_ids=["annotator:fresh"], idempotency_key="round-001",
