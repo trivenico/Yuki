@@ -1728,30 +1728,34 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if project is None:
                 return None
-            rows = db.execute(
-                "SELECT decision, COUNT(*) AS count FROM annotation_adjudications "
-                "WHERE owner_id=? AND project_id=? GROUP BY decision",
+            task_rows = db.execute(
+                """SELECT t.task_id, t.status, a.decision
+                   FROM annotation_tasks t
+                   JOIN annotation_adjudications a
+                     ON a.task_id=t.task_id AND a.owner_id=t.owner_id
+                   WHERE t.owner_id=? AND t.project_id=?""",
                 (owner_id, project_id),
             ).fetchall()
             task_count = db.execute(
-                """SELECT COUNT(DISTINCT task_id) FROM annotation_independent_assignments
-                   WHERE owner_id=? AND project_id=?""",
-                (owner_id, project_id),
+                "SELECT COUNT(DISTINCT task_id) FROM annotation_independent_assignments "
+                "WHERE owner_id=? AND project_id=?", (owner_id, project_id),
             ).fetchone()[0]
             accepted_exports = db.execute(
                 "SELECT COUNT(*) FROM annotation_submissions WHERE owner_id=? AND project_id=? AND status='accepted'",
                 (owner_id, project_id),
             ).fetchone()[0]
-        decisions = {row["decision"]: row["count"] for row in rows}
-        adjudicated = sum(decisions.values())
+        accepted_independent = sum(1 for row in task_rows if row["status"] == "accepted" and row["decision"] == "accepted")
+        rework_pending = sum(1 for row in task_rows if row["status"] == "rework")
+        pending = sum(1 for row in task_rows if row["status"] in {"pending", "in_progress", "submitted"})
+        adjudicated = accepted_independent + rework_pending
         return {
             "project_id": project_id, "task_count": task_count,
             "adjudicated_task_count": adjudicated,
-            "pending_adjudication_count": max(0, task_count - adjudicated),
-            "accepted_independent_task_count": decisions.get("accepted", 0),
-            "rework_independent_task_count": decisions.get("rework", 0),
+            "pending_adjudication_count": pending,
+            "accepted_independent_task_count": accepted_independent,
+            "rework_independent_task_count": rework_pending,
             "accepted_single_submission_count": accepted_exports,
-            "accepted_delivery_count": accepted_exports + decisions.get("accepted", 0),
+            "accepted_delivery_count": accepted_exports + accepted_independent,
         }
 
 
@@ -1799,15 +1803,18 @@ class SQLiteAnnotationWorkbench:
                 "ai_assisted": False, "accepted_at": row["created_at"],
                 "provenance": {"source": "independent_adjudication", "adjudication_id": row["adjudication_id"]},
             } for row in independent)
-            unresolved = db.execute(
-                "SELECT COUNT(*) FROM annotation_tasks WHERE owner_id=? AND project_id=? "
-                "AND status NOT IN ('accepted','completed')",
+            task_totals = db.execute(
+                "SELECT COUNT(*) AS total, SUM(CASE WHEN status NOT IN ('accepted','completed') "
+                "THEN 1 ELSE 0 END) AS unresolved FROM annotation_tasks "
+                "WHERE owner_id=? AND project_id=?",
                 (owner_id, project_id),
-            ).fetchone()[0]
-            if unresolved:
+            ).fetchone()
+            if task_totals["unresolved"]:
                 raise ValueError("manifest_has_unaccepted_tasks")
             if not items:
                 raise ValueError("manifest_has_no_accepted_items")
+            if len(items) != task_totals["total"]:
+                raise ValueError("manifest_incomplete_task_coverage")
             task_ids = [item["task_id"] for item in items]
             if len(task_ids) != len(set(task_ids)):
                 raise ValueError("manifest_contains_duplicate_tasks")
