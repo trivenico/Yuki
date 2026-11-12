@@ -266,5 +266,20 @@ class LearningTests(unittest.TestCase):
 
 
 
+
+class ProviderHelpTests(unittest.TestCase):
+    def test_help_lists_compatible_provider_command_on_separate_lines(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from yuki import show_help
+
+        output = StringIO()
+        with redirect_stdout(output):
+            show_help()
+        help_text = output.getvalue()
+        self.assertIn("/provider select NAME", help_text)
+        self.assertIn("/provider add-compatible NAME", help_text)
+        self.assertNotIn(r"adapter\\n", help_text)
+
 if __name__ == "__main__":
     unittest.main()
