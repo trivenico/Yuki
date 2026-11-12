@@ -80,7 +80,11 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b"/draft", js[1]["body"])
         self.assertIn(b"expected_revision", js[1]["body"])
         self.assertIn(b"Recovered saved draft", js[1]["body"])
-        self.assertIn(b"touch-action:none", css[1]["body"])
+        self.assertIn(b"/review-queue", js[1]["body"])
+        self.assertIn(b"reviewer_user_id", js[1]["body"])
+        self.assertIn(b"Grant access", self.request(app, "/")[1]["body"])
+        self.assertIn(b"annotation-review-load", self.request(app, "/")[1]["body"])
+        self.assertIn(b"annotation-reviewer-admin", css[1]["body"])
         self.assertEqual(self.request(app, "/assets/../api/runtime.py")[0]["status"], 404)
 
     def test_provider_specific_oauth_callback_path_serves_chat_shell(self):
