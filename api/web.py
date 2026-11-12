@@ -9,6 +9,8 @@ _ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/assets/chat.js": ("chat.js", "text/javascript; charset=utf-8"),
     "/assets/chat.css": ("chat.css", "text/css; charset=utf-8"),
+    "/assets/annotation.js": ("annotation.js", "text/javascript; charset=utf-8"),
+    "/assets/annotation.css": ("annotation.css", "text/css; charset=utf-8"),
 }
 _WEB_ROOT = Path(__file__).resolve().parent.parent / "ui" / "web"
 _SECURITY_HEADERS = [
