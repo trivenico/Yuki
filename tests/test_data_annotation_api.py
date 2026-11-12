@@ -260,6 +260,71 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, hidden["error"]), (404, "not_found"))
 
+    def test_independent_adjudication_api_gates_delivery_and_is_owner_scoped(self):
+        self.auth.create_account("adjudicator-one", "adjudicator-one-password")
+        self.auth.create_account("adjudicator-two", "adjudicator-two-password")
+        one = self.auth.authenticate("adjudicator-one", "adjudicator-one-password")
+        two = self.auth.authenticate("adjudicator-two", "adjudicator-two-password")
+        status, created = self.request(
+            "POST", "/v1/annotation/projects", {
+                "name": "Adjudication API", "task_type": "text_classification",
+                "instructions": "Classify the sentence.",
+                "rubric": {"labels": ["positive", "negative"]},
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        project_id = created["project"]["project_id"]
+        status, task_result = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "adjudicate-api-001", "input_data": {"text": "A disputed sentence."}},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task_id = task_result["task"]["task_id"]
+        status, created_assignments = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/independent-assignments",
+            {"annotator_user_ids": [one.user.user_id, two.user.user_id]}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        assignments = created_assignments["assignments"]
+        for assignment, session, label in zip(assignments, (one, two), ("positive", "negative")):
+            status, claimed = self.request(
+                "POST", f"/v1/annotation/assignments/{assignment['assignment_id']}/claim",
+                {"expected_version": 1}, session.token,
+            )
+            self.assertEqual(status, 200)
+            status, _ = self.request(
+                "POST", f"/v1/annotation/assignments/{assignment['assignment_id']}/submit",
+                {"payload": {"label": label},
+                 "expected_version": claimed["assignment"]["version"], "human_confirmed": True},
+                session.token,
+            )
+            self.assertEqual(status, 201)
+        status, adjudicated = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/adjudication",
+            {"decision": "accepted", "final_label": "positive",
+             "notes": "Owner reviewed the conflicting labels."}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(adjudicated["adjudication"]["submission_count"], 2)
+        status, report = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/delivery-report",
+            token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(report["report"]["accepted_delivery_count"], 1)
+        status, hidden = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/delivery-report",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, hidden["error"]), (404, "not_found"))
+        status, denied = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/adjudication",
+            {"decision": "accepted", "final_label": "positive", "notes": "Not owner."},
+            self.owner_two.token,
+        )
+        self.assertEqual(status, 403)
+
     def test_gold_standard_api_hides_expected_answer_and_reports_calibration(self):
         self.auth.create_account("gold-annotator", "gold-annotator-password")
         annotator = self.auth.authenticate("gold-annotator", "gold-annotator-password")
