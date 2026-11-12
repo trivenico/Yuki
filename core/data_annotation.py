@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -271,6 +272,17 @@ class SQLiteAnnotationWorkbench:
                 UNIQUE(owner_id, project_id, version),
                 UNIQUE(owner_id, project_id, idempotency_key)
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_quality_drift_reports (
+                report_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL, report_json TEXT NOT NULL, sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL, UNIQUE(owner_id, project_id, idempotency_key)
+            )""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS annotation_quality_drift_reports_no_update
+                BEFORE UPDATE ON annotation_quality_drift_reports
+                BEGIN SELECT RAISE(ABORT, 'annotation_quality_drift_reports_are_immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS annotation_quality_drift_reports_no_delete
+                BEFORE DELETE ON annotation_quality_drift_reports
+                BEGIN SELECT RAISE(ABORT, 'annotation_quality_drift_reports_are_immutable'); END""")
             db.execute("""CREATE TRIGGER IF NOT EXISTS annotation_adjudication_events_no_update
                 BEFORE UPDATE ON annotation_adjudication_events
                 BEGIN SELECT RAISE(ABORT, 'annotation_adjudication_events_are_immutable'); END""")
@@ -1930,6 +1942,190 @@ class SQLiteAnnotationWorkbench:
             "actual_sha256": actual, "item_count": row["item_count"],
         }
 
+
+    def create_quality_drift_report(
+        self, owner_id: str, project_id: str, *, idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """Persist an immutable, evidence-backed gold-accuracy drift assessment."""
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 128:
+            raise ValueError("invalid_idempotency_key")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        baseline_start = now_dt.timestamp() - 90 * 86400
+        recent_start = now_dt.timestamp() - 30 * 86400
+        minimum_baseline, minimum_recent = 20, 10
+        minimum_drop, significance = 0.10, 0.01
+
+        def parse_timestamp(value: str) -> float | None:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.timestamp()
+            except (TypeError, ValueError):
+                return None
+
+        def wilson(successes: int, count: int) -> list[float] | None:
+            if count <= 0:
+                return None
+            z = 1.959963984540054
+            p = successes / count
+            denom = 1 + z * z / count
+            center = (p + z * z / (2 * count)) / denom
+            margin = z * math.sqrt((p * (1 - p) / count) + z * z / (4 * count * count)) / denom
+            return [max(0.0, center - margin), min(1.0, center + margin)]
+
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM annotation_quality_drift_reports WHERE owner_id=? AND project_id=? AND idempotency_key=?",
+                (owner_id, project_id, idempotency_key.strip()),
+            ).fetchone()
+            if existing is not None:
+                return self._decode_drift_report(existing)
+            project = db.execute(
+                "SELECT task_type FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            if project["task_type"] != "text_classification":
+                raise ValueError("quality_drift_requires_text_classification")
+            rows = db.execute(
+                """SELECT annotator_id, correct, created_at FROM annotation_gold_results
+                   WHERE owner_id=? AND project_id=? ORDER BY created_at, assignment_id""",
+                (owner_id, project_id),
+            ).fetchall()
+            grouped: dict[str, dict[str, list[int]]] = {}
+            for row in rows:
+                stamp = parse_timestamp(row["created_at"])
+                if stamp is None or stamp < baseline_start:
+                    continue
+                windows = grouped.setdefault(row["annotator_id"], {"baseline": [], "recent": []})
+                if stamp < recent_start:
+                    windows["baseline"].append(int(row["correct"]))
+                else:
+                    windows["recent"].append(int(row["correct"]))
+            assessments = []
+            for annotator_id, windows in sorted(grouped.items()):
+                baseline, recent = windows["baseline"], windows["recent"]
+                base_n, recent_n = len(baseline), len(recent)
+                base_correct, recent_correct = sum(baseline), sum(recent)
+                base_accuracy = base_correct / base_n if base_n else None
+                recent_accuracy = recent_correct / recent_n if recent_n else None
+                p_value = None
+                status = "insufficient_evidence"
+                drop = None
+                if base_n >= minimum_baseline and recent_n >= minimum_recent:
+                    drop = base_accuracy - recent_accuracy
+                    pooled = (base_correct + recent_correct) / (base_n + recent_n)
+                    variance = pooled * (1 - pooled) * (1 / base_n + 1 / recent_n)
+                    if variance == 0:
+                        p_value = 1.0 if drop == 0 else 0.0
+                    else:
+                        z_score = drop / math.sqrt(variance)
+                        p_value = math.erfc(abs(z_score) / math.sqrt(2))
+                    status = (
+                        "drift_detected"
+                        if drop >= minimum_drop and p_value <= significance
+                        else "stable"
+                    )
+                assessments.append({
+                    "annotator_id": annotator_id,
+                    "baseline": {"sample_count": base_n, "correct_count": base_correct,
+                                 "accuracy": base_accuracy, "wilson_95_ci": wilson(base_correct, base_n)},
+                    "recent": {"sample_count": recent_n, "correct_count": recent_correct,
+                               "accuracy": recent_accuracy, "wilson_95_ci": wilson(recent_correct, recent_n)},
+                    "accuracy_drop": drop, "two_proportion_p_value": p_value, "status": status,
+                })
+            report = {
+                "project_id": project_id, "generated_at": now,
+                "policy": {
+                    "baseline_window_days": 90, "recent_window_days": 30,
+                    "minimum_baseline_samples": minimum_baseline,
+                    "minimum_recent_samples": minimum_recent,
+                    "minimum_accuracy_drop": minimum_drop,
+                    "significance_level": significance,
+                    "confidence_interval": "Wilson 95%",
+                    "test": "two-sided pooled two-proportion z-test",
+                },
+                "annotators": assessments,
+                "summary": {
+                    "annotator_count": len(assessments),
+                    "drift_detected_count": sum(item["status"] == "drift_detected" for item in assessments),
+                    "insufficient_evidence_count": sum(item["status"] == "insufficient_evidence" for item in assessments),
+                },
+                "limitations": [
+                    "Only blinded gold-standard results are evaluated; ordinary task labels are not treated as ground truth.",
+                    "Statistical alerts require both sample thresholds and the configured effect-size and significance thresholds.",
+                    "Windows are fixed rolling periods; seasonality, task difficulty shifts, and multiple-comparison correction are not modeled.",
+                    "An alert is a review signal, not an automatic worker suspension or routing decision.",
+                ],
+            }
+            encoded = json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            report_id = uuid.uuid4().hex
+            db.execute(
+                """INSERT INTO annotation_quality_drift_reports
+                   (report_id, owner_id, project_id, idempotency_key, report_json, sha256, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (report_id, owner_id, project_id, idempotency_key.strip(), encoded, digest, now),
+            )
+            self._audit(db, owner_id, project_id, None, "quality_drift_report_created",
+                        {"report_id": report_id, "sha256": digest,
+                         "drift_detected_count": report["summary"]["drift_detected_count"]})
+            return {"report_id": report_id, "sha256": digest, "report": report}
+
+    @staticmethod
+    def _decode_drift_report(row) -> dict[str, Any]:
+        encoded = row["report_json"]
+        actual = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        return {
+            "report_id": row["report_id"], "sha256": row["sha256"],
+            "integrity_valid": actual == row["sha256"], "report": json.loads(encoded),
+        }
+
+    def list_quality_drift_reports(
+        self, owner_id: str, project_id: str, *, limit: int = 50,
+    ) -> list[dict[str, Any]] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("invalid_report_limit")
+        with self._connect() as db:
+            if db.execute(
+                "SELECT 1 FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone() is None:
+                return None
+            rows = db.execute(
+                """SELECT report_id, sha256, created_at, report_json FROM annotation_quality_drift_reports
+                   WHERE owner_id=? AND project_id=? ORDER BY created_at DESC, report_id DESC LIMIT ?""",
+                (owner_id, project_id, limit),
+            ).fetchall()
+        return [{
+            "report_id": row["report_id"], "sha256": row["sha256"], "created_at": row["created_at"],
+            "integrity_valid": hashlib.sha256(row["report_json"].encode("utf-8")).hexdigest() == row["sha256"],
+            "summary": json.loads(row["report_json"]).get("summary", {}),
+        } for row in rows]
+
+    def get_quality_drift_report(
+        self, owner_id: str, project_id: str, report_id: str,
+    ) -> dict[str, Any] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id) or not isinstance(report_id, str) or not _ID.fullmatch(report_id):
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT * FROM annotation_quality_drift_reports
+                   WHERE owner_id=? AND project_id=? AND report_id=?""",
+                (owner_id, project_id, report_id),
+            ).fetchone()
+        return self._decode_drift_report(row) if row else None
 
     def performance_report(self, owner_id: str, project_id: str) -> dict[str, Any] | None:
         """Return owner-only, evidence-backed annotator and reviewer performance aggregates."""
