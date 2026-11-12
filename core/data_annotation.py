@@ -121,6 +121,7 @@ class AnnotationSubmission:
     human_confirmed: bool
     status: str
     reviewer_notes: str
+    reviewer_id: str
     created_at: str
     updated_at: str
 
@@ -197,12 +198,20 @@ class SQLiteAnnotationWorkbench:
                 human_confirmed INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 reviewer_notes TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(task_id) REFERENCES annotation_tasks(task_id)
             )""")
+            submission_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(annotation_submissions)")
+            }
+            if "reviewer_id" not in submission_columns:
+                db.execute("ALTER TABLE annotation_submissions ADD COLUMN reviewer_id TEXT NOT NULL DEFAULT ''")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_submissions_task
                 ON annotation_submissions(owner_id, task_id, created_at DESC)""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_submissions_review_queue
+                ON annotation_submissions(owner_id, project_id, status, created_at)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_drafts (
                 task_id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -761,9 +770,12 @@ class SQLiteAnnotationWorkbench:
 
     def review(
         self, owner_id: str, submission_id: str, *,
-        decision: str, notes: str = "",
+        decision: str, notes: str = "", reviewer_id: str | None = None,
     ) -> AnnotationSubmission | None:
         owner_id = _owner(owner_id)
+        reviewer_id = _owner(reviewer_id) if reviewer_id is not None else owner_id
+        if reviewer_id == owner_id:
+            raise PermissionError("self_review_prohibited")
         if decision not in {"accepted", "rework"}:
             raise ValueError("invalid_review_decision")
         if not isinstance(notes, str) or len(notes) > 4000:
@@ -780,9 +792,9 @@ class SQLiteAnnotationWorkbench:
             if row["status"] != "submitted":
                 raise ValueError("submission_already_reviewed")
             db.execute(
-                "UPDATE annotation_submissions SET status=?, reviewer_notes=?, updated_at=? "
+                "UPDATE annotation_submissions SET status=?, reviewer_notes=?, reviewer_id=?, updated_at=? "
                 "WHERE owner_id=? AND submission_id=? AND status='submitted'",
-                (decision, notes, now, owner_id, submission_id),
+                (decision, notes, reviewer_id, now, owner_id, submission_id),
             )
             db.execute(
                 "UPDATE annotation_tasks SET status=?, version=version+1, updated_at=? "
@@ -790,12 +802,29 @@ class SQLiteAnnotationWorkbench:
                 (decision, now, owner_id, row["task_id"]),
             )
             self._audit(db, owner_id, row["project_id"], row["task_id"],
-                        "submission_reviewed", {"decision": decision})
+                        "submission_reviewed", {"decision": decision, "reviewer_id": reviewer_id})
             updated = db.execute(
                 "SELECT * FROM annotation_submissions WHERE owner_id=? AND submission_id=?",
                 (owner_id, submission_id),
             ).fetchone()
         return self._submission(updated)
+
+    def list_review_queue(
+        self, owner_id: str, project_id: str, *, limit: int = 100,
+    ) -> list[AnnotationSubmission]:
+        """Return submitted work for a project; caller must authorize reviewer access."""
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            raise ValueError("invalid_project_id")
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("invalid_limit")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM annotation_submissions WHERE owner_id=? AND project_id=? "
+                "AND status='submitted' ORDER BY created_at ASC, submission_id LIMIT ?",
+                (owner_id, project_id, limit),
+            ).fetchall()
+        return [self._submission(row) for row in rows]
 
     def list_submissions(
         self, owner_id: str, task_id: str, *, limit: int = 50,
