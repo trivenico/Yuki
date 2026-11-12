@@ -103,12 +103,15 @@
       return;
     }
     const history = { undo: cloneJson(state.undoStack), redo: cloneJson(state.redoStack) };
-    if (new TextEncoder().encode(JSON.stringify(draftStoragePayload(payload, history))).length > 64 * 1024) {
+    const stored = draftStoragePayload(payload, history);
+    if (new TextEncoder().encode(JSON.stringify(stored)).length > 64 * 1024) {
       setStatus("Draft exceeds the 64 KiB storage limit; reduce the annotation before continuing.", true);
       return;
     }
+    state.undoStack = stored._history.undo;
+    state.redoStack = stored._history.redo;
     session.payload = payload;
-    session.history = history;
+    session.history = stored._history;
     session.dirty = true;
     if (session.timer) clearTimeout(session.timer);
     session.timer = setTimeout(() => flushDraftSave(taskId), 650);
@@ -339,6 +342,8 @@
   };
   const renderCanvas = () => {
     if (!canvas) return;
+    $("annotation-undo").disabled = !state.undoStack.length;
+    $("annotation-redo").disabled = !state.redoStack.length;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const ratio = Math.min(window.devicePixelRatio || 1, 3);
