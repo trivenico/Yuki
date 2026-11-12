@@ -182,6 +182,8 @@ class CapabilityApprovalGateway:
         policy = self.policy_engine.evaluate(request)
         if policy.decision != Decision.REQUIRE_APPROVAL:
             raise PermissionError("the current policy does not permit an approval override")
+        if self.preview_registry is None or self.preview_registry.render(request) is None:
+            raise PermissionError("trusted capability operation preview is required")
         try:
             trusted = self.authorize_approver(approved_by, request)
         except Exception as error:
