@@ -194,6 +194,7 @@
     }
     state.project = selectedProject();
     await loadTasks();
+    await loadReviewerMembers();
   };
   const loadTasks = async () => {
     if (state.task?.task_id) {
@@ -585,7 +586,7 @@
   $("annotation-project").addEventListener("change", async () => {
     const previousProjectId = state.project?.project_id;
     state.project = selectedProject();
-    try { await loadTasks(); }
+    try { await loadTasks(); await loadReviewerMembers(); }
     catch (error) {
       if (previousProjectId) $("annotation-project").value = previousProjectId;
       state.project = state.projects.find((item) => item.project_id === previousProjectId) || null;
@@ -739,6 +740,55 @@
     if (state.imageUrl) URL.revokeObjectURL(state.imageUrl);
     if (state.resizeObserver) state.resizeObserver.disconnect();
   });
+  const loadReviewerMembers = async () => {
+    const container = $("annotation-reviewer-members");
+    container.replaceChildren();
+    if (!state.project) {
+      container.textContent = "Select a project to manage reviewer access.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/reviewers");
+      if (!result.reviewers?.length) {
+        container.textContent = "No reviewers assigned.";
+        return;
+      }
+      for (const member of result.reviewers) {
+        const line = document.createElement("p");
+        line.textContent = member.reviewer_id + " · granted " +
+          new Date(member.granted_at).toLocaleString();
+        container.append(line);
+      }
+    } catch (error) {
+      container.textContent = "Could not load reviewer assignments: " + error.message;
+    }
+  };
+  const changeReviewerGrant = async (method) => {
+    if (!state.project) {
+      $("annotation-reviewer-admin-status").textContent = "Select a project first.";
+      return;
+    }
+    const reviewerId = $("annotation-reviewer-user-id").value.trim();
+    if (!reviewerId) {
+      $("annotation-reviewer-admin-status").textContent = "Enter a reviewer account ID.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/reviewers", {
+          method, body: JSON.stringify({ reviewer_user_id: reviewerId })
+        });
+      $("annotation-reviewer-admin-status").textContent = method === "POST"
+        ? (result.granted ? "Reviewer access granted." : "Project not found.")
+        : (result.revoked ? "Reviewer access revoked." : "No active grant existed.");
+      await loadReviewerMembers();
+    } catch (error) {
+      $("annotation-reviewer-admin-status").textContent = "Reviewer access update failed: " + error.message;
+    }
+  };
+  $("annotation-reviewer-grant").addEventListener("click", () => changeReviewerGrant("POST"));
+  $("annotation-reviewer-revoke").addEventListener("click", () => changeReviewerGrant("DELETE"));
   const loadReviewerQueue = async () => {
     const projectId = $("annotation-review-project-id").value.trim();
     const queue = $("annotation-review-queue");
