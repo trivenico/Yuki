@@ -696,32 +696,22 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             token=self.owner_one.token,
         )
         self.assertEqual((status, evidence["submissions"]), (200, []))
-        status, created = self.request(
+        status, rejected = self.request(
             "POST", f"/v1/annotation/projects/{project_id}/delivery-manifests",
-            {"idempotency_key": "api-delivery-001"}, self.owner_one.token,
+            {"idempotency_key": "api-delivery-empty"}, self.owner_one.token,
         )
-        self.assertEqual((status, created["manifest"]["item_count"]), (201, 0))
-        manifest_id = created["manifest"]["manifest_id"]
-        status, repeated = self.request(
-            "POST", f"/v1/annotation/projects/{project_id}/delivery-manifests",
-            {"idempotency_key": "api-delivery-001"}, self.owner_one.token,
-        )
-        self.assertEqual(repeated["manifest"]["manifest_id"], manifest_id)
-        status, detail = self.request(
-            "GET", f"/v1/annotation/projects/{project_id}/delivery-manifests/{manifest_id}",
+        self.assertEqual((status, rejected["error"]), (400, "invalid_request"))
+        status, manifests = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/delivery-manifests",
             token=self.owner_one.token,
         )
-        self.assertEqual((status, detail["manifest"]["snapshot"]["items"]), (200, []))
-        status, verified = self.request(
-            "GET", f"/v1/annotation/projects/{project_id}/delivery-manifests/{manifest_id}/verify",
-            token=self.owner_one.token,
-        )
-        self.assertTrue(verified["verification"]["valid"])
+        self.assertEqual((status, manifests["manifests"]), (200, []))
         status, hidden = self.request(
             "GET", f"/v1/annotation/projects/{project_id}/delivery-manifests",
             token=self.owner_two.token,
         )
         self.assertEqual((status, hidden["error"]), (404, "not_found"))
+
 
 class AnnotationRuntimeTests(unittest.TestCase):
     def test_runtime_mounts_annotation_api_when_configured(self):
