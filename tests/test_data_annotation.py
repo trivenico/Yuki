@@ -793,3 +793,120 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnnotationReworkAndManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.database = Path(self.directory.name) / "annotation.sqlite3"
+        self.store = SQLiteAnnotationWorkbench(str(self.database))
+        self.project = self.store.create_project(
+            "owner:alice", name="Rework lifecycle", task_type="text_classification",
+            instructions="Classify sentiment.", rubric={"labels": ["positive", "negative"]},
+        )
+        self.task = self.store.create_task(
+            "owner:alice", self.project.project_id, external_ref="rework-001",
+            input_data={"text": "A sentence requiring review."},
+        )
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def _submit_round(self, assignments, labels):
+        for assignment, label in zip(assignments, labels):
+            annotator = assignment["annotator_id"]
+            claimed = self.store.claim_independent_assignment(
+                annotator, assignment["assignment_id"], expected_version=1,
+            )
+            self.store.submit_independent_assignment(
+                annotator, assignment["assignment_id"], payload={"label": label},
+                expected_version=claimed["version"], human_confirmed=True,
+            )
+
+    def test_rework_round_preserves_history_and_manifest_is_reproducible(self):
+        first = self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, self.task.task_id,
+            ["annotator:first-a", "annotator:first-b"],
+        )
+        first_with_workers = [
+            dict(item, annotator_id=worker)
+            for item, worker in zip(first, ("annotator:first-a", "annotator:first-b"))
+        ]
+        self._submit_round(first_with_workers, ["positive", "negative"])
+        first_decision = self.store.adjudicate_independent_task(
+            "owner:alice", self.project.project_id, self.task.task_id, "owner:alice",
+            decision="rework", notes="Resolve inconsistent first-round labels.",
+        )
+        self.assertEqual(first_decision["round_number"], 1)
+        second = self.store.create_rework_assignments(
+            "owner:alice", self.project.project_id, self.task.task_id,
+            ["annotator:second-a", "annotator:second-b"],
+        )
+        self.assertEqual({item["round_number"] for item in second}, {2})
+        second_with_workers = [
+            dict(item, annotator_id=worker)
+            for item, worker in zip(second, ("annotator:second-a", "annotator:second-b"))
+        ]
+        self._submit_round(second_with_workers, ["positive", "positive"])
+        accepted = self.store.adjudicate_independent_task(
+            "owner:alice", self.project.project_id, self.task.task_id, "owner:alice",
+            decision="accepted", final_label="positive",
+        )
+        self.assertEqual(accepted["round_number"], 2)
+        with sqlite3.connect(self.database) as db:
+            events = db.execute(
+                "SELECT round_number, event_type FROM annotation_adjudication_events "
+                "WHERE owner_id=? AND project_id=? AND task_id=? ORDER BY round_number",
+                ("owner:alice", self.project.project_id, self.task.task_id),
+            ).fetchall()
+            assignments = db.execute(
+                "SELECT assignment_id, round_number, status FROM annotation_independent_assignments "
+                "WHERE task_id=? ORDER BY round_number, assignment_id", (self.task.task_id,),
+            ).fetchall()
+        self.assertEqual([row[0] for row in events], [1, 2])
+        self.assertEqual(len(assignments), 4)
+        self.assertEqual(len({row[0] for row in assignments}), 4)
+        manifest = self.store.create_delivery_manifest(
+            "owner:alice", self.project.project_id, idempotency_key="delivery-001",
+        )
+        self.assertEqual(manifest["item_count"], 1)
+        self.assertEqual(manifest["snapshot"]["items"][0]["annotation"], {"label": "positive"})
+        repeated = self.store.create_delivery_manifest(
+            "owner:alice", self.project.project_id, idempotency_key="delivery-001",
+        )
+        self.assertEqual(repeated["manifest_id"], manifest["manifest_id"])
+        verification = self.store.verify_delivery_manifest(
+            "owner:alice", self.project.project_id, manifest["manifest_id"],
+        )
+        self.assertTrue(verification["valid"])
+        self.assertIsNone(self.store.verify_delivery_manifest(
+            "owner:bob", self.project.project_id, manifest["manifest_id"],
+        ))
+        with sqlite3.connect(self.database) as db:
+            db.execute(
+                "UPDATE annotation_delivery_manifests SET snapshot_json=? WHERE manifest_id=?",
+                ('{"tampered":true}', manifest["manifest_id"]),
+            )
+        tampered = self.store.verify_delivery_manifest(
+            "owner:alice", self.project.project_id, manifest["manifest_id"],
+        )
+        self.assertFalse(tampered["valid"])
+
+    def test_rework_requires_new_distinct_annotators_and_current_round(self):
+        first = self.store.create_independent_assignments(
+            "owner:alice", self.project.project_id, self.task.task_id,
+            ["annotator:one", "annotator:two"],
+        )
+        self._submit_round([
+            dict(first[0], annotator_id="annotator:one"),
+            dict(first[1], annotator_id="annotator:two"),
+        ], ["positive", "negative"])
+        self.store.adjudicate_independent_task(
+            "owner:alice", self.project.project_id, self.task.task_id, "owner:alice",
+            decision="rework", notes="Second pass required.",
+        )
+        with self.assertRaisesRegex(ValueError, "rework_requires_new_annotators"):
+            self.store.create_rework_assignments(
+                "owner:alice", self.project.project_id, self.task.task_id,
+                ["annotator:one", "annotator:three"],
+            )
