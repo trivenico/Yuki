@@ -32,6 +32,7 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertEqual(headers[b"content-type"], b"text/html; charset=utf-8")
         self.assertEqual(headers[b"x-frame-options"], b"DENY")
         self.assertIn(b"script-src 'self'", headers[b"content-security-policy"])
+        self.assertIn(b"img-src 'self' data: blob:", headers[b"content-security-policy"])
         self.assertIn(b"Yuki", sent[1]["body"])
         self.assertEqual(api.calls, 0)
 
@@ -55,6 +56,17 @@ class YukiWebApplicationTests(unittest.TestCase):
             self.assertEqual(sent[0]["status"], 200)
             self.assertIn(expected, sent[1]["body"])
         self.assertEqual(api.calls, 0)
+
+    def test_annotation_assets_are_allowlisted_and_served(self):
+        app = YukiWebApplication(_FakeAPI())
+        js = self.request(app, "/assets/annotation.js")
+        css = self.request(app, "/assets/annotation.css")
+        self.assertEqual(js[0]["status"], 200)
+        self.assertEqual(css[0]["status"], 200)
+        self.assertIn(b"/v1/annotation/tasks/", js[1]["body"])
+        self.assertIn(b"human_confirmed", js[1]["body"])
+        self.assertIn(b"touch-action:none", css[1]["body"])
+        self.assertEqual(self.request(app, "/assets/../api/runtime.py")[0]["status"], 404)
 
     def test_provider_specific_oauth_callback_path_serves_chat_shell(self):
         api = _FakeAPI()
