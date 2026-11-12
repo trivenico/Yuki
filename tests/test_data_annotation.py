@@ -196,6 +196,10 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         claimed = self.store.claim_task(
             "owner:alice", task.task_id, expected_version=task.version
         )
+        self.store.save_draft(
+            "owner:alice", task.task_id, payload={"private_text": "bird"},
+            expected_revision=0,
+        )
         self.store.submit(
             "owner:alice", task.task_id, payload={"label": "bird"},
             expected_version=claimed.version, ai_assisted=False, human_confirmed=True,
@@ -204,6 +208,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         serialized = repr(events)
         self.assertNotIn("bird", serialized)
         self.assertIn("submission_created", serialized)
+        self.assertIn("draft_saved", serialized)
 
     def test_batch_import_is_atomic_and_preserves_order(self):
         tasks = [
