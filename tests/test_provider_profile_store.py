@@ -65,6 +65,14 @@ class ProviderProfileStoreTests(unittest.TestCase):
         self.assertEqual(self.store.resolve_for_runtime("owner:alice", "gateway")["api_key"],
                          "rotated-secret")
 
+    def test_selected_profile_is_owner_scoped_and_cleared_on_delete(self):
+        self.save()
+        self.store.select_profile("owner:alice", "gateway")
+        self.assertEqual(self.store.selected_profile("owner:alice"), "gateway")
+        self.assertIsNone(self.store.selected_profile("owner:bob"))
+        self.assertTrue(self.store.delete("owner:alice", "gateway"))
+        self.assertIsNone(self.store.selected_profile("owner:alice"))
+
     def test_delete_removes_profile_and_credential(self):
         self.save()
         self.assertTrue(self.store.delete("owner:alice", "gateway"))
