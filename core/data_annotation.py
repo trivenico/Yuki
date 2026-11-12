@@ -1281,7 +1281,7 @@ class SQLiteAnnotationWorkbench:
                         (assignment_id, task_id, project_id, owner_id, annotator_id, now, now),
                     )
                 created.append({"assignment_id": assignment_id, "task_id": task_id,
-                    "project_id": project_id, "status": "assigned", "version": 1,
+                    "project_id": project_id, "round_number": 1, "status": "assigned", "version": 1,
                     "created_at": now})
             self._audit(db, owner_id, project_id, task_id, "independent_assignments_created",
                         {"assignment_count": len(created)})
@@ -1400,7 +1400,7 @@ class SQLiteAnnotationWorkbench:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT a.assignment_id, a.task_id, a.project_id, a.owner_id,
-                          a.status, a.version, a.created_at, a.updated_at,
+                          a.round_number, a.status, a.version, a.created_at, a.updated_at,
                           t.external_ref, t.input_json, p.task_type, p.instructions, p.rubric_json
                    FROM annotation_independent_assignments a
                    JOIN annotation_tasks t ON t.task_id=a.task_id AND t.owner_id=a.owner_id
@@ -1411,7 +1411,7 @@ class SQLiteAnnotationWorkbench:
         return [{
             "assignment_id": row["assignment_id"], "task_id": row["task_id"],
             "project_id": row["project_id"], "owner_id": row["owner_id"],
-            "status": row["status"], "version": row["version"],
+            "round_number": row["round_number"], "status": row["status"], "version": row["version"],
             "external_ref": row["external_ref"], "input_data": _decode(row["input_json"]),
             "task_type": row["task_type"], "instructions": row["instructions"],
             "rubric": _decode(row["rubric_json"]),
@@ -1444,7 +1444,7 @@ class SQLiteAnnotationWorkbench:
                 (_now(), assignment_id, annotator_id, expected_version),
             )
             updated = db.execute(
-                "SELECT assignment_id, task_id, project_id, status, version "
+                "SELECT assignment_id, task_id, project_id, round_number, status, version "
                 "FROM annotation_independent_assignments WHERE assignment_id=?",
                 (assignment_id,),
             ).fetchone()
@@ -1512,7 +1512,7 @@ class SQLiteAnnotationWorkbench:
                         assignment["task_id"], "independent_annotation_submitted",
                         {"assignment_id": assignment_id, "annotator_id": annotator_id})
             row = db.execute(
-                "SELECT assignment_id, task_id, project_id, status, version, quality_json, updated_at "
+                "SELECT assignment_id, task_id, project_id, round_number, status, version, quality_json, updated_at "
                 "FROM annotation_independent_assignments WHERE assignment_id=?", (assignment_id,),
             ).fetchone()
         result = dict(row)
@@ -1534,7 +1534,7 @@ class SQLiteAnnotationWorkbench:
             if task is None:
                 return None
             rows = db.execute(
-                """SELECT assignment_id, annotator_id, payload_json, quality_json, updated_at
+                """SELECT assignment_id, annotator_id, round_number, payload_json, quality_json, updated_at
                    FROM annotation_independent_assignments
                    WHERE owner_id=? AND project_id=? AND task_id=? AND round_number=(
                        SELECT MAX(round_number) FROM annotation_independent_assignments
@@ -1545,7 +1545,7 @@ class SQLiteAnnotationWorkbench:
             ).fetchall()
         return [{
             "assignment_id": row["assignment_id"], "annotator_id": row["annotator_id"],
-            "payload": _decode(row["payload_json"]),
+            "round_number": row["round_number"], "payload": _decode(row["payload_json"]),
             "quality": _decode(row["quality_json"]), "submitted_at": row["updated_at"],
         } for row in rows]
 
