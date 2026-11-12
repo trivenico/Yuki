@@ -1,0 +1,158 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.data_annotation import (
+    AnnotationConflict,
+    SQLiteAnnotationWorkbench,
+)
+
+
+class DataAnnotationWorkbenchTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.database = Path(self.directory.name) / "annotation.sqlite3"
+        self.store = SQLiteAnnotationWorkbench(str(self.database))
+        self.project = self.store.create_project(
+            "owner:alice",
+            name="Wildlife image labels",
+            task_type="image_classification",
+            instructions="Choose the primary animal visible in each image.",
+            rubric={"labels": ["bird", "cat", "dog"], "allow_unknown": True},
+        )
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def _task(self):
+        return self.store.create_task(
+            "owner:alice", self.project.project_id,
+            external_ref="batch-001/item-0001",
+            asset_ref="asset:images:0001",
+            input_data={"prompt": "Classify the primary animal."},
+        )
+
+    def test_owner_scoped_project_and_task_access(self):
+        task = self._task()
+        self.assertIsNone(self.store.get_project("owner:bob", self.project.project_id))
+        self.assertIsNone(self.store.get_task("owner:bob", task.task_id))
+        self.assertEqual(self.store.list_projects("owner:bob"), [])
+        self.assertEqual(self.store.list_tasks("owner:bob", self.project.project_id), [])
+
+    def test_task_claim_requires_optimistic_version(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        self.assertEqual(claimed.status, "in_progress")
+        self.assertEqual(claimed.version, task.version + 1)
+        with self.assertRaises(AnnotationConflict):
+            self.store.claim_task(
+                "owner:alice", task.task_id, expected_version=task.version
+            )
+
+    def test_ai_assisted_work_requires_explicit_human_confirmation(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        with self.assertRaisesRegex(PermissionError, "human_confirmation_required"):
+            self.store.submit(
+                "owner:alice", task.task_id,
+                payload={"label": "bird"}, expected_version=claimed.version,
+                ai_assisted=True, human_confirmed=False,
+            )
+        submission = self.store.submit(
+            "owner:alice", task.task_id,
+            payload={"label": "bird"}, expected_version=claimed.version,
+            ai_assisted=True, human_confirmed=True,
+        )
+        self.assertTrue(submission.ai_assisted)
+        self.assertTrue(submission.human_confirmed)
+        self.assertEqual(submission.status, "submitted")
+
+    def test_review_updates_submission_and_task_state(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        submission = self.store.submit(
+            "owner:alice", task.task_id,
+            payload={"label": "bird"}, expected_version=claimed.version,
+            human_confirmed=True,
+        )
+        reviewed = self.store.review(
+            "owner:alice", submission.submission_id,
+            decision="rework", notes="Use the project taxonomy exactly.",
+        )
+        self.assertEqual(reviewed.status, "rework")
+        updated_task = self.store.get_task("owner:alice", task.task_id)
+        self.assertEqual(updated_task.status, "rework")
+        self.assertGreater(updated_task.version, claimed.version)
+
+    def test_project_pause_prevents_new_tasks_and_submissions(self):
+        self.store.set_project_status(
+            "owner:alice", self.project.project_id, status="paused"
+        )
+        with self.assertRaisesRegex(ValueError, "project_not_active"):
+            self._task()
+
+    def test_rejects_remote_asset_urls_and_oversized_payloads(self):
+        with self.assertRaisesRegex(ValueError, "opaque_storage_identifier"):
+            self.store.create_task(
+                "owner:alice", self.project.project_id,
+                external_ref="remote", asset_ref="https://example.com/image.jpg",
+                input_data={},
+            )
+        with self.assertRaisesRegex(ValueError, "too_large"):
+            self.store.create_task(
+                "owner:alice", self.project.project_id,
+                external_ref="large", input_data={"text": "x" * 70000},
+            )
+
+    def test_rejects_non_json_and_non_finite_payloads(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        with self.assertRaisesRegex(ValueError, "invalid_annotation_payload"):
+            self.store.submit(
+                "owner:alice", task.task_id, payload={"score": float("nan")},
+                expected_version=claimed.version, human_confirmed=True,
+            )
+
+    def test_audit_trail_does_not_store_annotation_content(self):
+        task = self._task()
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        self.store.submit(
+            "owner:alice", task.task_id, payload={"private_text": "sensitive content"},
+            expected_version=claimed.version, ai_assisted=True, human_confirmed=True,
+        )
+        events = self.store.audit_events("owner:alice")
+        serialized = repr(events)
+        self.assertNotIn("sensitive content", serialized)
+        self.assertIn("submission_created", serialized)
+
+    def test_duplicate_external_task_reference_is_rejected(self):
+        self._task()
+        with self.assertRaises(Exception):
+            self._task()
+
+    def test_database_symlink_is_rejected(self):
+        if not hasattr(Path, "symlink_to"):
+            self.skipTest("symlinks are unavailable")
+        target = Path(self.directory.name) / "target.sqlite3"
+        target.touch()
+        link = Path(self.directory.name) / "link.sqlite3"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation is not permitted")
+        with self.assertRaisesRegex(ValueError, "must_not_be_symlink"):
+            SQLiteAnnotationWorkbench(str(link))
+
+
+if __name__ == "__main__":
+    unittest.main()
