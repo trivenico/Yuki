@@ -298,9 +298,10 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             operation_type="workspace.delete", capability="workspace:write",
             target="repo:project-a", payload=payload,
         )
-        self.assertFalse(self.gateway.authorize(
-            request2, approval_token=token2, operation=altered
-        ).allowed)
+        with self.assertRaises(PermissionError):
+            self.gateway.authorize(
+                request2, approval_token=token2, operation=altered
+            )
 
     def test_typed_operation_metadata_fails_closed_after_storage_tampering(self):
         payload = {"changes": [{"path": "README.md", "content": "approved"}]}
