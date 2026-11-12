@@ -68,3 +68,14 @@ registry. A capability must explicitly register the operation type it accepts;
 typed request creation, approval and authorization reject an unregistered or
 substituted operation kind. This prevents a caller from pairing an arbitrary
 operation label with a capability merely because the payload digest matches.
+
+## Authenticated owner review payload
+
+The authenticated approval service now enriches the owner-only inbox with the
+exact decrypted typed operation payload after checking `workflow:approve`.
+For workspace writes this includes each relative path, expected pre-edit
+SHA-256 and exact proposed content. The HTTP API retains its no-store response
+headers and never returns approval credentials, request digests or claim
+secrets. Non-approvers cannot call this inbox method. This makes the exact
+proposal available to an owner-facing client, but does not itself implement
+the visual diff UI or connect the worker to the workspace executor.
