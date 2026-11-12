@@ -11,6 +11,7 @@ from typing import Any, Callable
 import hashlib
 import math
 import threading
+import time
 
 from core.guarded_skill_runtime import SkillPolicyContext
 
@@ -25,6 +26,7 @@ class DurableSkillWorker:
         lease_seconds: int = 60,
         heartbeat_interval_seconds: float = 20,
         approval_token_resolver: Callable[[SkillPolicyContext, str, str], str | None] | None = None,
+        approval_wait_timeout_seconds: int = 86400,
     ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
@@ -47,10 +49,17 @@ class DurableSkillWorker:
             raise ValueError("approval resolver is bound to a different worker identity")
         if getattr(runtime, "approval_gateway", None) is not None and approval_token_resolver is None:
             raise ValueError("durable approval gateway requires a trusted approval_token_resolver")
+        if (
+            isinstance(approval_wait_timeout_seconds, bool)
+            or not isinstance(approval_wait_timeout_seconds, int)
+            or not 1 <= approval_wait_timeout_seconds <= 86400
+        ):
+            raise ValueError("approval_wait_timeout_seconds must be an integer from 1 to 86400")
         self.approval_token_resolver = approval_token_resolver
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
+        self.approval_wait_timeout_seconds = approval_wait_timeout_seconds
 
     def _invoke_with_lease_heartbeat(self, task_id: str, lease_token: str, skill_name: str, argument: str, policy_context: SkillPolicyContext):
         stop = threading.Event()
@@ -81,13 +90,33 @@ class DurableSkillWorker:
             if self.approval_token_resolver is not None:
                 if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
                     raise PermissionError("task claim is no longer valid before approval lookup")
-                approval_token = self.approval_token_resolver(policy_context, skill_name, lease_token)
-                if approval_token is not None and (
-                    not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256
-                ):
-                    raise PermissionError("approval resolver returned an invalid credential")
+                policy_engine = getattr(self.runtime, "policy_engine", None)
+                request_factory = getattr(self.runtime, "policy_request_factory", None)
+                gateway = getattr(self.runtime, "approval_gateway", None)
+                if policy_engine is not None and callable(request_factory) and gateway is not None:
+                    skill = self.runtime.registry.get(skill_name)
+                    if skill is None:
+                        raise PermissionError("registered skill is unavailable for policy review")
+                    policy_request = request_factory(skill_name, argument, skill, policy_context)
+                    decision = policy_engine.evaluate(policy_request)
+                    if getattr(decision, "decision", None).value == "require_approval":
+                        gateway.request_approval(policy_request)
+                deadline = time.monotonic() + self.approval_wait_timeout_seconds
+                while True:
+                    if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
+                        raise PermissionError("task claim changed while awaiting owner approval")
+                    approval_token = self.approval_token_resolver(
+                        policy_context, skill_name, lease_token
+                    )
+                    if approval_token is not None:
+                        if not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256:
+                            raise PermissionError("approval resolver returned an invalid credential")
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("owner approval did not arrive before the wait deadline")
+                    stop.wait(min(0.5, max(0.01, deadline - time.monotonic())))
                 if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
-                    raise PermissionError("task claim changed during approval lookup")
+                    raise PermissionError("task claim changed during approval delivery")
             invoke_kwargs = {
                 "execution_guard": lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
                 "policy_context": policy_context,
