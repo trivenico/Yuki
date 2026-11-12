@@ -12,6 +12,9 @@ from core.capability_approval_gateway import CapabilityApprovalGateway
 from core.capability_approval_preview import ApprovalPreview, CapabilityApprovalPreviewRegistry
 from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest
 from core.approval_operation import ApprovalOperation
+from automation.approved_workspace_changes import ApprovedWorkspaceChanges, FileChange
+from automation.authorized_read_tools import ToolPrincipal
+from core.approved_workspace_operation_executor import apply_claim_bound_workspace_changes
 
 
 class _Downstream:
@@ -170,6 +173,83 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         self.assertTrue(item["operation_payload_available"])
         self.assertEqual(item["operation_payload"], payload)
         self.assertEqual(item["operation"]["operation_type"], "workspace.write")
+
+    def test_claim_bound_typed_workspace_execution_applies_only_exact_approved_payload(self):
+        root = Path(self.tmp.name) / "workspace"
+        root.mkdir()
+        target = root / "README.md"
+        target.write_text("old contents", encoding="utf-8")
+        change = FileChange(
+            "README.md", hashlib.sha256(b"old contents").hexdigest(),
+            "new approved contents",
+        )
+        from core.workspace_approval_operation import build_workspace_approval_operation
+        operation, payload = build_workspace_approval_operation(
+            workspace_id="workspace:project-a", changes=[change],
+        )
+        request_data = self.payload("goal-execute-exact")
+        request_data["argument_sha256"] = operation.payload_sha256
+        request = PolicyRequest(**{**request_data, "risk": Risk.HIGH})
+        request_id = self.gateway.request_approval(
+            request, operation=operation, operation_payload=payload,
+        )
+        self.service.approve_pending(self.admin.token, request_id)
+        approval_token = self.delivered[-1][1]
+        principal = ToolPrincipal(
+            self.requester.user_id, frozenset({"workspace:write"}),
+        )
+        executor = ApprovedWorkspaceChanges(
+            root, trusted_principal=lambda p: p.actor_id == self.requester.user_id,
+            approve_change=lambda actor, change_id, digest: True,
+            audit=lambda event: None, allowed_paths=("README.md",),
+        )
+        result = apply_claim_bound_workspace_changes(
+            gateway=self.gateway, executor=executor, request=request,
+            approval_token=approval_token, principal=principal,
+            workspace_id="workspace:project-a", changes=[change],
+            validate_live_claim=lambda: True,
+        )
+        self.assertEqual(target.read_text(encoding="utf-8"), "new approved contents")
+        self.assertEqual(result.changed_paths, ("README.md",))
+
+    def test_claim_loss_at_final_workspace_commit_fails_closed(self):
+        root = Path(self.tmp.name) / "workspace-claim-loss"
+        root.mkdir()
+        target = root / "README.md"
+        target.write_text("old contents", encoding="utf-8")
+        change = FileChange(
+            "README.md", hashlib.sha256(b"old contents").hexdigest(),
+            "new approved contents",
+        )
+        from core.workspace_approval_operation import build_workspace_approval_operation
+        operation, payload = build_workspace_approval_operation(
+            workspace_id="workspace:project-a", changes=[change],
+        )
+        request_data = self.payload("goal-claim-lost")
+        request_data["argument_sha256"] = operation.payload_sha256
+        request = PolicyRequest(**{**request_data, "risk": Risk.HIGH})
+        request_id = self.gateway.request_approval(
+            request, operation=operation, operation_payload=payload,
+        )
+        self.service.approve_pending(self.admin.token, request_id)
+        approval_token = self.delivered[-1][1]
+        principal = ToolPrincipal(
+            self.requester.user_id, frozenset({"workspace:write"}),
+        )
+        executor = ApprovedWorkspaceChanges(
+            root, trusted_principal=lambda p: p.actor_id == self.requester.user_id,
+            approve_change=lambda actor, change_id, digest: True,
+            audit=lambda event: None, allowed_paths=("README.md",),
+        )
+        checks = iter((True, True, False))
+        with self.assertRaises(PermissionError):
+            apply_claim_bound_workspace_changes(
+                gateway=self.gateway, executor=executor, request=request,
+                approval_token=approval_token, principal=principal,
+                workspace_id="workspace:project-a", changes=[change],
+                validate_live_claim=lambda: next(checks),
+            )
+        self.assertEqual(target.read_text(encoding="utf-8"), "old contents")
 
     def test_approval_is_blocked_when_capability_has_no_trusted_preview(self):
         gateway = CapabilityApprovalGateway(
