@@ -92,7 +92,8 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
         self.assertEqual(self.claim["id"], self.task["id"])
         self.lease_token = self.claim["lease_token"]
         self.context = SkillPolicyContext(
-            self.owner, "durable_task", self.goal, self.task["id"]
+            self.owner, "durable_task", self.goal, self.task["id"],
+            hashlib.sha256(self.lease_token.encode("ascii")).hexdigest(),
         )
         self.request = self.make_request(
             self.skill.name, "approved-value", self.skill, self.context
