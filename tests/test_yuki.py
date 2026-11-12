@@ -279,7 +279,7 @@ class ProviderHelpTests(unittest.TestCase):
         help_text = output.getvalue()
         self.assertIn("/provider select NAME", help_text)
         self.assertIn("/provider add-compatible NAME", help_text)
-        self.assertNotIn(r"adapter\\n", help_text)
+        self.assertNotIn(r"adapter\n", help_text)
 
 if __name__ == "__main__":
     unittest.main()
