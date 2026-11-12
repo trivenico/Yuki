@@ -198,6 +198,7 @@
     await loadQualityReport();
     await refreshAgreementReport();
     await refreshCalibrationReport();
+    await refreshCalibrationSessions();
   };
   const loadTasks = async () => {
     if (state.task?.task_id) {
@@ -594,7 +595,7 @@
     state.project = selectedProject();
     try { await loadTasks(); await loadReviewerMembers(); await loadQualityReport();
     await refreshAgreementReport();
-    await refreshCalibrationReport(); }
+    await refreshCalibrationReport(); await refreshCalibrationSessions(); }
     catch (error) {
       if (previousProjectId) $("annotation-project").value = previousProjectId;
       state.project = state.projects.find((item) => item.project_id === previousProjectId) || null;
@@ -1001,6 +1002,73 @@
     }
   });
   $("annotation-calibration-refresh").addEventListener("click", refreshCalibrationReport);
+  const refreshCalibrationSessions = async () => {
+    const target = $("annotation-calibration-sessions-summary");
+    if (!state.project) {
+      target.textContent = "Select a project to view requalification sessions.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/calibration-sessions");
+      target.textContent = result.sessions.length
+        ? result.sessions.map(item => item.session_id + " · " + item.status +
+          " · " + item.submitted_count + "/" + item.assignment_count + " submitted").join(" | ")
+        : "No requalification sessions have been created.";
+    } catch (error) {
+      target.textContent = "Requalification sessions unavailable: " + error.message;
+    }
+  };
+  $("annotation-calibration-session-create").addEventListener("click", async () => {
+    const target = $("annotation-calibration-sessions-summary");
+    if (!state.project) {
+      target.textContent = "Select a project before launching a calibration session.";
+      return;
+    }
+    const taskIds = $("annotation-calibration-session-tasks").value.split(",").map(x => x.trim()).filter(Boolean);
+    const annotatorIds = $("annotation-calibration-session-annotators").value.split(",").map(x => x.trim()).filter(Boolean);
+    if (!taskIds.length || taskIds.length > 100 ||
+        taskIds.some(x => !/^[0-9a-f]{32}$/.test(x)) ||
+        new Set(taskIds).size !== taskIds.length ||
+        !annotatorIds.length || annotatorIds.length > 20 ||
+        annotatorIds.some(x => !x || x.length > 256) ||
+        new Set(annotatorIds).size !== annotatorIds.length) {
+      target.textContent = "Enter 1–100 unique 32-character task IDs and 1–20 unique annotator account IDs.";
+      return;
+    }
+    const keyField = $("annotation-calibration-session-key");
+    if (!keyField.value.trim()) {
+      if (!window.crypto || typeof window.crypto.randomUUID !== "function") {
+        target.textContent = "A secure random idempotency key could not be generated in this browser.";
+        return;
+      }
+      keyField.value = window.crypto.randomUUID().replace(/-/g, "");
+    }
+    const idempotencyKey = keyField.value.trim();
+    if (idempotencyKey.length > 128) {
+      target.textContent = "The idempotency key must be 128 characters or fewer.";
+      return;
+    }
+    target.textContent = "Creating blinded requalification assignments…";
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/calibration-sessions", {
+          method: "POST",
+          body: JSON.stringify({
+            task_ids: taskIds, annotator_user_ids: annotatorIds,
+            idempotency_key: idempotencyKey
+          })
+        });
+      target.textContent = "Session " + result.session.session_id +
+        " created · " + result.session.assignment_count + " blinded assignments. Keep the idempotency key unchanged when retrying.";
+      await refreshCalibrationSessions();
+      await refreshCalibrationReport();
+    } catch (error) {
+      target.textContent = "Requalification session creation failed: " + error.message +
+        ". Keep the same idempotency key when retrying.";
+    }
+  });
+  $("annotation-calibration-sessions-refresh").addEventListener("click", refreshCalibrationSessions);
   $("annotation-calibration-policy-save").addEventListener("click", async () => {
     const target = $("annotation-calibration-summary");
     if (!state.project) {

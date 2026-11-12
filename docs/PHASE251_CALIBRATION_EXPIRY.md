@@ -35,3 +35,8 @@ The annotation workbench exposes policy editing and evidence age/status. Policy 
 ## Validation
 
 Added tests for expiry classification, fail-closed adjudication, policy validation, and owner isolation. Exact-head CI is required before this phase can be considered validated. No local test run is claimed.
+
+
+## Next phase
+
+Phase 252 adds owner-launched blinded requalification sessions. Session creation must use only registered project gold tasks, create fresh assignment rows atomically, bind each assignment and result to an immutable session identifier, and never expose expected labels in annotator-facing responses. Session results must be evaluated independently from historical calibration evidence. See the Phase 252 design in the project plan.

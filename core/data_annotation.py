@@ -223,6 +223,8 @@ class SQLiteAnnotationWorkbench:
             }
             if "round_number" not in assignment_columns:
                 db.execute("ALTER TABLE annotation_independent_assignments ADD COLUMN round_number INTEGER NOT NULL DEFAULT 1")
+            if "session_id" not in assignment_columns:
+                db.execute("ALTER TABLE annotation_independent_assignments ADD COLUMN session_id TEXT")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_worker
                 ON annotation_independent_assignments(annotator_id, status, created_at)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_independent_round
@@ -310,6 +312,16 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_gold_owner_project
                 ON annotation_gold_standards(owner_id, project_id, created_at)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS annotation_calibration_sessions (
+                session_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL, request_json TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('open','completed','cancelled')),
+                assignment_count INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(owner_id, project_id, idempotency_key),
+                FOREIGN KEY(project_id) REFERENCES annotation_projects(project_id)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_calibration_sessions_owner
+                ON annotation_calibration_sessions(owner_id, project_id, created_at DESC)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_results (
                 assignment_id TEXT PRIMARY KEY,
                 gold_id TEXT NOT NULL,
@@ -324,6 +336,11 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_gold_results_owner
                 ON annotation_gold_results(owner_id, project_id, annotator_id, created_at)""")
+            gold_result_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(annotation_gold_results)")
+            }
+            if "session_id" not in gold_result_columns:
+                db.execute("ALTER TABLE annotation_gold_results ADD COLUMN session_id TEXT")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_calibration_policies (
                 owner_id TEXT NOT NULL, project_id TEXT NOT NULL,
                 minimum_gold_tasks INTEGER NOT NULL DEFAULT 5,
@@ -1238,14 +1255,32 @@ class SQLiteAnnotationWorkbench:
             effective_minimum = policy["minimum_gold_tasks"] if policy else minimum_gold_tasks
             effective_accuracy = policy["passing_accuracy"] if policy else passing_accuracy
             maximum_age_days = policy["maximum_age_days"] if policy else 90
-            rows = db.execute(
-                """SELECT annotator_id, COUNT(*) AS evaluated_count,
-                          SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
-                   FROM annotation_gold_results
-                   WHERE owner_id=? AND project_id=?
-                   GROUP BY annotator_id ORDER BY annotator_id""",
+            latest_session = db.execute(
+                "SELECT session_id FROM annotation_calibration_sessions WHERE owner_id=? AND project_id=? "
+                "ORDER BY created_at DESC, session_id DESC LIMIT 1",
                 (owner_id, project_id),
-            ).fetchall()
+            ).fetchone()
+            if latest_session is not None:
+                rows = db.execute(
+                    """SELECT a.annotator_id, COUNT(g.assignment_id) AS evaluated_count,
+                              COALESCE(SUM(g.correct), 0) AS correct_count,
+                              MAX(g.created_at) AS last_evaluated_at
+                       FROM annotation_independent_assignments a
+                       LEFT JOIN annotation_gold_results g
+                         ON g.assignment_id=a.assignment_id AND g.session_id=a.session_id
+                       WHERE a.owner_id=? AND a.project_id=? AND a.session_id=?
+                       GROUP BY a.annotator_id ORDER BY a.annotator_id""",
+                    (owner_id, project_id, latest_session["session_id"]),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """SELECT annotator_id, COUNT(*) AS evaluated_count,
+                              SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
+                       FROM annotation_gold_results
+                       WHERE owner_id=? AND project_id=?
+                       GROUP BY annotator_id ORDER BY annotator_id""",
+                    (owner_id, project_id),
+                ).fetchall()
             gold_count = db.execute(
                 "SELECT COUNT(*) FROM annotation_gold_standards WHERE owner_id=? AND project_id=?",
                 (owner_id, project_id),
@@ -1256,12 +1291,14 @@ class SQLiteAnnotationWorkbench:
             count, correct = row["evaluated_count"], row["correct_count"]
             accuracy = correct / count if count else None
             last_dt = None
-            try:
-                last_dt = datetime.fromisoformat(row["last_evaluated_at"].replace("Z", "+00:00"))
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-            except (TypeError, ValueError):
-                pass
+            timestamp = row["last_evaluated_at"]
+            if timestamp is not None:
+                try:
+                    last_dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    pass
             age_days = max(0.0, (now_dt - last_dt).total_seconds() / 86400) if last_dt else None
             expired = age_days is None or age_days > maximum_age_days
             status = (
@@ -1322,6 +1359,139 @@ class SQLiteAnnotationWorkbench:
             "passing_accuracy": float(passing_accuracy), "maximum_age_days": maximum_age_days,
             "updated_at": now,
         }
+
+    def create_calibration_session(
+        self, owner_id: str, project_id: str, *, task_ids: list[str],
+        annotator_ids: list[str], idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """Atomically assign fresh blinded gold tasks to annotators."""
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            raise ValueError("invalid_calibration_project")
+        if (not isinstance(task_ids, list) or not 1 <= len(task_ids) <= 100
+                or any(not isinstance(x, str) or not _ID.fullmatch(x) for x in task_ids)
+                or len(set(task_ids)) != len(task_ids)):
+            raise ValueError("invalid_calibration_tasks")
+        if (not isinstance(annotator_ids, list) or not 1 <= len(annotator_ids) <= 20
+                or any(not isinstance(x, str) or not x.strip() or len(x) > 256 for x in annotator_ids)
+                or len(set(annotator_ids)) != len(annotator_ids) or owner_id in annotator_ids):
+            raise ValueError("invalid_calibration_annotators")
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 128:
+            raise ValueError("invalid_calibration_idempotency_key")
+        request_json = json.dumps({"task_ids": sorted(task_ids), "annotator_ids": sorted(annotator_ids)},
+                                  sort_keys=True, separators=(",", ":"), allow_nan=False)
+        now, session_id = _now(), uuid.uuid4().hex
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute(
+                "SELECT task_type, status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                return None
+            prior = db.execute(
+                "SELECT * FROM annotation_calibration_sessions WHERE owner_id=? AND project_id=? AND idempotency_key=?",
+                (owner_id, project_id, idempotency_key.strip()),
+            ).fetchone()
+            if prior is not None:
+                if prior["request_json"] != request_json:
+                    raise ValueError("calibration_idempotency_conflict")
+                return {"session_id": prior["session_id"], "project_id": project_id,
+                        "status": prior["status"], "assignment_count": prior["assignment_count"],
+                        "created_at": prior["created_at"], "updated_at": prior["updated_at"]}
+            if project["status"] != "active" or project["task_type"] != "text_classification":
+                raise ValueError("calibration_requires_active_text_classification_project")
+            policy = db.execute(
+                "SELECT minimum_gold_tasks FROM annotation_calibration_policies WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            minimum = policy["minimum_gold_tasks"] if policy else 5
+            if len(task_ids) < minimum:
+                raise ValueError("calibration_session_below_minimum_gold_tasks")
+            placeholders = ",".join("?" for _ in task_ids)
+            gold_rows = db.execute(
+                f"""SELECT g.task_id FROM annotation_gold_standards g
+                    WHERE g.owner_id=? AND g.project_id=? AND g.task_id IN ({placeholders})""",
+                [owner_id, project_id, *task_ids],
+            ).fetchall()
+            if len(gold_rows) != len(task_ids):
+                raise ValueError("calibration_tasks_must_be_registered_gold")
+            for task_id in task_ids:
+                task = db.execute(
+                    "SELECT status FROM annotation_tasks WHERE owner_id=? AND project_id=? AND task_id=?",
+                    (owner_id, project_id, task_id),
+                ).fetchone()
+                if task is None or task["status"] in {"accepted", "completed"}:
+                    raise ValueError("calibration_task_not_assignable")
+                prior_task_assignment = db.execute(
+                    "SELECT 1 FROM annotation_independent_assignments WHERE owner_id=? AND project_id=? AND task_id=? LIMIT 1",
+                    (owner_id, project_id, task_id),
+                ).fetchone()
+                if prior_task_assignment is not None:
+                    raise ValueError("calibration_requires_unassigned_gold_tasks")
+                for annotator_id in annotator_ids:
+                    exists = db.execute(
+                        "SELECT 1 FROM annotation_independent_assignments WHERE owner_id=? AND project_id=? AND task_id=? AND annotator_id=?",
+                        (owner_id, project_id, task_id, annotator_id),
+                    ).fetchone()
+                    if exists is not None:
+                        raise ValueError("calibration_requires_fresh_annotator_task_pairs")
+            assignment_count = len(task_ids) * len(annotator_ids)
+            db.execute(
+                """INSERT INTO annotation_calibration_sessions
+                   (session_id, owner_id, project_id, idempotency_key, request_json,
+                    status, assignment_count, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
+                (session_id, owner_id, project_id, idempotency_key.strip(),
+                 request_json, assignment_count, now, now),
+            )
+            for task_id in task_ids:
+                round_number = db.execute(
+                    "SELECT COALESCE(MAX(round_number), 0)+1 FROM annotation_independent_assignments WHERE owner_id=? AND project_id=? AND task_id=?",
+                    (owner_id, project_id, task_id),
+                ).fetchone()[0]
+                for annotator_id in annotator_ids:
+                    db.execute(
+                        """INSERT INTO annotation_independent_assignments
+                           (assignment_id, task_id, project_id, owner_id, annotator_id, round_number,
+                            status, version, payload_json, quality_json, created_at, updated_at, session_id)
+                           VALUES (?, ?, ?, ?, ?, ?, 'assigned', 1, NULL, '{}', ?, ?, ?)""",
+                        (uuid.uuid4().hex, task_id, project_id, owner_id, annotator_id,
+                         round_number, now, now, session_id),
+                    )
+            self._audit(db, owner_id, project_id, None, "calibration_session_created", {
+                "session_id": session_id, "assignment_count": assignment_count,
+                "gold_task_count": len(task_ids), "annotator_count": len(annotator_ids),
+            })
+        return {"session_id": session_id, "project_id": project_id, "status": "open",
+                "assignment_count": assignment_count, "created_at": now, "updated_at": now}
+
+    def list_calibration_sessions(
+        self, owner_id: str, project_id: str, *, limit: int = 20,
+    ) -> list[dict[str, Any]] | None:
+        owner_id = _owner(owner_id)
+        if not isinstance(project_id, str) or not _ID.fullmatch(project_id):
+            return None
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("invalid_calibration_session_limit")
+        with self._connect() as db:
+            if db.execute("SELECT 1 FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                          (owner_id, project_id)).fetchone() is None:
+                return None
+            rows = db.execute(
+                """SELECT s.session_id, s.status, s.assignment_count, s.created_at, s.updated_at,
+                          SUM(CASE WHEN a.status='submitted' THEN 1 ELSE 0 END) AS submitted_count
+                   FROM annotation_calibration_sessions s
+                   LEFT JOIN annotation_independent_assignments a ON a.session_id=s.session_id
+                   WHERE s.owner_id=? AND s.project_id=?
+                   GROUP BY s.session_id ORDER BY s.created_at DESC LIMIT ?""",
+                (owner_id, project_id, limit),
+            ).fetchall()
+        return [{"session_id": row["session_id"], "status": row["status"],
+                 "assignment_count": row["assignment_count"],
+                 "submitted_count": row["submitted_count"] or 0,
+                 "created_at": row["created_at"], "updated_at": row["updated_at"]}
+                for row in rows]
 
     def create_independent_assignments(
         self, owner_id: str, project_id: str, task_id: str, annotator_ids: list[str],
@@ -1604,11 +1774,11 @@ class SQLiteAnnotationWorkbench:
                 db.execute(
                     """INSERT INTO annotation_gold_results
                        (assignment_id, gold_id, owner_id, project_id, task_id,
-                        annotator_id, correct, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        annotator_id, correct, created_at, session_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (assignment_id, gold["gold_id"], assignment["owner_id"],
                      assignment["project_id"], assignment["task_id"], annotator_id,
-                     int(submitted_label == gold["expected_label"]), now),
+                     int(submitted_label == gold["expected_label"]), now, assignment["session_id"]),
                 )
             db.execute(
                 """UPDATE annotation_independent_assignments
@@ -1619,6 +1789,16 @@ class SQLiteAnnotationWorkbench:
             self._audit(db, assignment["owner_id"], assignment["project_id"],
                         assignment["task_id"], "independent_annotation_submitted",
                         {"assignment_id": assignment_id, "annotator_id": annotator_id})
+            if assignment["session_id"] is not None:
+                pending = db.execute(
+                    "SELECT 1 FROM annotation_independent_assignments WHERE session_id=? AND status!='submitted' LIMIT 1",
+                    (assignment["session_id"],),
+                ).fetchone()
+                if pending is None:
+                    db.execute(
+                        "UPDATE annotation_calibration_sessions SET status='completed', updated_at=? WHERE session_id=? AND status='open'",
+                        (now, assignment["session_id"]),
+                    )
             row = db.execute(
                 "SELECT assignment_id, task_id, project_id, round_number, status, version, quality_json, updated_at "
                 "FROM annotation_independent_assignments WHERE assignment_id=?", (assignment_id,),
@@ -1727,11 +1907,23 @@ class SQLiteAnnotationWorkbench:
                 required_samples = policy["minimum_gold_tasks"] if policy else minimum_gold_tasks
                 required_accuracy = policy["passing_accuracy"] if policy else passing_accuracy
                 maximum_age_days = policy["maximum_age_days"] if policy else 90
-                calibration = db.execute(
-                    "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
-                    "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=?",
-                    (owner_id, project_id, reviewer_id),
+                latest_session = db.execute(
+                    "SELECT session_id FROM annotation_calibration_sessions WHERE owner_id=? AND project_id=? "
+                    "ORDER BY created_at DESC, session_id DESC LIMIT 1",
+                    (owner_id, project_id),
                 ).fetchone()
+                if latest_session is not None:
+                    calibration = db.execute(
+                        "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
+                        "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=? AND session_id=?",
+                        (owner_id, project_id, reviewer_id, latest_session["session_id"]),
+                    ).fetchone()
+                else:
+                    calibration = db.execute(
+                        "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
+                        "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=?",
+                        (owner_id, project_id, reviewer_id),
+                    ).fetchone()
                 n = calibration["n"]
                 accuracy = calibration["correct"] / n if n else 0.0
                 last_evaluated = None

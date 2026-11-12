@@ -780,6 +780,66 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.assertEqual((status, hidden["error"]), (404, "not_found"))
 
 
+
+    def test_owner_only_blinded_calibration_session_api(self):
+        project_id = self.create_project()
+        status, body = self.request(
+            "PUT", f"/v1/annotation/projects/{project_id}/calibration-policy",
+            {"minimum_gold_tasks": 1}, self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        status, body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "gold-session-api", "input_data": {"text": "Excellent"}},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task_id = body["task"]["task_id"]
+        status, body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/{task_id}/gold-standard",
+            {"expected_label": "positive"}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        payload = {
+            "task_ids": [task_id],
+            "annotator_user_ids": [self.owner_two.user.user_id],
+            "idempotency_key": "api-round-1",
+        }
+        status, body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/calibration-sessions",
+            payload, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        session_id = body["session"]["session_id"]
+        self.assertNotIn("expected_label", str(body))
+        replay_status, replay = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/calibration-sessions",
+            payload, self.owner_one.token,
+        )
+        self.assertEqual(replay_status, 201)
+        self.assertEqual(replay["session"]["session_id"], session_id)
+        status, body = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/calibration-sessions",
+            token=self.owner_one.token,
+        )
+        self.assertEqual((status, body["sessions"][0]["status"]), (200, "open"))
+        status, body = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/calibration-sessions",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, body["error"]), (404, "not_found"))
+        invalid_status, invalid_body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/calibration-sessions",
+            {"task_ids": [task_id], "annotator_user_ids": [{}],
+             "idempotency_key": "malformed"}, self.owner_one.token,
+        )
+        self.assertEqual((invalid_status, invalid_body["error"]), (400, "invalid_request"))
+        status, body = self.request(
+            "GET", "/v1/annotation/assignments", token=self.owner_two.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("expected_label", str(body))
+
 class AnnotationRuntimeTests(unittest.TestCase):
     def test_runtime_mounts_annotation_api_when_configured(self):
         def model(**kwargs):
@@ -835,6 +895,7 @@ class AnnotationRuntimeTests(unittest.TestCase):
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=auth, agent_loop=loop, annotation_workbench=object(),
                 )
+
 
 
 
