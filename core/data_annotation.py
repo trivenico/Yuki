@@ -187,7 +187,13 @@ class SQLiteAnnotationWorkbench:
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_audit_owner
                 ON annotation_audit(owner_id, created_at DESC)""")
         if os.name == "posix":
-            os.chmod(self.database_path, 0o600)
+            for private_path in (
+                self.database_path,
+                self.database_path + "-wal",
+                self.database_path + "-shm",
+            ):
+                if os.path.exists(private_path):
+                    os.chmod(private_path, 0o600)
 
     @contextmanager
     def _connect(self):
@@ -356,6 +362,12 @@ class SQLiteAnnotationWorkbench:
                 raise LookupError("annotation_project_not_found")
             if project["status"] != "active":
                 raise ValueError("annotation_project_not_active")
+            duplicate = db.execute(
+                "SELECT 1 FROM annotation_tasks WHERE owner_id=? AND project_id=? AND external_ref=?",
+                (owner_id, project_id, external_ref.strip()),
+            ).fetchone()
+            if duplicate is not None:
+                raise ValueError("duplicate_external_task_reference")
             count = db.execute(
                 "SELECT COUNT(*) FROM annotation_tasks WHERE owner_id=? AND project_id=?",
                 (owner_id, project_id),
@@ -421,6 +433,15 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()[0]
             if count + len(prepared) > _MAX_TASKS_PER_PROJECT:
                 raise ValueError("project_task_capacity_reached")
+            refs = [item[1] for item in prepared]
+            placeholders = ",".join("?" for _ in refs)
+            duplicate = db.execute(
+                "SELECT 1 FROM annotation_tasks WHERE owner_id=? AND project_id=? "
+                f"AND external_ref IN ({placeholders}) LIMIT 1",
+                [owner_id, project_id, *refs],
+            ).fetchone()
+            if duplicate is not None:
+                raise ValueError("duplicate_external_task_reference")
             rows = []
             for task_id, external_ref, asset_ref, input_json in prepared:
                 db.execute(
