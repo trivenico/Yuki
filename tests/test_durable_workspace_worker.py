@@ -148,6 +148,25 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
         self.assertEqual(self.request_ids, [])
         self.assertEqual(self.gateway.pending_requests(), [])
 
+    def test_principal_factory_cannot_substitute_workspace_owner(self):
+        self.submit()
+        worker = DurableWorkspaceWorker(
+            self.engine, gateway=self.gateway, executor=self.executor,
+            worker_id="workspace-worker",
+            policy_request_factory=self.request_factory,
+            principal_factory=lambda context: ToolPrincipal(
+                "owner:attacker", frozenset({"workspace:write"}),
+            ),
+            approval_token_resolver=self.approve_from_test_resolver,
+            lease_seconds=30, heartbeat_interval_seconds=10,
+            approval_wait_timeout_seconds=5,
+        )
+        result = worker.run_once()
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "before\\n")
+        self.assertEqual(self.request_ids, [])
+        self.assertEqual(self.delivered_tokens, [])
+
     def test_owner_approved_workspace_task_executes_exact_change(self):
         task = self.submit()
         result = self.worker().run_once()
