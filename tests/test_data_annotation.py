@@ -317,6 +317,25 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         ))
         self.assertIsNone(self.store.get_draft("owner:alice", task.task_id))
 
+    def test_draft_rejects_oversized_payload_and_noneditable_task(self):
+        task = self._task()
+        with self.assertRaisesRegex(ValueError, "not_editable"):
+            self.store.save_draft(
+                "owner:alice", task.task_id, payload={"label": "bird"},
+                expected_revision=0,
+            )
+        claimed = self.store.claim_task(
+            "owner:alice", task.task_id, expected_version=task.version
+        )
+        with self.assertRaisesRegex(ValueError, "too_large"):
+            self.store.save_draft(
+                "owner:alice", task.task_id, payload={"text": "x" * (70 * 1024)},
+                expected_revision=0,
+            )
+        self.assertEqual(
+            self.store.get_task("owner:alice", task.task_id).version, claimed.version
+        )
+
     def test_successful_submission_atomically_clears_draft(self):
         task = self._task()
         claimed = self.store.claim_task(
