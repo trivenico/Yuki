@@ -60,6 +60,11 @@ class AuthenticatedCapabilityApprovalService:
         self._principal(session_token, "workflow:approve")
         return self.gateway.pending_requests(limit=limit)
 
+    def reject_pending(self, session_token: str, request_id: str) -> bool:
+        """Reject a pending inbox item using the authenticated approver identity."""
+        user = self._principal(session_token, "workflow:approve")
+        return self.gateway.reject_request(request_id, rejected_by=user.user_id)
+
     def approve_pending(self, session_token: str, request_id: str, *, ttl_seconds: int = 300) -> None:
         """Approve an inbox item and deliver its token only to a trusted resolver."""
         user = self._principal(session_token, "workflow:approve")
