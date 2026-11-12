@@ -47,7 +47,7 @@ class LeaseRecoveryCoordinator:
         for item in items:
             broker = self.brokers_by_worker.get(item["worker_id"])
             if broker is None:
-                self.engine.release_recovery_outbox(item["id"], self.supervisor_id)
+                self.engine.release_recovery_outbox(item["id"], self.supervisor_id, item["claim_token"])
                 deferred += 1
                 continue
             try:
@@ -57,7 +57,7 @@ class LeaseRecoveryCoordinator:
                     item["task_id"], item["claim_token_sha256"]
                 )
                 if not self.engine.acknowledge_recovery_outbox(
-                    item["id"], self.supervisor_id
+                    item["id"], self.supervisor_id, item["claim_token"]
                 ):
                     deferred += 1
                 else:
