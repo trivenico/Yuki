@@ -131,7 +131,10 @@ class ApprovedWorkspaceChanges:
         except Exception as exc:
             raise RuntimeError("audit unavailable; workspace operation denied.") from exc
 
-    def apply(self, *, principal: ToolPrincipal, changes: Sequence[FileChange]) -> ChangeResult:
+    def apply(
+        self, *, principal: ToolPrincipal, changes: Sequence[FileChange],
+        execution_guard: Callable[[], bool] | None = None,
+    ) -> ChangeResult:
         _validate_principal(principal, self.trusted_principal, "workspace:write")
         if not isinstance(changes, (tuple, list)) or not 1 <= len(changes) <= _MAX_CHANGES:
             raise ToolInputError("one to eight file changes are required.")
@@ -182,6 +185,15 @@ class ApprovedWorkspaceChanges:
                     os.fsync(handle.fileno())
                 os.chmod(temp_name, target.stat().st_mode & 0o777)
                 staged.append((relative, target, old, Path(temp_name)))
+            # Revalidate the durable worker claim after staging and immediately
+            # before any workspace side effect. A lost claim must not write files.
+            if execution_guard is not None:
+                try:
+                    claim_valid = callable(execution_guard) and execution_guard() is True
+                except Exception:
+                    claim_valid = False
+                if not claim_valid:
+                    raise WorkspaceChangeError("worker claim is no longer valid; no changes applied.")
             # Recheck all source digests immediately before replacing any file.
             for relative, target, old, _ in staged:
                 if hashlib.sha256(target.read_bytes()).digest() != hashlib.sha256(old).digest():
