@@ -19,7 +19,7 @@ does not add a browser canvas, drawing controls, or an annotation editor UI.
   oversized dimensions are rejected.
 - Responses use `image/png`, `nosniff`, `no-store`, a restrictive CSP sandbox,
   same-origin resource policy, and inline disposition for the generated PNG.
-- The existing download endpoint remains attachment-only and unchanged.
+- The existing download endpoint remains attachment-only and unchanged. A clean-state metadata/file digest mismatch fails closed with HTTP 409; missing or non-clean assets remain indistinguishable as 404.
 - Preview generation runs off the ASGI event loop and is bounded by input
   storage limits, 40 million pixels, 12,000 pixels per dimension, and a 20 MiB
   encoded derivative limit.
@@ -36,5 +36,7 @@ does not add a browser canvas, drawing controls, or an annotation editor UI.
 - This endpoint is a safe raster preview primitive, not a full visual
   annotation surface. Coordinate editing, zoom/pan, polygons, boxes, and
   task-family interaction remain future UI work.
-- The source asset is re-read and integrity-checked for each preview. No
-  derivative cache is persisted, avoiding stale derivatives after deletion.
+- The source asset is re-read and integrity-checked for each preview. Tests cover
+  successful re-encoding, owner isolation, quarantined assets, malformed raster
+  content, and post-upload file tampering. No derivative cache is persisted,
+  avoiding stale derivatives after deletion.
