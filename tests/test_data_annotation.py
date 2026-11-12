@@ -352,6 +352,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
         )
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0]["annotation"], {"label": "bird"})
+        self.assertEqual(exported[0]["quality"]["status"], "pass")
         self.assertFalse(exported[0]["ai_assisted"])
         self.assertEqual(
             self.store.export_accepted("owner:bob", self.project.project_id), []
