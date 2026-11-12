@@ -1293,6 +1293,83 @@
     }
   };
   $("annotation-performance-refresh").addEventListener("click", refreshPerformanceReport);
+  let driftIdempotencyKey = null;
+  const renderDriftReport = (target, report) => {
+    target.replaceChildren();
+    const summary = document.createElement("p");
+    summary.textContent = "Detected drift: " + report.summary.drift_detected_count +
+      "; insufficient evidence: " + report.summary.insufficient_evidence_count +
+      "; annotators assessed: " + report.summary.annotator_count + ".";
+    target.append(summary);
+    const list = document.createElement("ul");
+    for (const item of report.annotators) {
+      const entry = document.createElement("li");
+      const baseline = item.baseline.accuracy === null ? "n/a" :
+        (item.baseline.accuracy * 100).toFixed(1) + "% (" + item.baseline.sample_count + ")";
+      const recent = item.recent.accuracy === null ? "n/a" :
+        (item.recent.accuracy * 100).toFixed(1) + "% (" + item.recent.sample_count + ")";
+      entry.textContent = item.annotator_id + ": " + item.status +
+        "; baseline " + baseline + "; recent " + recent +
+        (item.two_proportion_p_value === null ? "" : "; p=" + item.two_proportion_p_value.toFixed(4));
+      list.append(entry);
+    }
+    target.append(list);
+    const note = document.createElement("p");
+    note.textContent = report.limitations.join(" ");
+    target.append(note);
+  };
+  $("annotation-drift-run").addEventListener("click", async () => {
+    const target = $("annotation-drift-summary");
+    if (!state.project) {
+      target.textContent = "Select a project first.";
+      return;
+    }
+    const button = $("annotation-drift-run");
+    button.disabled = true;
+    target.textContent = "Assessing blinded gold-standard evidence…";
+    try {
+      if (!driftIdempotencyKey) driftIdempotencyKey = crypto.randomUUID();
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/quality-drift-reports", {
+          method: "POST", body: JSON.stringify({ idempotency_key: driftIdempotencyKey })
+        });
+      renderDriftReport(target, result.report.report);
+      driftIdempotencyKey = null;
+      $("annotation-drift-history").click();
+    } catch (error) {
+      target.textContent = "Quality drift assessment unavailable: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $("annotation-drift-history").addEventListener("click", async () => {
+    const target = $("annotation-drift-history-list");
+    target.replaceChildren();
+    if (!state.project) {
+      target.textContent = "Select a project first.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/quality-drift-reports");
+      if (!result.reports.length) {
+        target.textContent = "No saved drift assessments yet.";
+        return;
+      }
+      const list = document.createElement("ul");
+      for (const item of result.reports) {
+        const entry = document.createElement("li");
+        entry.textContent = item.created_at + " — " +
+          item.summary.drift_detected_count + " drift alerts; " +
+          item.summary.insufficient_evidence_count + " insufficient evidence; " +
+          (item.integrity_valid ? "integrity verified" : "integrity check failed");
+        list.append(entry);
+      }
+      target.append(list);
+    } catch (error) {
+      target.textContent = "Drift history unavailable: " + error.message;
+    }
+  });
   $("annotation-independent-load").addEventListener("click", loadIndependentAssignments);
   $("annotation-independent-submit").addEventListener("click", async () => {
     const assignment = state.independentAssignment;
