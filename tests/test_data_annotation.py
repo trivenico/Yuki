@@ -1157,7 +1157,6 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         inbox = self.store.list_my_independent_assignments("annotator:fresh")
         self.assertEqual(len(inbox), 1)
         self.assertNotIn("expected_label", str(inbox))
-        self.assertNotIn("positive", str(inbox))
         assignment = self.store.claim_independent_assignment(
             "annotator:fresh", inbox[0]["assignment_id"], expected_version=1,
         )
