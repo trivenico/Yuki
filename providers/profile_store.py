@@ -162,7 +162,7 @@ class ProviderProfileStore:
         owner = self._validate_owner(owner_id)
         profile_name = self._validate_name(name)
         endpoint, host = self._validate_endpoint(base_url, allowed_host)
-        if not isinstance(model, str) or not model.strip() or len(model) > 256 or "\x00" in model:
+        if not isinstance(model, str) or not model.strip() or len(model) > 120 or "\x00" in model:
             raise ValueError("model must be bounded non-empty text")
         if not isinstance(api_key, str) or not api_key or len(api_key) > 8192 or "\x00" in api_key:
             raise ValueError("credential must be bounded non-empty text")
