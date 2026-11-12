@@ -1418,6 +1418,12 @@ class SQLiteAnnotationWorkbench:
                 ).fetchone()
                 if task is None or task["status"] in {"accepted", "completed"}:
                     raise ValueError("calibration_task_not_assignable")
+                prior_task_assignment = db.execute(
+                    "SELECT 1 FROM annotation_independent_assignments WHERE owner_id=? AND project_id=? AND task_id=? LIMIT 1",
+                    (owner_id, project_id, task_id),
+                ).fetchone()
+                if prior_task_assignment is not None:
+                    raise ValueError("calibration_requires_unassigned_gold_tasks")
                 for annotator_id in annotator_ids:
                     exists = db.execute(
                         "SELECT 1 FROM annotation_independent_assignments WHERE owner_id=? AND project_id=? AND task_id=? AND annotator_id=?",
