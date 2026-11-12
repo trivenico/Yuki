@@ -5,6 +5,7 @@ unavailable until an explicitly configured scanner marks them clean.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import os
@@ -12,7 +13,6 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
-from typing import BinaryIO
 
 
 _ASSET_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -85,6 +85,7 @@ class SQLiteAnnotationAssetStore:
         if os.name == "posix" and self.database_path.exists():
             os.chmod(self.database_path, 0o600)
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         db.row_factory = sqlite3.Row
