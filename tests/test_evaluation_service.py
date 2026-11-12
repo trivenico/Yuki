@@ -1,4 +1,5 @@
 import tempfile
+import time
 import threading
 import unittest
 from pathlib import Path
@@ -87,6 +88,40 @@ class EvaluationServiceTests(unittest.TestCase):
                 benchmark_digest="0" * 64, candidate_id="candidate-a",
             )
         self.assertEqual(self.resolutions, [])
+
+    def test_adapter_receives_remaining_suite_deadline(self):
+        registry = BenchmarkRegistry()
+        benchmark = registry.register(BenchmarkDefinition(
+            benchmark_id="two-case-deadline",
+            version=1,
+            name="Two case deadline",
+            cases=(
+                EvalCase("case-1", "reasoning", "First case", max_latency_seconds=3),
+                EvalCase("case-2", "reasoning", "Second case", max_latency_seconds=3),
+            ),
+        ))
+        timeouts = []
+
+        def generate(prompt, *, timeout_seconds):
+            timeouts.append(timeout_seconds)
+            if prompt == "First case":
+                time.sleep(0.15)
+            return "A retry is bounded."
+
+        adapter = TrustedEvaluationAdapter("provider-a", "model-a", generate)
+        service = EvaluationService(
+            registry, self.store, lambda owner, candidate: adapter,
+            evaluator=ModelEvaluator(max_total_duration_seconds=1),
+        )
+        service.run(
+            owner_id="owner-a", idempotency_key="remaining-budget",
+            benchmark_id=benchmark.benchmark_id, benchmark_version=benchmark.version,
+            benchmark_digest=benchmark.digest, candidate_id="candidate-a",
+        )
+        self.assertEqual(len(timeouts), 2)
+        self.assertGreater(timeouts[0], timeouts[1])
+        self.assertLess(timeouts[1], 0.9)
+        self.assertGreater(timeouts[1], 0.5)
 
     def test_adapter_timeout_is_recorded_as_failed_case(self):
         def timeout(prompt, *, timeout_seconds):
