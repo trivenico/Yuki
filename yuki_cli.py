@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import uuid
 from collections.abc import Callable, Sequence
@@ -10,6 +11,10 @@ from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
+from providers.profile_store import OSKeyringVault, ProviderProfileStore
+from core.portable_paths import data_root
+from core.local_owner_identity import load_or_create_local_owner_id
+from yuki_providers import ProviderManager
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,11 +24,82 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
 
+    profiles = sub.add_parser("provider-profile", help="Manage persistent custom model providers")
+    profile_actions = profiles.add_subparsers(dest="profile_action", required=True)
+    profile_actions.add_parser("list", help="List owner-scoped profiles without secrets")
+    add_profile = profile_actions.add_parser("add", help="Save a custom OpenAI-compatible endpoint")
+    add_profile.add_argument("--name", required=True)
+    add_profile.add_argument("--endpoint", required=True)
+    add_profile.add_argument("--model", required=True)
+    add_profile.add_argument("--approved-host", required=True)
+    select_profile = profile_actions.add_parser("select", help="Select a saved profile for CLI requests")
+    select_profile.add_argument("name")
+    remove_profile = profile_actions.add_parser("remove", help="Remove a saved profile and vault credential")
+    remove_profile.add_argument("name")
+    verify_profile = profile_actions.add_parser("verify", help="Check local profile and vault readiness (no network request)")
+    verify_profile.add_argument("name")
+
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start persistent local conversation chat")
     return parser
+
+
+class _UnavailableCredentialVault:
+    """Metadata-only vault placeholder; every secret operation fails closed."""
+    def set_secret(self, reference: str, secret: str) -> None:
+        raise RuntimeError("OS credential vault is unavailable")
+    def get_secret(self, reference: str) -> str | None:
+        raise RuntimeError("OS credential vault is unavailable")
+    def delete_secret(self, reference: str) -> None:
+        raise RuntimeError("OS credential vault is unavailable")
+
+
+def _default_profile_store(config: dict, *, create: bool):
+    path = data_root() / ".yuki" / "provider_profiles.sqlite3"
+    if not create and not path.exists():
+        return None
+    try:
+        vault = OSKeyringVault()
+    except Exception:
+        vault = _UnavailableCredentialVault()
+    return ProviderProfileStore(path, vault)
+
+
+def _local_profile_owner(config: dict) -> str:
+    return load_or_create_local_owner_id(config.get("workspace"))
+
+
+def _profile_context(config, store_factory, owner_factory):
+    store = store_factory(config, create=True)
+    if store is None:
+        raise RuntimeError("provider profile storage is unavailable")
+    owner_id = owner_factory(config)
+    manager = ProviderManager(config)
+    manager.load_persisted_profiles(store, owner_id)
+    return store, owner_id, manager
+
+
+def _resolve_cli_provider(config, provider_factory, store_factory, owner_factory):
+    store = store_factory(config, create=False)
+    if store is None:
+        return provider_factory(config), None, None, None
+    owner_id = owner_factory(config)
+    manager = ProviderManager(config)
+    manager.load_persisted_profiles(store, owner_id)
+    selected = store.selected_profile(owner_id)
+    if selected is None:
+        return provider_factory(config), store, owner_id, manager
+    result = manager.select(selected)
+    if not result.startswith("Selected provider:"):
+        store.close()
+        raise RuntimeError("saved provider profile could not be selected")
+    adapter = manager.create_selected_adapter()
+    if adapter is None or adapter.is_available() is not True:
+        store.close()
+        raise RuntimeError("saved provider profile credential is unavailable")
+    return adapter, store, owner_id, manager
 
 
 def _write_json(value, output_fn: Callable[[str], object] = print) -> None:
@@ -137,6 +213,9 @@ def run_cli(
     provider_factory: Callable = create_provider,
     readiness_builder: Callable = build_readiness_report,
     conversation_runtime_factory: Callable = build_local_conversation_runtime,
+    profile_store_factory: Callable = _default_profile_store,
+    owner_id_factory: Callable = _local_profile_owner,
+    secret_input_fn: Callable[[str], str] = getpass.getpass,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
 ) -> int:
@@ -149,9 +228,18 @@ def run_cli(
 
     if args.command == "chat":
         runtime = None
+        profile_store = None
         try:
             config = config_loader()
-            runtime = conversation_runtime_factory(config)
+            selected_provider, profile_store, owner_id, manager = _resolve_cli_provider(
+                config, provider_factory, profile_store_factory, owner_id_factory,
+            )
+            if manager is not None and profile_store is not None and profile_store.selected_profile(owner_id):
+                runtime = conversation_runtime_factory(
+                    config, provider_factory=lambda _config: selected_provider,
+                )
+            else:
+                runtime = conversation_runtime_factory(config)
             return _run_persistent_chat(runtime, input_fn=input_fn, output_fn=output_fn)
         except Exception as exc:
             output_fn(f"Yuki could not initialize persistent chat ({type(exc).__name__}).")
@@ -162,10 +250,14 @@ def run_cli(
                     runtime.close()
                 except Exception:
                     output_fn("Yuki: Chat storage could not close cleanly.")
+            if profile_store is not None:
+                profile_store.close()
 
     try:
         config = config_loader()
-        provider = provider_factory(config)
+        provider, profile_store, owner_id, manager = _resolve_cli_provider(
+            config, provider_factory, profile_store_factory, owner_id_factory,
+        )
     except Exception as exc:
         output_fn(f"Yuki could not initialize the configured provider ({type(exc).__name__}).")
         return 2
@@ -180,14 +272,21 @@ def run_cli(
             "provider": type(provider).__name__,
             "available": available,
             "status": "ready" if available else "unavailable",
+            "profile_selected": bool(profile_store is not None and profile_store.selected_profile(owner_id)),
         }, output_fn)
+        if profile_store is not None:
+            profile_store.close()
         return 0 if available else 3
 
     if args.command == "ask":
         answer, status = _safe_ask(provider, args.prompt)
         output_fn(answer)
+        if profile_store is not None:
+            profile_store.close()
         return status
 
+    if profile_store is not None:
+        profile_store.close()
     return 2
 
 
