@@ -201,7 +201,27 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             self.store.get_task(self.owner_one.user_id, task["task_id"]).status, "submitted"
         )
 
-    def test_reviewer_routes_fail_closed_without_authorization_service(self):
+    def test_owner_can_grant_list_and_revoke_reviewer_access(self):
+        project_id = self.create_project()
+        self.grant_reviewer(project_id)
+        status, body = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/reviewers",
+            token=self.owner_one.token,
+        )
+        self.assertEqual((status, body["reviewers"][0]["reviewer_id"]),
+                         (200, self.owner_two.user_id))
+        status, body = self.request(
+            "DELETE", f"/v1/annotation/projects/{project_id}/reviewers",
+            {"reviewer_user_id": self.owner_two.user_id}, self.owner_one.token,
+        )
+        self.assertEqual((status, body["revoked"]), (200, True))
+        status, body = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/review-queue",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, body["error"]), (403, "reviewer_access_denied"))
+
+    def test_reviewer_routes_fail_closed_without_active_grant(self):
         project_id = self.create_project()
         self.app = AuthenticatedAnnotationAPI(_Downstream(), self.auth, self.store)
         status, body = self.request(
