@@ -57,11 +57,13 @@ class AnnotationGeometryTests(unittest.TestCase):
         self.assertAlmostEqual(polygon_area(points), 1)
         self.assertEqual(len(validate_polygon(points)), 4)
 
-    def test_polygon_rejects_duplicate_and_degenerate_vertices(self):
+    def test_polygon_rejects_duplicate_degenerate_and_self_intersecting_vertices(self):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             validate_polygon([Point(0, 0), Point(1, 0), Point(1, 0), Point(0, 1)])
         with self.assertRaisesRegex(ValueError, "area"):
             validate_polygon([Point(0, 0), Point(.5, .5), Point(1, 1)])
+        with self.assertRaisesRegex(ValueError, "self_intersecting"):
+            validate_polygon([Point(0, 0), Point(1, 1), Point(0, 1), Point(1, 0)])
 
 
 class SnapshotHistoryTests(unittest.TestCase):
