@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import re
 import threading
 import time
 from typing import Any, Callable
@@ -233,12 +232,8 @@ class DurableWorkspaceWorker:
                         lease_token=lease_token, retry_delay_seconds=0,
                     )
                     return {"task_id": task_id, "state": failed["state"],
-                            "status": "workspace_execution_failed",
-                            "failure_code": failure_code,
-                            "failure_cause_code": cause_code}
+                            "status": "workspace_execution_failed"}
             except Exception:
                 pass
             return {"task_id": task_id, "state": "unknown",
-                    "status": "workspace_claim_lost_or_outcome_ambiguous",
-                    "failure_code": failure_code,
-                    "failure_cause_code": cause_code}
+                    "status": "workspace_claim_lost_or_outcome_ambiguous"}
