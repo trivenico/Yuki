@@ -182,8 +182,7 @@ class EvaluationRunStore:
             "benchmark_id": benchmark, "benchmark_version": benchmark_version,
             "benchmark_digest": benchmark_digest, "candidate_id": candidate,
             "provider_id": provider, "model_id": model, "environment": env,
-            "report_digest": report_digest,
-        }
+            }
         request_digest = self._record_digest(request_fields)
         now = datetime.now(timezone.utc).isoformat()
         run_id = secrets.token_urlsafe(18)
