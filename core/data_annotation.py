@@ -1719,15 +1719,39 @@ class SQLiteAnnotationWorkbench:
                     ).fetchone()
                     if grant is None:
                         raise PermissionError("reviewer_access_revoked")
+                policy = db.execute(
+                    "SELECT minimum_gold_tasks, passing_accuracy, maximum_age_days "
+                    "FROM annotation_calibration_policies WHERE owner_id=? AND project_id=?",
+                    (owner_id, project_id),
+                ).fetchone()
+                required_samples = policy["minimum_gold_tasks"] if policy else minimum_gold_tasks
+                required_accuracy = policy["passing_accuracy"] if policy else passing_accuracy
+                maximum_age_days = policy["maximum_age_days"] if policy else 90
                 calibration = db.execute(
-                    "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct "
+                    "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
                     "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=?",
                     (owner_id, project_id, reviewer_id),
                 ).fetchone()
                 n = calibration["n"]
                 accuracy = calibration["correct"] / n if n else 0.0
-                if n < minimum_gold_tasks or accuracy < passing_accuracy:
+                last_evaluated = None
+                try:
+                    last_evaluated = datetime.fromisoformat(
+                        calibration["last_evaluated_at"].replace("Z", "+00:00")
+                    )
+                    if last_evaluated.tzinfo is None:
+                        last_evaluated = last_evaluated.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    pass
+                evidence_fresh = (
+                    last_evaluated is not None
+                    and (datetime.now(timezone.utc) - last_evaluated).total_seconds()
+                    <= maximum_age_days * 86400
+                )
+                if n < required_samples or accuracy < required_accuracy:
                     raise PermissionError("reviewer_calibration_required")
+                if not evidence_fresh:
+                    raise PermissionError("reviewer_calibration_expired")
             existing = db.execute(
                 "SELECT * FROM annotation_adjudications WHERE owner_id=? AND project_id=? AND task_id=?",
                 (owner_id, project_id, task_id),
