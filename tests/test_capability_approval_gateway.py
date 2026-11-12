@@ -214,11 +214,12 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             target="repo:project-a", payload=payload,
         )
         request = self.make_request(argument_sha256=argument_digest(payload))
-        request_id = self.gateway.request_approval(request, operation=operation)
+        request_id = self.gateway.request_approval(request, operation=operation, operation_payload=payload)
         stored = self.gateway.approval_operation(request_id)
         self.assertEqual(stored["operation_type"], "workspace.write")
         self.assertEqual(stored["payload_sha256"], operation.payload_sha256)
         self.assertEqual(stored["target"], "repo:project-a")
+        self.assertEqual(self.gateway.approval_operation_payload(request_id), payload)
         inbox_row = self.gateway.pending_requests()[0]
         self.assertEqual(inbox_row["operation"], stored)
 
@@ -238,7 +239,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.gateway.request_approval(self.request, operation=operation)
         request = self.make_request(argument_sha256=argument_digest(payload))
-        request_id = self.gateway.request_approval(request, operation=operation)
+        request_id = self.gateway.request_approval(request, operation=operation, operation_payload=payload)
         with self.assertRaises(PermissionError):
             self.gateway.request_approval(request)
 
@@ -250,7 +251,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         )
         request = self.make_request(argument_sha256=argument_digest(payload))
         with self.assertRaises(PermissionError):
-            self.gateway.request_approval(request, operation=operation)
+            self.gateway.request_approval(request, operation=operation, operation_payload=payload)
 
     def test_approval_credential_is_bound_to_typed_operation_envelope(self):
         payload = {"changes": [{"path": "README.md", "content": "approved"}]}
@@ -259,7 +260,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             target="repo:project-a", payload=payload,
         )
         request = self.make_request(argument_sha256=argument_digest(payload))
-        request_id = self.gateway.request_approval(request, operation=operation)
+        request_id = self.gateway.request_approval(request, operation=operation, operation_payload=payload)
         token = self.gateway.approve_request(request_id, approved_by="admin")
         self.assertTrue(self.gateway.authorize(
             request, approval_token=token, operation=operation
@@ -269,7 +270,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         request_id = self.gateway.request_approval(
             self.make_request(argument_sha256=argument_digest(payload),
                               run_id="run-2", step_id="step-2"),
-            operation=operation,
+            operation=operation, operation_payload=payload,
         )
         request2 = self.make_request(argument_sha256=argument_digest(payload),
                                      run_id="run-2", step_id="step-2")
@@ -292,7 +293,7 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             target="repo:project-a", payload=payload,
         )
         request = self.make_request(argument_sha256=argument_digest(payload))
-        request_id = self.gateway.request_approval(request, operation=operation)
+        request_id = self.gateway.request_approval(request, operation=operation, operation_payload=payload)
         with closing(self.gateway._connect()) as db:
             db.execute(
                 "UPDATE capability_approval_operations SET operation_json=? WHERE request_id=?",
@@ -300,6 +301,27 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             )
             db.commit()
         self.assertIsNone(self.gateway.approval_operation(request_id))
+        self.assertIsNone(self.gateway.approval_operation_payload(request_id))
+        with self.assertRaises(PermissionError):
+            self.gateway.approve_request(request_id, approved_by="admin")
+
+    def test_exact_typed_payload_tampering_blocks_approval(self):
+        payload = {"changes": [{"path": "README.md", "content": "approved"}]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.write", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        request = self.make_request(argument_sha256=argument_digest(payload))
+        request_id = self.gateway.request_approval(
+            request, operation=operation, operation_payload=payload
+        )
+        with closing(self.gateway._connect()) as db:
+            db.execute(
+                "UPDATE capability_approval_operations SET payload_json=? WHERE request_id=?",
+                ('{"changes":[{"path":"README.md","content":"substituted"}]}', request_id),
+            )
+            db.commit()
+        self.assertIsNone(self.gateway.approval_operation_payload(request_id))
         with self.assertRaises(PermissionError):
             self.gateway.approve_request(request_id, approved_by="admin")
 
