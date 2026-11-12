@@ -34,7 +34,7 @@ class AnnotationAssetAPITests(unittest.TestCase):
             asset_scanner=lambda media_type, data: True,
         )
         self.project_id = self.workbench.create_project(
-            self.owner.user_id, name="Image labels", task_type="image_classification",
+            self.owner.user.user_id, name="Image labels", task_type="image_classification",
             instructions="Choose a class", rubric={"labels": ["cat", "dog"]},
         ).project_id
 
