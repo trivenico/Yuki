@@ -147,6 +147,9 @@ class AuthenticatedApprovalAPITests(unittest.TestCase):
         )
         with self.assertRaisesRegex(PermissionError, "trusted capability operation preview"):
             service.approve_pending(self.admin.token, request_id)
+        # The alternate direct-approval facade must enforce the same preview gate.
+        with self.assertRaisesRegex(PermissionError, "trusted capability operation preview"):
+            service.approve(self.admin.token, request)
         self.assertEqual(self.delivered, [])
         self.assertEqual(gateway.get_request_status(request_id), "pending")
 
