@@ -125,7 +125,7 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             expected_version=claimed.version, human_confirmed=True,
         )
         queue = self.store.list_review_queue("owner:alice", project.project_id)
-        self.assertEqual([item.submission_id for item in queue], [submission.submission_id])
+        self.assertEqual([item.submission.submission_id for item in queue], [submission.submission_id])
         with self.assertRaisesRegex(PermissionError, "self_review_prohibited"):
             self.store.review(
                 "owner:alice", submission.submission_id,
