@@ -138,6 +138,23 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
             broken.apply(principal=self.principal, changes=[self.change()])
         self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
 
+    def test_success_audit_failure_does_not_rollback_durable_commit(self):
+        def audit(event):
+            if event["outcome"] == "succeeded":
+                raise OSError("audit backend unavailable")
+            self.audit_events.append(event)
+        service = ApprovedWorkspaceChanges(
+            self.root, trusted_principal=self.trusted, approve_change=self.approve,
+            audit=audit, allowed_paths=("sample.py",),
+            journal_dir=self.root.parent / (self.root.name + "-private-journal"),
+        )
+        with self.assertRaises(WorkspaceChangeError):
+            service.apply(principal=self.principal, changes=[self.change()])
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 2\\n")
+        manifests = list(service.journal.directory.glob("*/manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(service.journal._load(manifests[0].parent)["state"], "committed")
+
     def test_journal_recovery_requires_recovery_permission_and_is_idempotent(self):
         service = self.service()
         recovery_principal = ToolPrincipal("alice", frozenset({"workspace:recover"}))
