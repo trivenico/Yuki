@@ -182,5 +182,42 @@ class EvaluationRunStoreTests(unittest.TestCase):
 
 
 
+    def test_reclaimed_expired_lease_fences_out_the_previous_worker(self):
+        from evaluation.run_store import EvaluationRunInProgress
+        digest = self.store.request_digest_for(
+            benchmark_id="core-reasoning", benchmark_version=1,
+            benchmark_digest="a" * 64, candidate_id="candidate-a",
+            provider_id="local", model_id="test-model",
+            environment={"python_version": "3.11", "platform": "linux"},
+        )
+        stale_token = self.store.acquire_claim(
+            owner_id="owner-a", idempotency_key="lease-reclaim",
+            request_digest=digest,
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE evaluation_claims SET expires_at=0 "
+                "WHERE owner_id=? AND idempotency_key=?",
+                ("owner-a", "lease-reclaim"),
+            )
+            db.commit()
+        replacement_token = self.store.acquire_claim(
+            owner_id="owner-a", idempotency_key="lease-reclaim",
+            request_digest=digest,
+        )
+        self.assertNotEqual(stale_token, replacement_token)
+        with self.assertRaises(EvaluationRunInProgress):
+            self.store.record(
+                **dict(self.arguments, idempotency_key="lease-reclaim"),
+                lease_token=stale_token,
+            )
+        committed = self.store.record(
+            **dict(self.arguments, idempotency_key="lease-reclaim"),
+            lease_token=replacement_token,
+        )
+        self.assertEqual(committed.idempotency_key, "lease-reclaim")
+
+
+
 if __name__ == "__main__":
     unittest.main()
