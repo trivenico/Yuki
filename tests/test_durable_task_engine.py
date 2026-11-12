@@ -605,6 +605,36 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(self.engine.get_goal(legacy_goal)["state"], "active")
         self.assertEqual(self.engine.get_task(task["id"])["state"], "queued")
 
+    def test_claim_identity_is_derived_from_goal_and_current_lease(self):
+        owner_id = "trusted-owner"
+        goal_id = self.engine.create_owned_goal(owner_id)
+        task = self.engine.submit_for_owner(
+            owner_id, goal_id, "work", {}, idempotency_key="claim-identity",
+        )
+        first = self.engine.claim("identity-worker", lease_seconds=30)
+        self.assertEqual(first["id"], task["id"])
+        identity = self.engine.get_claim_identity(
+            task["id"], "identity-worker", first["lease_token"]
+        )
+        self.assertEqual(identity, {
+            "owner_id": owner_id, "goal_id": goal_id, "task_id": task["id"]
+        })
+        self.assertFalse(self.engine.validate_lease(
+            task["id"], "identity-worker", "invalid-claim-token"
+        ))
+
+    def test_claim_identity_marks_legacy_goal_unowned(self):
+        goal_id = self.engine.create_goal()
+        task = self.engine.submit(
+            goal_id, "work", {}, idempotency_key="legacy-claim-identity",
+        )
+        claim = self.engine.claim("legacy-worker", lease_seconds=30)
+        self.assertEqual(claim["id"], task["id"])
+        identity = self.engine.get_claim_identity(
+            task["id"], "legacy-worker", claim["lease_token"]
+        )
+        self.assertIsNone(identity["owner_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
