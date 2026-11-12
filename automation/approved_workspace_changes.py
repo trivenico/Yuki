@@ -149,7 +149,7 @@ class ApprovedWorkspaceChanges:
             seen.add(change.path)
             if not isinstance(change.expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", change.expected_sha256):
                 raise ToolInputError("expected_sha256 must be a lowercase SHA-256 digest.")
-            if not isinstance(change.content, str) or "\\x00" in change.content:
+            if not isinstance(change.content, str) or "\x00" in change.content:
                 raise ToolInputError("file content must be text without NUL bytes.")
             encoded = change.content.encode("utf-8")
             total += len(encoded)
