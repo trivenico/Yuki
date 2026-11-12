@@ -996,6 +996,84 @@
     }
   });
   $("annotation-calibration-refresh").addEventListener("click", refreshCalibrationReport);
+  const refreshDeliveryReport = async () => {
+    const target = $("annotation-delivery-summary");
+    if (!state.project) {
+      target.textContent = "Select a project to view delivery metrics.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/delivery-report");
+      const report = result.report;
+      target.textContent = report.accepted_delivery_count + " accepted delivery item(s) · " +
+        report.accepted_independent_task_count + " independently adjudicated · " +
+        report.rework_independent_task_count + " marked for rework · " +
+        report.pending_adjudication_count + " task(s) not yet adjudicated.";
+    } catch (error) {
+      target.textContent = "Delivery report unavailable: " + error.message;
+    }
+  };
+  const loadIndependentEvidence = async () => {
+    const target = $("annotation-independent-evidence-list");
+    target.replaceChildren();
+    if (!state.project || !state.task) {
+      target.textContent = "Select a project and task first.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/tasks/" +
+        encodeURIComponent(state.task.task_id) + "/independent-submissions");
+      if (!result.submissions.length) {
+        target.textContent = "No submitted independent annotations for this task.";
+        return;
+      }
+      for (const item of result.submissions) {
+        const line = document.createElement("p");
+        line.textContent = item.annotator_id + ": " +
+          (item.payload && typeof item.payload.label === "string" ? item.payload.label : "No classification label");
+        target.appendChild(line);
+      }
+    } catch (error) {
+      target.textContent = "Submission evidence unavailable: " + error.message;
+    }
+  };
+  const submitAdjudication = async decision => {
+    if (!state.project || !state.task) {
+      $("annotation-independent-status").textContent = "Select a project and task first.";
+      return;
+    }
+    const payload = {
+      decision,
+      notes: $("annotation-adjudication-notes").value.trim(),
+    };
+    if (decision === "accepted") {
+      payload.final_label = $("annotation-adjudication-label").value.trim();
+      if (!payload.final_label) {
+        $("annotation-independent-status").textContent = "Enter the final rubric label.";
+        return;
+      }
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/tasks/" +
+        encodeURIComponent(state.task.task_id) + "/adjudication", {
+          method: "POST", body: JSON.stringify(payload)
+        });
+      $("annotation-independent-status").textContent =
+        "Task adjudicated: " + result.adjudication.decision +
+        ". Original annotator submissions have been preserved.";
+      await loadIndependentEvidence();
+      await refreshDeliveryReport();
+    } catch (error) {
+      $("annotation-independent-status").textContent = "Adjudication failed: " + error.message;
+    }
+  };
+  $("annotation-independent-evidence").addEventListener("click", loadIndependentEvidence);
+  $("annotation-adjudication-accept").addEventListener("click", () => submitAdjudication("accepted"));
+  $("annotation-adjudication-rework").addEventListener("click", () => submitAdjudication("rework"));
+  $("annotation-delivery-refresh").addEventListener("click", refreshDeliveryReport);
   const loadIndependentAssignments = async () => {
     const target = $("annotation-independent-list");
     target.replaceChildren();
