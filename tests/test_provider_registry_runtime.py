@@ -147,7 +147,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_persisted_profile_loader_rejects_wrong_owner_identity(self):
         class MemoryVault:
             def set_secret(self, reference, secret): pass
-            def get_secret(self, reference): return secret
+            def get_secret(self, reference): return None
             def delete_secret(self, reference): pass
 
         with tempfile.TemporaryDirectory() as directory:
