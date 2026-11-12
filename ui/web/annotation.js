@@ -313,6 +313,7 @@
     $("annotation-label-wrap").hidden = !task || !(["bounding_boxes", "polygon_segmentation"].includes(family) || classification);
     $("annotation-tools").hidden = !task || !["bounding_boxes", "polygon_segmentation"].includes(family);
     $("annotation-canvas-panel").hidden = !task || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
+    $("annotation-upload-row").hidden = !state.project || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
     $("annotation-family-json").value = "{}";
     $("annotation-task-input").textContent = task
       ? (state.project.instructions || "") + "\\n\\nInput: " + JSON.stringify(task.input_data || {}, null, 2)
@@ -455,7 +456,7 @@
         setStatus("Image stored in quarantine. A configured scanner must mark it clean before it can become a task.", true);
         return;
       }
-      await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/tasks", {
+      const created = await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/tasks", {
         method: "POST", body: JSON.stringify({
           external_ref: "upload-" + uploaded.asset_id.slice(0, 16),
           asset_ref: uploaded.asset_id,
@@ -464,6 +465,10 @@
       });
       $("annotation-upload-file").value = "";
       await loadTasks();
+      if (created.task?.task_id) {
+        $("annotation-task").value = created.task.task_id;
+        await selectTask();
+      }
       setStatus("Clean image uploaded and annotation task created.");
     } catch (error) { setStatus(error.message, true); }
     finally { button.disabled = false; }
