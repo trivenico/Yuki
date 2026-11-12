@@ -1510,6 +1510,8 @@ class SQLiteAnnotationWorkbench:
             ).fetchall()
             if len(rows) < 2:
                 raise ValueError("adjudication_requires_two_submissions")
+            if not is_owner and any(row["annotator_id"] == reviewer_id for row in rows):
+                raise PermissionError("self_review_prohibited")
             labels = []
             for row in rows:
                 payload = _decode(row["payload_json"])
