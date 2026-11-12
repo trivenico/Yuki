@@ -953,6 +953,9 @@
       const result = await api("/v1/annotation/projects/" +
         encodeURIComponent(state.project.project_id) + "/calibration-report");
       const report = result.report;
+      $("annotation-calibration-minimum").value = String(report.minimum_gold_tasks);
+      $("annotation-calibration-accuracy").value = String(report.passing_accuracy);
+      $("annotation-calibration-age").value = String(report.maximum_age_days);
       if (!report.supported) {
         target.textContent = "Gold calibration is currently supported for text classification only.";
         return;
@@ -965,7 +968,9 @@
       target.textContent = report.annotators.map(item =>
         item.annotator_id + ": " + item.correct_gold_tasks + "/" +
         item.evaluated_gold_tasks + " correct (" +
-        Math.round(item.accuracy * 100) + "%) · " + item.status
+        Math.round(item.accuracy * 100) + "%) · " + item.status +
+        (item.evidence_age_days === null ? "" : " · " + Math.floor(item.evidence_age_days) +
+          "/" + item.maximum_age_days + " days")
       ).join(" | ");
     } catch (error) {
       target.textContent = "Calibration report unavailable: " + error.message;
@@ -996,6 +1001,35 @@
     }
   });
   $("annotation-calibration-refresh").addEventListener("click", refreshCalibrationReport);
+  $("annotation-calibration-policy-save").addEventListener("click", async () => {
+    const target = $("annotation-calibration-summary");
+    if (!state.project) {
+      target.textContent = "Select a project before saving calibration policy.";
+      return;
+    }
+    const minimum = Number($("annotation-calibration-minimum").value);
+    const accuracy = Number($("annotation-calibration-accuracy").value);
+    const age = Number($("annotation-calibration-age").value);
+    if (!Number.isInteger(minimum) || minimum < 1 || minimum > 100 ||
+        !Number.isFinite(accuracy) || accuracy < 0.5 || accuracy > 1 ||
+        !Number.isInteger(age) || age < 1 || age > 3650) {
+      target.textContent = "Policy values are outside the permitted ranges.";
+      return;
+    }
+    try {
+      await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/calibration-policy", {
+          method: "PUT",
+          body: JSON.stringify({
+            minimum_gold_tasks: minimum, passing_accuracy: accuracy, maximum_age_days: age
+          })
+        });
+      target.textContent = "Calibration policy saved. Refreshing current evidence…";
+      await refreshCalibrationReport();
+    } catch (error) {
+      target.textContent = "Calibration policy update failed: " + error.message;
+    }
+  });
   const refreshDeliveryReport = async () => {
     const target = $("annotation-delivery-summary");
     if (!state.project) {
