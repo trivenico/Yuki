@@ -82,7 +82,9 @@ Yuki commands:
   /help                           Show this help
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
-  /provider select NAME           Select an implemented provider adapter\n  /provider add-compatible NAME | HTTPS_URL | MODEL | KEY_ENV | APPROVED_HOST\n                                  Add a session-only OpenAI-compatible endpoint
+  /provider select NAME           Select an implemented provider adapter
+  /provider add-compatible NAME | HTTPS_URL | MODEL | KEY_ENV | APPROVED_HOST
+                                  Add a session-only OpenAI-compatible endpoint
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
