@@ -315,6 +315,20 @@ class AuthenticatedAnnotationAPI:
                     {"assignments": assignments} if assignments is not None else {"error": "not_found"},
                 )
 
+            revoke_assignment = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/independent-assignments/([0-9a-f]{32})",
+                path,
+            )
+            if revoke_assignment:
+                if method != "DELETE":
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                project_id, assignment_id = revoke_assignment.groups()
+                revoked = await asyncio.to_thread(
+                    self.workbench.revoke_independent_assignment,
+                    user.user_id, project_id, assignment_id,
+                )
+                return await self._respond(send, 200, {"revoked": revoked})
+
             independent_report = re.fullmatch(
                 re.escape(prefix) + r"/projects/([0-9a-f]{32})/agreement-report", path
             )
