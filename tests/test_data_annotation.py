@@ -879,6 +879,15 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             "owner:alice", self.project.project_id, idempotency_key="delivery-001",
         )
         self.assertEqual(repeated["manifest_id"], manifest["manifest_id"])
+        summaries = self.store.list_delivery_manifests("owner:alice", self.project.project_id)
+        self.assertEqual(len(summaries), 1)
+        self.assertNotIn("snapshot", summaries[0])
+        with sqlite3.connect(self.database) as db:
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute(
+                    "UPDATE annotation_adjudication_events SET snapshot_json='{}' WHERE task_id=?",
+                    (self.task.task_id,),
+                )
         verification = self.store.verify_delivery_manifest(
             "owner:alice", self.project.project_id, manifest["manifest_id"],
         )
