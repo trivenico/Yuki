@@ -1,6 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
+import socket
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
@@ -168,6 +170,62 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
         with self.assertRaisesRegex(TypeError, "generate"):
             manager._build_adapter("custom")
+
+
+    def test_provider_dns_resolution_rejects_private_and_mixed_answers(self):
+        from providers.openai_compatible import _resolve_public_addresses
+        private = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+                    ("127.0.0.1", 443))]
+        mixed = [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+             ("8.8.8.8", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+             ("10.0.0.8", 443)),
+        ]
+        with patch("providers.openai_compatible.socket.getaddrinfo", return_value=private):
+            with self.assertRaisesRegex(ValueError, "non-public"):
+                _resolve_public_addresses("gateway.example.test", 443)
+        with patch("providers.openai_compatible.socket.getaddrinfo", return_value=mixed):
+            with self.assertRaisesRegex(ValueError, "non-public"):
+                _resolve_public_addresses("gateway.example.test", 443)
+
+    def test_provider_dns_resolution_returns_only_validated_public_targets(self):
+        from providers.openai_compatible import _resolve_public_addresses
+        public = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+                   ("8.8.8.8", 443))]
+        with patch("providers.openai_compatible.socket.getaddrinfo", return_value=public):
+            result = _resolve_public_addresses("gateway.example.test", 443)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][3], ("8.8.8.8", 443))
+
+    def test_provider_https_connection_uses_pinned_ip_and_original_tls_hostname(self):
+        from providers.openai_compatible import _PinnedHTTPSConnection
+        address = (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP,
+                   ("8.8.8.8", 443))
+        raw_socket = Mock()
+        tls_socket = Mock()
+        context = Mock()
+        context.wrap_socket.return_value = tls_socket
+        with patch("providers.openai_compatible.socket.socket", return_value=raw_socket):
+            with patch("providers.openai_compatible.ssl.create_default_context", return_value=context):
+                connection = _PinnedHTTPSConnection(
+                    "gateway.example.test", 443, (address,), timeout=5
+                )
+                connection.connect()
+        raw_socket.connect.assert_called_once_with(("8.8.8.8", 443))
+        context.wrap_socket.assert_called_once_with(
+            raw_socket, server_hostname="gateway.example.test"
+        )
+        self.assertIs(connection.sock, tls_socket)
+        connection.close()
+
+    def test_custom_provider_endpoint_rejects_nonstandard_https_port(self):
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            OpenAICompatibleProvider(
+                "model-x", base_url="https://gateway.example.test:8443/v1",
+                api_key_env="CUSTOM_LLM_KEY",
+                allowed_hosts={"gateway.example.test"}, environ={"CUSTOM_LLM_KEY": "test"},
+            )
 
 if __name__ == "__main__":
     unittest.main()
