@@ -1523,8 +1523,9 @@ class SQLiteAnnotationWorkbench:
                 validate_annotation_payload(
                     project["task_type"], {"label": chosen_label}, _decode(project["rubric_json"])
                 )
-                if len(set(labels)) > 1 and not notes.strip():
-                    raise ValueError("disagreement_requires_adjudication_notes")
+            if (len(set(labels)) > 1
+                    or (decision == "accepted" and chosen_label not in labels)) and not notes.strip():
+                raise ValueError("disagreement_requires_adjudication_notes")
             adjudication_id = uuid.uuid4().hex
             source_ids = [row["assignment_id"] for row in rows]
             db.execute(
