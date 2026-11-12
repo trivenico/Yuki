@@ -152,5 +152,35 @@ class EvaluationRunStoreTests(unittest.TestCase):
             self.store.list_runs(owner_id="owner-a", limit=0)
 
 
+    def test_claim_acquisition_reclaims_expired_leases_in_bounded_batches(self):
+        with closing(sqlite3.connect(self.database)) as db:
+            db.executemany(
+                "INSERT INTO evaluation_claims "
+                "(owner_id,idempotency_key,request_digest,lease_token,expires_at) "
+                "VALUES(?,?,?,?,?)",
+                [
+                    ("owner-expired", f"expired-{index}", "a" * 64, f"token-{index}", 0)
+                    for index in range(105)
+                ],
+            )
+            db.commit()
+        digest = self.store.request_digest_for(
+            benchmark_id="core-reasoning", benchmark_version=1,
+            benchmark_digest="a" * 64, candidate_id="candidate-a",
+            provider_id="local", model_id="test-model",
+            environment={"python_version": "3.11", "platform": "linux"},
+        )
+        self.store.acquire_claim(
+            owner_id="owner-a", idempotency_key="cleanup-trigger",
+            request_digest=digest,
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            remaining = db.execute(
+                "SELECT COUNT(*) FROM evaluation_claims WHERE owner_id='owner-expired'"
+            ).fetchone()[0]
+        self.assertEqual(remaining, 5)
+
+
+
 if __name__ == "__main__":
     unittest.main()
