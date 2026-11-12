@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 
 _OWNER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$")
-_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_NAME = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 _ENV_REF = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _SERVICE = "yuki.provider-profile.v1"
 
@@ -215,6 +215,23 @@ class ProviderProfileStore:
             row["owner_id"], row["name"], row["base_url"], row["model"],
             row["allowed_host"], True, row["created_at"], row["updated_at"],
         ) for row in rows)
+
+    def credential_available(self, owner_id: str, name: str) -> bool:
+        """Return credential presence without exposing secret material."""
+        owner = self._validate_owner(owner_id)
+        profile_name = self._validate_name(name)
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT credential_ref FROM provider_profiles WHERE owner_id=? AND name=?",
+                (owner, profile_name),
+            ).fetchone()
+        if row is None:
+            return False
+        try:
+            secret = self.vault.get_secret(row["credential_ref"])
+            return isinstance(secret, str) and bool(secret)
+        except Exception:
+            return False
 
     def resolve_for_runtime(self, owner_id: str, name: str) -> dict[str, str]:
         """Internal runtime-only credential resolution; never use for API responses."""
