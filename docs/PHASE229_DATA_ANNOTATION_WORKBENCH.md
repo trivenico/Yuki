@@ -26,7 +26,9 @@ retention/deletion policies and protection against sensitive-data leakage.
 1. Create an owner-scoped project with task family, instructions and rubric.
 2. Add individual tasks or atomically import a batch of up to 100 tasks.
 3. Claim tasks with optimistic version checks.
-4. Submit a structured annotation only after explicit human confirmation.
+4. Keep AI assistance disabled by default per project; enabling it requires an explicit
+   permitted-with-disclosure project policy.
+5. Submit a structured annotation only after explicit human confirmation.
 5. Review a submission as accepted or rework.
 6. Export only accepted annotations, scoped to the authenticated owner/project.
 7. Inspect a metadata-only audit trail; raw annotation content is not copied into audit events.
