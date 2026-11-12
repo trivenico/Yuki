@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -854,7 +855,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertEqual(accepted["round_number"], 2)
         # Reopening the store must not backfill duplicate copies of later adjudication events.
         SQLiteAnnotationWorkbench(str(self.database))
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             events = db.execute(
                 "SELECT round_number, event_type FROM annotation_adjudication_events "
                 "WHERE owner_id=? AND project_id=? AND task_id=? ORDER BY round_number",
@@ -882,7 +883,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         summaries = self.store.list_delivery_manifests("owner:alice", self.project.project_id)
         self.assertEqual(len(summaries), 1)
         self.assertNotIn("snapshot", summaries[0])
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute(
                     "UPDATE annotation_adjudication_events SET snapshot_json='{}' WHERE task_id=?",
@@ -895,12 +896,13 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         self.assertIsNone(self.store.verify_delivery_manifest(
             "owner:bob", self.project.project_id, manifest["manifest_id"],
         ))
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             db.execute("DROP TRIGGER annotation_delivery_manifests_no_update")
             db.execute(
                 "UPDATE annotation_delivery_manifests SET snapshot_json=? WHERE manifest_id=?",
                 ('{"tampered":true}', manifest["manifest_id"]),
             )
+            db.commit()
         tampered = self.store.verify_delivery_manifest(
             "owner:alice", self.project.project_id, manifest["manifest_id"],
         )
@@ -938,7 +940,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
         )
         gold_id = "gold-performance-fixture"
         now = "2026-11-12T00:00:00+00:00"
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             db.execute(
                 "INSERT INTO annotation_gold_standards "
                 "(gold_id, owner_id, project_id, task_id, expected_label, created_at) "
@@ -955,6 +957,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
                     for index, (item, annotator) in enumerate(zip(assignments, annotators))
                 ],
             )
+            db.commit()
         report = self.store.performance_report("owner:alice", self.project.project_id)
         by_id = {item["annotator_id"]: item for item in report["annotators"]}
         self.assertEqual(by_id[annotators[0]]["gold_sample_count"], 1)
