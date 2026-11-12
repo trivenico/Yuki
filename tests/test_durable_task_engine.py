@@ -121,12 +121,12 @@ class DurableTaskEngineTests(unittest.TestCase):
             reopened.get_approval_wait(task["id"], digest)["request_id"], request_id
         )
         self.assertTrue(reopened.transition_approval_wait(task["id"], digest, "delivered"))
-        self.assertTrue(reopened.transition_approval_wait(task["id"], digest, "completed"))
-        self.assertFalse(reopened.transition_approval_wait(task["id"], digest, "stale"))
+        self.assertTrue(reopened.transition_approval_wait(task["id"], digest, "delivered"))
         with sqlite3.connect(self.db) as db:
             db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
         self.assertEqual(reopened.recover_expired_leases(), 1)
         self.assertEqual(reopened.get_approval_wait(task["id"], digest)["state"], "stale")
+        self.assertFalse(reopened.transition_approval_wait(task["id"], digest, "completed"))
         self.assertEqual(reopened.get_task(task["id"])["state"], "queued")
         replacement = reopened.claim("replacement-worker")
         self.assertNotEqual(
