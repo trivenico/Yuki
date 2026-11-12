@@ -1262,11 +1262,14 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
             if latest_session is not None:
                 rows = db.execute(
-                    """SELECT annotator_id, COUNT(*) AS evaluated_count,
-                              SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
-                       FROM annotation_gold_results
-                       WHERE owner_id=? AND project_id=? AND session_id=?
-                       GROUP BY annotator_id ORDER BY annotator_id""",
+                    """SELECT a.annotator_id, COUNT(g.assignment_id) AS evaluated_count,
+                              COALESCE(SUM(g.correct), 0) AS correct_count,
+                              MAX(g.created_at) AS last_evaluated_at
+                       FROM annotation_independent_assignments a
+                       LEFT JOIN annotation_gold_results g
+                         ON g.assignment_id=a.assignment_id AND g.session_id=a.session_id
+                       WHERE a.owner_id=? AND a.project_id=? AND a.session_id=?
+                       GROUP BY a.annotator_id ORDER BY a.annotator_id""",
                     (owner_id, project_id, latest_session["session_id"]),
                 ).fetchall()
             else:
