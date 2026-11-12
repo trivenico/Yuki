@@ -62,7 +62,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             return sent[0]["status"], json.loads(sent[1]["body"])
         return asyncio.run(run())
 
-    def create_project(self):
+    def create_project(self, ai_assistance_mode="permitted_with_disclosure"):
         status, body = self.request(
             "POST", "/v1/annotation/projects",
             {
@@ -70,6 +70,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
                 "task_type": "text_classification",
                 "instructions": "Choose positive, neutral or negative.",
                 "rubric": {"labels": ["positive", "neutral", "negative"]},
+                "ai_assistance_mode": ai_assistance_mode,
             }, self.owner_one.token,
         )
         self.assertEqual(status, 201)
@@ -173,6 +174,27 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             token=self.owner_one.token,
         )
         self.assertEqual((status, len(exported["accepted_annotations"])), (200, 1))
+
+    def test_project_defaults_to_human_only_ai_policy(self):
+        project_id = self.create_project(ai_assistance_mode="human_only")
+        _, body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks",
+            {"external_ref": "human-only", "input_data": {"text": "Sample"}},
+            self.owner_one.token,
+        )
+        task = body["task"]
+        _, body = self.request(
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        status, body = self.request(
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/submit",
+            {"payload": {"label": "neutral"},
+             "expected_version": body["task"]["version"],
+             "ai_assisted": True, "human_confirmed": True},
+            self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (403, "human_confirmation_required"))
 
     def test_human_confirmation_required_and_version_conflict_mapped(self):
         project_id = self.create_project()
