@@ -70,11 +70,11 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertNotIn("lease_token", first[0])
         # A second supervisor cannot take an item while its processing lease is live.
         self.assertEqual(self.engine.claim_recovery_outbox("supervisor-b"), [])
-        self.assertTrue(self.engine.release_recovery_outbox(first[0]["id"], "supervisor-a"))
+        self.assertTrue(self.engine.release_recovery_outbox(first[0]["id"], "supervisor-a", first[0]["claim_token"]))
         second = self.engine.claim_recovery_outbox("supervisor-b")
         self.assertEqual(len(second), 1)
         self.assertTrue(
-            self.engine.acknowledge_recovery_outbox(second[0]["id"], "supervisor-b")
+            self.engine.acknowledge_recovery_outbox(second[0]["id"], "supervisor-b", second[0]["claim_token"])
         )
         self.assertEqual(self.engine.claim_recovery_outbox("supervisor-c"), [])
 
