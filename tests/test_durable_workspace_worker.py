@@ -24,7 +24,7 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
         self.goal = self.engine.create_owned_goal(self.owner, "goal-workspace")
         self.workspace_id = "workspace:project-a"
         self.target = self.root / "README.md"
-        self.target.write_text("before\n", encoding="utf-8")
+        self.target.write_bytes(b"before\n")
         self.changes = [{
             "path": "README.md",
             "expected_sha256": hashlib.sha256(b"before\n").hexdigest(),
@@ -205,7 +205,7 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
 
     def test_stale_workspace_digest_fails_before_creating_approval(self):
         self.submit()
-        self.target.write_text("changed by another process\\n", encoding="utf-8")
+        self.target.write_bytes(b"changed by another process\\n")
         result = self.worker().run_once()
         self.assertEqual(result["state"], "failed")
         self.assertEqual(self.target.read_text(encoding="utf-8"), "changed by another process\\n")
