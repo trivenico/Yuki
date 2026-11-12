@@ -1040,7 +1040,22 @@ class SQLiteAnnotationWorkbench:
                 raise ValueError("independent_agreement_requires_text_classification")
             for annotator_id in annotator_ids:
                 assignment_id = uuid.uuid4().hex
-                try:
+                existing = db.execute(
+                    "SELECT assignment_id, status FROM annotation_independent_assignments "
+                    "WHERE owner_id=? AND task_id=? AND annotator_id=?",
+                    (owner_id, task_id, annotator_id),
+                ).fetchone()
+                if existing is not None:
+                    if existing["status"] != "revoked":
+                        raise ValueError("annotator_already_assigned_to_task")
+                    db.execute(
+                        """UPDATE annotation_independent_assignments
+                           SET assignment_id=?, status='assigned', version=1, payload_json=NULL,
+                               quality_json='{}', created_at=?, updated_at=?
+                           WHERE owner_id=? AND task_id=? AND annotator_id=? AND status='revoked'""",
+                        (assignment_id, now, now, owner_id, task_id, annotator_id),
+                    )
+                else:
                     db.execute(
                         """INSERT INTO annotation_independent_assignments
                         (assignment_id, task_id, project_id, owner_id, annotator_id,
@@ -1048,8 +1063,6 @@ class SQLiteAnnotationWorkbench:
                         VALUES (?, ?, ?, ?, ?, 'assigned', 1, NULL, '{}', ?, ?)""",
                         (assignment_id, task_id, project_id, owner_id, annotator_id, now, now),
                     )
-                except sqlite3.IntegrityError:
-                    raise ValueError("annotator_already_assigned_to_task") from None
                 created.append({"assignment_id": assignment_id, "task_id": task_id,
                     "project_id": project_id, "status": "assigned", "version": 1,
                     "created_at": now})
