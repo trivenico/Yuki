@@ -197,6 +197,7 @@
     await loadReviewerMembers();
     await loadQualityReport();
     await refreshAgreementReport();
+    await refreshCalibrationReport();
   };
   const loadTasks = async () => {
     if (state.task?.task_id) {
@@ -541,6 +542,7 @@
       await loadTasks();
       await loadQualityReport();
     await refreshAgreementReport();
+    await refreshCalibrationReport();
       setStatus("Annotation submitted for review · " + result.submission.submission_id);
     } catch (error) { setStatus(error.message, true); }
     finally { $("submit-annotation").disabled = !state.claimed; }
@@ -591,7 +593,8 @@
     const previousProjectId = state.project?.project_id;
     state.project = selectedProject();
     try { await loadTasks(); await loadReviewerMembers(); await loadQualityReport();
-    await refreshAgreementReport(); }
+    await refreshAgreementReport();
+    await refreshCalibrationReport(); }
     catch (error) {
       if (previousProjectId) $("annotation-project").value = previousProjectId;
       state.project = state.projects.find((item) => item.project_id === previousProjectId) || null;
@@ -939,6 +942,60 @@
       target.textContent = "Agreement report unavailable: " + error.message;
     }
   };
+  const refreshCalibrationReport = async () => {
+    const target = $("annotation-calibration-summary");
+    target.textContent = "";
+    if (!state.project) {
+      target.textContent = "Select a project to view annotator calibration.";
+      return;
+    }
+    try {
+      const result = await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/calibration-report");
+      const report = result.report;
+      if (!report.supported) {
+        target.textContent = "Gold calibration is currently supported for text classification only.";
+        return;
+      }
+      if (!report.annotators.length) {
+        target.textContent = report.gold_standard_task_count +
+          " gold-standard task(s) registered; no calibration submissions yet.";
+        return;
+      }
+      target.textContent = report.annotators.map(item =>
+        item.annotator_id + ": " + item.correct_gold_tasks + "/" +
+        item.evaluated_gold_tasks + " correct (" +
+        Math.round(item.accuracy * 100) + "%) · " + item.status
+      ).join(" | ");
+    } catch (error) {
+      target.textContent = "Calibration report unavailable: " + error.message;
+    }
+  };
+  $("annotation-gold-create").addEventListener("click", async () => {
+    if (!state.project || !state.task) {
+      $("annotation-independent-status").textContent = "Select a project and task first.";
+      return;
+    }
+    const expectedLabel = $("annotation-gold-label").value.trim();
+    if (!expectedLabel) {
+      $("annotation-independent-status").textContent = "Enter the expected label from the project rubric.";
+      return;
+    }
+    try {
+      await api("/v1/annotation/projects/" +
+        encodeURIComponent(state.project.project_id) + "/tasks/" +
+        encodeURIComponent(state.task.task_id) + "/gold-standard", {
+          method: "POST", body: JSON.stringify({ expected_label: expectedLabel })
+        });
+      $("annotation-gold-label").value = "";
+      $("annotation-independent-status").textContent =
+        "Gold standard registered. Assign this task only after verifying the expected answer.";
+      await refreshCalibrationReport();
+    } catch (error) {
+      $("annotation-independent-status").textContent = "Gold-standard registration failed: " + error.message;
+    }
+  });
+  $("annotation-calibration-refresh").addEventListener("click", refreshCalibrationReport);
   const loadIndependentAssignments = async () => {
     const target = $("annotation-independent-list");
     target.replaceChildren();
