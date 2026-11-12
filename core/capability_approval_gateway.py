@@ -338,17 +338,36 @@ class CapabilityApprovalGateway:
                    ORDER BY created_at,request_id LIMIT ?""",
                 (now, limit),
             ).fetchall()
+            redacted = []
+            for row in rows:
+                item = dict(row)
+                request_metadata = json.loads(item.pop("request_json"))
+                # An inbox is a live authorization surface: stale policy decisions
+                # must disappear immediately, not merely fail at approval time.
+                request_metadata["risk"] = Risk(request_metadata["risk"])
+                request = PolicyRequest(**request_metadata)
+                current_policy = self.policy_engine.evaluate(request)
+                if (current_policy.decision != Decision.REQUIRE_APPROVAL
+                        or current_policy.policy_version != item["policy_version"]):
+                    db.execute(
+                        """UPDATE capability_approval_requests
+                           SET status='rejected',decided_at=?,decided_by=?
+                           WHERE request_id=? AND status='pending'""",
+                        (now, "system:policy-revalidation", item["request_id"]),
+                    )
+                    self._audit(
+                        db, "approval_rejected", request,
+                        self._request_digest(request), current_policy.policy_version,
+                        current_policy.matched_rule_ids, "policy_changed",
+                    )
+                    continue
+                # Only expose review metadata; never expose argument or claim digests.
+                item["risk"] = request_metadata.get("risk").value
+                item["trigger"] = request_metadata.get("trigger")
+                item["preview"] = self.approval_preview(item["request_id"])
+                item["preview_available"] = item["preview"] is not None
+                redacted.append(item)
             db.commit()
-        redacted = []
-        for row in rows:
-            item = dict(row)
-            request_metadata = json.loads(item.pop("request_json"))
-            # Only expose review metadata; never expose argument or claim digests.
-            item["risk"] = request_metadata.get("risk")
-            item["trigger"] = request_metadata.get("trigger")
-            item["preview"] = self.approval_preview(item["request_id"])
-            item["preview_available"] = item["preview"] is not None
-            redacted.append(item)
         return tuple(redacted)
 
     def reject_request(self, request_id: str, *, rejected_by: str) -> bool:
