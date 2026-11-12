@@ -6,6 +6,7 @@ owns gesture identity, tool state, normalized geometry, and bounded history.
 from __future__ import annotations
 
 from typing import Any
+import math
 
 from core.annotation_geometry import (
     Point, Rect, SnapshotHistory, bounding_box_from_drag, validate_polygon,
@@ -24,7 +25,7 @@ class AnnotationInteraction:
             raise ValueError("invalid_image_dimensions")
         if (isinstance(minimum_box_pixels, bool)
                 or not isinstance(minimum_box_pixels, (int, float))
-                or minimum_box_pixels <= 0):
+                or not math.isfinite(minimum_box_pixels) or minimum_box_pixels <= 0):
             raise ValueError("invalid_minimum_box_size")
         self.image_width = image_width
         self.image_height = image_height
@@ -76,13 +77,10 @@ class AnnotationInteraction:
             raise ValueError("box_tool_not_selected")
         if self.pointer_active:
             raise ValueError("pointer_gesture_active")
-        if isinstance(pointer_id, bool) or not isinstance(pointer_id, (int, str)):
+        if pointer_id is None or isinstance(pointer_id, bool) or not isinstance(pointer_id, (int, str)):
             raise ValueError("invalid_pointer_id")
-        # Geometry validation also rejects non-finite/out-of-image coordinates.
-        bounding_box_from_drag(
-            point, point, minimum_pixels=self.minimum_box_pixels,
-            image_width=self.image_width, image_height=self.image_height,
-        ) if False else _validate_point(point)
+        # Reject non-finite/out-of-image coordinates before capturing the pointer.
+        _validate_point(point)
         self._pointer_id = pointer_id
         self._drag_start = point
         self._drag_current = point
@@ -167,7 +165,7 @@ def _validate_point(point: Point) -> None:
         raise ValueError("invalid_point")
     if any(
         isinstance(value, bool) or not isinstance(value, (int, float))
-        or not __import__("math").isfinite(value)
+        or not math.isfinite(value)
         for value in (point.x, point.y)
     ):
         raise ValueError("invalid_point")
