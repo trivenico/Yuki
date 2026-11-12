@@ -1,4 +1,5 @@
 import sqlite3
+import hashlib
 import tempfile
 import threading
 import unittest
@@ -116,7 +117,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         )
         self.assertEqual(wait["state"], "pending")
         reopened = DurableTaskEngine(self.db)
-        digest = wait["claim_token_sha256"]
+        digest = hashlib.sha256(claimed["lease_token"].encode("ascii")).hexdigest()
         self.assertEqual(
             reopened.get_approval_wait(task["id"], digest)["request_id"], request_id
         )
