@@ -124,7 +124,7 @@
       return;
     }
     $("annotation-task-meta").textContent = "Task " + state.task.external_ref + " · " + state.task.status + " · version " + state.task.version;
-    $("claim-annotation-task").disabled = state.task.status !== "pending" || state.project.status !== "active";
+    $("claim-annotation-task").disabled = !["pending", "rework"].includes(state.task.status) || state.project.status !== "active";
     setTool(state.project.task_type === "polygon_segmentation" ? "polygon" : state.project.task_type === "image_classification" ? "pan" : "box");
     $("submit-annotation").disabled = !state.claimed;
     await loadImage();
@@ -314,6 +314,7 @@
     $("annotation-tools").hidden = !task || !["bounding_boxes", "polygon_segmentation"].includes(family);
     $("annotation-canvas-panel").hidden = !task || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
     $("annotation-upload-row").hidden = !state.project || state.project.status !== "active" || !["bounding_boxes", "polygon_segmentation", "image_classification"].includes(family);
+    $("annotation-manual-task-row").hidden = !state.project || state.project.status !== "active";
     $("annotation-family-json").value = "{}";
     $("annotation-task-input").textContent = task
       ? (state.project.instructions || "") + "\\n\\nRubric: " + JSON.stringify(state.project.rubric || {}, null, 2) + "\\n\\nInput: " + JSON.stringify(task.input_data || {}, null, 2)
@@ -338,7 +339,7 @@
       renderEditor();
       $("annotation-task").value = state.task.task_id;
     } catch (error) { setStatus(error.message, true); await loadTasks(); }
-    finally { button.disabled = !state.task || state.task.status !== "pending"; }
+    finally { button.disabled = !state.task || !["pending", "rework"].includes(state.task.status); }
   });
   $("submit-annotation").addEventListener("click", async () => {
     if (!state.task || !state.claimed) return;
@@ -440,6 +441,31 @@
       await loadProjects();
       setStatus("Human-only annotation project created.");
     } catch (error) { setStatus(error.message, true); }
+  });
+  $("annotation-create-task").addEventListener("click", async () => {
+    if (!state.project || state.project.status !== "active") { setStatus("Choose an active project first.", true); return; }
+    const externalRef = $("annotation-new-task-ref").value.trim();
+    if (!externalRef || externalRef.length > 256) { setStatus("Enter a task reference (maximum 256 characters).", true); return; }
+    let inputData;
+    try {
+      inputData = JSON.parse($("annotation-new-task-input").value);
+      if (!inputData || Array.isArray(inputData) || typeof inputData !== "object") throw new Error("Task input must be a JSON object.");
+    } catch (error) { setStatus(error.message, true); return; }
+    const button = $("annotation-create-task"); button.disabled = true;
+    try {
+      const created = await api("/v1/annotation/projects/" + encodeURIComponent(state.project.project_id) + "/tasks", {
+        method: "POST", body: JSON.stringify({ external_ref: externalRef, input_data: inputData })
+      });
+      $("annotation-new-task-ref").value = "";
+      $("annotation-new-task-input").value = "{}";
+      await loadTasks();
+      if (created.task?.task_id) {
+        $("annotation-task").value = created.task.task_id;
+        await selectTask();
+      }
+      setStatus("Task created. Claim it when you are ready to annotate.");
+    } catch (error) { setStatus(error.message, true); }
+    finally { button.disabled = false; }
   });
   $("annotation-upload-button").addEventListener("click", async () => {
     const file = $("annotation-upload-file").files[0];
