@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from core.tool_policy import Decision, PolicyRequest, Risk
 from core.capability_approval_preview import CapabilityApprovalPreviewRegistry
-from core.approval_operation import ApprovalOperation
+from core.approval_operation import ApprovalOperation, canonical_operation_payload
 
 
 @dataclass(frozen=True)
@@ -115,6 +115,7 @@ class CapabilityApprovalGateway:
                     request_id TEXT PRIMARY KEY REFERENCES capability_approval_requests(request_id),
                     operation_json TEXT NOT NULL,
                     operation_sha256 TEXT NOT NULL,
+                    payload_json TEXT,
                     created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS capability_audit (
@@ -132,6 +133,11 @@ class CapabilityApprovalGateway:
                     occurred_at REAL NOT NULL
                 );
             """)
+            operation_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(capability_approval_operations)")
+            }
+            if "payload_json" not in operation_columns:
+                db.execute("ALTER TABLE capability_approval_operations ADD COLUMN payload_json TEXT")
             approval_columns = {
                 row[1] for row in db.execute("PRAGMA table_info(capability_approvals)")
             }
@@ -242,6 +248,7 @@ class CapabilityApprovalGateway:
     def request_approval(
         self, request: PolicyRequest, *, ttl_seconds: int = 86400,
         operation: ApprovalOperation | None = None,
+        operation_payload: dict[str, Any] | None = None,
     ) -> str:
         """Persist an approval request; duplicate live requests are idempotent."""
         digest = self._request_digest(request)
@@ -256,6 +263,14 @@ class CapabilityApprovalGateway:
                     or self.preview_registry.operation_type_for(request.capability)
                     != operation.operation_type):
                 raise PermissionError("typed operation kind is not registered for this capability")
+        if (operation is None) != (operation_payload is None):
+            raise ValueError("typed operation and exact operation_payload must be supplied together")
+        payload_json = None
+        if operation is not None:
+            encoded_payload = canonical_operation_payload(operation_payload)
+            if not operation.verify_payload(operation_payload):
+                raise ValueError("typed operation does not match the supplied exact payload")
+            payload_json = encoded_payload.decode("utf-8")
         operation_json = None if operation is None else json.dumps(
             {
                 "schema_version": operation.schema_version,
@@ -309,7 +324,12 @@ class CapabilityApprovalGateway:
                     (existing["request_id"],),
                 ).fetchone()
                 stored_digest = None if stored_operation is None else stored_operation["operation_sha256"]
-                if stored_digest != operation_digest:
+                stored_payload = db.execute(
+                    "SELECT payload_json FROM capability_approval_operations WHERE request_id=?",
+                    (existing["request_id"],),
+                ).fetchone()
+                stored_payload_json = None if stored_payload is None else stored_payload["payload_json"]
+                if stored_digest != operation_digest or stored_payload_json != payload_json:
                     raise PermissionError("an existing request is bound to a different typed operation")
                 db.commit()
                 return existing["request_id"]
@@ -333,9 +353,9 @@ class CapabilityApprovalGateway:
             if operation_json is not None and operation_digest is not None:
                 db.execute(
                     """INSERT INTO capability_approval_operations
-                       (request_id,operation_json,operation_sha256,created_at)
-                       VALUES(?,?,?,?)""",
-                    (request_id, operation_json, operation_digest, now),
+                       (request_id,operation_json,operation_sha256,payload_json,created_at)
+                       VALUES(?,?,?,?,?)""",
+                    (request_id, operation_json, operation_digest, payload_json, now),
                 )
             self._audit(db, "approval_requested", request, digest,
                         policy.policy_version, policy.matched_rule_ids, "pending")
@@ -415,6 +435,38 @@ class CapabilityApprovalGateway:
             "payload_sha256": operation.payload_sha256,
             "operation_sha256": row["operation_sha256"],
         }
+
+    def approval_operation_payload(self, request_id: str) -> dict[str, Any] | None:
+        """Return the exact persisted payload only for a live pending approval."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT o.operation_json,o.operation_sha256,o.payload_json,
+                          r.status,r.expires_at
+                   FROM capability_approval_operations o
+                   JOIN capability_approval_requests r ON r.request_id=o.request_id
+                   WHERE o.request_id=?""", (request_id,),
+            ).fetchone()
+        if row is None or row["status"] != "pending" or row["expires_at"] <= now:
+            return None
+        if row["payload_json"] is None:
+            return None
+        encoded_operation = row["operation_json"]
+        if not hmac.compare_digest(
+            hashlib.sha256(encoded_operation.encode("utf-8")).hexdigest(),
+            row["operation_sha256"],
+        ):
+            return None
+        try:
+            operation = ApprovalOperation(**json.loads(encoded_operation))
+            payload = json.loads(row["payload_json"])
+            if not operation.verify_payload(payload):
+                return None
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload
 
     def pending_requests(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """Return redacted inbox metadata; never expose request arguments or credentials."""
@@ -579,6 +631,20 @@ class CapabilityApprovalGateway:
                 if not operation.verify_policy_request(request):
                     db.rollback()
                     raise PermissionError("typed approval operation does not match its request")
+                payload_row = db.execute(
+                    "SELECT payload_json FROM capability_approval_operations WHERE request_id=?",
+                    (request_id,),
+                ).fetchone()
+                if payload_row is None or payload_row["payload_json"] is None:
+                    db.rollback()
+                    raise PermissionError("exact typed operation payload is unavailable")
+                try:
+                    persisted_payload = json.loads(payload_row["payload_json"])
+                    if not operation.verify_payload(persisted_payload):
+                        raise ValueError("payload digest mismatch")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    db.rollback()
+                    raise PermissionError("exact typed operation payload integrity check failed")
                 if (self.preview_registry is None
                         or self.preview_registry.operation_type_for(request.capability)
                         != operation.operation_type):
