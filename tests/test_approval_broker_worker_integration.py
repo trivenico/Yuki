@@ -224,7 +224,7 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
             lease_seconds=4, heartbeat_interval_seconds=0.1,
         )
         outcomes = []
-        thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))
+        thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()), daemon=True)
         thread.start()
         try:
             deadline = time.monotonic() + 3
@@ -251,10 +251,10 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
             self.assertEqual(self.skill.calls, ["awaited-value"])
         finally:
             if thread.is_alive():
-                try:
-                    self.engine.recover_expired_leases()
-                except Exception:
-                    pass
+                import sqlite3
+                with sqlite3.connect(self.engine.db_path) as db:
+                    db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+                self.engine.recover_expired_leases()
                 thread.join(timeout=2)
 
     def test_runtime_requires_resolver_when_central_gateway_is_enabled(self):
