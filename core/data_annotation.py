@@ -1,7 +1,7 @@
 """Owner-scoped data annotation workbench primitives.
 
 This module stores project rubrics, opaque asset references, task state,
-AI-assisted drafts and human-confirmed submissions. It deliberately does not
+AI-assistance policy metadata and human-confirmed submissions. It deliberately does not
 fetch remote assets, scrape marketplaces, claim worker identity, or submit work
 to a third-party platform. External delivery is a separate approval-gated step.
 """
@@ -129,7 +129,7 @@ class SQLiteAnnotationWorkbench:
         if type(max_projects_per_owner) is not int or not 1 <= max_projects_per_owner <= 10000:
             raise ValueError("invalid_max_projects_per_owner")
         path = Path(database_path).expanduser()
-        if path.exists() and path.is_symlink():
+        if path.is_symlink():
             raise ValueError("database_path_must_not_be_symlink")
         path.parent.mkdir(parents=True, exist_ok=True)
         self.database_path = str(path.resolve())
