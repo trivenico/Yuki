@@ -78,6 +78,32 @@ class DurableTaskEngineTests(unittest.TestCase):
         )
         self.assertEqual(self.engine.claim_recovery_outbox("supervisor-c"), [])
 
+    def test_recovery_outbox_rejects_stale_supervisor_claim_token(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="recovery-outbox-fence"
+        )
+        claimed = self.engine.claim("recovery-worker-fence")
+        self.assertEqual(claimed["id"], task["id"])
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
+        self.engine.recover_expired_leases()
+        first = self.engine.claim_recovery_outbox("same-supervisor")
+        self.assertEqual(len(first), 1)
+        with sqlite3.connect(self.db) as db:
+            db.execute(
+                "UPDATE lease_recovery_outbox SET claim_until=0 WHERE id=?",
+                (first[0]["id"],),
+            )
+        second = self.engine.claim_recovery_outbox("same-supervisor")
+        self.assertEqual(len(second), 1)
+        self.assertNotEqual(first[0]["claim_token"], second[0]["claim_token"])
+        self.assertFalse(self.engine.acknowledge_recovery_outbox(
+            first[0]["id"], "same-supervisor", first[0]["claim_token"]
+        ))
+        self.assertTrue(self.engine.acknowledge_recovery_outbox(
+            second[0]["id"], "same-supervisor", second[0]["claim_token"]
+        ))
+
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
         self._install_claim_token_test_adapter(engine)
