@@ -58,7 +58,20 @@ class AuthenticatedCapabilityApprovalService:
     def pending_requests(self, session_token: str, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """List redacted pending approvals for an authorized approver."""
         self._principal(session_token, "workflow:approve")
-        return self.gateway.pending_requests(limit=limit)
+        items = []
+        for item in self.gateway.pending_requests(limit=limit):
+            enriched = dict(item)
+            if enriched.get("operation") is not None:
+                payload = self.gateway.approval_operation_payload(enriched["request_id"])
+                enriched["operation_payload_available"] = payload is not None
+                if payload is not None:
+                    # This method is reachable only after workflow:approve authorization.
+                    # The exact content is required for a human to review a typed edit.
+                    enriched["operation_payload"] = payload
+            else:
+                enriched["operation_payload_available"] = False
+            items.append(enriched)
+        return tuple(items)
 
     def reject_pending(self, session_token: str, request_id: str) -> bool:
         """Reject a pending inbox item using the authenticated approver identity."""
