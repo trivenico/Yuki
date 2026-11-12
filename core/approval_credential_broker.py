@@ -34,6 +34,7 @@ class ApprovalCredentialBroker:
         seal: Callable[[bytes, bytes], bytes],
         unseal: Callable[[bytes, bytes], bytes],
         validate_claim: Callable[[str, str, str], bool],
+        validate_claim_digest: Callable[[str, str, str], bool] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
@@ -47,7 +48,9 @@ class ApprovalCredentialBroker:
         self.database_path = str(Path(database_path).expanduser())
         self._prepare_private_database_file()
         self.gateway, self.worker_id = gateway, worker_id
-        self.seal, self.unseal, self.validate_claim, self.clock = seal, unseal, validate_claim, clock
+        if validate_claim_digest is not None and not callable(validate_claim_digest):
+            raise TypeError("validate_claim_digest must be callable")
+        self.seal, self.unseal, self.validate_claim, self.validate_claim_digest, self.clock = seal, unseal, validate_claim, validate_claim_digest, clock
         with closing(self._connect()) as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS approval_worker_credentials (
@@ -168,6 +171,51 @@ class ApprovalCredentialBroker:
                 db.rollback()
                 raise PermissionError("credential delivery has already been recorded") from None
             if self.validate_claim(binding["step_id"], self.worker_id, lease_token) is not True:
+                db.rollback()
+                raise PermissionError("worker claim changed during credential delivery")
+            db.commit()
+
+    def deliver_credential_by_digest(
+        self, request_id: str, token: str, *, claim_token_sha256: str,
+    ) -> None:
+        """Deliver via a trusted router without exporting the worker's lease secret."""
+        if self.validate_claim_digest is None:
+            raise RuntimeError("digest-based claim validation is not configured")
+        if not isinstance(claim_token_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", claim_token_sha256):
+            raise ValueError("claim digest is invalid")
+        binding = self.gateway.approval_delivery_binding(request_id, token)
+        if binding.get("claim_token_sha256") != claim_token_sha256:
+            raise PermissionError("approval delivery is not bound to the requested claim")
+        if self.validate_claim_digest(binding["step_id"], self.worker_id, claim_token_sha256) is not True:
+            raise PermissionError("worker claim is no longer active")
+        token_bytes = token.encode("ascii")
+        ciphertext = self.seal(
+            token_bytes, self._aad(request_id, binding, self.worker_id, claim_token_sha256)
+        )
+        if not isinstance(ciphertext, bytes) or len(ciphertext) < 16 or len(ciphertext) > 16384:
+            raise ValueError("encryption adapter returned an invalid envelope")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """DELETE FROM approval_worker_credentials
+                   WHERE status IN ('expired','revoked') OR expires_at<=?""", (now,),
+            )
+            try:
+                db.execute(
+                    """INSERT INTO approval_worker_credentials
+                       (request_id,principal_id,goal_id,task_id,worker_id,claim_token_sha256,
+                        credential_sha256,ciphertext,expires_at,status,created_at)
+                       VALUES(?,?,?,?,?,?,?,?,?, 'available',?)""",
+                    (request_id, binding["principal_id"], binding["run_id"],
+                     binding["step_id"], self.worker_id, claim_token_sha256,
+                     hashlib.sha256(token_bytes).hexdigest(), ciphertext,
+                     binding["expires_at"], now),
+                )
+            except sqlite3.IntegrityError:
+                db.rollback()
+                raise PermissionError("credential delivery has already been recorded") from None
+            if self.validate_claim_digest(binding["step_id"], self.worker_id, claim_token_sha256) is not True:
                 db.rollback()
                 raise PermissionError("worker claim changed during credential delivery")
             db.commit()
