@@ -288,6 +288,82 @@ class AuthenticatedAnnotationAPI:
                     })
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
+            independent_assignments = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/tasks/([0-9a-f]{32})/independent-assignments",
+                path,
+            )
+            if independent_assignments:
+                project_id, task_id = independent_assignments.groups()
+                if method != "POST":
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                payload = await self._body(receive)
+                if set(payload) != {"annotator_user_ids"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                annotator_ids = payload["annotator_user_ids"]
+                if not isinstance(annotator_ids, list) or not 2 <= len(annotator_ids) <= 20:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                users = await asyncio.to_thread(self.auth.list_users)
+                known = {item.user_id for item in users}
+                if any(item not in known for item in annotator_ids):
+                    return await self._respond(send, 404, {"error": "annotator_not_found"})
+                assignments = await asyncio.to_thread(
+                    self.workbench.create_independent_assignments,
+                    user.user_id, project_id, task_id, annotator_ids,
+                )
+                return await self._respond(
+                    send, 201 if assignments is not None else 404,
+                    {"assignments": assignments} if assignments is not None else {"error": "not_found"},
+                )
+
+            independent_report = re.fullmatch(
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/agreement-report", path
+            )
+            if independent_report and method == "GET":
+                report = await asyncio.to_thread(
+                    self.workbench.independent_agreement_report,
+                    user.user_id, independent_report.group(1),
+                )
+                return await self._respond(
+                    send, 200 if report else 404,
+                    {"report": report} if report else {"error": "not_found"},
+                )
+
+            if path == prefix + "/assignments" and method == "GET":
+                assignments = await asyncio.to_thread(
+                    self.workbench.list_my_independent_assignments, user.user_id
+                )
+                return await self._respond(send, 200, {"assignments": assignments})
+
+            independent_action = re.fullmatch(
+                re.escape(prefix) + r"/assignments/([0-9a-f]{32})/(claim|submit)", path
+            )
+            if independent_action:
+                assignment_id, action = independent_action.groups()
+                payload = await self._body(receive)
+                if action == "claim" and method == "POST":
+                    if set(payload) != {"expected_version"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    result = await asyncio.to_thread(
+                        self.workbench.claim_independent_assignment, user.user_id,
+                        assignment_id, expected_version=payload["expected_version"],
+                    )
+                    return await self._respond(
+                        send, 200 if result else 404,
+                        {"assignment": result} if result else {"error": "not_found"},
+                    )
+                if action == "submit" and method == "POST":
+                    if set(payload) != {"payload", "expected_version", "human_confirmed"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    result = await asyncio.to_thread(
+                        self.workbench.submit_independent_assignment, user.user_id,
+                        assignment_id, **payload,
+                    )
+                    return await self._respond(
+                        send, 201 if result else 404,
+                        {"assignment": result} if result else {"error": "not_found"},
+                    )
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             match = re.fullmatch(
                 re.escape(prefix) + r"/tasks/([0-9a-f]{32})/(claim|submit|submissions)",
                 path,
