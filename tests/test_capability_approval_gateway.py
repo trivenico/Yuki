@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 from contextlib import closing
 import unittest
