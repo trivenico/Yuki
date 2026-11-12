@@ -65,7 +65,6 @@ class DurableTaskEngineTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db)) as db:
             db.execute("UPDATE tasks SET lease_until=0 WHERE id=?", (task["id"],))
             db.commit()
-            db.commit()
         self.assertEqual(self.engine.recover_expired_leases(), 1)
         first = self.engine.claim_recovery_outbox("supervisor-a")
         self.assertEqual(len(first), 1)
@@ -99,7 +98,6 @@ class DurableTaskEngineTests(unittest.TestCase):
                 "UPDATE lease_recovery_outbox SET claim_until=0 WHERE id=?",
                 (first[0]["id"],),
             )
-            db.commit()
         second = self.engine.claim_recovery_outbox("same-supervisor")
         self.assertEqual(len(second), 1)
         self.assertNotEqual(first[0]["claim_token"], second[0]["claim_token"])
