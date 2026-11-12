@@ -35,15 +35,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.auth.create_account("owner-two", "another-secure-password")
         self.owner_two = self.auth.authenticate("owner-two", "another-secure-password")
         self.store = SQLiteAnnotationWorkbench(str(root / "annotation.sqlite"))
-        self.app = AuthenticatedAnnotationAPI(
-            _Downstream(), self.auth, self.store,
-            reviewer_authorizer=lambda user, project_id: (
-                self.owner_one.user_id
-                if user.user_id == self.owner_two.user_id
-                and self.store.get_project(self.owner_one.user_id, project_id) is not None
-                else None
-            ),
-        )
+        self.app = AuthenticatedAnnotationAPI(_Downstream(), self.auth, self.store)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -85,6 +77,13 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.assertEqual(status, 201)
         return body["project"]["project_id"]
 
+    def grant_reviewer(self, project_id):
+        status, body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/reviewers",
+            {"reviewer_user_id": self.owner_two.user_id}, self.owner_one.token,
+        )
+        self.assertEqual((status, body["granted"]), (201, True))
+
     def test_authentication_and_owner_id_spoofing_are_rejected(self):
         status, body = self.request("GET", "/v1/annotation/projects")
         self.assertEqual((status, body["error"]), (401, "authentication_required"))
@@ -123,6 +122,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         submission_id = body["submission"]["submission_id"]
+        self.grant_reviewer(project_id)
         status, body = self.request(
             "POST", f"/v1/annotation/submissions/{submission_id}/review",
             {"decision": "accepted", "notes": "Matches rubric.", "project_id": project_id},
@@ -137,6 +137,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             {"external_ref": "review-separation", "input_data": {"text": "Review me"}},
             self.owner_one.token,
         )
+        self.grant_reviewer(project_id)
         task = created["task"]
         _, claimed = self.request(
             "POST", f"/v1/annotation/tasks/{task['task_id']}/claim",
@@ -149,6 +150,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
             self.owner_one.token,
         )
         submission_id = submitted["submission"]["submission_id"]
+        self.grant_reviewer(project_id)
         status, body = self.request(
             "GET", f"/v1/annotation/projects/{project_id}/review-queue",
             token=self.owner_one.token,
@@ -251,6 +253,7 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
              "human_confirmed": True}, self.owner_one.token,
         )
         submission_id = submitted_body["submission"]["submission_id"]
+        self.grant_reviewer(project_id)
         self.request(
             "POST", f"/v1/annotation/submissions/{submission_id}/review",
             {"decision": "accepted"}, self.owner_one.token,
