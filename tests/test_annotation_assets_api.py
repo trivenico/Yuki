@@ -104,6 +104,71 @@ class AnnotationAssetAPITests(unittest.TestCase):
         status, _, _ = self.request("GET", access, token=self.other.token)
         self.assertEqual(status, 404)
 
+    def test_task_binding_requires_clean_asset_in_same_owner_project(self):
+        asset_path = f"/v1/annotation/projects/{self.project_id}/assets"
+        data = b"\\x89PNG\\r\\n\\x1a\\n" + b"pixel-data"
+        status, body, _ = self.request(
+            "POST", asset_path, data, self.owner.token, "application/octet-stream"
+        )
+        self.assertEqual(status, 201)
+        clean_asset_id = json.loads(body)["asset_id"]
+        task_path = f"/v1/annotation/projects/{self.project_id}/tasks"
+        task = {"external_ref": "clean-image", "input_data": {}, "asset_ref": clean_asset_id}
+        status, body, _ = self.request(
+            "POST", task_path, json.dumps(task).encode(), self.owner.token,
+            "application/json",
+        )
+        self.assertEqual(status, 201, body)
+
+        self.app.asset_scanner = None
+        status, body, _ = self.request(
+            "POST", asset_path, b"GIF89a" + b"image", self.owner.token,
+            "application/octet-stream",
+        )
+        self.assertEqual(status, 202)
+        quarantined_id = json.loads(body)["asset_id"]
+        rejected = {"external_ref": "quarantined-image", "input_data": {},
+                    "asset_ref": quarantined_id}
+        status, body, _ = self.request(
+            "POST", task_path, json.dumps(rejected).encode(), self.owner.token,
+            "application/json",
+        )
+        self.assertEqual((status, json.loads(body)["error"]), (400, "invalid_request"))
+
+        foreign = {"external_ref": "foreign-image", "input_data": {},
+                   "asset_ref": clean_asset_id}
+        status, body, _ = self.request(
+            "POST", task_path, json.dumps(foreign).encode(), self.other.token,
+            "application/json",
+        )
+        self.assertEqual((status, json.loads(body)["error"]), (400, "invalid_request"))
+
+    def test_batch_task_binding_rejects_quarantined_asset_atomically(self):
+        self.app.asset_scanner = None
+        asset_path = f"/v1/annotation/projects/{self.project_id}/assets"
+        status, body, _ = self.request(
+            "POST", asset_path, b"GIF89a" + b"image", self.owner.token,
+            "application/octet-stream",
+        )
+        self.assertEqual(status, 202)
+        asset_id = json.loads(body)["asset_id"]
+        task_path = f"/v1/annotation/projects/{self.project_id}/tasks/batch"
+        batch = {"tasks": [
+            {"external_ref": "valid-text-task", "input_data": {}},
+            {"external_ref": "quarantined-image-task", "input_data": {},
+             "asset_ref": asset_id},
+        ]}
+        status, body, _ = self.request(
+            "POST", task_path, json.dumps(batch).encode(), self.owner.token,
+            "application/json",
+        )
+        self.assertEqual((status, json.loads(body)["error"]), (400, "invalid_request"))
+        status, body, _ = self.request(
+            "GET", f"/v1/annotation/projects/{self.project_id}/tasks",
+            token=self.owner.token,
+        )
+        self.assertEqual(json.loads(body)["tasks"], [])
+
     def test_rejects_wrong_content_type_and_unknown_project(self):
         path = f"/v1/annotation/projects/{self.project_id}/assets"
         status, body, _ = self.request(
