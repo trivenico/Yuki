@@ -93,32 +93,36 @@ class DurableSkillWorker:
                 policy_engine = getattr(self.runtime, "policy_engine", None)
                 request_factory = getattr(self.runtime, "policy_request_factory", None)
                 gateway = getattr(self.runtime, "approval_gateway", None)
+                requires_owner_approval = False
                 if policy_engine is not None and callable(request_factory) and gateway is not None:
                     skill = self.runtime.registry.get(skill_name)
                     if skill is None:
                         raise PermissionError("registered skill is unavailable for policy review")
                     policy_request = request_factory(skill_name, argument, skill, policy_context)
                     decision = policy_engine.evaluate(policy_request)
-                    if getattr(getattr(decision, "decision", None), "value", None) == "require_approval":
+                    decision_name = getattr(getattr(decision, "decision", None), "value", None)
+                    requires_owner_approval = decision_name == "require_approval"
+                    if requires_owner_approval:
                         gateway.request_approval(policy_request)
-                deadline = time.monotonic() + self.approval_wait_timeout_seconds
-                while True:
+                if requires_owner_approval or policy_engine is None:
+                    deadline = time.monotonic() + self.approval_wait_timeout_seconds
+                    while True:
+                        if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
+                            raise PermissionError("task claim changed while awaiting owner approval")
+                        approval_token = self.approval_token_resolver(
+                            policy_context, skill_name, lease_token
+                        )
+                        if heartbeat_errors:
+                            raise RuntimeError("task lease heartbeat failed while awaiting approval")
+                        if approval_token is not None:
+                            if not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256:
+                                raise PermissionError("approval resolver returned an invalid credential")
+                            break
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("owner approval did not arrive before the wait deadline")
+                        stop.wait(min(0.5, max(0.01, deadline - time.monotonic())))
                     if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
-                        raise PermissionError("task claim changed while awaiting owner approval")
-                    approval_token = self.approval_token_resolver(
-                        policy_context, skill_name, lease_token
-                    )
-                    if heartbeat_errors:
-                        raise RuntimeError("task lease heartbeat failed while awaiting approval")
-                    if approval_token is not None:
-                        if not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256:
-                            raise PermissionError("approval resolver returned an invalid credential")
-                        break
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("owner approval did not arrive before the wait deadline")
-                    stop.wait(min(0.5, max(0.01, deadline - time.monotonic())))
-                if self.engine.validate_lease(task_id, self.worker_id, lease_token) is not True:
-                    raise PermissionError("task claim changed during approval delivery")
+                        raise PermissionError("task claim changed during approval delivery")
             invoke_kwargs = {
                 "execution_guard": lambda: self.engine.validate_lease(task_id, self.worker_id, lease_token),
                 "policy_context": policy_context,
