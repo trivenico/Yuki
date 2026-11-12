@@ -473,19 +473,22 @@ class DurableTaskEngine:
                 (task_id, digest, request_id, now, now),
             )
             self._event(c, task["goal_id"], task_id, "task.awaiting_approval",
-                        {"request_id": request_id, "claim_token_sha256": digest})
+                        {"request_id": request_id})
             c.commit()
         return self.get_approval_wait(task_id, digest)
 
     def get_approval_wait(self, task_id: str, claim_token_sha256: str) -> dict[str, Any] | None:
-        if not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64:
+        if (not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in claim_token_sha256)):
             raise ValueError("claim digest is invalid")
         with closing(self._connect()) as c:
             row = c.execute(
                 "SELECT * FROM task_approval_waits WHERE task_id=? AND claim_token_sha256=?",
                 (task_id, claim_token_sha256),
             ).fetchone()
-        return dict(row) if row is not None else None
+        if row is None:
+            return None
+        return {key: row[key] for key in ("task_id", "request_id", "state", "created_at", "updated_at")}
 
     def transition_approval_wait(
         self, task_id: str, claim_token_sha256: str, state: str,
@@ -495,6 +498,9 @@ class DurableTaskEngine:
             "pending": {"delivered", "rejected", "expired", "stale"},
             "delivered": {"completed", "stale"},
         }
+        if (not isinstance(claim_token_sha256, str) or len(claim_token_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in claim_token_sha256)):
+            raise ValueError("claim digest is invalid")
         if state not in {"delivered", "rejected", "expired", "stale", "completed"}:
             raise ValueError("invalid approval wait state")
         now = self.clock()
@@ -524,7 +530,10 @@ class DurableTaskEngine:
                 "SELECT * FROM task_approval_waits WHERE task_id=? ORDER BY created_at",
                 (task_id,),
             ).fetchall()
-        return tuple(dict(row) for row in rows)
+        return tuple(
+            {key: row[key] for key in ("task_id", "request_id", "state", "created_at", "updated_at")}
+            for row in rows
+        )
 
     def claim_recovery_outbox(self, supervisor_id: str, *, limit: int = 50, lease_seconds: int = 60):
         """Lease pending credential-revocation work to one trusted supervisor."""
