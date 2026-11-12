@@ -142,11 +142,17 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                     return "Approved host must exactly match the HTTPS endpoint hostname."
                 providers.register_openai_compatible(
                     name=name, base_url=base_url, model=model, api_key_env=key_env,
-                    allowed_hosts={approved_host}, select=True,
+                    allowed_hosts={approved_host}, select=False,
                 )
+                adapter = providers._build_adapter(name)
+                if adapter.is_available() is not True:
+                    return f"Provider profile '{name}' registered for this session, but its credential is unavailable. Set {key_env}; the active model was not changed."
+                result = providers.select(name)
+                if not result.startswith("Selected provider:"):
+                    return "Provider profile was registered, but selection failed; the active model was not changed."
                 adapter = providers.create_selected_adapter()
-                if adapter is None or adapter.is_available() is not True:
-                    return f"Provider profile '{name}' registered, but its credential is unavailable. Set {key_env} and select it."
+                if adapter is None:
+                    return "Provider profile was registered, but no adapter could be selected."
                 agent.set_provider(adapter)
                 write_audit_event("provider:add-compatible", "completed")
                 return f"Selected session-only provider '{name}' using model '{model}'. The API key value was not stored by Yuki."
