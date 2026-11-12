@@ -572,21 +572,29 @@ class AuthenticatedAnnotationAPI:
                 )
 
             delivery_manifests = re.fullmatch(
-                re.escape(prefix) + r"/projects/([0-9a-f]{32})/delivery-manifests(?:/([0-9a-f]{32})/verify)?",
+                re.escape(prefix) + r"/projects/([0-9a-f]{32})/delivery-manifests(?:/([0-9a-f]{32})(?:/(verify))?)?",
                 path,
             )
             if delivery_manifests:
-                project_id, manifest_id = delivery_manifests.groups()
+                project_id, manifest_id, action = delivery_manifests.groups()
                 if manifest_id is not None:
                     if method != "GET":
                         return await self._respond(send, 405, {"error": "method_not_allowed"})
-                    verified = await asyncio.to_thread(
-                        self.workbench.verify_delivery_manifest,
-                        user.user_id, project_id, manifest_id,
-                    )
+                    if action == "verify":
+                        result = await asyncio.to_thread(
+                            self.workbench.verify_delivery_manifest,
+                            user.user_id, project_id, manifest_id,
+                        )
+                        key = "verification"
+                    else:
+                        result = await asyncio.to_thread(
+                            self.workbench.get_delivery_manifest,
+                            user.user_id, project_id, manifest_id,
+                        )
+                        key = "manifest"
                     return await self._respond(
-                        send, 200 if verified else 404,
-                        {"verification": verified} if verified else {"error": "not_found"},
+                        send, 200 if result else 404,
+                        {key: result} if result else {"error": "not_found"},
                     )
                 if method == "POST":
                     payload = await self._body(receive)
