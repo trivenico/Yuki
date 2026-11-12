@@ -148,6 +148,9 @@ class CapabilityApprovalGateway:
             }
             if "payload_ciphertext" not in operation_columns:
                 db.execute("ALTER TABLE capability_approval_operations ADD COLUMN payload_ciphertext BLOB")
+            if "payload_json" in operation_columns:
+                # Never retain plaintext operation payloads from an interrupted development migration.
+                db.execute("UPDATE capability_approval_operations SET payload_json=NULL")
             approval_columns = {
                 row[1] for row in db.execute("PRAGMA table_info(capability_approvals)")
             }
@@ -384,8 +387,6 @@ class CapabilityApprovalGateway:
                         raise PermissionError("an existing request is bound to a different operation payload")
                 elif stored_payload_ciphertext is not None:
                     raise PermissionError("an existing request is bound to a typed operation payload")
-                if stored_digest != operation_digest:
-                    raise PermissionError("an existing request is bound to a different typed operation")
                 db.commit()
                 return existing["request_id"]
             request_id = secrets.token_hex(16)
@@ -524,7 +525,7 @@ class CapabilityApprovalGateway:
             payload = json.loads(plaintext.decode("utf-8"))
             if not operation.verify_payload(payload):
                 return None
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except Exception:
             return None
         return payload
 
