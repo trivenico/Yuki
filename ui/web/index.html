@@ -60,6 +60,17 @@
             <div><h2>Annotation workbench</h2><p>Review your project instructions, annotate clean assets, and submit work for review.</p></div>
             <div class="annotation-toolbar"><button id="annotation-create-project-button" type="button">New project</button><button id="refresh-annotation" type="button">Refresh projects</button><button id="close-annotation" type="button">Back to chat</button></div>
           </div>
+          <section class="annotation-reviewer" aria-label="Reviewer workbench">
+            <div class="annotation-reviewer-heading">
+              <div><h3>Reviewer queue</h3><p>Review submitted work only. Reviewer access is independently authorized by the server.</p></div>
+              <div class="annotation-reviewer-controls">
+                <label class="annotation-field" for="annotation-review-project-id">Assigned project ID<input id="annotation-review-project-id" maxlength="32" pattern="[0-9a-f]{32}" autocomplete="off" spellcheck="false"></label>
+                <button id="annotation-review-load" type="button">Load review queue</button>
+              </div>
+            </div>
+            <div id="annotation-review-queue" class="annotation-review-queue" aria-live="polite"><p class="annotation-hint">Enter a project ID assigned to your reviewer account.</p></div>
+            <p id="annotation-review-status" class="annotation-status" role="status" aria-live="polite"></p>
+          </section>
           <form id="annotation-create-project" class="annotation-create-project" hidden>
             <label class="annotation-field" for="annotation-new-name">Project name<input id="annotation-new-name" maxlength="120" required></label>
             <label class="annotation-field" for="annotation-new-type">Task family<select id="annotation-new-type"><option value="image_classification">Image classification</option><option value="bounding_boxes">Bounding boxes</option><option value="polygon_segmentation">Polygon segmentation</option><option value="text_classification">Text classification</option><option value="video_tracking">Video tracking</option><option value="audio_transcription">Audio transcription</option><option value="speaker_diarization">Speaker diarization</option><option value="entity_extraction">Entity extraction</option><option value="response_ranking">Response ranking</option><option value="llm_evaluation">LLM evaluation</option><option value="custom">Custom JSON</option></select></label>
