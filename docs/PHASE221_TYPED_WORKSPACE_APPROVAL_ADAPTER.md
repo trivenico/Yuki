@@ -100,3 +100,32 @@ existing `skill.invoke` payload shape and does not dispatch a dedicated
 `workspace.apply` task through this bridge. Production rollout must also
 supply a reviewed AEAD/KMS envelope adapter and bind the claim validator to
 the worker's actual live task/worker/lease tuple.
+
+## Durable workspace task worker
+
+`core/durable_workspace_worker.py` adds a dedicated `workspace.apply`
+worker for the fixed payload shape `{workspace_id, changes}`. It does not
+dispatch arbitrary skill names, commands, scripts, or model-provided tools.
+It derives owner/goal/task/claim identity from the durable engine, builds the
+typed workspace operation, requires a policy request factory to bind all of
+those values plus the exact payload digest, persists a claim-bound approval
+wait, waits through the worker-pinned credential resolver while heartbeating,
+and dispatches only through the claim-fenced executor bridge. Workspace tasks
+must be single-attempt.
+
+The task engine's safe rejection vocabulary now includes the workspace
+worker's fixed invalid-payload, unsupported-task, and invalid-identity cases.
+
+The workspace executor now revalidates the live claim, re-resolves the
+workspace path (to detect symlink/path substitution), and rechecks the expected
+file digest immediately before each individual replacement. If a claim is
+lost partway through a multi-file operation, the existing rollback path
+restores already-replaced files. Regression tests cover this mid-commit loss.
+
+This is a dedicated worker implementation and test slice, not yet an enabled
+production service. Deployment still needs a reviewed AEAD/KMS adapter, a
+trusted runtime wiring the worker to authenticated task submission and the
+worker-pinned broker, an owner-facing structured diff/approval experience,
+and crash-safe filesystem transaction/recovery semantics for process or power
+loss between multiple replacements. Until those gates are complete, do not
+expose `workspace.apply` as a generally available user capability.
