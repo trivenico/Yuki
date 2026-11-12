@@ -415,6 +415,36 @@ class CapabilityApprovalGateway:
             raise PermissionError("approval request binding is unavailable")
         return row["request_json"]
 
+    def approval_delivery_metadata(self, request_id: str) -> dict[str, Any]:
+        """Return approved delivery routing metadata without exposing a credential."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT r.principal_id,r.capability,r.target,r.run_id,r.step_id,
+                          r.policy_version,r.expires_at,r.status,a.expires_at AS credential_expires_at,
+                          a.consumed_at,a.revoked_at,a.token_sha256
+                   FROM capability_approval_requests r
+                   JOIN capability_approvals a
+                     ON a.request_sha256=r.request_sha256 AND a.policy_version=r.policy_version
+                   WHERE r.request_id=?""", (request_id,)
+            ).fetchone()
+        if (row is None or row["status"] != "approved"
+                or row["credential_expires_at"] <= now or row["expires_at"] <= now
+                or row["consumed_at"] is not None or row["revoked_at"] is not None):
+            raise PermissionError("approved credential is unavailable for delivery")
+        request = json.loads(self._request_json_for_binding(request_id))
+        return {
+            "request_id": request_id, "principal_id": row["principal_id"],
+            "capability": row["capability"], "target": row["target"],
+            "run_id": row["run_id"], "step_id": row["step_id"],
+            "policy_version": row["policy_version"],
+            "claim_token_sha256": request.get("claim_token_sha256"),
+            "credential_sha256": row["token_sha256"],
+            "expires_at": min(row["expires_at"], row["credential_expires_at"]),
+        }
+
     def approval_delivery_binding(self, request_id: str, token: str) -> dict[str, Any]:
         """Return verified task metadata for trusted credential delivery only."""
         if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
