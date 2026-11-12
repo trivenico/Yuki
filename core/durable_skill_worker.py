@@ -108,6 +108,8 @@ class DurableSkillWorker:
                     approval_token = self.approval_token_resolver(
                         policy_context, skill_name, lease_token
                     )
+                    if heartbeat_errors:
+                        raise RuntimeError("task lease heartbeat failed while awaiting approval")
                     if approval_token is not None:
                         if not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256:
                             raise PermissionError("approval resolver returned an invalid credential")
