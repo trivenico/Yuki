@@ -1203,6 +1203,46 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
                 annotator_ids=["annotator:fresh"], idempotency_key="again",
             )
 
+    def test_new_requalification_round_does_not_inherit_old_gold_results(self):
+        project = self.store.create_project(
+            "owner:alice", name="Separate calibration rounds", task_type="text_classification",
+            instructions="Classify sentiment.", rubric={"labels": ["positive", "negative"]},
+        )
+        self.store.set_calibration_policy(
+            "owner:alice", project.project_id, minimum_gold_tasks=1,
+        )
+        task_ids = []
+        for index, label in enumerate(("positive", "negative")):
+            task = self.store.create_task(
+                "owner:alice", project.project_id, external_ref=f"round-{index}",
+                input_data={"text": f"Round {index}."},
+            )
+            self.store.create_gold_standard(
+                "owner:alice", project.project_id, task.task_id, label,
+            )
+            task_ids.append(task.task_id)
+        for index, task_id in enumerate(task_ids):
+            session = self.store.create_calibration_session(
+                "owner:alice", project.project_id, task_ids=[task_id],
+                annotator_ids=["annotator:rounds"], idempotency_key=f"round-{index}",
+            )
+            inbox = self.store.list_my_independent_assignments("annotator:rounds")
+            current = next(item for item in inbox if item["task_id"] == task_id)
+            claimed = self.store.claim_independent_assignment(
+                "annotator:rounds", current["assignment_id"], expected_version=1,
+            )
+            label = "positive" if index == 0 else "positive"
+            self.store.submit_independent_assignment(
+                "annotator:rounds", current["assignment_id"],
+                payload={"label": label}, expected_version=claimed["version"],
+                human_confirmed=True,
+            )
+        report = self.store.gold_calibration_report("owner:alice", project.project_id)
+        self.assertEqual(len(report["annotators"]), 1)
+        self.assertEqual(report["annotators"][0]["evaluated_gold_tasks"], 1)
+        self.assertEqual(report["annotators"][0]["correct_gold_tasks"], 0)
+        self.assertEqual(report["annotators"][0]["status"], "needs_review")
+
     def test_calibration_session_is_owner_isolated_and_idempotency_conflicts(self):
         project = self.store.create_project(
             "owner:alice", name="Private calibration", task_type="text_classification",
