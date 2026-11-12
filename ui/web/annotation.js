@@ -67,7 +67,7 @@
   };
   const flushDraftSave = (taskId) => {
     const session = draftSessions.get(taskId);
-    if (!session) return Promise.resolve();
+    if (!session) return Promise.resolve(true);
     if (session.timer) { clearTimeout(session.timer); session.timer = null; }
     session.chain = session.chain.catch(() => {}).then(async () => {
       while (session.dirty && !session.conflict) {
@@ -90,12 +90,14 @@
         session.conflict ? "Draft changed in another session. Refresh before continuing to avoid overwriting it." :
           "Draft save failed; your changes are retained locally and will retry: " + error.message, true
       );
-    });
+      return false;
+    }).then(() => !session.dirty && !session.conflict);
   };
   const scheduleDraftSave = () => {
     if (!state.task || !state.claimed) return;
     const taskId = state.task.task_id, session = draftSession(taskId);
     const payload = draftPayload();
+    state.lastHistorySnapshot = historySnapshot();
     if (!payload) {
       setStatus("Draft not saved: finish entering valid JSON first.", true);
       return;
@@ -250,7 +252,10 @@
   const selectTask = async () => {
     const previousTaskId = state.task?.task_id;
     const nextTaskId = $("annotation-task").value;
-    if (previousTaskId && previousTaskId !== nextTaskId) await flushDraftSave(previousTaskId);
+    if (previousTaskId && previousTaskId !== nextTaskId) {
+      const saved = await flushDraftSave(previousTaskId);
+      if (!saved) { $("annotation-task").value = previousTaskId; return; }
+    }
     state.task = selectedTask(); state.claimed = Boolean(state.task && ["in_progress", "rework"].includes(state.task.status));
     state.boxes = []; state.polygons = []; state.draft = [];
     state.undoStack = []; state.redoStack = []; state.lastHistorySnapshot = null;
@@ -500,7 +505,9 @@
         if (!payload || Array.isArray(payload) || typeof payload !== "object") throw new Error("Annotation payload must be a JSON object.");
       }
       if (!window.confirm("Submit this annotation for review? This records your human confirmation. Yuki will not send it to a marketplace.")) return;
-      await flushDraftSave(state.task.task_id);
+      const saved = await flushDraftSave(state.task.task_id);
+      const session = draftSessions.get(state.task.task_id);
+      if (!saved || session?.dirty || session?.conflict) throw new Error("Draft must be saved successfully before submission.");
       const button = $("submit-annotation"); button.disabled = true;
       const result = await api("/v1/annotation/tasks/" + encodeURIComponent(state.task.task_id) + "/submit", {
         method: "POST", body: JSON.stringify({
