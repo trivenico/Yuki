@@ -106,8 +106,9 @@ class ProviderManager:
         loaded = []
         for profile in store.list_profiles(owner_id):
             name = getattr(profile, "name", None)
-            if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,47}", name):
-                raise ValueError("persisted provider profile has an invalid name")
+            if (not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,47}", name)
+                    or getattr(profile, "owner_id", None) != owner_id):
+                raise ValueError("persisted provider profile identity is invalid")
             if name in self._providers and name not in self._vault_profiles:
                 raise ValueError("persisted profile conflicts with a registered provider")
             def factory(profile_name=name, profile_owner=owner_id, profile_store=store):
@@ -127,7 +128,7 @@ class ProviderManager:
             self._vault_profiles[name] = {
                 "name": name, "owner_id": owner_id,
                 "base_url": profile.base_url, "model": profile.model,
-                "allowed_host": profile.allowed_host,
+                "allowed_host": profile.allowed_host, "store": store,
             }
             loaded.append(name)
         return tuple(loaded)
@@ -240,14 +241,17 @@ class ProviderManager:
         for name, profile in sorted(self._vault_profiles.items()):
             if name in known:
                 continue
-            # Credential existence is checked at adapter construction; do not
-            # read secret material while building a metadata-only catalog.
+            # The store reports presence only; secret material is never returned here.
+            credential_configured = False
+            checker = getattr(profile["store"], "credential_available", None)
+            if callable(checker):
+                credential_configured = checker(profile["owner_id"], name) is True
             catalog.append({
                 "name": name, "label": name, "implemented": True,
-                "ready": True, "privacy": "cloud_provider",
+                "ready": credential_configured, "privacy": "cloud_provider",
                 "capabilities": ["text", "tooling_provider_dependent"],
                 "configured_model": profile["model"],
-                "credential_configured": None,
+                "credential_configured": credential_configured,
                 "selected": name == (self._selected or ""),
                 "status": "os_vault_profile",
             })
