@@ -14,8 +14,8 @@ canvas or a desktop rendering surface.
 - Bounding-box creation supports reverse-direction drags, clamps through
   normalized input validation, and rejects sub-pixel gestures.
 - Polygon validation enforces bounded vertex count, finite normalized points,
-  adjacent-vertex uniqueness, and non-zero area. Self-intersection detection
-  remains a required follow-up before polygon editing is exposed for production.
+  adjacent-vertex uniqueness, non-zero area, and rejects non-adjacent edge
+  intersections and adjacent collinear overlaps.
 - SnapshotHistory provides defensive copies, bounded undo history, redo, and
   redo invalidation after a new edit.
 
