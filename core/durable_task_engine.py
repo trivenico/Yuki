@@ -71,6 +71,7 @@ class DurableTaskEngine:
               created_at REAL NOT NULL,
               claimed_by TEXT,
               claim_until REAL,
+              claim_token TEXT,
               attempts INTEGER NOT NULL DEFAULT 0,
               UNIQUE(task_id,claim_token_sha256));
             CREATE INDEX IF NOT EXISTS lease_recovery_pending_idx
@@ -87,6 +88,9 @@ class DurableTaskEngine:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
             if "lease_token" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN lease_token TEXT")
+            recovery_columns = {row["name"] for row in c.execute("PRAGMA table_info(lease_recovery_outbox)")}
+            if "claim_token" not in recovery_columns:
+                c.execute("ALTER TABLE lease_recovery_outbox ADD COLUMN claim_token TEXT")
 
     def close(self):
         """Release engine-owned resources. Safe to call more than once."""
@@ -403,42 +407,49 @@ class DurableTaskEngine:
             ).fetchall()
             result = []
             for row in rows:
+                claim_token = secrets.token_urlsafe(32)
                 changed = c.execute(
                     """UPDATE lease_recovery_outbox
-                       SET claimed_by=?,claim_until=?,attempts=attempts+1
+                       SET claimed_by=?,claim_until=?,claim_token=?,attempts=attempts+1
                        WHERE id=? AND (claim_until IS NULL OR claim_until<=?)""",
-                    (supervisor_id, now + lease_seconds, row["id"], now),
+                    (supervisor_id, now + lease_seconds, claim_token, row["id"], now),
                 ).rowcount
                 if changed == 1:
                     item = dict(row)
                     item["claimed_by"] = supervisor_id
                     item["claim_until"] = now + lease_seconds
+                    item["claim_token"] = claim_token
                     item["attempts"] = row["attempts"] + 1
                     result.append(item)
             c.commit()
             return result
 
-    def acknowledge_recovery_outbox(self, event_id: int, supervisor_id: str) -> bool:
+    def acknowledge_recovery_outbox(self, event_id: int, supervisor_id: str, claim_token: str) -> bool:
         if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
             raise ValueError("invalid recovery event id")
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
+            if not isinstance(claim_token, str) or not claim_token:
+                raise ValueError("recovery claim token is required")
             changed = c.execute(
-                "DELETE FROM lease_recovery_outbox WHERE id=? AND claimed_by=?",
-                (event_id, supervisor_id),
+                "DELETE FROM lease_recovery_outbox WHERE id=? AND claimed_by=? AND claim_token=?",
+                (event_id, supervisor_id, claim_token),
             ).rowcount
             c.commit()
             return changed == 1
 
-    def release_recovery_outbox(self, event_id: int, supervisor_id: str) -> bool:
+    def release_recovery_outbox(self, event_id: int, supervisor_id: str, claim_token: str) -> bool:
         if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
             raise ValueError("invalid recovery event id")
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
+            if not isinstance(claim_token, str) or not claim_token:
+                raise ValueError("recovery claim token is required")
             changed = c.execute(
-                """UPDATE lease_recovery_outbox SET claimed_by=NULL,claim_until=NULL
-                   WHERE id=? AND claimed_by=?""",
-                (event_id, supervisor_id),
+                """UPDATE lease_recovery_outbox
+                   SET claimed_by=NULL,claim_until=NULL,claim_token=NULL
+                   WHERE id=? AND claimed_by=? AND claim_token=?""",
+                (event_id, supervisor_id, claim_token),
             ).rowcount
             c.commit()
             return changed == 1
