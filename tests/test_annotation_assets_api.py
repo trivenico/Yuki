@@ -106,7 +106,7 @@ class AnnotationAssetAPITests(unittest.TestCase):
 
     def test_task_binding_requires_clean_asset_in_same_owner_project(self):
         asset_path = f"/v1/annotation/projects/{self.project_id}/assets"
-        data = b"\\x89PNG\\r\\n\\x1a\\n" + b"pixel-data"
+        data = b"\x89PNG\r\n\x1a\n" + b"pixel-data"
         status, body, _ = self.request(
             "POST", asset_path, data, self.owner.token, "application/octet-stream"
         )
