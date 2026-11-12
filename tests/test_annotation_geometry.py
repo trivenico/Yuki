@@ -38,7 +38,10 @@ class AnnotationGeometryTests(unittest.TestCase):
             Point(.8, .7), Point(.2, .1),
             image_width=1000, image_height=1000,
         )
-        self.assertEqual(box, Rect(.2, .1, .6, .6))
+        self.assertAlmostEqual(box.x, .2)
+        self.assertAlmostEqual(box.y, .1)
+        self.assertAlmostEqual(box.width, .6)
+        self.assertAlmostEqual(box.height, .6)
 
     def test_rejects_tiny_or_out_of_bounds_boxes(self):
         with self.assertRaisesRegex(ValueError, "too_small"):
