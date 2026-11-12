@@ -4,7 +4,7 @@
 
 - Lease expiry now writes a credential-revocation outbox row in the same SQLite transaction that clears the task's worker, expiry and lease token.
 - The outbox stores only the SHA-256 claim-token digest, task ID, worker ID and processing metadata; it never stores the raw lease secret.
-- Added bounded, leased outbox claiming with supervisor identity, retry attempts, lease expiry, explicit release and owner-fenced acknowledgement.
+- Added bounded, leased outbox claiming with supervisor identity, retry attempts, lease expiry, explicit release and per-claim random fencing tokens for acknowledgement. A stale supervisor process cannot acknowledge a later lease, even if the same supervisor identity is reused.
 - Added broker revocation by task/worker/claim digest. Revocation is idempotent and erases ciphertext for unused credentials.
 - Added `LeaseRecoveryCoordinator`, which routes each outbox item only to the broker pinned to the recorded worker identity and acknowledges only after successful broker cleanup.
 - Missing brokers and broker errors leave work retryable. A supervisor crash after revocation but before acknowledgement is safe because the next pass repeats an idempotent revocation.
