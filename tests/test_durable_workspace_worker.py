@@ -144,7 +144,7 @@ class DurableWorkspaceWorkerTests(unittest.TestCase):
             approval_wait_timeout_seconds=5,
         ).run_once()
         self.assertEqual(result["state"], "failed")
-        self.assertEqual(self.target.read_text(encoding="utf-8"), "before\\n")
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "before\n")
         self.assertEqual(self.request_ids, [])
         self.assertEqual(self.gateway.pending_requests(), [])
 
