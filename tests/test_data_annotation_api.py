@@ -653,6 +653,21 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         self.assertEqual((status, body["delegated"]), (200, True))
 
 
+    def test_performance_report_api_is_owner_scoped(self):
+        project_id = self.create_project()
+        status, owner_report = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/performance-report",
+            token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(owner_report["report"]["annotators"], [])
+        self.assertEqual(owner_report["report"]["reviewers"], [])
+        status, denied = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/performance-report",
+            token=self.owner_two.token,
+        )
+        self.assertEqual((status, denied["error"]), (404, "not_found"))
+
     def test_rework_and_manifest_api_are_owner_scoped_and_idempotent(self):
         project_id = self.create_project()
         status, task_body = self.request(
