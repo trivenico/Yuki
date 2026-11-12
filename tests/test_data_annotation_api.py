@@ -133,6 +133,42 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, body["error"]), (404, "not_found"))
 
+    def test_batch_import_and_accepted_only_export_routes(self):
+        project_id = self.create_project()
+        status, body = self.request(
+            "POST", f"/v1/annotation/projects/{project_id}/tasks/batch",
+            {"tasks": [
+                {"external_ref": "batch-1", "input_data": {"text": "good"}},
+                {"external_ref": "batch-2", "input_data": {"text": "bad"}},
+            ]}, self.owner_one.token,
+        )
+        self.assertEqual((status, len(body["tasks"])), (201, 2))
+        self.assertEqual(
+            self.request("GET", f"/v1/annotation/projects/{project_id}/export",
+                         token=self.owner_one.token)[1]["accepted_annotations"], []
+        )
+        task = body["tasks"][0]
+        _, claimed_body = self.request(
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/claim",
+            {"expected_version": task["version"]}, self.owner_one.token,
+        )
+        _, submitted_body = self.request(
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/submit",
+            {"payload": {"label": "positive"},
+             "expected_version": claimed_body["task"]["version"],
+             "human_confirmed": True}, self.owner_one.token,
+        )
+        submission_id = submitted_body["submission"]["submission_id"]
+        self.request(
+            "POST", f"/v1/annotation/submissions/{submission_id}/review",
+            {"decision": "accepted"}, self.owner_one.token,
+        )
+        status, exported = self.request(
+            "GET", f"/v1/annotation/projects/{project_id}/export",
+            token=self.owner_one.token,
+        )
+        self.assertEqual((status, len(exported["accepted_annotations"])), (200, 1))
+
     def test_human_confirmation_required_and_version_conflict_mapped(self):
         project_id = self.create_project()
         _, body = self.request(
