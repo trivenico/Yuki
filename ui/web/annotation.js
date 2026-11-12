@@ -59,7 +59,8 @@
   };
   const draftStoragePayload = (payload, snapshot) => {
     const history = snapshot ? cloneJson(snapshot) : { undo: [], redo: [] };
-    while (JSON.stringify(history).length > 16 * 1024 && (history.undo.length || history.redo.length)) {
+    const encodedSize = () => new TextEncoder().encode(JSON.stringify({ ...payload, _history: history })).length;
+    while (encodedSize() > 64 * 1024 - 512 && (history.undo.length || history.redo.length)) {
       if (history.undo.length) history.undo.shift(); else history.redo.shift();
     }
     return { ...payload, _history: history };
@@ -99,8 +100,13 @@
       setStatus("Draft not saved: finish entering valid JSON first.", true);
       return;
     }
+    const history = { undo: cloneJson(state.undoStack), redo: cloneJson(state.redoStack) };
+    if (new TextEncoder().encode(JSON.stringify(draftStoragePayload(payload, history))).length > 64 * 1024) {
+      setStatus("Draft exceeds the 64 KiB storage limit; reduce the annotation before continuing.", true);
+      return;
+    }
     session.payload = payload;
-    session.history = { undo: cloneJson(state.undoStack), redo: cloneJson(state.redoStack) };
+    session.history = history;
     session.dirty = true;
     if (session.timer) clearTimeout(session.timer);
     session.timer = setTimeout(() => flushDraftSave(taskId), 650);
