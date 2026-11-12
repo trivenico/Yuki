@@ -34,6 +34,16 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         )
         self.engine = ToolPolicyEngine(rules, policy_version="policy-v7")
         self.previews = CapabilityApprovalPreviewRegistry()
+        # Test-only reversible envelope; production must inject a reviewed AEAD/KMS adapter.
+        def seal(plaintext, aad):
+            return b"test-envelope:" + hashlib.sha256(aad).digest() + plaintext
+        def unseal(ciphertext, aad):
+            prefix = b"test-envelope:" + hashlib.sha256(aad).digest()
+            if not ciphertext.startswith(prefix):
+                raise ValueError("test envelope authentication failed")
+            return ciphertext[len(prefix):]
+        self.seal_payload = seal
+        self.unseal_payload = unseal
         self.previews.register(
             "workspace:write",
             lambda request: ApprovalPreview(
@@ -47,6 +57,8 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             self.engine,
             authorize_approver=lambda actor, request: actor == "admin",
             clock=lambda: self.now[0], preview_registry=self.previews,
+            seal_operation_payload=self.seal_payload,
+            unseal_operation_payload=self.unseal_payload,
         )
         self.request = self.make_request()
 
