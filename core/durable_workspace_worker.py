@@ -215,14 +215,7 @@ class DurableWorkspaceWorker:
             return {"task_id": task_id, "state": completed["state"],
                     "status": "workspace_changes_applied",
                     "changed_paths": list(result.changed_paths)}
-        except Exception as exc:
-            # Expose only a bounded exception type for operations diagnostics; never persist messages or secrets.
-            failure_code = type(exc).__name__
-            if not isinstance(failure_code, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", failure_code):
-                failure_code = "ExecutionError"
-            cause_code = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
-            if not isinstance(cause_code, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", cause_code or ""):
-                cause_code = None
+        except Exception:
             # Side effects are not replayed: workspace tasks are single-attempt.
             try:
                 current = self.engine.get_task(task_id)
