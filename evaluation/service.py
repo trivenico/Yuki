@@ -109,30 +109,7 @@ class EvaluationService:
                         "idempotency key was used for a different evaluation request"
                     )
                 return previous
-            case_index = 0
-
-            def generate(prompt: str) -> str:
-                nonlocal case_index
-                case = benchmark.cases[case_index]
-                case_index += 1
-                # The adapter owns the hard timeout; ModelEvaluator measures and
-                # reports latency but cannot safely kill a blocked Python call.
-                return adapter.generate_with_timeout(
-                    prompt,
-                    timeout_seconds=min(
-                        float(case.max_latency_seconds),
-                        self.evaluator.max_total_duration_seconds,
-                    ),
-                )
-
-            report = self.evaluator.run(
-                candidate_id, generate, benchmark.cases, approval_required=True,
-            )
-            if not isinstance(report, EvalReport):
-                raise RuntimeError("evaluator returned an invalid report")
-            return self.store.record(
-                owner_id=owner_id,
-                idempotency_key=idempotency_key,
+            request_digest = self.store.request_digest_for(
                 benchmark_id=benchmark.benchmark_id,
                 benchmark_version=benchmark.version,
                 benchmark_digest=benchmark.digest,
@@ -140,8 +117,60 @@ class EvaluationService:
                 provider_id=adapter.provider_id,
                 model_id=adapter.model_id,
                 environment=self.environment,
-                report=report,
             )
+            lease_token = self.store.acquire_claim(
+                owner_id=owner_id,
+                idempotency_key=idempotency_key,
+                request_digest=request_digest,
+            )
+            if lease_token is None:
+                completed = self.store.get_by_idempotency(
+                    owner_id=owner_id, idempotency_key=idempotency_key,
+                )
+                if completed is None:
+                    raise RuntimeError("completed evaluation disappeared after claim acquisition")
+                return completed
+            try:
+                case_index = 0
+
+                def generate(prompt: str) -> str:
+                    nonlocal case_index
+                    case = benchmark.cases[case_index]
+                    case_index += 1
+                    # The adapter owns the hard timeout; ModelEvaluator measures and
+                    # reports latency but cannot safely kill a blocked Python call.
+                    return adapter.generate_with_timeout(
+                        prompt,
+                        timeout_seconds=min(
+                            float(case.max_latency_seconds),
+                            self.evaluator.max_total_duration_seconds,
+                        ),
+                    )
+
+                report = self.evaluator.run(
+                    candidate_id, generate, benchmark.cases, approval_required=True,
+                )
+                if not isinstance(report, EvalReport):
+                    raise RuntimeError("evaluator returned an invalid report")
+                return self.store.record(
+                    owner_id=owner_id,
+                    idempotency_key=idempotency_key,
+                    benchmark_id=benchmark.benchmark_id,
+                    benchmark_version=benchmark.version,
+                    benchmark_digest=benchmark.digest,
+                    candidate_id=candidate_id,
+                    provider_id=adapter.provider_id,
+                    model_id=adapter.model_id,
+                    environment=self.environment,
+                    report=report,
+                    lease_token=lease_token,
+                )
+            finally:
+                self.store.release_claim(
+                    owner_id=owner_id,
+                    idempotency_key=idempotency_key,
+                    lease_token=lease_token,
+                )
         finally:
             self._slots.release()
 
