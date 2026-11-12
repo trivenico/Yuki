@@ -79,3 +79,24 @@ headers and never returns approval credentials, request digests or claim
 secrets. Non-approvers cannot call this inbox method. This makes the exact
 proposal available to an owner-facing client, but does not itself implement
 the visual diff UI or connect the worker to the workspace executor.
+
+## Claim-fenced execution bridge
+
+`core/approved_workspace_operation_executor.py` adds a capability-specific
+bridge that reconstructs the typed envelope from `FileChange` values, checks
+the request binding, consumes the matching typed central approval exactly
+once, and calls the existing workspace executor only while the durable claim
+remains live. `ApprovedWorkspaceChanges.apply` now accepts an optional
+execution guard and checks it after staging and immediately before the
+pre-commit file-digest recheck and replacement. Guard exceptions are treated
+as claim loss. The bridge retains the executor's trusted-principal check,
+explicit path allowlist, expected-file digest checks, audit and rollback
+behavior.
+
+Regression coverage exercises successful exact-payload execution and a claim
+that is lost at the final commit guard. This is an execution primitive, not yet
+a complete worker integration: `DurableSkillWorker` still accepts only its
+existing `skill.invoke` payload shape and does not dispatch a dedicated
+`workspace.apply` task through this bridge. Production rollout must also
+supply a reviewed AEAD/KMS envelope adapter and bind the claim validator to
+the worker's actual live task/worker/lease tuple.
