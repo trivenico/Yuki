@@ -139,11 +139,11 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         task = created["task"]
         _, claimed = self.request(
-            "POST", f"/v1/annotation/tasks/{task["task_id"]}/claim",
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/claim",
             {"expected_version": task["version"]}, self.owner_one.token,
         )
         _, submitted = self.request(
-            "POST", f"/v1/annotation/tasks/{task["task_id"]}/submit",
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/submit",
             {"payload": {"label": "positive"},
              "expected_version": claimed["task"]["version"], "human_confirmed": True},
             self.owner_one.token,
@@ -180,17 +180,17 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         task = created["task"]
         _, claimed = self.request(
-            "POST", f"/v1/annotation/tasks/{task["task_id"]}/claim",
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/claim",
             {"expected_version": task["version"]}, self.owner_one.token,
         )
         _, submitted = self.request(
-            "POST", f"/v1/annotation/tasks/{task["task_id"]}/submit",
+            "POST", f"/v1/annotation/tasks/{task['task_id']}/submit",
             {"payload": {"label": "positive"},
              "expected_version": claimed["task"]["version"], "human_confirmed": True},
             self.owner_one.token,
         )
         status, body = self.request(
-            "POST", f"/v1/annotation/submissions/{submitted["submission"]["submission_id"]}/review",
+            "POST", f"/v1/annotation/submissions/{submitted['submission']['submission_id']}/review",
             {"decision": "accepted", "project_id": other_project}, self.owner_two.token,
         )
         self.assertEqual((status, body["error"]), (404, "not_found"))
