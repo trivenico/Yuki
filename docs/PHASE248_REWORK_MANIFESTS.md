@@ -40,6 +40,7 @@
 - Dataset manifests are stored in SQLite and returned through the authenticated API; object-storage publication, signed attestations, retention policy, and large-dataset streaming remain separate work.
 - The manifest checksum is an integrity digest, not a cryptographic signature. External verification needs a separately protected signing key or trusted digest channel.
 - Assignment and adjudication remain limited to the text-classification independent-assignment workflow.
+- Longitudinal annotator/reviewer performance dashboards and drift analysis are deferred to the next phase; this phase records round-level evidence and reviewer provenance needed to build them safely.
 
 ## Validation
 
