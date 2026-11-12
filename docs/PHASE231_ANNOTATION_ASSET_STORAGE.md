@@ -25,3 +25,15 @@ The current implementation does not provide multipart streaming, browser preview
 ## Validation
 
 `tests/test_annotation_assets.py` covers quarantine, explicit clean-scan promotion, owner/project isolation, unsupported formats, size bounds, symlink rejection, integrity verification and deletion. Cross-platform CI must pass before merge.
+
+## Authenticated API integration
+
+When both the annotation workbench and asset store are injected into the conversation runtime, the authenticated annotation API exposes:
+
+- `POST /v1/annotation/projects/{project_id}/assets` with `application/octet-stream` body.
+- `GET /v1/annotation/projects/{project_id}/assets/{asset_id}` for clean assets only; responses are private, attachment-disposition and `nosniff`.
+- `DELETE /v1/annotation/projects/{project_id}/assets/{asset_id}` for owner/project-scoped revocation.
+
+The upload route enforces the configured store byte limit, verifies the project belongs to the authenticated owner, and never accepts a filename or path. A trusted synchronous scanner can be injected as `annotation_asset_scanner(media_type, bytes) -> bool`; `True` promotes to clean, `False` blocks, and missing scanner, exceptions or non-boolean results leave the file quarantined. The scanner callback runs off the event loop. Do not inject a scanner that calls untrusted remote services or exports client bytes without authorization.
+
+This initial API buffers one bounded upload in memory rather than streaming multipart chunks to disk. Deployment-level request timeouts, concurrent upload limits and aggregate per-owner quotas remain required before broad production exposure. The API does not expose the scan promotion method.
