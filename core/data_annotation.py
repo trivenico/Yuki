@@ -268,8 +268,6 @@ class SQLiteAnnotationWorkbench:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_annotation_manifests_owner
                 ON annotation_delivery_manifests(owner_id, project_id, created_at DESC)""")
-            db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_annotation_manifests_digest
-                ON annotation_delivery_manifests(owner_id, project_id, sha256)""")
             db.execute("""CREATE TABLE IF NOT EXISTS annotation_gold_standards (
                 gold_id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -1834,12 +1832,6 @@ class SQLiteAnnotationWorkbench:
             if len(snapshot_bytes) > 16 * 1024 * 1024:
                 raise ValueError("manifest_size_limit_exceeded")
             digest = hashlib.sha256(snapshot_bytes).hexdigest()
-            duplicate = db.execute(
-                "SELECT * FROM annotation_delivery_manifests WHERE owner_id=? AND project_id=? AND sha256=?",
-                (owner_id, project_id, digest),
-            ).fetchone()
-            if duplicate is not None:
-                return self._manifest_result(duplicate)
             manifest_id = uuid.uuid4().hex
             db.execute("""INSERT INTO annotation_delivery_manifests
                 (manifest_id, owner_id, project_id, version, idempotency_key, snapshot_json, sha256, item_count, created_at)
