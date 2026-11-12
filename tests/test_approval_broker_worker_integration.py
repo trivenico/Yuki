@@ -249,6 +249,9 @@ class ClaimBoundApprovalIntegrationTests(unittest.TestCase):
             self.assertFalse(thread.is_alive(), "worker did not resume after credential delivery")
             self.assertEqual(outcomes[0]["state"], "succeeded")
             self.assertEqual(self.skill.calls, ["awaited-value"])
+            waits = self.engine.list_approval_waits(task["id"])
+            self.assertEqual(len(waits), 1)
+            self.assertEqual(waits[0]["state"], "completed")
         finally:
             if thread.is_alive():
                 import sqlite3
