@@ -1057,6 +1057,34 @@ class SQLiteAnnotationWorkbench:
                         {"assignment_count": len(created)})
         return created
 
+    def revoke_independent_assignment(
+        self, owner_id: str, project_id: str, assignment_id: str,
+    ) -> bool:
+        owner_id = _owner(owner_id)
+        if (not isinstance(project_id, str) or not _ID.fullmatch(project_id)
+                or not isinstance(assignment_id, str) or not _ID.fullmatch(assignment_id)):
+            raise ValueError("invalid_assignment_target")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT task_id, status FROM annotation_independent_assignments
+                   WHERE owner_id=? AND project_id=? AND assignment_id=?""",
+                (owner_id, project_id, assignment_id),
+            ).fetchone()
+            if row is None:
+                return False
+            if row["status"] == "submitted":
+                raise ValueError("submitted_assignment_cannot_be_revoked")
+            db.execute(
+                """UPDATE annotation_independent_assignments
+                   SET status='revoked', version=version+1, updated_at=?
+                   WHERE owner_id=? AND project_id=? AND assignment_id=?""",
+                (_now(), owner_id, project_id, assignment_id),
+            )
+            self._audit(db, owner_id, project_id, row["task_id"],
+                        "independent_assignment_revoked", {"assignment_id": assignment_id})
+        return True
+
     def list_my_independent_assignments(self, annotator_id: str) -> list[dict[str, Any]]:
         annotator_id = _owner(annotator_id)
         with self._connect() as db:
