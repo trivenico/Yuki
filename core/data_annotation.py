@@ -358,6 +358,96 @@ class SQLiteAnnotationWorkbench:
             ).fetchone()
         return self._task(row)
 
+    def create_tasks(
+        self, owner_id: str, project_id: str, *,
+        tasks: list[Mapping[str, Any]],
+    ) -> list[AnnotationTask]:
+        """Atomically import a bounded batch; one invalid row rejects the batch."""
+        owner_id = _owner(owner_id)
+        if not isinstance(tasks, list) or not 1 <= len(tasks) <= 100:
+            raise ValueError("invalid_annotation_task_batch_size")
+        prepared = []
+        seen_refs: set[str] = set()
+        for item in tasks:
+            if not isinstance(item, Mapping) or set(item) - {"external_ref", "asset_ref", "input_data"}:
+                raise ValueError("invalid_annotation_task_batch_row")
+            external_ref = item.get("external_ref")
+            asset_ref = item.get("asset_ref")
+            input_data = item.get("input_data")
+            if not isinstance(external_ref, str) or not external_ref.strip() or len(external_ref) > 200:
+                raise ValueError("invalid_external_task_reference")
+            external_ref = external_ref.strip()
+            if external_ref in seen_refs:
+                raise ValueError("duplicate_external_task_reference_in_batch")
+            seen_refs.add(external_ref)
+            if asset_ref is not None and (
+                not isinstance(asset_ref, str) or not _ASSET_REF.fullmatch(asset_ref)
+            ):
+                raise ValueError("asset_ref_must_be_opaque_storage_identifier")
+            prepared.append((
+                uuid.uuid4().hex, external_ref, asset_ref,
+                _json_object(input_data, maximum=_MAX_JSON_BYTES, field="task_input"),
+            ))
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute(
+                "SELECT status FROM annotation_projects WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()
+            if project is None:
+                raise LookupError("annotation_project_not_found")
+            if project["status"] != "active":
+                raise ValueError("annotation_project_not_active")
+            count = db.execute(
+                "SELECT COUNT(*) FROM annotation_tasks WHERE owner_id=? AND project_id=?",
+                (owner_id, project_id),
+            ).fetchone()[0]
+            if count + len(prepared) > _MAX_TASKS_PER_PROJECT:
+                raise ValueError("project_task_capacity_reached")
+            rows = []
+            for task_id, external_ref, asset_ref, input_json in prepared:
+                db.execute(
+                    """INSERT INTO annotation_tasks VALUES
+                    (?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)""",
+                    (task_id, project_id, owner_id, external_ref, asset_ref,
+                     input_json, now, now),
+                )
+                self._audit(db, owner_id, project_id, task_id, "task_created", {
+                    "batch": True,
+                })
+                rows.append(db.execute(
+                    "SELECT * FROM annotation_tasks WHERE task_id=?", (task_id,)
+                ).fetchone())
+        return [self._task(row) for row in rows]
+
+    def export_accepted(
+        self, owner_id: str, project_id: str, *, limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return only accepted work for an owner-controlled export pipeline."""
+        owner_id = _owner(owner_id)
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise ValueError("invalid_export_limit")
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT t.external_ref, t.asset_ref, t.input_json,
+                          s.payload_json, s.ai_assisted, s.created_at
+                   FROM annotation_tasks AS t
+                   JOIN annotation_submissions AS s
+                     ON s.task_id=t.task_id AND s.owner_id=t.owner_id
+                   WHERE t.owner_id=? AND t.project_id=? AND s.status='accepted'
+                   ORDER BY s.updated_at, s.submission_id LIMIT ?""",
+                (owner_id, project_id, limit),
+            ).fetchall()
+        return [{
+            "external_ref": row["external_ref"],
+            "asset_ref": row["asset_ref"],
+            "input_data": _decode(row["input_json"]),
+            "annotation": _decode(row["payload_json"]),
+            "ai_assisted": bool(row["ai_assisted"]),
+            "accepted_at": row["created_at"],
+        } for row in rows]
+
     def get_task(self, owner_id: str, task_id: str) -> AnnotationTask | None:
         owner_id = _owner(owner_id)
         if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
