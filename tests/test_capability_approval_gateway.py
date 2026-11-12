@@ -239,8 +239,11 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             Path(self.temp.name) / "approvals.sqlite", self.engine,
             authorize_approver=lambda actor, request: actor == "admin",
             clock=lambda: self.now[0], preview_registry=self.previews,
+            seal_operation_payload=self.seal_payload,
+            unseal_operation_payload=self.unseal_payload,
         )
         self.assertEqual(reopened.approval_operation(request_id), stored)
+        self.assertEqual(reopened.approval_operation_payload(request_id), payload)
 
     def test_typed_operation_rejects_request_mismatch_and_idempotency_substitution(self):
         payload = {"changes": [{"path": "README.md", "content": "approved"}]}
@@ -316,6 +319,23 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         self.assertIsNone(self.gateway.approval_operation_payload(request_id))
         with self.assertRaises(PermissionError):
             self.gateway.approve_request(request_id, approved_by="admin")
+
+    def test_typed_payload_storage_requires_encryption_adapter(self):
+        payload = {"changes": [{"path": "README.md", "content": "approved"}]}
+        operation = ApprovalOperation.from_payload(
+            operation_type="workspace.write", capability="workspace:write",
+            target="repo:project-a", payload=payload,
+        )
+        gateway = CapabilityApprovalGateway(
+            Path(self.temp.name) / "no-encryption.sqlite", self.engine,
+            authorize_approver=lambda actor, request: actor == "admin",
+            clock=lambda: self.now[0], preview_registry=self.previews,
+        )
+        request = self.make_request(argument_sha256=argument_digest(payload))
+        with self.assertRaises(PermissionError):
+            gateway.request_approval(
+                request, operation=operation, operation_payload=payload
+            )
 
     def test_exact_typed_payload_tampering_blocks_approval(self):
         payload = {"changes": [{"path": "README.md", "content": "approved"}]}
