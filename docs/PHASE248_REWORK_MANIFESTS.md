@@ -16,7 +16,8 @@
 
 - `POST /v1/annotation/projects/{project_id}/tasks/{task_id}/rework-assignments` — owner creates a new assignment round using 2–20 new annotator account IDs.
 - `POST /v1/annotation/projects/{project_id}/delivery-manifests` with `{"idempotency_key":"..."}` — create or retrieve the same manifest for an idempotent retry.
-- `GET /v1/annotation/projects/{project_id}/delivery-manifests` — list owner manifests.
+- `GET /v1/annotation/projects/{project_id}/delivery-manifests` — list compact owner manifest summaries.
+- `GET /v1/annotation/projects/{project_id}/delivery-manifests/{manifest_id}` — retrieve a single immutable snapshot.
 - `GET /v1/annotation/projects/{project_id}/delivery-manifests/{manifest_id}/verify` — recompute and compare the SHA-256 checksum.
 
 ## Integrity and lifecycle rules
@@ -26,7 +27,7 @@
 - Current-round labels alone are used for the next adjudication.
 - Prior adjudications are retained in `annotation_adjudication_events`; the compatibility adjudication row represents the latest decision.
 - A manifest is a point-in-time snapshot. Later task changes or later manifests do not alter its stored snapshot.
-- Manifest creation is bounded to 5,000 items and fails rather than silently truncating a dataset.
+- Manifest creation is bounded to 5,000 items and 16 MiB of canonical snapshot data; it fails rather than silently truncating a dataset. Identical snapshot digests are deduplicated per owner/project, even when a retry uses a different idempotency key.
 - Verification detects snapshot changes; it is an integrity check, not a signature or proof against an attacker who can rewrite both the snapshot and checksum in the database.
 
 ## Deliberate limitations
