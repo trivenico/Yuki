@@ -668,6 +668,32 @@ class AuthenticatedAnnotationAPITests(unittest.TestCase):
         )
         self.assertEqual((status, denied["error"]), (404, "not_found"))
 
+    def test_quality_drift_report_api_is_owner_scoped_and_idempotent(self):
+        project_id = self.create_project()
+        path = f"/v1/annotation/projects/{project_id}/quality-drift-reports"
+        status, empty = self.request("GET", path, token=self.owner_one.token)
+        self.assertEqual((status, empty["reports"]), (200, []))
+        status, created = self.request(
+            "POST", path, {"idempotency_key": "api-drift-001"}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        report_id = created["report"]["report_id"]
+        self.assertEqual(created["report"]["report"]["summary"]["drift_detected_count"], 0)
+        status, repeated = self.request(
+            "POST", path, {"idempotency_key": "api-drift-001"}, self.owner_one.token,
+        )
+        self.assertEqual((status, repeated["report"]["report_id"]), (201, report_id))
+        status, detail = self.request(
+            "GET", path + "/" + report_id, token=self.owner_one.token,
+        )
+        self.assertEqual((status, detail["report"]["integrity_valid"]), (200, True))
+        status, denied = self.request("GET", path, token=self.owner_two.token)
+        self.assertEqual((status, denied["error"]), (404, "not_found"))
+        status, denied = self.request(
+            "GET", path + "/" + report_id, token=self.owner_two.token,
+        )
+        self.assertEqual((status, denied["error"]), (404, "not_found"))
+
     def test_rework_and_manifest_api_are_owner_scoped_and_idempotent(self):
         project_id = self.create_project()
         status, task_body = self.request(

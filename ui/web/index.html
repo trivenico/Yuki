@@ -146,6 +146,12 @@
                 <p>Owner-only descriptive metrics from assignment, calibration, and adjudication evidence. Small samples are marked insufficient; this is not a worker ranking.</p>
                 <button id="annotation-performance-refresh" type="button">Refresh performance metrics</button>
                 <div id="annotation-performance-summary" class="annotation-hint" aria-live="polite">Performance metrics have not been loaded.</div>
+                <h4>Quality drift detection</h4>
+                <p>Compare blinded gold accuracy over a 90-day baseline and a recent 30-day window. Alerts require minimum sample sizes, a meaningful accuracy drop, and statistical significance; they are review signals, not automatic worker actions.</p>
+                <button id="annotation-drift-run" type="button">Run quality drift assessment</button>
+                <button id="annotation-drift-history" type="button">Refresh drift report history</button>
+                <div id="annotation-drift-summary" class="annotation-hint" aria-live="polite">No quality drift assessment has been run.</div>
+                <div id="annotation-drift-history-list" class="annotation-hint" aria-live="polite">No drift report history loaded.</div>
                 <h4>My independent assignments</h4>
                 <button id="annotation-independent-load" type="button">Load my assignments</button>
                 <div id="annotation-independent-list" aria-live="polite"></div>
