@@ -131,6 +131,34 @@ class ApprovedWorkspaceChanges:
         except Exception as exc:
             raise RuntimeError("audit unavailable; workspace operation denied.") from exc
 
+    def validate_principal(self, principal: ToolPrincipal) -> None:
+        """Validate the owner identity and workspace-write permission without side effects."""
+        _validate_principal(principal, self.trusted_principal, "workspace:write")
+
+    def validate_proposal(self, changes: Sequence[FileChange]) -> None:
+        """Preflight the exact proposal before creating an owner approval request."""
+        if not isinstance(changes, (tuple, list)) or not 1 <= len(changes) <= _MAX_CHANGES:
+            raise ToolInputError("one to eight file changes are required.")
+        seen = set()
+        total = 0
+        for change in changes:
+            if not isinstance(change, FileChange):
+                raise ToolInputError("each change must be a FileChange.")
+            if not isinstance(change.path, str) or change.path not in self.allowed_paths or change.path in seen:
+                raise ToolAuthorizationError("path is not explicitly allowed or is duplicated.")
+            seen.add(change.path)
+            if not isinstance(change.expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", change.expected_sha256):
+                raise ToolInputError("expected_sha256 must be a lowercase SHA-256 digest.")
+            if not isinstance(change.content, str) or "\\x00" in change.content:
+                raise ToolInputError("file content must be text without NUL bytes.")
+            encoded = change.content.encode("utf-8")
+            total += len(encoded)
+            if len(encoded) > _MAX_FILE_BYTES or total > _MAX_PATCH_BYTES:
+                raise ToolInputError("proposed changes exceed the size limit.")
+            target = _safe_existing_file(self.root, change.path)
+            if hashlib.sha256(target.read_bytes()).hexdigest() != change.expected_sha256:
+                raise WorkspaceChangeError("file changed since proposal; refresh and reapprove.")
+
     def apply(
         self, *, principal: ToolPrincipal, changes: Sequence[FileChange],
         execution_guard: Callable[[], bool] | None = None,
