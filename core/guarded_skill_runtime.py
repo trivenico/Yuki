@@ -55,12 +55,7 @@ class OneShotSkillApprovals:
     @staticmethod
     def _key(skill_name: str, argument: str, principal_id: str | None = None) -> tuple[str, str, str]:
         import hashlib
-        if policy_context is not None and not isinstance(policy_context, SkillPolicyContext):
-        record("invalid_policy_context")
-        return SkillInvocationResult(False, "Trusted task identity is invalid.", str(skill_name)[:128], "invalid_policy_context")
-    principal_id = policy_context.principal_id if policy_context is not None else None
-
-    if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
+        if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
             raise ValueError("A non-empty bounded skill name is required.")
         if not isinstance(argument, str) or len(argument) > 20000:
             raise ValueError("Approval argument must be text no longer than 20000 characters.")
@@ -265,6 +260,11 @@ def invoke_registered_skill(
             except Exception:
                 # Audit sink failure must not change authorization semantics.
                 pass
+
+    if policy_context is not None and not isinstance(policy_context, SkillPolicyContext):
+        record("invalid_policy_context")
+        return SkillInvocationResult(False, "Trusted task identity is invalid.", str(skill_name)[:128], "invalid_policy_context")
+    principal_id = policy_context.principal_id if policy_context is not None else None
 
     if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
         record("invalid_name")
