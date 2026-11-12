@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -390,6 +391,22 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             expected_version=claimed.version, human_confirmed=True,
         )
         self.assertIsNone(self.store.get_draft("owner:alice", task.task_id))
+
+    def test_legacy_submission_schema_migrates_reviewer_identity_column(self):
+        legacy_path = Path(self.directory.name) / "legacy-annotation.sqlite3"
+        with sqlite3.connect(legacy_path) as db:
+            db.execute("""CREATE TABLE annotation_submissions (
+                submission_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                project_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL, ai_assisted INTEGER NOT NULL,
+                human_confirmed INTEGER NOT NULL, status TEXT NOT NULL,
+                reviewer_notes TEXT NOT NULL, created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )""")
+        SQLiteAnnotationWorkbench(str(legacy_path))
+        with sqlite3.connect(legacy_path) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(annotation_submissions)")}
+        self.assertIn("reviewer_id", columns)
 
     def test_database_symlink_is_rejected(self):
         if not hasattr(Path, "symlink_to"):
