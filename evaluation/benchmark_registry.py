@@ -207,7 +207,7 @@ class BenchmarkRegistry:
             if len(self._definitions) >= self._max_revisions:
                 raise ValueError("benchmark registry capacity reached")
             if self.database_path is not None:
-                with self._connect() as db:
+                with closing(self._connect()) as db, db:
                     db.execute("BEGIN IMMEDIATE")
                     row = db.execute(
                         "SELECT digest, payload FROM benchmark_revisions WHERE benchmark_id=? AND version=?",
