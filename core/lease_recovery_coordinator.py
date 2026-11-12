@@ -63,7 +63,7 @@ class LeaseRecoveryCoordinator:
                 else:
                     acknowledged += 1
             except Exception:
-                self.engine.release_recovery_outbox(item["id"], self.supervisor_id)
+                self.engine.release_recovery_outbox(item["id"], self.supervisor_id, item["claim_token"])
                 deferred += 1
         return {
             "claimed": len(items),
