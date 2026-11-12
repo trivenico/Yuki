@@ -1255,14 +1255,29 @@ class SQLiteAnnotationWorkbench:
             effective_minimum = policy["minimum_gold_tasks"] if policy else minimum_gold_tasks
             effective_accuracy = policy["passing_accuracy"] if policy else passing_accuracy
             maximum_age_days = policy["maximum_age_days"] if policy else 90
-            rows = db.execute(
-                """SELECT annotator_id, COUNT(*) AS evaluated_count,
-                          SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
-                   FROM annotation_gold_results
-                   WHERE owner_id=? AND project_id=?
-                   GROUP BY annotator_id ORDER BY annotator_id""",
+            latest_session = db.execute(
+                "SELECT session_id FROM annotation_calibration_sessions WHERE owner_id=? AND project_id=? "
+                "ORDER BY created_at DESC, session_id DESC LIMIT 1",
                 (owner_id, project_id),
-            ).fetchall()
+            ).fetchone()
+            if latest_session is not None:
+                rows = db.execute(
+                    """SELECT annotator_id, COUNT(*) AS evaluated_count,
+                              SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
+                       FROM annotation_gold_results
+                       WHERE owner_id=? AND project_id=? AND session_id=?
+                       GROUP BY annotator_id ORDER BY annotator_id""",
+                    (owner_id, project_id, latest_session["session_id"]),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """SELECT annotator_id, COUNT(*) AS evaluated_count,
+                              SUM(correct) AS correct_count, MAX(created_at) AS last_evaluated_at
+                       FROM annotation_gold_results
+                       WHERE owner_id=? AND project_id=?
+                       GROUP BY annotator_id ORDER BY annotator_id""",
+                    (owner_id, project_id),
+                ).fetchall()
             gold_count = db.execute(
                 "SELECT COUNT(*) FROM annotation_gold_standards WHERE owner_id=? AND project_id=?",
                 (owner_id, project_id),
@@ -1881,11 +1896,23 @@ class SQLiteAnnotationWorkbench:
                 required_samples = policy["minimum_gold_tasks"] if policy else minimum_gold_tasks
                 required_accuracy = policy["passing_accuracy"] if policy else passing_accuracy
                 maximum_age_days = policy["maximum_age_days"] if policy else 90
-                calibration = db.execute(
-                    "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
-                    "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=?",
-                    (owner_id, project_id, reviewer_id),
+                latest_session = db.execute(
+                    "SELECT session_id FROM annotation_calibration_sessions WHERE owner_id=? AND project_id=? "
+                    "ORDER BY created_at DESC, session_id DESC LIMIT 1",
+                    (owner_id, project_id),
                 ).fetchone()
+                if latest_session is not None:
+                    calibration = db.execute(
+                        "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
+                        "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=? AND session_id=?",
+                        (owner_id, project_id, reviewer_id, latest_session["session_id"]),
+                    ).fetchone()
+                else:
+                    calibration = db.execute(
+                        "SELECT COUNT(*) AS n, COALESCE(SUM(correct), 0) AS correct, MAX(created_at) AS last_evaluated_at "
+                        "FROM annotation_gold_results WHERE owner_id=? AND project_id=? AND annotator_id=?",
+                        (owner_id, project_id, reviewer_id),
+                    ).fetchone()
                 n = calibration["n"]
                 accuracy = calibration["correct"] / n if n else 0.0
                 last_evaluated = None
