@@ -146,7 +146,10 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             "owner:alice", task.task_id, payload={"label": "positive"},
             expected_version=claimed.version, human_confirmed=True,
         )
-        queue = self.store.list_review_queue("owner:alice", project.project_id)
+        self.store.grant_reviewer("owner:alice", project.project_id, "owner:reviewer")
+        queue = self.store.list_review_queue(
+            "owner:alice", project.project_id, reviewer_id="owner:reviewer"
+        )
         self.assertEqual([item.submission.submission_id for item in queue], [submission.submission_id])
         with self.assertRaisesRegex(PermissionError, "self_review_prohibited"):
             self.store.review(
@@ -159,7 +162,11 @@ class DataAnnotationWorkbenchTests(unittest.TestCase):
             expected_project_id=project.project_id,
         )
         self.assertEqual(reviewed.reviewer_id, "owner:reviewer")
-        self.assertEqual(self.store.list_review_queue("owner:alice", project.project_id), [])
+        self.assertEqual(
+            self.store.list_review_queue(
+                "owner:alice", project.project_id, reviewer_id="owner:reviewer"
+            ), []
+        )
 
     def test_project_completion_requires_all_tasks_accepted_and_is_terminal(self):
         task = self._task()
