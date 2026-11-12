@@ -924,7 +924,7 @@ class AnnotationReworkAndManifestTests(unittest.TestCase):
             assignments.extend(created)
         now = datetime.now(timezone.utc)
         gold_id = "gold-drift-fixture"
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             db.execute(
                 "INSERT INTO annotation_gold_standards "
                 "(gold_id, owner_id, project_id, task_id, expected_label, created_at) "
