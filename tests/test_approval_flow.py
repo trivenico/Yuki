@@ -48,9 +48,11 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             session_id=session_id, confirm=confirm,
         )
 
-    def test_audit_log_is_mandatory(self):
+    def test_audit_log_and_trusted_executor_resolver_are_mandatory(self):
         with self.assertRaisesRegex(ValueError, "required approval audit log"):
             ApprovalCoordinator()
+        with self.assertRaisesRegex(ValueError, "trusted host planner_resolver"):
+            ApprovalCoordinator(audit_log=MemoryAudit())
 
     def test_audit_failure_does_not_leave_pending_request_available(self):
         class BrokenAudit:
