@@ -1,3 +1,4 @@
+import multiprocessing
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,21 @@ from core.conversation_store import (
     ConversationNotFound,
     ConversationStore,
 )
+
+
+def _hold_generation_lease(database_path, owner_id, conversation_id, ready, release):
+    store = ConversationStore(database_path)
+    try:
+        store.acquire_generation_lease(
+            owner_id=owner_id, conversation_id=conversation_id,
+            lease_token="subprocess-worker", ttl_seconds=30,
+        )
+        ready.set()
+        if not release.wait(10):
+            raise TimeoutError("parent did not release subprocess lease test")
+    except Exception:
+        ready.set()
+        raise
 
 
 class ConversationStoreTests(unittest.TestCase):
@@ -172,6 +188,30 @@ class ConversationStoreTests(unittest.TestCase):
         self.assertEqual(self.store.list_interrupted_generations(
             owner_id=self.other_owner, conversation_id=self.conversation["conversation_id"]
         ), [])
+
+    def test_generation_lease_is_exclusive_across_processes(self):
+        conversation_id = self.conversation["conversation_id"]
+        ready = multiprocessing.Event()
+        release = multiprocessing.Event()
+        process = multiprocessing.Process(
+            target=_hold_generation_lease,
+            args=(str(self.store.database_path), self.owner, conversation_id, ready, release),
+        )
+        process.start()
+        try:
+            self.assertTrue(ready.wait(10), "subprocess did not acquire its lease")
+            with self.assertRaises(ConversationConflict):
+                self.store.acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="parent-worker", ttl_seconds=30,
+                )
+        finally:
+            release.set()
+            process.join(10)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+        self.assertEqual(process.exitcode, 0)
 
     def test_generation_lease_is_exclusive_across_independent_store_instances(self):
         second = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
