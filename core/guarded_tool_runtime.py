@@ -87,6 +87,7 @@ class GuardedToolRuntime:
                     or set(execution_context) != required
                     or any(not isinstance(value, str) or not value.strip() or len(value) > 256
                            for value in execution_context.values())):
+                self._record(name if isinstance(name, str) and name else "invalid", "invalid_execution_context")
                 return "Tool blocked because its authenticated execution context is invalid."
             # Policies receive an immutable host-created snapshot, never model data.
             execution_context = MappingProxyType(dict(execution_context))
