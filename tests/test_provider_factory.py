@@ -22,6 +22,8 @@ class ProviderFactoryTests(unittest.TestCase):
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
             create_provider({"provider": "ollama", "ollama_model": ""})
+        with self.assertRaisesRegex(ValueError, "model"):
+            create_provider({"provider": "ollama"}, environ={})
 
     def test_gemini_provider_is_constructible_without_cli_installation(self):
         provider = create_provider({"provider": "gemini"}, environ={})
