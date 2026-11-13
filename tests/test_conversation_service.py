@@ -84,6 +84,98 @@ class ConversationServiceTests(unittest.TestCase):
             self.send(owner="owner-b")
         self.assertEqual(self.observed, [])
 
+    def test_owner_factory_routes_authenticated_owners_to_distinct_loops(self):
+        loops = {}
+        invoked = []
+
+        def factory(owner_id):
+            invoked.append(owner_id)
+            protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+            loop = AgentExecutionLoop(
+                lambda **kwargs: {"text": "answer:" + owner_id, "tool_calls": {"tool_calls": []}},
+                protocol,
+            )
+            loops[owner_id] = loop
+            return loop
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        first = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="first", request_id="owner-a-request", expected_version=0, tools=[],
+        )
+        other = service.create(owner_id="owner-b")
+        second = service.reply(
+            owner_id="owner-b", conversation_id=other["conversation_id"],
+            user_text="second", request_id="owner-b-request", expected_version=0, tools=[],
+        )
+        self.assertEqual(first["answer"], "answer:owner-a")
+        self.assertEqual(second["answer"], "answer:owner-b")
+        self.assertIsNot(loops["owner-a"], loops["owner-b"])
+        self.assertEqual(invoked, ["owner-a", "owner-b"])
+
+    def test_owner_factory_rejects_cross_owner_loop_reuse(self):
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        shared = AgentExecutionLoop(
+            lambda **kwargs: {"text": "shared", "tool_calls": {"tool_calls": []}},
+            protocol,
+        )
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=lambda owner: shared)
+        first = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="first", request_id="shared-owner-a", expected_version=0, tools=[],
+        )
+        other = service.create(owner_id="owner-b")
+        second = service.reply(
+            owner_id="owner-b", conversation_id=other["conversation_id"],
+            user_text="second", request_id="shared-owner-b", expected_version=0, tools=[],
+        )
+        self.assertEqual(first["answer"], "shared")
+        self.assertEqual(second["status"], "failed")
+        self.assertNotIn("shared", second["answer"])
+
+    def test_independent_owner_conversations_execute_concurrently(self):
+        import threading
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def factory(owner_id):
+            def model(**kwargs):
+                try:
+                    barrier.wait(timeout=3)
+                except threading.BrokenBarrierError:
+                    raise AssertionError("independent owners were serialized")
+                return {"text": owner_id, "tool_calls": {"tool_calls": []}}
+            return AgentExecutionLoop(model, StructuredToolProtocol(
+                GuardedToolRuntime({}, AllowNothing())
+            ))
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        other = service.create(owner_id="owner-b")
+        requests = [
+            ("owner-a", self.conversation["conversation_id"], "parallel-a"),
+            ("owner-b", other["conversation_id"], "parallel-b"),
+        ]
+
+        def run(owner, conversation_id, request_id):
+            try:
+                results.append(service.reply(
+                    owner_id=owner, conversation_id=conversation_id,
+                    user_text="parallel", request_id=request_id,
+                    expected_version=0, tools=[],
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run, args=item) for item in requests]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual({item["answer"] for item in results}, {"owner-a", "owner-b"})
+
     def test_model_failure_is_sanitized_and_persisted(self):
         def failing_model(**kwargs):
             raise RuntimeError("secret provider response and credentials")
