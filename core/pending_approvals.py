@@ -102,7 +102,7 @@ class SQLitePendingApprovalStore:
             db.execute("BEGIN IMMEDIATE")
             try:
                 db.execute("""DELETE FROM pending_approvals
-                    WHERE expires_at <= ? AND status IN ('pending', 'completed', 'denied', 'outcome_unknown')""",
+                    WHERE expires_at <= ? AND status IN ('pending', 'completed', 'denied')""",
                     (now.isoformat(),))
                 count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
                 if count >= self.max_pending:
@@ -209,9 +209,9 @@ class SQLitePendingApprovalStore:
                 db.execute("ROLLBACK")
                 raise
 
-    def deny(self, pending_id: str) -> bool:
-        if not isinstance(pending_id, str) or not pending_id:
-            return False
-        with self._connect() as db:
-            cursor = db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
-            return cursor.rowcount == 1
+    def deny(self, pending_id: str, *, actor: str, session_id: str) -> bool:
+        """Owner-bound denial that retains the audit-failure tombstone."""
+        return self.transition(
+            pending_id, expected_status="pending", new_status="denied",
+            actor=actor, session_id=session_id,
+        ) is not None
