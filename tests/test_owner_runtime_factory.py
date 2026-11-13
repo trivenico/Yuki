@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -155,6 +156,60 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         alice = factory("owner:alice")
         bob = factory("owner:bob")
         self.assertIsNot(alice.tool_protocol, bob.tool_protocol)
+
+    def test_concurrent_tool_approval_execution_and_audit_are_owner_bound(self):
+        import threading
+
+        approvals = []
+        audits = []
+        barrier = threading.Barrier(2)
+
+        class OwnerPolicy:
+            def __init__(self, owner):
+                self.owner = owner
+
+            def authorize_tool(self, name):
+                approvals.append((self.owner, name))
+                return True
+
+        def runtime_for_owner(owner):
+            return GuardedToolRuntime(
+                {"owner.read": lambda argument: owner + ":" + argument},
+                OwnerPolicy(owner),
+                audit=lambda name, outcome: audits.append((owner, name, outcome)),
+            )
+
+        factory = OwnerAgentLoopFactory(self.store, tool_runtime_for_owner=runtime_for_owner)
+        results = {}
+
+        def invoke(owner):
+            loop = factory(owner)
+            barrier.wait(timeout=5)
+            results[owner] = loop.tool_protocol.dispatch(json.dumps({
+                "tool_calls": [{"id": owner.replace(":", "-"), "name": "owner.read",
+                                "arguments": {"value": "private"}}],
+            }))
+
+        workers = [
+            threading.Thread(target=invoke, args=("owner:alice",)),
+            threading.Thread(target=invoke, args=("owner:bob",)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(set(results), {"owner:alice", "owner:bob"})
+        self.assertEqual(results["owner:alice"][0].output, 'owner:alice:{"value":"private"}')
+        self.assertEqual(results["owner:bob"][0].output, 'owner:bob:{"value":"private"}')
+        self.assertCountEqual(approvals, [
+            ("owner:alice", "owner.read"), ("owner:bob", "owner.read"),
+        ])
+        self.assertCountEqual(audits, [
+            ("owner:alice", "tool:owner.read", "completed"),
+            ("owner:bob", "tool:owner.read", "completed"),
+        ])
 
     def test_factory_rejects_shared_authorization_policy_between_owners(self):
         shared_policy = AllowNothing()
