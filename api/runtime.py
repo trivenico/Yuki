@@ -129,10 +129,8 @@ def build_conversation_runtime(
         raise ValueError("OAuth provider catalog requires authorization service configuration")
 
     application = build_conversation_application_runtime(
-        config, agent_loop=agent_loop,
+        config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
     )
-    if agent_loop_for_owner is not None:
-        application.conversations.agent_loop_for_owner = agent_loop_for_owner
     try:
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
