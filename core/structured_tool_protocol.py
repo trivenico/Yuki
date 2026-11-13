@@ -107,14 +107,14 @@ class StructuredToolProtocol:
         """Names actually executable by this owner-bound guarded runtime."""
         return self._runtime.registered_tool_names
 
-    def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
+    def dispatch(self, response: str, *, execution_context: Mapping[str, str] | None = None) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
         calls = parse_tool_calls(response)
         results = []
         for call in calls:
             argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
-            output = self._runtime.invoke(call.name, argument)
+            output = self._runtime.invoke(call.name, argument, execution_context=execution_context)
             results.append(StructuredToolResult(call.call_id, call.name, output))
         return tuple(results)
 
