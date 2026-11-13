@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import random
 import sys
 from pathlib import Path
 
@@ -68,17 +67,16 @@ def main() -> int:
     if not corpus_path.is_file():
         raise SystemExit("corpus must be a regular file")
     raw = corpus_path.read_bytes()
-    if len(raw) < args.block_size + 2:
-        raise SystemExit("corpus is too small for the selected block-size")
+    if len(raw) < (2 * (args.block_size + 1)):
+        raise SystemExit("corpus must contain at least 2 * (block-size + 1) UTF-8 bytes for train and validation splits")
     text = raw.decode("utf-8")
     token_ids = torch.tensor(list(text.encode("utf-8")), dtype=torch.long)
     split = max(args.block_size + 1, int(len(token_ids) * 0.9))
-    split = min(split, len(token_ids) - 1)
+    split = min(split, len(token_ids) - args.block_size - 1)
     train_data, val_data = token_ids[:split], token_ids[split:]
     if len(val_data) < args.block_size + 1:
         val_data = train_data
 
-    random.seed(args.seed)
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
