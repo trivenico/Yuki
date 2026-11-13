@@ -171,15 +171,19 @@ def verify_signed_bundle(bundle: str | Path, public_key_path: str | Path) -> dic
 def stage_verified_bundle(
     bundle: str | Path,
     public_key_path: str | Path,
-    staging_parent: str | Path | None = None,
-) -> tempfile.TemporaryDirectory[str]:
+) -> tempfile.TemporaryDirectory:
     """Copy only authenticated files to host temp storage, then verify the copy."""
     source = Path(bundle).expanduser().resolve(strict=True)
     manifest = verify_signed_bundle(source, public_key_path)
-    parent = Path(staging_parent).expanduser().resolve() if staging_parent is not None else None
-    if parent is not None:
-        parent.mkdir(parents=True, exist_ok=True)
-    staged_temp = tempfile.TemporaryDirectory(prefix="yuki-verified-", dir=parent)
+    staged_temp = tempfile.TemporaryDirectory(prefix="yuki-verified-")
+    staged_root = Path(staged_temp.name).resolve(strict=True)
+    try:
+        staged_root.relative_to(source)
+    except ValueError:
+        pass
+    else:
+        staged_temp.cleanup()
+        raise BootstrapError("Host staging directory must be outside the removable bundle.")
     staged = Path(staged_temp.name)
     try:
         try:
@@ -212,8 +216,6 @@ def run_verified_bundle(
     public_key_path: str | Path,
     entrypoint: str,
     arguments: list[str] | None = None,
-    *,
-    staging_parent: str | Path | None = None,
 ) -> int:
     if not isinstance(entrypoint, str) or not entrypoint or "\\" in entrypoint:
         raise BootstrapError("Entrypoint must be a canonical relative path inside the signed bundle.")
@@ -221,7 +223,7 @@ def run_verified_bundle(
     if relative.is_absolute() or any(part in {"", ".", ".."} for part in entrypoint.split("/")) or relative.as_posix() != entrypoint:
         raise BootstrapError("Entrypoint must be a canonical relative path inside the signed bundle.")
 
-    staged_temp = stage_verified_bundle(bundle, public_key_path, staging_parent)
+    staged_temp = stage_verified_bundle(bundle, public_key_path)
     try:
         staged = Path(staged_temp.name)
         executable = staged.joinpath(*relative.parts)
