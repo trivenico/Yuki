@@ -158,6 +158,57 @@ class AgentExecutionLoopTests(unittest.TestCase):
                         "Test", tools=self.tools)
         self.assertEqual(self.invocations, [])
 
+    def test_authenticated_execution_context_reaches_policy_immutably(self):
+        observed = []
+
+        class ContextPolicy:
+            def authorize_tool(self, name):
+                return False
+
+            def authorize_tool_context(self, name, context):
+                observed.append((name, context))
+                with self.assertRaises(TypeError):
+                    context["actor"] = "attacker"
+                return context["actor"] == "owner-a"
+
+        runtime = GuardedToolRuntime(
+            {"echo": lambda raw: self.invocations.append(json.loads(raw)) or "ok"},
+            ContextPolicy(),
+        )
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "context_call", "name": "echo", "arguments": {"value": "safe"}}
+            ]}},
+            StructuredToolProtocol(runtime),
+        )
+        context = {
+            "actor": "owner-a", "session_id": "session-digest",
+            "conversation_id": "conversation-123", "request_id": "request-123",
+        }
+        result = loop.run("Use the tool", tools=self.tools, execution_context=context)
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(self.invocations, [{"value": "safe"}])
+        self.assertEqual(observed[0][0], "echo")
+        self.assertEqual(dict(observed[0][1]), context)
+
+    def test_invalid_execution_context_blocks_tool_before_policy_or_handler(self):
+        policy_calls = []
+        handler_calls = []
+
+        class ContextPolicy:
+            def authorize_tool(self, name):
+                policy_calls.append(name)
+                return True
+
+        runtime = GuardedToolRuntime(
+            {"echo": lambda raw: handler_calls.append(raw) or "ok"},
+            ContextPolicy(),
+        )
+        result = runtime.invoke("echo", "{}", execution_context={"actor": "owner-a"})
+        self.assertIn("invalid", result)
+        self.assertEqual(policy_calls, [])
+        self.assertEqual(handler_calls, [])
+
     def test_non_finite_model_tool_arguments_fail_before_dispatch(self):
         for invalid in (float("nan"), float("inf"), float("-inf")):
             response = {"text": "", "tool_calls": {"tool_calls": [
