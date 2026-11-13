@@ -85,6 +85,8 @@ class ApprovalCoordinator:
                     "actor": actor, "session_id": session_id,
                 }
         if not created:
+            if getattr(stored, "status", "pending") != "pending":
+                raise RuntimeError("idempotent approval request already reached a terminal or claimed state")
             return ApprovalOutcome(False, "pending_approval", pending_id=pending_id, result=action)
         try:
             self._audit("requested", pending_id, actor, skill_id)
