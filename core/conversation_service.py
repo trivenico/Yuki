@@ -199,6 +199,7 @@ class ConversationService:
                     owner_id=owner_id, conversation_id=conversation_id,
                     role="user", content=user_text, idempotency_key=request_id,
                     expected_version=expected_version,
+                    generation_lease_token=lease_token,
                 )
                 if duplicate["created"]:
                     raise ConversationConflict("conversation version changed.")
@@ -216,6 +217,7 @@ class ConversationService:
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="user", content=user_text, idempotency_key=request_id,
                 expected_version=expected_version, generation_request_id=request_id,
+                generation_lease_token=lease_token,
             )
             if not user_result["created"]:
                 return self._replay_or_conflict(
