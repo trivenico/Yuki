@@ -113,6 +113,59 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIsNot(loops["owner-a"], loops["owner-b"])
         self.assertEqual(invoked, ["owner-a", "owner-b"])
 
+
+    def test_owner_tool_catalog_must_match_owner_guarded_handlers(self):
+        invoked = []
+        model_calls = []
+
+        class AllowRegistered:
+            def authorize_tool(self, name):
+                return name == "owner_safe"
+
+        def factory(owner_id):
+            runtime = GuardedToolRuntime(
+                {"owner_safe": lambda argument: invoked.append(owner_id) or "ok"},
+                AllowRegistered(),
+                audit=lambda name, outcome: invoked.append((owner_id, name, outcome)),
+            )
+            return AgentExecutionLoop(
+                lambda **kwargs: model_calls.append(owner_id) or {
+                    "text": "answer", "tool_calls": {"tool_calls": []}
+                },
+                StructuredToolProtocol(runtime),
+            )
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="use tools", request_id="mismatched-tool-catalog",
+            expected_version=0,
+            tools=[{"type": "function", "function": {"name": "owner_other", "parameters": {"type": "object"}}}],
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(model_calls, [])
+        self.assertEqual(invoked, [])
+
+    def test_owner_tool_catalog_accepts_exact_registered_handler_names(self):
+        model_calls = []
+        def factory(owner_id):
+            runtime = GuardedToolRuntime({"owner_safe": lambda argument: "ok"}, AllowNothing())
+            return AgentExecutionLoop(
+                lambda **kwargs: model_calls.append(owner_id) or {
+                    "text": "answer", "tool_calls": {"tool_calls": []}
+                },
+                StructuredToolProtocol(runtime),
+            )
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="hello", request_id="matching-tool-catalog", expected_version=0,
+            tools=[{"type": "function", "function": {"name": "owner_safe", "parameters": {"type": "object"}}}],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(model_calls, ["owner-a"])
+
     def test_owner_factory_rejects_cross_owner_loop_reuse(self):
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
         shared = AgentExecutionLoop(
