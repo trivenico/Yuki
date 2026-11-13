@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import threading
 from typing import Any, Callable
 
+from core.operation_context import OperationExecutionContext, bind_operation_context
+
 
 @dataclass(frozen=True)
 class ApprovalOutcome:
@@ -256,7 +258,18 @@ class ApprovalCoordinator:
                 return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
 
         try:
-            result = target(action)
+            if persistent:
+                execution_context = OperationExecutionContext(
+                    pending_id=pending_id,
+                    operation_id=operation_intent["operation_id"],
+                    action_digest=operation_intent["action_digest"],
+                    actor=actor,
+                    session_id=session_id,
+                )
+                with bind_operation_context(execution_context):
+                    result = target(action)
+            else:
+                result = target(action)
         except Exception as exc:
             # An executor exception does not prove that no external side effect
             # occurred: a provider may have committed the action before a

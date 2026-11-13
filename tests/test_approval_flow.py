@@ -605,3 +605,76 @@ class ApprovalCoordinatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApprovalOperationContextTests(unittest.TestCase):
+    def test_persistent_execution_exposes_durable_operation_context_to_executor(self):
+        from core.operation_context import current_operation_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            observed = []
+
+            class ContextExecutor:
+                def execute_approved_action(self, action):
+                    observed.append(current_operation_context())
+                    return SimpleNamespace(ok=True, value="done")
+
+            executor = ContextExecutor()
+            coordinator = ApprovalCoordinator(
+                pending_store=store,
+                audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: executor,
+            )
+            pending = coordinator.record(
+                self_planner := FakePlanner(), action_result("bind context"),
+                actor="owner-a", session_id="session-a",
+            )
+            outcome = coordinator.approve(
+                self_planner, pending.pending_id, actor="owner-a",
+                session_id="session-a", confirm=lambda _action: True,
+            )
+
+            self.assertEqual(outcome.status, "completed")
+            self.assertEqual(len(observed), 1)
+            context = observed[0]
+            intent = store.get_operation_intent(
+                pending.pending_id, actor="owner-a", session_id="session-a",
+            )
+            self.assertEqual(context.pending_id, pending.pending_id)
+            self.assertEqual(context.operation_id, intent["operation_id"])
+            self.assertEqual(context.action_digest, intent["action_digest"])
+            self.assertEqual(context.actor, "owner-a")
+            self.assertEqual(context.session_id, "session-a")
+            self.assertIsNone(current_operation_context())
+
+    def test_operation_context_is_reset_when_executor_raises(self):
+        from core.operation_context import current_operation_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+
+            class FailingExecutor:
+                def execute_approved_action(self, _action):
+                    self.assert_bound = current_operation_context() is not None
+                    raise TimeoutError("provider outcome is ambiguous")
+
+            executor = FailingExecutor()
+            coordinator = ApprovalCoordinator(
+                pending_store=store,
+                audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: executor,
+            )
+            planner = FakePlanner()
+            pending = coordinator.record(
+                planner, action_result("reset context"),
+                actor="owner-a", session_id="session-a",
+            )
+            outcome = coordinator.approve(
+                planner, pending.pending_id, actor="owner-a",
+                session_id="session-a", confirm=lambda _action: True,
+            )
+
+            self.assertEqual(outcome.status, "recovery_required")
+            self.assertTrue(executor.assert_bound)
+            self.assertIsNone(current_operation_context())
