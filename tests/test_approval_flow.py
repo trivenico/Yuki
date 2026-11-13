@@ -317,14 +317,14 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 item.pending_id, expected_status="pending", new_status="claimed",
                 actor="owner", session_id="session-a",
             )
-            approved = store.transition(
+            self.assertEqual(store.transition(
                 item.pending_id, expected_status="claimed", new_status="approved",
                 actor="owner", session_id="session-a",
-            )
-            executing = store.transition(
+            ).status, "approved")
+            self.assertEqual(store.transition(
                 item.pending_id, expected_status="approved", new_status="executing",
                 actor="owner", session_id="session-a",
-            )
+            ).status, "executing")
             unknown = store.transition(
                 item.pending_id, expected_status="executing", new_status="outcome_unknown",
                 actor="owner", session_id="session-a",
