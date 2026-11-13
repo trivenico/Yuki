@@ -85,6 +85,28 @@ class StructuredToolProtocolTests(unittest.TestCase):
         with self.assertRaises(ToolProtocolError):
             parse_tool_calls(self.envelope([self.call(str(i)) for i in range(6)]))
 
+    def test_non_standard_json_constants_are_rejected_before_dispatch(self):
+        for value in (
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":NaN}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":Infinity}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":-Infinity}}]}',
+        ):
+            with self.subTest(value=value), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch(value)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
+    def test_duplicate_json_keys_are_rejected_at_every_object_level(self):
+        values = (
+            '{"tool_calls":[],"tool_calls":[]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":1,"n":2}}]}',
+        )
+        for value in values:
+            with self.subTest(value=value), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch(value)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
     def test_policy_denial_does_not_execute(self):
         self.policy.allowed = False
         results = self.protocol.dispatch(self.envelope([self.call()]))

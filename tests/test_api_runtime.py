@@ -14,6 +14,8 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from providers.owner_runtime_factory import OwnerAgentLoopFactory
+from providers.profile_store import ProviderProfileStore
 
 
 class _NoApprovals:
@@ -44,6 +46,89 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
             self.assertTrue(runtime._closed)
+
+    def test_runtime_wires_authenticated_owner_execution_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            factory = lambda owner_id: _loop()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=factory,
+            )
+            self.assertIs(runtime.app.conversations.agent_loop_for_owner, factory)
+            runtime.close()
+
+
+    def test_owner_factory_store_is_shared_with_profile_api_and_lifecycle(self):
+        class MemoryVault:
+            def set_secret(self, reference, secret): pass
+            def get_secret(self, reference): return None
+            def delete_secret(self, reference): pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            profiles = ProviderProfileStore(root / "profiles.sqlite3", MemoryVault())
+            factory = OwnerAgentLoopFactory(profiles)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=factory,
+            )
+            self.assertIs(runtime.provider_profile_store, profiles)
+            # Profile routes are mounted over the same store used by the runtime factory.
+            from api.provider_profiles import AuthenticatedProviderProfileAPI
+            self.assertIsInstance(runtime.app, AuthenticatedProviderProfileAPI)
+            self.assertIs(runtime.app.store, profiles)
+            runtime.close()
+            self.assertTrue(runtime._closed)
+
+    def test_profile_api_cannot_be_mounted_without_profile_activating_owner_factory(self):
+        class MemoryVault:
+            def set_secret(self, reference, secret): pass
+            def get_secret(self, reference): return None
+            def delete_secret(self, reference): pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            profiles = ProviderProfileStore(root / "profiles.sqlite3", MemoryVault())
+            with self.assertRaisesRegex(ValueError, "requires the OwnerAgentLoopFactory"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    provider_profile_store=profiles,
+                )
+            profiles.close()
+
+    def test_runtime_rejects_different_profile_store_from_owner_factory(self):
+        class MemoryVault:
+            def set_secret(self, reference, secret): pass
+            def get_secret(self, reference): return None
+            def delete_secret(self, reference): pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            runtime_store = ProviderProfileStore(root / "runtime.sqlite3", MemoryVault())
+            factory_store = ProviderProfileStore(root / "factory.sqlite3", MemoryVault())
+            factory = OwnerAgentLoopFactory(factory_store)
+            with self.assertRaisesRegex(ValueError, "share the same profile store"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    agent_loop_for_owner=factory, provider_profile_store=runtime_store,
+                )
+            runtime_store.close()
+            factory_store.close()
+
+    def test_runtime_rejects_invalid_owner_execution_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "agent_loop_for_owner"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=object(),
+                )
 
     def test_runtime_injects_provider_catalog_callback(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,3 +1,4 @@
+import multiprocessing
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,21 @@ from core.conversation_store import (
     ConversationNotFound,
     ConversationStore,
 )
+
+
+def _hold_generation_lease(database_path, owner_id, conversation_id, ready, release):
+    store = ConversationStore(database_path)
+    try:
+        store.acquire_generation_lease(
+            owner_id=owner_id, conversation_id=conversation_id,
+            lease_token="subprocess-worker", ttl_seconds=30,
+        )
+        ready.set()
+        if not release.wait(10):
+            raise TimeoutError("parent did not release subprocess lease test")
+    except Exception:
+        ready.set()
+        raise
 
 
 class ConversationStoreTests(unittest.TestCase):
@@ -172,6 +188,167 @@ class ConversationStoreTests(unittest.TestCase):
         self.assertEqual(self.store.list_interrupted_generations(
             owner_id=self.other_owner, conversation_id=self.conversation["conversation_id"]
         ), [])
+
+    def test_generation_lease_is_exclusive_across_processes(self):
+        conversation_id = self.conversation["conversation_id"]
+        ready = multiprocessing.Event()
+        release = multiprocessing.Event()
+        process = multiprocessing.Process(
+            target=_hold_generation_lease,
+            args=(str(self.store.database_path), self.owner, conversation_id, ready, release),
+        )
+        process.start()
+        try:
+            self.assertTrue(ready.wait(10), "subprocess did not acquire its lease")
+            with self.assertRaises(ConversationConflict):
+                self.store.acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="parent-worker", ttl_seconds=30,
+                )
+        finally:
+            release.set()
+            process.join(10)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+        self.assertEqual(process.exitcode, 0)
+        # A dead worker cannot release its durable lease implicitly. Recovery
+        # must wait for expiry, after which a replacement worker can claim it.
+        with self.assertRaises(ConversationConflict):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-before-expiry", ttl_seconds=30,
+            )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        recovered = self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="replacement-after-expiry", ttl_seconds=30,
+        )
+        self.assertGreater(recovered["expires_at"], 0)
+
+    def test_generation_lease_is_exclusive_across_independent_store_instances(self):
+        second = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+        conversation_id = self.conversation["conversation_id"]
+        try:
+            first_lease = self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="worker-one-token", ttl_seconds=30,
+            )
+            self.assertGreater(first_lease["expires_at"], 0)
+            with self.assertRaises(ConversationConflict):
+                second.acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="worker-two-token", ttl_seconds=30,
+                )
+            self.assertTrue(self.store.release_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="worker-one-token",
+            ))
+            second_lease = second.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="worker-two-token", ttl_seconds=30,
+            )
+            self.assertGreater(second_lease["expires_at"], first_lease["expires_at"])
+        finally:
+            pass
+    def test_expired_lease_can_be_reclaimed_but_old_token_cannot_release_new_lease(self):
+        second = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+        conversation_id = self.conversation["conversation_id"]
+        try:
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="stale-worker", ttl_seconds=30,
+            )
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE conversation_generation_leases SET expires_at=? WHERE conversation_id=?",
+                    (0, conversation_id),
+                )
+            second.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker", ttl_seconds=30,
+            )
+            self.assertFalse(self.store.release_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="stale-worker",
+            ))
+            self.assertTrue(second.release_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker",
+            ))
+        finally:
+            pass
+
+    def test_stale_generation_worker_cannot_write_after_lease_replacement(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Run safely", idempotency_key="fenced-request",
+            expected_version=0, generation_request_id="fenced-request",
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-old", ttl_seconds=30,
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        self.assertTrue(self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-new", ttl_seconds=30,
+        ))
+        self.assertFalse(self.store.update_generation_checkpoint(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", checkpoint={"phase": "stale"},
+            lease_token="worker-old",
+        ))
+        self.assertFalse(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", status="completed",
+            lease_token="worker-old",
+        ))
+        with self.assertRaises(ConversationConflict):
+            self.store.append_message(
+                owner_id=self.owner, conversation_id=conversation_id, role="assistant",
+                content="Stale response", idempotency_key="assistant:fenced-request",
+                expected_version=1, generation_lease_token="worker-old",
+            )
+        self.assertTrue(self.store.update_generation_checkpoint(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", checkpoint={"phase": "current"},
+            lease_token="worker-new",
+        ))
+        self.assertTrue(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", status="completed",
+            lease_token="worker-new",
+        ))
+
+    def test_generation_lease_renewal_requires_current_unexpired_token(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="renew-worker", ttl_seconds=30,
+        )
+        self.assertTrue(self.store.renew_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="renew-worker", ttl_seconds=60,
+        ))
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        self.assertFalse(self.store.renew_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="renew-worker", ttl_seconds=60,
+        ))
 
 if __name__ == "__main__":
     unittest.main()

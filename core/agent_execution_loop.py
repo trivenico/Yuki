@@ -107,6 +107,7 @@ class AgentExecutionLoop:
         history: Sequence[Mapping[str, str]] = (),
         on_text_delta: Callable[[str], None] | None = None,
         cancellation_requested: Callable[[], bool] | None = None,
+        execution_context: Mapping[str, str] | None = None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
@@ -227,7 +228,7 @@ class AgentExecutionLoop:
             if not isinstance(envelope, Mapping):
                 raise AgentExecutionError("model tool_calls must be a structured envelope.")
             try:
-                encoded_envelope = json.dumps(dict(envelope), ensure_ascii=False, separators=(",", ":"))
+                encoded_envelope = json.dumps(dict(envelope), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
                 from core.structured_tool_protocol import parse_tool_calls
                 parsed = parse_tool_calls(encoded_envelope)
             except (TypeError, ValueError) as exc:
@@ -253,7 +254,7 @@ class AgentExecutionLoop:
 
             messages.append({"role": "assistant", "content": text or encoded_envelope})
             try:
-                results = self.tool_protocol.dispatch(encoded_envelope)
+                results = self.tool_protocol.dispatch(encoded_envelope, execution_context=execution_context)
                 formatted = self.tool_protocol.format_results(results)
             except Exception as exc:
                 self._event("agent.tool_dispatch_failed", error_type=type(exc).__name__)

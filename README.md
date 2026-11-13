@@ -1,6 +1,8 @@
 # Yuki
 
-Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations.
+Yuki is being built as a JARVIS-inspired, owner-controlled personal AI operating environment: one coherent assistant that can understand permissioned context, coordinate specialist agents, help across projects and everyday digital work, and operate approved tools across local and cloud environments. The target experience includes multimodal interaction, contextual assistance, a governed 100-role specialist workforce, secure computer use, portable desktop access, and persistent cloud/local continuity.
+
+**Product vision and capability status:** see the [Yuki Product Blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md). This is the complete product direction, not a claim that every capability is already implemented or production-ready.
 
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
@@ -290,3 +292,92 @@ yuki chat
 ```
 
 The installed CLI creates a user-owned configuration from packaged safe defaults on first use. See [installation and provider setup](docs/INSTALLATION.md). This packaging milestone provides the stable CLI entry point; it does not make the broader agent runtime, desktop application, or product production-ready.
+
+
+## Yuki's own model ecosystem
+
+**Yuki is intended to have its own model family and model-serving layer.** It will not be only a front end that forwards every request to a third-party API. The model strategy is to start from capable, already-trained open-weight models and build Yuki-specific models and services on top of them—not to pretrain a foundation model from random initialization as the default path.
+
+The intended model ecosystem includes:
+
+- **Yuki Core:** the primary conversational and reasoning model, adapted for Yuki's interaction style, instruction following, tool-use conventions, and policy-aware workflows.
+- **Yuki Code:** a coding-focused model or adapted coding checkpoint for repository understanding, implementation, debugging, testing, and review.
+- **Yuki Vision:** a vision-language model for supported image and document understanding.
+- **Yuki Speech:** speech recognition, speech generation, and optional voice components selected and evaluated as a coherent voice stack.
+- **Yuki Embeddings and Reranker:** retrieval models for semantic memory, project knowledge, document search, and evidence ranking.
+- **Yuki Specialist adapters:** task-specific adapters or routed models for research, analysis, security, operations, writing, and other specialist domains. These remain governed by the same agent/tool permissions; model specialization never grants authority.
+
+### How Yuki models will be built
+
+1. Select strong open-weight base checkpoints that fit the target quality, hardware, latency, and deployment needs. Verify the actual model licence, commercial-use permissions, redistribution terms, acceptable-use rules, and provenance individually.
+2. Use suitable openly licensed datasets and/or properly licensed synthetic examples for supervised fine-tuning, instruction tuning, domain adaptation, and evaluation. Dataset availability does not itself grant permission to train on it; record source, licence, consent/provenance, filtering, and intended use.
+3. Apply parameter-efficient methods such as LoRA/QLoRA where appropriate before considering expensive full fine-tuning. Use distillation only when the teacher model and generated training data permit it.
+4. Build Yuki-specific tool-use, agent-routing, structured-output, multilingual, safety, and workflow datasets from permitted sources. Keep held-out evaluation sets separate from training data.
+5. Evaluate quality, factuality, tool correctness, prompt-injection resistance, privacy leakage, multilingual performance, latency, memory/GPU use, and regression before promoting a checkpoint.
+6. Version model weights, adapters, tokenizer/configuration, datasets, evaluation reports, licences, and deployment manifests. Support rollback and reproducible model releases.
+7. Serve local models through a provider-neutral inference layer, with optional cloud models as explicitly configured fallbacks or specialist choices. The owner can choose local-only, cloud-enabled, or hybrid routing.
+
+**Important distinctions:** using an open-weight model is not the same as owning its original foundation weights; fine-tuning creates a Yuki-adapted checkpoint/adapter subject to the base model's licence. Retrieval-augmented generation, prompts, tools, and orchestration improve Yuki but do not by themselves create a new trained model. Yuki-specific model releases are a target capability, not a claim that custom-trained Yuki weights already exist in this repository.
+
+User conversations, private files, credentials, and personal memory must never be silently added to training data. Any contribution to model improvement requires separate, informed opt-in, minimization/redaction, retention controls, and a documented deletion policy. Model downloads and training artifacts belong in user-controlled data/model storage, not Git.
+
+Current state: **Partial/Planned.** Yuki has provider adapters and a local Ollama path, but the current repository documentation does not establish a released Yuki-owned fine-tuned model family, curated training corpus, reproducible fine-tuning pipeline, or model-evaluation/release process.
+
+## Yuki: complete product blueprint and delivery checklist
+
+**Product direction:** build Yuki as a complete, owner-controlled personal AI operating environment—not merely a chat wrapper, a collection of skill stubs, or a demo. The full target architecture, capability catalogue, acceptance criteria, safety rules, and implementation-status definitions are maintained in [Yuki Product Blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md). This blueprint is the source of truth for product scope; update it whenever a capability is added, changed, deferred, or removed.
+
+### What the complete Yuki is intended to do
+
+- **Understand and converse:** natural multilingual conversations, context-aware reasoning, planning, clarification, summaries, structured outputs, and multimodal understanding where configured.
+- **Think and orchestrate:** route work across configured local/cloud models, plan and critique work, use specialist agents, coordinate parallel tasks, maintain durable state, recover safely, and explain decisions.
+- **Operate as a 100-specialist-agent system:** a governed catalogue of focused agents across engineering, research, security, operations, productivity, learning, content, business, personal assistance, and integrations. Agents are bounded specialists—not 100 uncontrolled autonomous processes—and share one identity, policy, memory, audit, and approval framework.
+- **Remember with user control:** searchable long-term and working memory, project knowledge, preferences, retrieval, explicit correction/deletion, retention controls, and transparent provenance.
+- **Get work done:** durable workflows, schedules, reminders, event triggers, resumable jobs, browser/API integrations, document handling, workspace operations, and user-approved external actions.
+- **Be a software-engineering partner:** inspect repositories, understand architecture, plan changes, edit code, run permitted tests, debug failures, review security/performance, prepare pull requests, and report exact evidence. Destructive or externally consequential actions remain approval-gated.
+- **Research and create:** web/document research, source-grounded reports, knowledge extraction, writing, presentations, image/media workflows, and content production through configured backends.
+- **Support everyday life and work:** personal organization, study/coaching, accessibility, health-information organization (not diagnosis), manual finance organization (not unauthorized banking/trading), and compliant business/income-support workflows.
+- **Speak and listen when enabled:** explicit voice sessions, speech-to-text, text-to-speech, interruption, language/voice preferences, and optional wake-word operation with visible controls. Voice assistant functionality is in scope; **phone calling/telephony is not**.
+- **Connect to the owner's environment:** reviewed LAN, local-device, smart-home, vehicle, and external-service adapters with pairing, least privilege, allow-lists, explicit permissions, and audit trails. No silent microphone/camera activation or unrestricted device control.
+- **Offer optional companion experiences:** user-selected roles and an opt-in adult companion mode with transparent AI identity and healthy boundaries. No manipulation, coercion, possessiveness, dependency engineering, or exclusivity claims.
+- **Run reliably:** secure identity/session isolation, encrypted secret handling, backups, observability, policy enforcement, deployment tooling, migrations, disaster recovery, performance testing, and documented operations.
+
+### Implementation truth
+
+The complete target is **not yet delivered**. The current repository contains useful foundations and partial workflows, but some features remain scaffolds, require external adapters, or are not wired end to end. In particular, do not infer a finished capability from a registry entry, module, roadmap phase, or passing isolated test.
+
+- Current README-documented foundations include provider adapters/routing, a bounded agent/task loop, local memory and knowledge foundations, approval-gated skills, a durable local task queue, optional voice primitives, a small authenticated web-chat runtime, and defensive/security-lab components with explicit limitations.
+- Owner-isolated provider profiles and durable approval/recovery/reconciliation work is being developed in [PR #787](https://github.com/trivenico/Yuki/pull/787). It is **open, draft, and unmerged**; it is not yet a released mainline capability.
+- The complete 100-agent catalogue, robust autonomous orchestration, production-grade long-term memory, end-to-end voice conversation, desktop-grade product UX, broad verified integrations, compliant income workflows, and production deployment/operations are target capabilities—not claims of completion.
+- The README and blueprint must use the status labels **Implemented**, **Partial**, **Scaffold**, **Planned**, **Blocked**, and **Out of scope**. Only call a capability Implemented when its real runtime path, security controls, tests, and documented setup are present.
+
+### Product-wide non-negotiable requirements
+
+1. **No artificial Yuki usage quotas:** do not impose arbitrary daily/monthly/lifetime message, token, task, or agent-invocation caps. Clearly disclose actual provider billing/rate limits, hardware capacity, configured concurrency, and safety backpressure; never claim third-party limits can be removed.
+2. **One security model:** every agent, skill, tool, provider, connector, and interface uses the same authenticated owner/session context, policy checks, approvals, audit, and isolation boundaries.
+3. **No unsafe autonomy:** no arbitrary shell/code execution, hidden persistence, credential harvesting, unapproved purchases/messages/publications, unauthorized scraping, or automatic replay of uncertain side effects.
+4. **Privacy by default:** explicit consent for sensitive data and sensors; minimize collection; protect secrets; provide export, retention, and deletion controls.
+5. **Honest status:** distinguish code present, runtime integrated, tested, externally configured, production-ready, and released. No fabricated test, CI, deployment, or capability claims.
+6. **Income and platform compliance:** assist with legitimate research, planning, drafting, analysis, and permitted repetitive work. Respect platform terms, labor rules, intellectual property, and anti-abuse controls; no spam, fake engagement/accounts/reviews, deception, or unauthorized automation.
+7. **No telephony/calling feature:** voice conversation and speech interfaces are allowed; phone calls and calling integrations are deliberately excluded.
+
+See the blueprint for the detailed capability map, proposed specialist-agent domains, architecture, security model, phased delivery gates, and acceptance checklist.
+
+
+
+### Hybrid deployment and governed model improvement
+
+The target operating model is **Oracle Cloud Linux for production**, **Kaggle for isolated GPU training and evaluation**, **Hugging Face for pretrained model/dataset discovery and approved artifact distribution**, and **GitHub for source control, CI, review, and release automation**. This is a planned integration architecture, not a claim that these services are already provisioned or connected.
+
+Yuki's improvement loop will be governed: collect only permitted/minimized signals -> propose a code or model improvement -> version it in GitHub -> run tests and evaluations -> require authorized review -> stage and monitor on OCI -> promote or roll back. Kaggle workspaces must not receive production secrets or private user data. Model and dataset revisions, licences, provenance, training configurations, evaluation reports, and artifact hashes must be recorded. Private conversations, memory, files, and credentials are excluded from training by default; no silent online training, self-permission changes, or autonomous production deployment.
+
+See [the hybrid deployment and self-improvement blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md#11-hybrid-cloud-training-and-governed-self-improvement-architecture) for responsibilities, artifact lifecycle, routing, security boundaries, and acceptance gates.
+
+
+### Portable desktop and supervised computer use
+
+Yuki's target includes a portable desktop client for external SSD/USB storage, with a bundled per-platform Python runtime, secure authenticated connection to the Oracle Cloud Yuki service, optional local inference, and per-device revocation. An external SSD is recommended for performance and endurance; a USB flash drive can carry the client but may be unsuitable for heavy model/database workloads. “No installation” means no full system installation for supported user-space scenarios—not bypassing OS security, endpoint protection, code-signing, or accessibility permissions. Windows, macOS, and Linux require separately packaged and tested builds.
+
+Yuki may observe a selected screen/window and control approved desktop interactions only in an explicitly started, visibly indicated, revocable session. A local permission-enforcing broker, scoped actions, redaction, audit, pause/stop controls, and confirmation for consequential actions are mandatory. No silent capture, arbitrary shell access, credential-store access, security-control bypass, or hidden persistence is allowed. Screen contents are private data and are not used for training by default.
+
+See [the portable desktop and computer-use blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md#12-portable-desktop-client-and-supervised-computer-use-architecture). This capability is **Planned**, not yet delivered.

@@ -185,6 +185,7 @@ class ConversationStore:
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
         generation_request_id: str | None = None,
+        generation_lease_token: str | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -210,6 +211,18 @@ class ConversationStore:
                     raise ConversationNotFound("conversation not found.")
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
+                lease = db.execute(
+                    """SELECT owner_id, lease_token, expires_at FROM conversation_generation_leases
+                       WHERE conversation_id=?""",
+                    (conversation_id,),
+                ).fetchone()
+                if lease is not None and (
+                    generation_lease_token is None
+                    or lease["owner_id"] != owner
+                    or lease["lease_token"] != generation_lease_token
+                    or lease["expires_at"] <= time.time()
+                ):
+                    raise ConversationConflict("generation lease is no longer owned by this worker.")
                 previous = db.execute(
                     """SELECT * FROM conversation_messages
                        WHERE conversation_id=? AND idempotency_key=?""",
@@ -336,6 +349,22 @@ class ConversationStore:
                 raise
         return {"conversation_id": conversation_id, "expires_at": expires_at}
 
+    def renew_generation_lease(self, *, owner_id: str, conversation_id: str, lease_token: str, ttl_seconds: int = 600) -> bool:
+        """Extend an active lease only while its current fencing token is valid."""
+        owner = self._owner(owner_id)
+        if not isinstance(lease_token, str) or not lease_token.strip():
+            raise ValueError("lease_token must be non-empty text.")
+        if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 3600:
+            raise ValueError("ttl_seconds must be an integer from 5 to 3600.")
+        now = time.time()
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE conversation_generation_leases SET expires_at=?
+                   WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                (now + ttl_seconds, conversation_id, owner, lease_token.strip(), now),
+            )
+            return cursor.rowcount == 1
+
     def release_generation_lease(self, *, owner_id: str, conversation_id: str, lease_token: str) -> bool:
         """Release only a lease matching its owner and unique fencing token."""
         owner = self._owner(owner_id)
@@ -352,7 +381,7 @@ class ConversationStore:
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        checkpoint: dict[str, Any],
+        checkpoint: dict[str, Any], lease_token: str | None = None,
     ) -> bool:
         """Persist a bounded, non-sensitive execution checkpoint for recovery."""
         owner = self._owner(owner_id)
@@ -365,29 +394,51 @@ class ConversationStore:
         if len(encoded) > 4096:
             raise ValueError("checkpoint exceeds 4096 characters.")
         with self._connect() as db:
-            cursor = db.execute(
-                """UPDATE conversation_generation_runs
-                   SET checkpoint=?, updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (encoded, self._now(), owner, conversation_id, request_id.strip()),
-            )
+            if lease_token is None:
+                cursor = db.execute(
+                    """UPDATE conversation_generation_runs SET checkpoint=?, updated_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                         AND NOT EXISTS (SELECT 1 FROM conversation_generation_leases l
+                           WHERE l.conversation_id=?)""",
+                    (encoded, self._now(), owner, conversation_id, request_id.strip(), conversation_id),
+                )
+            else:
+                cursor = db.execute(
+                    """UPDATE conversation_generation_runs SET checkpoint=?, updated_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                         AND EXISTS (SELECT 1 FROM conversation_generation_leases l
+                           WHERE l.conversation_id=? AND l.owner_id=? AND l.lease_token=? AND l.expires_at>?)""",
+                    (encoded, self._now(), owner, conversation_id, request_id.strip(),
+                     conversation_id, owner, lease_token, time.time()),
+                )
             return cursor.rowcount == 1
 
     def finish_generation(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        status: str,
+        status: str, lease_token: str | None = None,
     ) -> bool:
         owner = self._owner(owner_id)
         if status not in {"completed", "interrupted", "failed", "cancelled"}:
             raise ValueError("invalid generation terminal status.")
         now = self._now()
         with self._connect() as db:
-            cursor = db.execute(
-                """UPDATE conversation_generation_runs
-                   SET status=?, updated_at=?, finished_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (status, now, now, owner, conversation_id, request_id.strip()),
-            )
+            if lease_token is None:
+                cursor = db.execute(
+                    """UPDATE conversation_generation_runs SET status=?, updated_at=?, finished_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                         AND NOT EXISTS (SELECT 1 FROM conversation_generation_leases l
+                           WHERE l.conversation_id=?)""",
+                    (status, now, now, owner, conversation_id, request_id.strip(), conversation_id),
+                )
+            else:
+                cursor = db.execute(
+                    """UPDATE conversation_generation_runs SET status=?, updated_at=?, finished_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                         AND EXISTS (SELECT 1 FROM conversation_generation_leases l
+                           WHERE l.conversation_id=? AND l.owner_id=? AND l.lease_token=? AND l.expires_at>?)""",
+                    (status, now, now, owner, conversation_id, request_id.strip(),
+                     conversation_id, owner, lease_token, time.time()),
+                )
             return cursor.rowcount == 1
 
     def list_interrupted_generations(

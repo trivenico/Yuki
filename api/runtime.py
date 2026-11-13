@@ -26,6 +26,7 @@ from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
 from providers.profile_store import ProviderProfileStore
+from providers.owner_runtime_factory import OwnerAgentLoopFactory
 
 
 class ConversationRuntime:
@@ -70,6 +71,7 @@ def build_conversation_runtime(
     *,
     auth_service: BuiltInAuthService,
     agent_loop: AgentExecutionLoop,
+    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
@@ -84,6 +86,8 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     provider_profile_store: ProviderProfileStore | None = None,
+    approval_runtime_factory: Any | None = None,
+    provider_receipt_verifier_for_owner: Callable[[str], Any] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -94,6 +98,8 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
+        raise TypeError("agent_loop_for_owner must be callable.")
     if (device_pairing is None) != (inference_jobs is None):
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
@@ -119,8 +125,26 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    if approval_runtime_factory is not None and not callable(
+        getattr(approval_runtime_factory, "coordinator_for_owner", None)
+    ):
+        raise TypeError("approval_runtime_factory must provide coordinator_for_owner")
     if provider_profile_store is not None and not isinstance(provider_profile_store, ProviderProfileStore):
         raise TypeError("provider_profile_store must be a ProviderProfileStore")
+    if provider_profile_store is not None and not isinstance(
+        agent_loop_for_owner, OwnerAgentLoopFactory
+    ):
+        raise ValueError(
+            "provider profile management requires the OwnerAgentLoopFactory "
+            "that activates those profiles for authenticated execution"
+        )
+    if isinstance(agent_loop_for_owner, OwnerAgentLoopFactory):
+        factory_store = agent_loop_for_owner.profile_store
+        if provider_profile_store is not None and provider_profile_store is not factory_store:
+            raise ValueError("provider profile API and owner runtime must share the same profile store")
+        # Mount and close the exact store used by owner execution. This prevents
+        # profile management and runtime activation from drifting onto separate DBs.
+        provider_profile_store = factory_store
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -135,12 +159,14 @@ def build_conversation_runtime(
         raise ValueError("OAuth provider catalog requires authorization service configuration")
 
     application = build_conversation_application_runtime(
-        config, agent_loop=agent_loop,
+        config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
     )
     try:
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            approval_runtime_factory=approval_runtime_factory,
+            provider_receipt_verifier_for_owner=provider_receipt_verifier_for_owner,
         )
         if provider_profile_store is not None:
             app = AuthenticatedProviderProfileAPI(app, auth_service, provider_profile_store)

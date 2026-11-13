@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Any, Sequence
+import weakref
+from contextlib import contextmanager
+from typing import Any, Callable, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
@@ -20,14 +22,44 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *,
+                 agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
+        if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
+            raise TypeError("agent_loop_for_owner must be callable.")
         self.store = store
         self.agent_loop = agent_loop
-        self._lock = threading.RLock()
+        self.agent_loop_for_owner = agent_loop_for_owner
+        self._loop_owners = weakref.WeakKeyDictionary()
+        self._loop_owners_guard = threading.Lock()
+        self._lock_registry_guard = threading.Lock()
+        self._conversation_locks = {}
+
+    @contextmanager
+    def _conversation_lock(self, key):
+        """Serialize turns for one owner/conversation without blocking others."""
+        with self._lock_registry_guard:
+            entry = self._conversation_locks.get(key)
+            if entry is None:
+                entry = [threading.RLock(), 0]
+                self._conversation_locks[key] = entry
+            entry[1] += 1
+        lock = entry[0]
+        acquired = False
+        try:
+            lock.acquire()
+            acquired = True
+            yield
+        finally:
+            if acquired:
+                lock.release()
+            with self._lock_registry_guard:
+                entry[1] -= 1
+                if entry[1] == 0 and self._conversation_locks.get(key) is entry:
+                    del self._conversation_locks[key]
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
@@ -44,22 +76,68 @@ class ConversationService:
             limit=limit, after_sequence=after_sequence,
         )
 
-    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
+    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None, session_id: str | None = None) -> dict[str, Any]:
         token = str(uuid.uuid4())
-        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
+        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=120)
+        stop_heartbeat = threading.Event()
+        lease_lost = threading.Event()
+        user_cancelled = threading.Event()
+
+        def renew_lease():
+            while not stop_heartbeat.wait(30):
+                try:
+                    renewed = self.store.renew_generation_lease(
+                        owner_id=owner_id, conversation_id=conversation_id,
+                        lease_token=token, ttl_seconds=120,
+                    )
+                except Exception:
+                    renewed = False
+                if not renewed:
+                    lease_lost.set()
+                    return
+
+        heartbeat = threading.Thread(
+            target=renew_lease, name="yuki-generation-lease", daemon=True,
+        )
+        heartbeat.start()
+
+        def should_cancel():
+            if lease_lost.is_set():
+                return True
+            requested = bool(cancellation_requested and cancellation_requested())
+            if requested:
+                user_cancelled.set()
+            return requested
+
         try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
+            return self._reply_unleased(
+                owner_id=owner_id, conversation_id=conversation_id,
+                user_text=user_text, request_id=request_id,
+                expected_version=expected_version, tools=tools,
+                system_text=system_text, on_text_delta=on_text_delta,
+                cancellation_requested=should_cancel, lease_token=token,
+                user_cancelled=user_cancelled, session_id=session_id,
+            )
         finally:
-            self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
+            stop_heartbeat.set()
+            heartbeat.join()
+            self.store.release_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id, lease_token=token,
+            )
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
-        on_text_delta=None, cancellation_requested=None,
+        on_text_delta=None, cancellation_requested=None, lease_token: str | None = None,
+        user_cancelled: threading.Event | None = None, session_id: str | None = None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
+        if session_id is not None and (
+            not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256
+        ):
+            raise ValueError("session_id must be non-empty text of at most 256 characters.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 20_000:
@@ -67,7 +145,7 @@ class ConversationService:
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
 
-        with self._lock:
+        with self._conversation_lock((owner_id, conversation_id)):
             starting_version = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
             )["version"]
@@ -98,7 +176,7 @@ class ConversationService:
                 if following and following[0]["role"] == "assistant":
                     self.store.finish_generation(
                         owner_id=owner_id, conversation_id=conversation_id,
-                        request_id=generation["request_id"], status="completed",
+                        request_id=generation["request_id"], status="completed", lease_token=lease_token,
                     )
                 elif user_message is not None:
                     self.store.append_message(
@@ -106,11 +184,11 @@ class ConversationService:
                         role="assistant",
                         content="This response was interrupted before completion. Please submit a new request; Yuki will not automatically repeat potentially side-effecting actions.",
                         idempotency_key="assistant:" + generation["request_id"],
-                        expected_version=conversation_now["version"],
+                        expected_version=conversation_now["version"], generation_lease_token=lease_token,
                     )
                     self.store.finish_generation(
                         owner_id=owner_id, conversation_id=conversation_id,
-                        request_id=generation["request_id"], status="interrupted",
+                        request_id=generation["request_id"], status="interrupted", lease_token=lease_token,
                     )
             # Check ownership and stale versions before invoking a model.
             conversation = self.store.get_conversation(
@@ -131,6 +209,7 @@ class ConversationService:
                     owner_id=owner_id, conversation_id=conversation_id,
                     role="user", content=user_text, idempotency_key=request_id,
                     expected_version=expected_version,
+                    generation_lease_token=lease_token,
                 )
                 if duplicate["created"]:
                     raise ConversationConflict("conversation version changed.")
@@ -148,6 +227,7 @@ class ConversationService:
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="user", content=user_text, idempotency_key=request_id,
                 expected_version=expected_version, generation_request_id=request_id,
+                generation_lease_token=lease_token,
             )
             if not user_result["created"]:
                 return self._replay_or_conflict(
@@ -162,20 +242,64 @@ class ConversationService:
             status, answer, model_turns, tool_calls = "completed", "", 0, 0
             self.store.update_generation_checkpoint(
                 owner_id=owner_id, conversation_id=conversation_id,
-                request_id=request_id, checkpoint={"phase": "model_running"},
+                request_id=request_id, checkpoint={"phase": "model_running"}, lease_token=lease_token,
             )
             try:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                execution_loop = self.agent_loop
+                if self.agent_loop_for_owner is not None:
+                    execution_loop = self.agent_loop_for_owner(owner_id)
+                    if not isinstance(execution_loop, AgentExecutionLoop):
+                        raise TypeError("owner agent-loop factory returned an invalid execution loop")
+                    if execution_loop is self.agent_loop:
+                        raise PermissionError("owner agent-loop factory must not return the shared default loop")
+                    with self._loop_owners_guard:
+                        try:
+                            previous_owner = self._loop_owners.get(execution_loop)
+                            if previous_owner is not None and previous_owner != owner_id:
+                                raise PermissionError("an agent execution loop cannot be shared across owners")
+                            self._loop_owners[execution_loop] = owner_id
+                        except TypeError as exc:
+                            raise TypeError("owner agent loops must support weak identity tracking") from exc
+                # The model-visible tool catalog must never advertise handlers
+                # that are absent from this authenticated owner's guarded runtime.
+                # This prevents a caller-supplied schema from exposing another
+                # owner's tools or creating a misleading authorization surface.
+                protocol = getattr(execution_loop, "tool_protocol", None)
+                registered_names = getattr(protocol, "registered_tool_names", None)
+                if self.agent_loop_for_owner is not None and registered_names is not None:
+                    advertised_names = set()
+                    for definition in tools:
+                        if not isinstance(definition, dict):
+                            raise ValueError("tool definitions must be objects")
+                        function = definition.get("function")
+                        name = function.get("name") if isinstance(function, dict) else None
+                        if not isinstance(name, str) or not name:
+                            raise ValueError("tool definition name is invalid")
+                        advertised_names.add(name)
+                    if advertised_names != set(registered_names):
+                        raise PermissionError("model tool catalog does not match owner guarded runtime")
+                result = execution_loop.run(
+                    user_text, on_text_delta=on_text_delta,
+                    cancellation_requested=cancellation_requested,
+                    execution_context=({
+                        "actor": owner_id, "session_id": session_id,
+                        "conversation_id": conversation_id, "request_id": request_id,
+                    } if session_id is not None else None), **kwargs,
+                )
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
                 if result.status == "completed":
                     answer = result.text
                 elif result.status == "cancelled":
-                    answer = "Generation was stopped at your request."
+                    answer = (
+                        "Generation was stopped at your request."
+                        if user_cancelled is not None and user_cancelled.is_set()
+                        else "Generation was stopped before completion."
+                    )
                 else:
                     answer = (
                         "I couldn't complete that request within the current execution limits. "
@@ -189,12 +313,13 @@ class ConversationService:
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="assistant", content=answer,
                 idempotency_key=f"assistant:{request_id}",
-                expected_version=user_result["version"],
+                expected_version=user_result["version"], generation_lease_token=lease_token,
             )
             self.store.finish_generation(
                 owner_id=owner_id, conversation_id=conversation_id,
                 request_id=request_id,
                 status=status if status in {"completed", "failed", "cancelled"} else "failed",
+                lease_token=lease_token,
             )
             return {
                 "conversation_id": conversation_id,

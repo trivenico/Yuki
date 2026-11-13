@@ -97,13 +97,19 @@ class ProviderProfileAPITests(unittest.TestCase):
         self.assertFalse(body["network_probe_performed"])
 
     def test_profiles_and_selection_are_owner_scoped(self):
-        self.request("POST", "/v1/provider-profiles", self.profile_payload(), self.session.token)
+        status, body, _ = self.request(
+            "POST", "/v1/provider-profiles", self.profile_payload(), self.session.token
+        )
+        self.assertEqual(status, 201, body)
+        owner_id = self.session.user.user_id
+        self.assertTrue(self.store.credential_available(owner_id, "gateway"))
         status, body, _ = self.request("GET", "/v1/provider-profiles", token=self.other.token)
         self.assertEqual((status, body["profiles"]), (200, []))
         status, body, _ = self.request(
             "PUT", "/v1/provider-profiles/active", {"name": "gateway"}, self.other.token
         )
         self.assertEqual((status, body["error"]), (404, "profile_not_found"))
+        self.assertTrue(self.store.credential_available(owner_id, "gateway"))
         status, body, _ = self.request(
             "PUT", "/v1/provider-profiles/active", {"name": "gateway"}, self.session.token
         )

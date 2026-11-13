@@ -15,6 +15,11 @@ from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
 
 
+class MemoryAudit:
+    def append(self, **_event):
+        pass
+
+
 class FakePlanner:
     def __init__(self):
         self.executed = []
@@ -31,7 +36,7 @@ def action_result(text="safe note"):
 class ApprovalCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.planner = FakePlanner()
-        self.coordinator = ApprovalCoordinator()
+        self.coordinator = ApprovalCoordinator(audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner)
         self.pending = self.coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -43,12 +48,18 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             session_id=session_id, confirm=confirm,
         )
 
+    def test_audit_log_and_trusted_executor_resolver_are_mandatory(self):
+        with self.assertRaisesRegex(ValueError, "required approval audit log"):
+            ApprovalCoordinator()
+        with self.assertRaisesRegex(ValueError, "trusted host planner_resolver"):
+            ApprovalCoordinator(audit_log=MemoryAudit())
+
     def test_audit_failure_does_not_leave_pending_request_available(self):
         class BrokenAudit:
             def append(self, **_event):
                 raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        coordinator = ApprovalCoordinator(audit_log=BrokenAudit(), planner_resolver=lambda **_: self.planner)
         with self.assertRaisesRegex(RuntimeError, "could not be audited"):
             coordinator.record(
                 self.planner, action_result(), actor="owner", session_id="session-a"
@@ -63,14 +74,14 @@ class ApprovalCoordinatorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
-            coordinator = ApprovalCoordinator(pending_store=store, audit_log=BrokenAudit())
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=BrokenAudit(), planner_resolver=lambda **_: self.planner)
             with self.assertRaisesRegex(RuntimeError, "could not be audited"):
                 coordinator.record(
                     self.planner, action_result(), actor="owner", session_id="session-a"
                 )
             with store._connect() as db:
-                count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
-            self.assertEqual(count, 0)
+                rows = db.execute("SELECT status FROM pending_approvals").fetchall()
+            self.assertEqual(rows, [("denied",)])
             self.assertEqual(self.planner.executed, [])
 
     def test_approval_audit_failure_prevents_execution(self):
@@ -79,7 +90,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "approved":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit(), planner_resolver=lambda **_: self.planner)
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -90,13 +101,56 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome.status, "audit_unavailable")
         self.assertEqual(self.planner.executed, [])
 
+    def test_executor_exception_is_unknown_outcome_and_never_reported_retryable(self):
+        events = []
+
+        class RecordingAudit:
+            def append(self, *, event_type, **_event):
+                events.append(event_type)
+
+        class AmbiguousExecutor:
+            def execute_approved_action(self, action):
+                self.side_effects += 1
+                raise TimeoutError("provider response was lost")
+
+            def __init__(self):
+                self.side_effects = 0
+
+        executor = AmbiguousExecutor()
+        coordinator = ApprovalCoordinator(
+            audit_log=RecordingAudit(),
+            planner_resolver=lambda **_: executor,
+        )
+        pending = coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+
+        self.assertEqual(outcome.status, "recovery_required")
+        self.assertEqual(outcome.result["outcome"], "unknown")
+        self.assertEqual(executor.side_effects, 1)
+        self.assertEqual(events, [
+            "requested", "approved", "execution_started", "outcome_unknown",
+        ])
+        self.assertEqual(
+            coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            ).status,
+            "pending_not_found",
+        )
+        self.assertEqual(executor.side_effects, 1)
+
     def test_execution_audit_failure_returns_recovery_required_not_retryable_failure(self):
         class SelectiveAudit:
             def append(self, *, event_type, **_event):
                 if event_type == "executed":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit(), planner_resolver=lambda **_: self.planner)
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -144,7 +198,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             pending_store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
             audit_log = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
-            coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit_log)
+            coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit_log, planner_resolver=lambda **_: self.planner)
             pending = coordinator.record(
                 self.planner, action_result("persisted"), actor="owner", session_id="session-a"
             )
@@ -155,7 +209,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertTrue(outcome.ok)
             events = list(reversed(audit_log.list_events()))
             self.assertEqual([event["event_type"] for event in events],
-                             ["requested", "approved", "executed"])
+                             ["requested", "approved", "execution_started", "executed"])
             self.assertNotIn("persisted", str(events))
 
 
@@ -197,6 +251,513 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.coordinator.record(
                 self.planner, action_result(), actor="owner", session_id="x" * 257
             )
+
+
+    def test_persistent_store_transitions_are_identity_bound_and_restart_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {"text": "durable"},
+                {"skill_id": "notes.write", "arguments": {"text": "durable"}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(item.status, "pending")
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="intruder", session_id="session-a",
+            ))
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-b",
+            ))
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(claimed.status, "claimed")
+            self.assertEqual(claimed.action["arguments"]["text"], "durable")
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            ))
+
+            restarted = SQLitePendingApprovalStore(path)
+            persisted = restarted.get(item.pending_id)
+            self.assertEqual(persisted.status, "claimed")
+            approved = restarted.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(approved.status, "approved")
+            executing = restarted.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(executing.status, "executing")
+            completed = restarted.transition(
+                item.pending_id, expected_status="executing", new_status="completed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(completed.status, "completed")
+            self.assertEqual(restarted.get(item.pending_id).action["arguments"]["text"], "durable")
+
+    def test_persistent_store_rejects_invalid_and_terminal_state_transitions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="completed",
+                actor="owner", session_id="session-a",
+            ))
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            ).status, "approved")
+            self.assertEqual(store.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            ).status, "executing")
+            unknown = store.transition(
+                item.pending_id, expected_status="executing", new_status="outcome_unknown",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(unknown.status, "outcome_unknown")
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="outcome_unknown", new_status="executing",
+                actor="owner", session_id="session-a",
+            ))
+
+
+    def test_persistent_approved_action_resumes_without_repeating_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {"text": "resume"},
+                {"skill_id": "notes.write", "arguments": {"text": "resume"}},
+                actor="owner", session_id="session-a",
+            )
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(claimed.status, "claimed")
+            approved = store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(approved.status, "approved")
+
+            confirmation_calls = []
+            coordinator = ApprovalCoordinator(
+                pending_store=SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3")),
+                audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner,
+            )
+            outcome = coordinator.approve(
+                self.planner, item.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: confirmation_calls.append(True) or False,
+            )
+            self.assertEqual(outcome.status, "completed")
+            self.assertEqual(confirmation_calls, [])
+            self.assertEqual(len(self.planner.executed), 1)
+            self.assertEqual(store.get(item.pending_id).status, "completed")
+
+    def test_persistent_execution_claim_is_never_replayed_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {"text": "uncertain"},
+                {"skill_id": "notes.write", "arguments": {"text": "uncertain"}},
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            coordinator = ApprovalCoordinator(
+                pending_store=SQLitePendingApprovalStore(path),
+                audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner,
+            )
+            confirmations = []
+            outcome = coordinator.approve(
+                self.planner, item.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: confirmations.append(True) or True,
+            )
+            self.assertEqual(outcome.status, "recovery_required")
+            self.assertEqual(outcome.result["outcome"], "unknown")
+            self.assertEqual(confirmations, [])
+            self.assertEqual(self.planner.executed, [])
+            self.assertEqual(store.get(item.pending_id).status, "executing")
+
+
+    def test_persistent_concurrent_approvals_across_coordinators_execute_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {"text": "single"},
+                {"skill_id": "notes.write", "arguments": {"text": "single"}},
+                actor="owner", session_id="session-a",
+            )
+            coordinators = [
+                ApprovalCoordinator(
+                    pending_store=SQLitePendingApprovalStore(path),
+                    audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner,
+                )
+                for _ in range(2)
+            ]
+            barrier = threading.Barrier(3)
+            outcomes = []
+            lock = threading.Lock()
+
+            def attempt(coordinator):
+                barrier.wait()
+                outcome = coordinator.approve(
+                    self.planner, item.pending_id, actor="owner", session_id="session-a",
+                    confirm=lambda _action: True,
+                )
+                with lock:
+                    outcomes.append(outcome.status)
+
+            threads = [threading.Thread(target=attempt, args=(coordinator,))
+                       for coordinator in coordinators]
+            for thread in threads:
+                thread.start()
+            barrier.wait()
+            for thread in threads:
+                thread.join(timeout=5)
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            self.assertEqual(len(self.planner.executed), 1)
+            self.assertEqual(outcomes.count("completed"), 1)
+            self.assertEqual(len(outcomes), 2)
+            self.assertEqual(sum(outcome != "completed" for outcome in outcomes), 1)
+            self.assertEqual(store.get(item.pending_id).status, "completed")
+
+
+    def test_expired_ttl_does_not_delete_claimed_execution_recovery_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(claimed.status, "claimed")
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
+                    ("2000-01-01T00:00:00+00:00", item.pending_id),
+                )
+            self.assertEqual(store.get(item.pending_id).status, "claimed")
+            approved = store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(approved.status, "approved")
+            executing = store.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(executing.status, "executing")
+
+
+    def test_outcome_unknown_is_retained_after_ttl_and_capacity_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="executing", new_status="outcome_unknown",
+                actor="owner", session_id="session-a",
+            )
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
+                    ("2000-01-01T00:00:00+00:00", item.pending_id),
+                )
+            self.assertEqual(store.get(item.pending_id).status, "outcome_unknown")
+            new_item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertIsNotNone(store.get(item.pending_id))
+            self.assertEqual(store.get(new_item.pending_id).status, "pending")
+
+    def test_denial_requires_matching_owner_and_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertFalse(store.deny(item.pending_id, actor="intruder", session_id="session-a"))
+            self.assertFalse(store.deny(item.pending_id, actor="owner", session_id="session-b"))
+            self.assertEqual(store.get(item.pending_id).status, "pending")
+            self.assertTrue(store.deny(item.pending_id, actor="owner", session_id="session-a"))
+            self.assertEqual(store.get(item.pending_id).status, "denied")
+
+
+    def test_unavailable_executor_is_persisted_and_can_resume_after_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            resolvers = [None, self.planner]
+            coordinator = ApprovalCoordinator(
+                pending_store=store,
+                audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: resolvers.pop(0),
+            )
+            pending = coordinator.record(
+                self.planner, action_result(), actor="owner", session_id="session-a"
+            )
+            first = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            )
+            self.assertEqual(first.status, "execution_unavailable")
+            self.assertEqual(store.get(pending.pending_id).status, "execution_unavailable")
+            second = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: self.fail("approval confirmation must not repeat"),
+            )
+            self.assertEqual(second.status, "completed")
+            self.assertEqual(len(self.planner.executed), 1)
+            self.assertEqual(store.get(pending.pending_id).status, "completed")
+
+
+    def test_identity_scoped_read_requires_matching_owner_and_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertIsNone(store.get_for_identity(
+                item.pending_id, actor="intruder", session_id="session-a"
+            ))
+            self.assertIsNone(store.get_for_identity(
+                item.pending_id, actor="owner", session_id="session-b"
+            ))
+            self.assertEqual(
+                store.get_for_identity(
+                    item.pending_id, actor="owner", session_id="session-a"
+                ).pending_id,
+                item.pending_id,
+            )
+
+    def test_identity_scoped_read_retains_claimed_records_past_ttl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
+                    ("2000-01-01T00:00:00+00:00", item.pending_id),
+                )
+            self.assertEqual(
+                store.get_for_identity(
+                    item.pending_id, actor="owner", session_id="session-a"
+                ).status,
+                "claimed",
+            )
+
+
+class ApprovalOperationContextTests(unittest.TestCase):
+    def test_persistent_execution_exposes_durable_operation_context_to_executor(self):
+        from core.operation_context import current_operation_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            observed = []
+
+            class ContextExecutor:
+                def execute_approved_action(self, action):
+                    observed.append(current_operation_context())
+                    return SimpleNamespace(ok=True, value="done")
+
+            executor = ContextExecutor()
+            coordinator = ApprovalCoordinator(
+                pending_store=store,
+                audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: executor,
+            )
+            planner = FakePlanner()
+            pending = coordinator.record(
+                planner, action_result("bind context"),
+                actor="owner-a", session_id="session-a",
+            )
+            outcome = coordinator.approve(
+                planner, pending.pending_id, actor="owner-a",
+                session_id="session-a", confirm=lambda _action: True,
+            )
+
+            self.assertEqual(outcome.status, "completed")
+            self.assertEqual(len(observed), 1)
+            context = observed[0]
+            intent = store.get_operation_intent(
+                pending.pending_id, actor="owner-a", session_id="session-a",
+            )
+            self.assertEqual(context.pending_id, pending.pending_id)
+            self.assertEqual(context.operation_id, intent["operation_id"])
+            self.assertEqual(context.action_digest, intent["action_digest"])
+            self.assertEqual(context.actor, "owner-a")
+            self.assertEqual(context.session_id, "session-a")
+            self.assertIsNone(current_operation_context())
+
+    def test_operation_context_is_reset_when_executor_raises(self):
+        from core.operation_context import current_operation_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+
+            class FailingExecutor:
+                def execute_approved_action(self, _action):
+                    self.assert_bound = current_operation_context() is not None
+                    raise TimeoutError("provider outcome is ambiguous")
+
+            executor = FailingExecutor()
+            coordinator = ApprovalCoordinator(
+                pending_store=store,
+                audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: executor,
+            )
+            planner = FakePlanner()
+            pending = coordinator.record(
+                planner, action_result("reset context"),
+                actor="owner-a", session_id="session-a",
+            )
+            outcome = coordinator.approve(
+                planner, pending.pending_id, actor="owner-a",
+                session_id="session-a", confirm=lambda _action: True,
+            )
+
+            self.assertEqual(outcome.status, "recovery_required")
+            self.assertTrue(executor.assert_bound)
+            self.assertIsNone(current_operation_context())
+
+
+class VerifiedProviderReconciliationTests(unittest.TestCase):
+    def _uncertain(self, store):
+        item = store.put(
+            "payments.create", {"amount": 12},
+            {"skill_id": "payments.create", "arguments": {"amount": 12}},
+            actor="owner-a", session_id="session-a",
+        )
+        store.transition(item.pending_id, expected_status="pending", new_status="claimed",
+                         actor="owner-a", session_id="session-a")
+        store.transition(item.pending_id, expected_status="claimed", new_status="approved",
+                         actor="owner-a", session_id="session-a")
+        intent = store.ensure_operation_intent(item.pending_id, actor="owner-a", session_id="session-a")
+        store.transition(item.pending_id, expected_status="approved", new_status="executing",
+                         actor="owner-a", session_id="session-a")
+        store.bind_operation_provider(
+            item.pending_id, actor="owner-a", session_id="session-a",
+            operation_id=intent["operation_id"], action_digest=intent["action_digest"],
+            provider_id="acme_payments",
+        )
+        store.transition(item.pending_id, expected_status="executing", new_status="outcome_unknown",
+                         actor="owner-a", session_id="session-a")
+        return item, intent
+
+    def test_verified_provider_receipt_resolves_exact_durable_operation(self):
+        from datetime import datetime, timezone
+        from core.provider_receipt_verification import (
+            ProviderReceiptVerifierRegistry, VerifiedProviderReceipt,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item, intent = self._uncertain(store)
+
+            class Verifier:
+                def verify(self, request):
+                    return VerifiedProviderReceipt(
+                        provider_id=request.provider_id, owner_id=request.owner_id,
+                        session_id=request.session_id, pending_id=request.pending_id,
+                        operation_id=request.operation_id, action_digest=request.action_digest,
+                        receipt_id="receipt-verified", resolution="completed",
+                        evidence_digest="b" * 64, verified_at=datetime.now(timezone.utc).isoformat(),
+                        authority="authenticated_provider_api",
+                    )
+
+            registry = ProviderReceiptVerifierRegistry({"acme_payments": Verifier()})
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: self.planner,
+            )
+            result = coordinator.reconcile_verified_provider(
+                item.pending_id, actor="owner-a", session_id="session-a",
+                evidence_reference="provider-operation:stable-id",
+                verifier_registry=registry,
+            )
+            self.assertEqual(result.status, "reconciled_completed")
+            self.assertEqual(store.get_for_identity(
+                item.pending_id, actor="owner-a", session_id="session-a"
+            ).status, "reconciled_completed")
+
+    def test_provider_verification_failure_never_changes_recovery_state(self):
+        from core.provider_receipt_verification import ProviderReceiptVerifierRegistry
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item, _ = self._uncertain(store)
+
+            class BrokenVerifier:
+                def verify(self, _request):
+                    raise TimeoutError("provider unavailable")
+
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: self.planner,
+            )
+            result = coordinator.reconcile_verified_provider(
+                item.pending_id, actor="owner-a", session_id="session-a",
+                evidence_reference="untrusted-locator",
+                verifier_registry=ProviderReceiptVerifierRegistry({"acme_payments": BrokenVerifier()}),
+            )
+            self.assertEqual(result.status, "provider_receipt_unverified")
+            self.assertEqual(store.get_for_identity(
+                item.pending_id, actor="owner-a", session_id="session-a"
+            ).status, "outcome_unknown")
 
 
 if __name__ == "__main__":

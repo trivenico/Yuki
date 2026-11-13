@@ -45,10 +45,25 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
         raise ToolProtocolError("tool response must be non-empty JSON text.")
     if len(response) > _MAX_RESPONSE_CHARS or "\x00" in response:
         raise ToolProtocolError("tool response exceeds the protocol size limit.")
+    def reject_constant(value):
+        raise ValueError(f"non-standard JSON constant: {value}")
+
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
     try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as exc:
-        raise ToolProtocolError("tool response must be valid JSON.") from exc
+        payload = json.loads(
+            response,
+            parse_constant=reject_constant,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ToolProtocolError("tool response must be strict JSON without duplicate keys or non-finite constants.") from exc
     if not isinstance(payload, dict) or set(payload) != {"tool_calls"}:
         raise ToolProtocolError("response must contain only the tool_calls field.")
     raw_calls = payload["tool_calls"]
@@ -68,7 +83,7 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
         if not isinstance(arguments, dict):
             raise ToolProtocolError("tool arguments must be a JSON object.")
         try:
-            encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+            encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
             size = len(encoded.encode("utf-8"))
         except (TypeError, ValueError, UnicodeEncodeError) as exc:
             raise ToolProtocolError("tool arguments must be JSON-compatible.") from exc
@@ -87,14 +102,19 @@ class StructuredToolProtocol:
             raise TypeError("runtime must be a GuardedToolRuntime.")
         self._runtime = runtime
 
-    def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
+    @property
+    def registered_tool_names(self) -> frozenset[str]:
+        """Names actually executable by this owner-bound guarded runtime."""
+        return self._runtime.registered_tool_names
+
+    def dispatch(self, response: str, *, execution_context: Mapping[str, str] | None = None) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
         calls = parse_tool_calls(response)
         results = []
         for call in calls:
             argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
-            output = self._runtime.invoke(call.name, argument)
+            output = self._runtime.invoke(call.name, argument, execution_context=execution_context)
             results.append(StructuredToolResult(call.call_id, call.name, output))
         return tuple(results)
 
