@@ -59,6 +59,13 @@ def _inventory(source: Path) -> list[Path]:
                     "Migration exceeds the 2 GiB initial safety limit."
                 )
             found.append(item)
+    if any(
+        item.relative_to(root).as_posix().casefold() == "migration-manifest.json"
+        for item in found
+    ):
+        raise MigrationError(
+            "Source contains the reserved migration-manifest.json filename; rename it before migration."
+        )
     databases = {
         item for item in found if item.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
     }
