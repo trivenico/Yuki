@@ -82,6 +82,24 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(runtime._closed)
 
+    def test_profile_api_cannot_be_mounted_without_profile_activating_owner_factory(self):
+        class MemoryVault:
+            def set_secret(self, reference, secret): pass
+            def get_secret(self, reference): return None
+            def delete_secret(self, reference): pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            profiles = ProviderProfileStore(root / "profiles.sqlite3", MemoryVault())
+            with self.assertRaisesRegex(ValueError, "requires the OwnerAgentLoopFactory"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    provider_profile_store=profiles,
+                )
+            profiles.close()
+
     def test_runtime_rejects_different_profile_store_from_owner_factory(self):
         class MemoryVault:
             def set_secret(self, reference, secret): pass
