@@ -128,5 +128,29 @@ class ProviderProfileStoreTests(unittest.TestCase):
             self.store.list_profiles("owner:alice")
 
 
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes required")
+    def test_database_file_is_private(self):
+        self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.store.path.parent.stat().st_mode & 0o777, 0o700)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_database_symlink_is_rejected(self):
+        self.store.close()
+        target = self.root / "target.sqlite"
+        target.touch()
+        link = self.root / "linked.sqlite"
+        link.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            ProviderProfileStore(link, self.vault)
+
+    @unittest.skipUnless(hasattr(os, "link"), "hard links unavailable")
+    def test_database_hard_link_is_rejected(self):
+        self.store.close()
+        alias = self.root / "alias.sqlite"
+        os.link(self.store.path, alias)
+        with self.assertRaisesRegex(ValueError, "hard_links"):
+            ProviderProfileStore(alias, self.vault)
+
+
 if __name__ == "__main__":
     unittest.main()
