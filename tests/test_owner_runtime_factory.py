@@ -136,7 +136,8 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "must require successful.*audit"):
             factory("owner:alice")
-\n    def test_factory_rejects_shared_guarded_runtime_between_owners(self):
+
+    def test_factory_rejects_shared_guarded_runtime_between_owners(self):
         shared = GuardedToolRuntime({}, AllowNothing(), audit=lambda name, outcome: None, require_audit=True)
         factory = OwnerAgentLoopFactory(
             self.store, tool_runtime_for_owner=lambda owner: shared,
