@@ -256,6 +256,7 @@ class ApprovalCoordinator:
                 pending_id, expected_status="pending", new_status="claimed",
                 actor=actor, session_id=session_id,
             )
+            newly_claimed = item is not None
             if item is None:
                 item = self.pending_store.get(pending_id)
                 if (item is None or item.actor_hash != self.pending_store._identity_hash(actor) or
@@ -264,8 +265,7 @@ class ApprovalCoordinator:
                     return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
                     "action": item.action, "actor": actor, "session_id": session_id,
-                    "status": "claimed_new" if item.status == "claimed" and
-                    self.pending_store is not None else item.status}
+                    "status": "claimed_new" if newly_claimed else item.status}
         # Check identity and remove the approval under one lock so two concurrent
         # callers cannot both observe and execute the same in-memory action.
         with self._pending_lock:
