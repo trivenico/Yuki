@@ -279,7 +279,11 @@ class ConversationService:
                         raise PermissionError("model tool catalog does not match owner guarded runtime")
                 result = execution_loop.run(
                     user_text, on_text_delta=on_text_delta,
-                    cancellation_requested=cancellation_requested,\n                    execution_context=({\n                        "actor": owner_id, "session_id": session_id,\n                        "conversation_id": conversation_id, "request_id": request_id,\n                    } if session_id is not None else None), **kwargs,
+                    cancellation_requested=cancellation_requested,
+                    execution_context=({
+                        "actor": owner_id, "session_id": session_id,
+                        "conversation_id": conversation_id, "request_id": request_id,
+                    } if session_id is not None else None), **kwargs,
                 )
                 status = result.status
                 model_turns = result.model_turns
