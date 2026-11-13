@@ -16,6 +16,7 @@ from core.approval_flow import ApprovalCoordinator
 from core.approval_runtime_adapter import ApprovalRuntimeAdapter
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.pending_approvals import SQLitePendingApprovalStore
+from core.operation_context import OperationExecutionContext
 
 
 class _OwnerBoundApprovedToolExecutor:
@@ -132,6 +133,43 @@ class OwnerApprovalRuntimeFactory:
             adapter = ApprovalRuntimeAdapter(coordinator)
             self._entries[owner_id] = (coordinator, adapter)
             return coordinator
+
+
+    def bind_provider_for_owner(
+        self, owner_id: str, context: OperationExecutionContext, provider_id: str,
+    ):
+        """Return the durable provider binding for this authenticated owner.
+
+        The callback is suitable for ProviderOperationAdapter(bind_provider=...).
+        It never accepts owner/session identity from the model or provider payload.
+        """
+        owner_id = self._validate_owner(owner_id)
+        if not isinstance(context, OperationExecutionContext):
+            raise TypeError("a trusted operation execution context is required")
+        if context.actor != owner_id:
+            raise PermissionError("provider operation context belongs to another owner")
+        coordinator = self.coordinator_for_owner(owner_id)
+        store = coordinator.pending_store
+        binder = getattr(store, "bind_operation_provider", None)
+        if not callable(binder):
+            raise RuntimeError("durable provider binding is unavailable")
+        return binder(
+            context.pending_id,
+            actor=owner_id,
+            session_id=context.session_id,
+            operation_id=context.operation_id,
+            action_digest=context.action_digest,
+            provider_id=provider_id,
+        )
+
+    def provider_binder_for_owner(self, owner_id: str):
+        """Return a closure bound to one owner for trusted provider adapter setup."""
+        owner_id = self._validate_owner(owner_id)
+
+        def bind(context: OperationExecutionContext, provider_id: str):
+            return self.bind_provider_for_owner(owner_id, context, provider_id)
+
+        return bind
 
     def adapter_for_owner(self, owner_id: str) -> ApprovalRuntimeAdapter:
         """Return the stable approval callback to inject into that owner's tool runtime."""
