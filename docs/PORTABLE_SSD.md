@@ -11,7 +11,7 @@ From the repository on the SSD:
 - Windows: run `scripts/portable-yuki-windows.bat`
 - Linux/macOS: run `sh scripts/portable-yuki-unix.sh`
 
-The launchers select the repository's virtual environment when present, otherwise use a host Python 3.10+ runtime. They verify the Python version and core YAML dependency; they do not install software or elevate privileges. Both launchers preserve an explicitly supplied `YUKI_HOME`, allowing the private data directory to live on another encrypted volume. Install core dependencies on a trusted machine first:
+The launchers select the repository's virtual environment when present, otherwise use a host Python 3.10+ runtime. They verify the Python version and core YAML dependency, then run a preflight that creates and tests the configured `YUKI_HOME` with a temporary write probe. Startup stops if the data volume is missing, a symbolic link, or not writable. They do not install software or elevate privileges. Both launchers preserve an explicitly supplied `YUKI_HOME`, allowing the private data directory to live on another encrypted volume. Install core dependencies on a trusted machine first:
 
 ```sh
 python -m venv .venv
@@ -31,7 +31,7 @@ The runtime now supports:
 - `YUKI_CONFIG`: optional config file path. If not set, the repository's `config.yaml` is used.
 - `workspace` in the YAML config: relative workspace paths resolve under `YUKI_HOME` when configured; absolute paths remain absolute.
 
-Both launchers default `YUKI_HOME` to `YukiData` beside the repository only when the caller has not already set it. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
+Both launchers default `YUKI_HOME` to `YukiData` beside the repository only when the caller has not already set it. The preflight verifies that this data directory can actually accept writes before starting the application; it does not claim to encrypt the drive or replace OS volume encryption. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
 
 ## Recommended SSD layout
 
