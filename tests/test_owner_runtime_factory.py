@@ -133,6 +133,29 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "cannot be shared across owners"):
             factory("owner:bob")
 
+    def test_factory_rejects_shared_tool_handler_between_owners(self):
+        shared_handler = lambda argument: argument
+        factory = OwnerAgentLoopFactory(
+            self.store,
+            tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
+                {"owner.read": shared_handler}, AllowNothing(),
+            ),
+        )
+        factory("owner:alice")
+        with self.assertRaisesRegex(PermissionError, "tool handler cannot be shared"):
+            factory("owner:bob")
+
+    def test_factory_allows_distinct_owner_bound_tool_handlers(self):
+        factory = OwnerAgentLoopFactory(
+            self.store,
+            tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
+                {"owner.read": lambda argument: owner + ":" + argument}, AllowNothing(),
+            ),
+        )
+        alice = factory("owner:alice")
+        bob = factory("owner:bob")
+        self.assertIsNot(alice.tool_protocol, bob.tool_protocol)
+
     def test_factory_rejects_shared_authorization_policy_between_owners(self):
         shared_policy = AllowNothing()
         factory = OwnerAgentLoopFactory(
