@@ -17,6 +17,10 @@ class ApprovalRuntimeAdapter:
     def __init__(self, coordinator: ApprovalCoordinator):
         if not isinstance(coordinator, ApprovalCoordinator):
             raise TypeError("coordinator must be an ApprovalCoordinator")
+        if coordinator.pending_store is None or not callable(
+            getattr(coordinator.pending_store, "put", None)
+        ):
+            raise ValueError("a durable pending approval store is required")
         self._coordinator = coordinator
 
     def __call__(
