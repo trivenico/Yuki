@@ -11,6 +11,8 @@ from typing import Any, Callable
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
+from core.memory_context import MemoryContextBuilder
+from core.cognitive_context import CognitiveContextEngine
 
 
 @dataclass
@@ -37,6 +39,7 @@ def build_conversation_application_runtime(
     *,
     agent_loop: AgentExecutionLoop,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    memory_service: Any | None = None,
     owner_id: str | None = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
 ) -> ConversationApplicationRuntime:
@@ -60,7 +63,15 @@ def build_conversation_application_runtime(
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
     store = store_factory(config)
     try:
-        conversations = ConversationService(store, agent_loop, agent_loop_for_owner=agent_loop_for_owner)
+        memory_context_builder = MemoryContextBuilder(memory_service) if memory_service is not None else None
+        cognitive_context_engine = CognitiveContextEngine(
+            memory_context_builder=memory_context_builder
+        )
+        conversations = ConversationService(
+            store, agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+            memory_context_builder=memory_context_builder,
+            cognitive_context_engine=cognitive_context_engine,
+        )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,
         )
