@@ -47,6 +47,26 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             self.assertIsNone(runtime.owner_id)
             runtime.close()
 
+    def test_passes_owner_loop_factory_to_conversation_service(self):
+        factory = lambda owner_id: _agent_loop()
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "owner-loops.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), agent_loop_for_owner=factory,
+                store_factory=lambda config: store,
+            )
+            self.assertIs(runtime.conversations.agent_loop_for_owner, factory)
+            runtime.close()
+
+    def test_rejects_invalid_owner_loop_factory_before_opening_store(self):
+        opened = []
+        with self.assertRaisesRegex(TypeError, "agent_loop_for_owner"):
+            build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), agent_loop_for_owner=object(),
+                store_factory=lambda config: opened.append(True),
+            )
+        self.assertEqual(opened, [])
+
     def test_rejects_invalid_owner_scope_before_opening_store(self):
         opened = []
         with self.assertRaisesRegex(ValueError, "owner_id"):
