@@ -28,7 +28,7 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         store = SQLitePendingApprovalStore(str(Path(self.tempdir.name) / "pending.sqlite3"))
-        self.coordinator = ApprovalCoordinator(pending_store=store, audit_log=MemoryAudit())
+        self.coordinator = ApprovalCoordinator(pending_store=store, audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner)
         self.planner = DummyPlanner()
         self.action = {"skill_id": "notes.write", "arguments": {"text": "safe"}}
         result = SimpleNamespace(action=self.action)
