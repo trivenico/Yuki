@@ -105,7 +105,7 @@ class ApprovalCoordinator:
                 False, "recovery_required", pending_id=pending_id,
                 result={"outcome": "unknown", "reason": "execution_was_already_claimed"},
             )
-        if persistent and state == "claimed":
+        if persistent and state == "claimed_new":
             action = pending["action"]
             import json
             display_action = json.loads(json.dumps(action))
@@ -183,6 +183,14 @@ class ApprovalCoordinator:
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
+        # Persist the start marker before changing the durable state to
+        # executing. If the audit write fails, the executor is never called and
+        # the approval remains safely retryable.
+        try:
+            self._audit("execution_started", pending_id, actor, pending["skill_id"])
+        except Exception:
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+
         if persistent:
             executing = self.pending_store.transition(
                 pending_id, expected_status="approved", new_status="executing",
@@ -190,21 +198,6 @@ class ApprovalCoordinator:
             )
             if executing is None:
                 return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
-
-        # Record the execution boundary before dispatch. If this fails, the
-        # persistent record is safely returned to approved because no external
-        # executor has been called yet.
-        try:
-            self._audit("execution_started", pending_id, actor, pending["skill_id"])
-        except Exception:
-            if persistent:
-                reverted = self.pending_store.transition(
-                    pending_id, expected_status="executing", new_status="approved",
-                    actor=actor, session_id=session_id,
-                )
-                if reverted is None:
-                    return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
-            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         try:
             result = target(action)
@@ -271,7 +264,8 @@ class ApprovalCoordinator:
                     return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
                     "action": item.action, "actor": actor, "session_id": session_id,
-                    "status": item.status}
+                    "status": "claimed_new" if item.status == "claimed" and
+                    self.pending_store is not None else item.status}
         # Check identity and remove the approval under one lock so two concurrent
         # callers cannot both observe and execute the same in-memory action.
         with self._pending_lock:
