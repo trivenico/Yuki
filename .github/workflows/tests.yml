@@ -49,7 +49,7 @@ jobs:
         run: sh -n scripts/portable-yuki-unix.sh
       - name: Validate Windows launcher invariants
         run: |
-          python -c "from pathlib import Path; p=Path('scripts/portable-yuki-windows.bat').read_text(); assert 'if not defined YUKI_HOME' in p; assert 'sys.version_info < (3, 10)' in p; assert '"%YUKI_PYTHON%" main.py' in p"
+          python -c 'from pathlib import Path; p=Path("scripts/portable-yuki-windows.bat").read_text(); assert "if not defined YUKI_HOME" in p; assert "sys.version_info < (3, 10)" in p; assert chr(34) + "%YUKI_PYTHON%" + chr(34) + " main.py" in p'
 
   installed-cli:
     name: Installed CLI Python ${{ matrix.python-version }} / ${{ matrix.os }}
