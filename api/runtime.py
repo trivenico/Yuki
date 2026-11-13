@@ -26,6 +26,7 @@ from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
 from providers.profile_store import ProviderProfileStore
+from providers.owner_runtime_factory import OwnerAgentLoopFactory
 
 
 class ConversationRuntime:
@@ -124,6 +125,13 @@ def build_conversation_runtime(
         raise TypeError("evaluation_service must be an EvaluationService")
     if provider_profile_store is not None and not isinstance(provider_profile_store, ProviderProfileStore):
         raise TypeError("provider_profile_store must be a ProviderProfileStore")
+    if isinstance(agent_loop_for_owner, OwnerAgentLoopFactory):
+        factory_store = agent_loop_for_owner.profile_store
+        if provider_profile_store is not None and provider_profile_store is not factory_store:
+            raise ValueError("provider profile API and owner runtime must share the same profile store")
+        # Mount and close the exact store used by owner execution. This prevents
+        # profile management and runtime activation from drifting onto separate DBs.
+        provider_profile_store = factory_store
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
