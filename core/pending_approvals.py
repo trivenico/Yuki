@@ -123,6 +123,8 @@ class SQLitePendingApprovalStore:
                         WHERE actor_hash=? AND session_hash=? AND idempotency_hash=?""",
                         (actor_hash, session_hash, idempotency_hash)).fetchone()
                     if existing is not None:
+                        if existing[4] <= now.isoformat() and existing[7] == "pending":
+                            raise ValueError("idempotent approval request has expired")
                         existing_hash = hashlib.sha256(existing[3].encode("utf-8")).hexdigest()
                         if existing_hash != action_hash:
                             raise ValueError("idempotency key was already used for a different action")
