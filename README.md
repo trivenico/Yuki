@@ -370,3 +370,12 @@ The target operating model is **Oracle Cloud Linux for production**, **Kaggle fo
 Yuki's improvement loop will be governed: collect only permitted/minimized signals -> propose a code or model improvement -> version it in GitHub -> run tests and evaluations -> require authorized review -> stage and monitor on OCI -> promote or roll back. Kaggle workspaces must not receive production secrets or private user data. Model and dataset revisions, licences, provenance, training configurations, evaluation reports, and artifact hashes must be recorded. Private conversations, memory, files, and credentials are excluded from training by default; no silent online training, self-permission changes, or autonomous production deployment.
 
 See [the hybrid deployment and self-improvement blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md#11-hybrid-cloud-training-and-governed-self-improvement-architecture) for responsibilities, artifact lifecycle, routing, security boundaries, and acceptance gates.
+
+
+### Portable desktop and supervised computer use
+
+Yuki's target includes a portable desktop client for external SSD/USB storage, with a bundled per-platform Python runtime, secure authenticated connection to the Oracle Cloud Yuki service, optional local inference, and per-device revocation. An external SSD is recommended for performance and endurance; a USB flash drive can carry the client but may be unsuitable for heavy model/database workloads. “No installation” means no full system installation for supported user-space scenarios—not bypassing OS security, endpoint protection, code-signing, or accessibility permissions. Windows, macOS, and Linux require separately packaged and tested builds.
+
+Yuki may observe a selected screen/window and control approved desktop interactions only in an explicitly started, visibly indicated, revocable session. A local permission-enforcing broker, scoped actions, redaction, audit, pause/stop controls, and confirmation for consequential actions are mandatory. No silent capture, arbitrary shell access, credential-store access, security-control bypass, or hidden persistence is allowed. Screen contents are private data and are not used for training by default.
+
+See [the portable desktop and computer-use blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md#12-portable-desktop-client-and-supervised-computer-use-architecture). This capability is **Planned**, not yet delivered.

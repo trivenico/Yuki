@@ -461,3 +461,43 @@ The runtime should support local/on-OCI inference, approved remote model endpoin
 ### 11.5 Acceptance gates and honest status
 
 The target architecture is **Planned** until the infrastructure and workflows are actually provisioned and tested. Acceptance requires documented OCI deployment/restore evidence; isolated Kaggle training runs; pinned Hugging Face model/dataset manifests with licence review; reproducible training/evaluation artifacts; GitHub protected CI/release workflows; staged model promotion and rollback; privacy/security review; and end-to-end operational monitoring. Do not claim Yuki learns or upgrades itself in production until this complete governed loop is implemented and evidenced.
+
+
+## 12. Portable desktop client and supervised computer-use architecture
+
+Yuki should provide a portable desktop edition that can be carried on an external SSD or USB storage device and used on compatible computers without installing the full Yuki application or requiring administrator rights for ordinary user-space operation. This is a **target capability (Planned)** until platform-specific builds, security review, and acceptance tests exist. “Portable” does not mean every operating system permits zero-install execution: endpoint protection, code-signing policy, filesystem permissions, accessibility permissions, and OS security prompts may still require user or administrator action.
+
+### 12.1 Portable package layout and runtime boundaries
+
+- Ship a signed, versioned launcher and desktop client for each supported OS/architecture. Keep platform-specific bundles separate; do not promise one executable works on Windows, macOS, and Linux.
+- Bundle a pinned, isolated Python runtime and locked dependencies where licensing and platform packaging permit. Use the Windows embeddable distribution or a self-contained environment where appropriate; provide separately built macOS and Linux runtimes. Do not depend on the host's globally installed Python or modify its global PATH, registry, shell profile, or system packages.
+- Keep application binaries read-only where practical; separate mutable user data, logs, caches, and optional local model files. Support an encrypted portable data directory and an explicit ephemeral mode.
+- Prefer an external SSD for frequent use, local model files, and databases. Ordinary USB flash drives are supported only within performance and endurance limits; avoid high-frequency SQLite writes, swap files, and large model downloads on low-end flash media.
+- Detect drive identity/mount changes safely. Never assume a stable drive letter or mount path. Handle unsafe removal, read-only media, full disks, corruption, and interrupted updates. Use atomic updates, checksums/signatures, backups, and a recovery path. Do not auto-run from USB or bypass OS autorun protections.
+- Make local model execution optional. The portable client can be a thin interface to Oracle Cloud; offline/local inference is separately configured and subject to available hardware, model licence, and capacity.
+
+### 12.2 Secure Oracle Cloud connection
+
+The desktop client connects to the owner's OCI-hosted Yuki API over authenticated TLS. Use an interactive device authorization or browser-based OAuth/OIDC authorization-code flow with PKCE where supported; bind sessions to the authenticated owner and this device instance. Prefer short-lived access tokens, refresh-token rotation/revocation, device registration, and server-side session expiry. Never embed a service account, shared API key, or OCI administrator credential in the portable package.
+
+If offline credential persistence is enabled, store only minimum revocable user-scoped material in an encrypted vault protected by an OS credential facility where available and/or a user-supplied unlock secret. Do not store plaintext secrets on removable media. Provide disconnect, sign-out, revoke-device, lost-drive response, and remote session invalidation. Treat the removable drive as potentially lost or copied. Use TLS certificate validation; do not disable verification to work around captive portals or proxies.
+
+### 12.3 Supervised screen observation
+
+Yuki may observe the active desktop only after the user explicitly starts a visible screen-sharing/observation session. Show a persistent status indicator, selected display/window and capture scope, and a clear pause/stop control. Default to minimum scope (selected window or user-selected display), avoid background capture, and do not record or upload frames unless the user explicitly enables the specific workflow. Provide redaction/exclusion controls for password managers, authentication prompts, private windows, and sensitive applications. Never silently activate cameras or microphones as part of desktop observation.
+
+Screen frames and OCR/accessibility-tree content are sensitive data. Process locally where feasible; before sending content to OCI or another model endpoint, disclose the data route and apply configured redaction and retention rules. Do not use screen contents for model training by default. Keep bounded, short-lived working context rather than an unbounded screenshot archive.
+
+### 12.4 Supervised desktop control
+
+Desktop control is an explicit, revocable capability—not unrestricted remote control. Implement a local computer-use broker with a narrow typed action API (for example: inspect an approved window, click a visible coordinate/element, type into the focused field, scroll, or invoke an allow-listed application action). Enforce user session binding, app/window scope, action validation, rate limits, audit events, and a visible control indicator. Include a global emergency stop and immediate pause on lock-screen, session switch, permission loss, or disconnect.
+
+Require confirmation for consequential or externally visible actions such as sending messages, submitting forms, publishing, purchasing, deleting data, changing security settings, or installing software. Never expose arbitrary shell execution, unrestricted scripting, credential-store access, security-dialog bypass, or hidden persistence to the model. The local broker must validate every action independently; model output is untrusted input. Prefer OS accessibility APIs and supported automation frameworks over brittle coordinate-only automation. Do not evade endpoint protection, enterprise device management, or OS privacy controls.
+
+### 12.5 Multi-computer portability and trust
+
+Treat each host computer as untrusted unless explicitly enrolled. Do not copy host credentials, browser cookies, SSH keys, or files into the portable drive. Keep per-device authorization and revocation independent. On exit, close capture/control sessions, revoke ephemeral credentials where possible, flush safe writes, and leave no host-side service or startup entry unless the user separately opts in. Support an administrator-managed deployment mode for managed environments rather than attempting to bypass their policies.
+
+### 12.6 Acceptance gates
+
+Before marking this capability Implemented, provide signed release artifacts and a software bill of materials; reproducible builds; supported OS/architecture matrix; portability tests on clean machines without Python installed; drive removal/corruption/recovery tests; encrypted-secret and lost-device tests; TLS/authentication/session-revocation tests; screen-capture consent and redaction tests; desktop-control permission and emergency-stop tests; audit and approval tests for consequential actions; accessibility review; and security testing against prompt injection from on-screen content. Publish a clear statement of which actions work without administrator rights and which require OS permissions or administrator approval.
