@@ -15,11 +15,14 @@ class ApprovalOutcome:
 
 
 class ApprovalCoordinator:
-    def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
+    def __init__(self, *, pending_store=None, audit_log=None, planner_resolver=None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
         self.pending_store = pending_store
         self.audit_log = audit_log
+        if planner_resolver is not None and not callable(planner_resolver):
+            raise TypeError("planner_resolver must be callable")
+        self.planner_resolver = planner_resolver
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
         self._pending_lock = threading.Lock()
@@ -106,17 +109,35 @@ class ApprovalCoordinator:
                 return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
             return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
 
+        # When configured by the trusted host, resolve the executor from the
+        # authenticated actor/session rather than accepting a request-supplied
+        # planner object. This prevents executor substitution at approval time.
+        executor = planner
+        if self.planner_resolver is not None:
+            try:
+                executor = self.planner_resolver(actor=actor, session_id=session_id)
+            except Exception:
+                executor = None
+        target = (
+            getattr(getattr(executor, "agent", None), "execute_approved_action", None)
+            if executor is not None else None
+        )
+        if not callable(target) and executor is not None:
+            target = getattr(executor, "execute_approved_action", None)
+        if not callable(target):
+            try:
+                self._audit("execution_unavailable", pending_id, actor, pending["skill_id"])
+            except Exception:
+                return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+            return ApprovalOutcome(False, "execution_unavailable", pending_id=pending_id)
+
         try:
             self._audit("approved", pending_id, actor, pending["skill_id"])
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         try:
-            result = (
-                planner.agent.execute_approved_action(action)
-                if hasattr(planner, "agent") and hasattr(planner.agent, "execute_approved_action")
-                else planner.execute_approved_action(action)
-            )
+            result = target(action)
         except Exception as exc:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
