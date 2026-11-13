@@ -67,6 +67,17 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertNotIn(b"secret-actor-123", handle.read())
 
+    def test_execution_lifecycle_events_are_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            for event in ("execution_started", "execution_unavailable", "execution_failed"):
+                audit.append(event_type=event, pending_id="pending-1", actor="owner", skill_id="notes.write")
+            self.assertTrue(audit.verify_chain())
+            self.assertEqual(
+                [event["event_type"] for event in reversed(audit.list_events())],
+                ["execution_started", "execution_unavailable", "execution_failed"],
+            )
+
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
