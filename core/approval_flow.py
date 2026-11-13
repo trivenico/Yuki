@@ -94,22 +94,69 @@ class ApprovalCoordinator:
 
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict], bool]) -> ApprovalOutcome:
-        pending = self._consume(pending_id, actor=actor, session_id=session_id)
+        pending = self._claim(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
-        action = pending["action"]
-        import json
-        display_action = json.loads(json.dumps(action))
-        try:
-            confirmed = confirm(display_action) is True
-        except Exception:
-            confirmed = False
-        if not confirmed:
+
+        persistent = self.pending_store is not None
+        state = pending.get("status", "claimed")
+        if persistent and state == "executing":
+            return ApprovalOutcome(
+                False, "recovery_required", pending_id=pending_id,
+                result={"outcome": "unknown", "reason": "execution_was_already_claimed"},
+            )
+        if persistent and state == "claimed":
+            action = pending["action"]
+            import json
+            display_action = json.loads(json.dumps(action))
             try:
-                self._audit("denied", pending_id, actor, pending["skill_id"])
+                confirmed = confirm(display_action) is True
             except Exception:
-                return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
-            return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
+                confirmed = False
+            if not confirmed:
+                transitioned = self.pending_store.transition(
+                    pending_id, expected_status="claimed", new_status="denied",
+                    actor=actor, session_id=session_id,
+                )
+                if transitioned is None:
+                    return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
+                try:
+                    self._audit("denied", pending_id, actor, pending["skill_id"])
+                except Exception:
+                    return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+                return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
+            approved = self.pending_store.transition(
+                pending_id, expected_status="claimed", new_status="approved",
+                actor=actor, session_id=session_id,
+            )
+            if approved is None:
+                return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
+            pending["status"] = "approved"
+        elif persistent and state != "approved":
+            # A process may have stopped while the confirmation callback was in
+            # progress. Do not replay the callback or infer that approval occurred.
+            return ApprovalOutcome(
+                False, "recovery_required", pending_id=pending_id,
+                result={"reason": "approval_confirmation_requires_reconciliation", "state": state},
+            )
+        else:
+            # The non-persistent compatibility path retains the existing one-shot
+            # in-memory claim and confirmation semantics.
+            action = pending["action"]
+            import json
+            display_action = json.loads(json.dumps(action))
+            try:
+                confirmed = confirm(display_action) is True
+            except Exception:
+                confirmed = False
+            if not confirmed:
+                try:
+                    self._audit("denied", pending_id, actor, pending["skill_id"])
+                except Exception:
+                    return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+                return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
+
+        action = pending["action"]
 
         # The request-supplied planner is deliberately never an execution
         # authority. Resolve the executor exclusively from trusted host state
@@ -136,12 +183,27 @@ class ApprovalCoordinator:
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
-        # Persist a start marker before dispatch. If this write fails, the
-        # executor is never called; after it succeeds, recovery can distinguish
-        # an action that may have crossed the execution boundary.
+        if persistent:
+            executing = self.pending_store.transition(
+                pending_id, expected_status="approved", new_status="executing",
+                actor=actor, session_id=session_id,
+            )
+            if executing is None:
+                return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
+
+        # Record the execution boundary before dispatch. If this fails, the
+        # persistent record is safely returned to approved because no external
+        # executor has been called yet.
         try:
             self._audit("execution_started", pending_id, actor, pending["skill_id"])
         except Exception:
+            if persistent:
+                reverted = self.pending_store.transition(
+                    pending_id, expected_status="executing", new_status="approved",
+                    actor=actor, session_id=session_id,
+                )
+                if reverted is None:
+                    return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         try:
@@ -149,43 +211,69 @@ class ApprovalCoordinator:
         except Exception as exc:
             # An executor exception does not prove that no external side effect
             # occurred: a provider may have committed the action before a
-            # timeout, transport reset, or response-decoding failure. Treat the
-            # result as indeterminate and never label it safe to retry.
+            # timeout, transport reset, or response-decoding failure.
             try:
                 self._audit("outcome_unknown", pending_id, actor, pending["skill_id"])
             except Exception:
-                return ApprovalOutcome(
-                    False, "recovery_required", pending_id=pending_id,
-                    result={"execution_error": type(exc).__name__, "outcome": "unknown",
-                            "audit": "unavailable"},
+                audit_error = "unavailable"
+            else:
+                audit_error = None
+            if persistent:
+                self.pending_store.transition(
+                    pending_id, expected_status="executing", new_status="outcome_unknown",
+                    actor=actor, session_id=session_id,
                 )
             return ApprovalOutcome(
                 False, "recovery_required", pending_id=pending_id,
-                result={"execution_error": type(exc).__name__, "outcome": "unknown"},
+                result={"execution_error": type(exc).__name__, "outcome": "unknown",
+                        **({"audit": audit_error} if audit_error else {})},
             )
 
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
         except Exception:
+            if persistent:
+                self.pending_store.transition(
+                    pending_id, expected_status="executing", new_status="completed",
+                    actor=actor, session_id=session_id,
+                )
             return ApprovalOutcome(
                 False, "recovery_required", pending_id=pending_id,
                 result={"execution_result": result, "audit": "unavailable"},
             )
+        if persistent:
+            completed = self.pending_store.transition(
+                pending_id, expected_status="executing", new_status="completed",
+                actor=actor, session_id=session_id,
+            )
+            if completed is None:
+                return ApprovalOutcome(
+                    False, "recovery_required", pending_id=pending_id,
+                    result={"execution_result": result, "state_persistence": "unavailable"},
+                )
         return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
 
-    def _consume(self, pending_id, *, actor, session_id):
+    def _claim(self, pending_id, *, actor, session_id):
         if not isinstance(pending_id, str) or not pending_id:
             return None
         if not isinstance(actor, str) or not isinstance(session_id, str):
             return None
         if self.pending_store is not None:
-            item = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
+            item = self.pending_store.transition(
+                pending_id, expected_status="pending", new_status="claimed",
+                actor=actor, session_id=session_id,
+            )
             if item is None:
-                return None
+                item = self.pending_store.get(pending_id)
+                if (item is None or item.actor_hash != self.pending_store._identity_hash(actor) or
+                        item.session_hash != self.pending_store._identity_hash(session_id) or
+                        item.status not in {"approved", "executing", "claimed"}):
+                    return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
-                    "action": item.action, "actor": actor, "session_id": session_id}
+                    "action": item.action, "actor": actor, "session_id": session_id,
+                    "status": item.status}
         # Check identity and remove the approval under one lock so two concurrent
-        # callers cannot both observe and execute the same pending action.
+        # callers cannot both observe and execute the same in-memory action.
         with self._pending_lock:
             item = self._pending.get(pending_id)
             if item is None or item["actor"] != actor or item["session_id"] != session_id:
