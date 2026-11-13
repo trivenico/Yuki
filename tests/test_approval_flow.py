@@ -450,5 +450,36 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual(store.get(item.pending_id).status, "completed")
 
 
+    def test_expired_ttl_does_not_delete_claimed_execution_recovery_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(claimed.status, "claimed")
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
+                    ("2000-01-01T00:00:00+00:00", item.pending_id),
+                )
+            self.assertEqual(store.get(item.pending_id).status, "claimed")
+            approved = store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(approved.status, "approved")
+            executing = store.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(executing.status, "executing")
+
+
 if __name__ == "__main__":
     unittest.main()
