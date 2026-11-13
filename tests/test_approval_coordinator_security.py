@@ -1,6 +1,7 @@
 """Security regression tests for approval coordinator behavior."""
 import sqlite3
 import tempfile
+from contextlib import closing
 import threading
 import unittest
 from pathlib import Path
@@ -142,11 +143,12 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
                 pending_id, expected_status=expected, new_status=new,
                 actor="owner", session_id="session-1",
             ))
-        with sqlite3.connect(store.database_path) as db:
-            db.execute(
-                "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
-                ("2000-01-01T00:00:00+00:00", pending_id),
-            )
+        with closing(sqlite3.connect(store.database_path)) as db:
+            with db:
+                db.execute(
+                    "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
+                    ("2000-01-01T00:00:00+00:00", pending_id),
+                )
         retained = store.get(pending_id)
         self.assertIsNotNone(retained)
         self.assertEqual(retained.status, "outcome_unknown")
