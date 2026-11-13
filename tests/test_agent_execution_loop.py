@@ -179,7 +179,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
             lambda **kwargs: {"text": "", "tool_calls": {"tool_calls": [
                 {"id": "context_call", "name": "echo", "arguments": {"value": "safe"}}
             ]}},
-            StructuredToolProtocol(runtime),
+            StructuredToolProtocol(runtime), max_model_turns=1,
         )
         context = {
             "actor": "owner-a", "session_id": "session-digest",
