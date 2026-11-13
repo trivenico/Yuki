@@ -167,8 +167,12 @@ class AgentExecutionLoopTests(unittest.TestCase):
 
             def authorize_tool_context(self, name, context):
                 observed.append((name, context))
-                with self.assertRaises(TypeError):
+                try:
                     context["actor"] = "attacker"
+                except TypeError:
+                    pass
+                else:
+                    raise AssertionError("execution context must be immutable")
                 return context["actor"] == "owner-a"
 
         runtime = GuardedToolRuntime(
