@@ -62,6 +62,17 @@ class YukiCoreRuntimeTests(unittest.TestCase):
     def _write_manifest(self):
         (self.root / "yuki-core.json").write_text(json.dumps(self.manifest), encoding="utf-8")
 
+    def test_decoder_output_projection_is_safetensors_serializable(self):
+        from yuki_training.decoder import YukiDecoder
+        model = YukiDecoder(
+            vocab_size=256, block_size=32, n_embd=8,
+            n_head=2, n_layer=1, dropout=0.0,
+        )
+        self.assertNotEqual(
+            model.token_embedding.weight.data_ptr(),
+            model.lm_head.weight.data_ptr(),
+        )
+
     def test_loads_verified_checkpoint_and_generates_bounded_output(self):
         from yuki_training.runtime import YukiCoreRuntime
         runtime = YukiCoreRuntime(self.root)
