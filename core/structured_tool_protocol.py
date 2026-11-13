@@ -45,10 +45,25 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
         raise ToolProtocolError("tool response must be non-empty JSON text.")
     if len(response) > _MAX_RESPONSE_CHARS or "\x00" in response:
         raise ToolProtocolError("tool response exceeds the protocol size limit.")
+    def reject_constant(value):
+        raise ValueError(f"non-standard JSON constant: {value}")
+
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
     try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as exc:
-        raise ToolProtocolError("tool response must be valid JSON.") from exc
+        payload = json.loads(
+            response,
+            parse_constant=reject_constant,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ToolProtocolError("tool response must be strict JSON without duplicate keys or non-finite constants.") from exc
     if not isinstance(payload, dict) or set(payload) != {"tool_calls"}:
         raise ToolProtocolError("response must contain only the tool_calls field.")
     raw_calls = payload["tool_calls"]
@@ -68,7 +83,7 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
         if not isinstance(arguments, dict):
             raise ToolProtocolError("tool arguments must be a JSON object.")
         try:
-            encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+            encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
             size = len(encoded.encode("utf-8"))
         except (TypeError, ValueError, UnicodeEncodeError) as exc:
             raise ToolProtocolError("tool arguments must be JSON-compatible.") from exc
