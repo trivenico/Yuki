@@ -149,7 +149,7 @@ def main() -> int:
             output = bundle / MANIFEST_NAME
             if output.is_symlink() or (output.exists() and not output.is_file()):
                 raise RuntimeManifestError("Runtime manifest destination must be a regular non-symlink file.")
-            output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+            output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             print(f"Created unsigned integrity manifest for {len(manifest['files'])} files: {output}")
         else:
             manifest = verify_manifest(args.bundle)
