@@ -134,6 +134,10 @@ class ConversationService:
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
+        if session_id is not None and (
+            not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256
+        ):
+            raise ValueError("session_id must be non-empty text of at most 256 characters.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 20_000:
