@@ -34,6 +34,7 @@ class ConversationService:
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
         self._loop_owners = weakref.WeakKeyDictionary()
+        self._loop_owners_guard = threading.Lock()
         self._lock_registry_guard = threading.Lock()
         self._conversation_locks = {}
 
@@ -206,13 +207,14 @@ class ConversationService:
                         raise TypeError("owner agent-loop factory returned an invalid execution loop")
                     if execution_loop is self.agent_loop:
                         raise PermissionError("owner agent-loop factory must not return the shared default loop")
-                    try:
-                        previous_owner = self._loop_owners.get(execution_loop)
-                    except TypeError as exc:
-                        raise TypeError("owner agent loops must support weak identity tracking") from exc
-                    if previous_owner is not None and previous_owner != owner_id:
-                        raise PermissionError("an agent execution loop cannot be shared across owners")
-                    self._loop_owners[execution_loop] = owner_id
+                    with self._loop_owners_guard:
+                        try:
+                            previous_owner = self._loop_owners.get(execution_loop)
+                            if previous_owner is not None and previous_owner != owner_id:
+                                raise PermissionError("an agent execution loop cannot be shared across owners")
+                            self._loop_owners[execution_loop] = owner_id
+                        except TypeError as exc:
+                            raise TypeError("owner agent loops must support weak identity tracking") from exc
                 result = execution_loop.run(
                     user_text, on_text_delta=on_text_delta,
                     cancellation_requested=cancellation_requested, **kwargs,
