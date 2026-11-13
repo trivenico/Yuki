@@ -29,7 +29,7 @@ voice = [
   "soundfile>=0.14.0,<1.0",
 ]
 ui = ["textual>=0.80,<2.0"]
-training = ["torch>=2.2,<3.0"]
+training = ["torch>=2.2,<3.0", "safetensors>=0.4.5,<1.0"]
 email = [
   "google-api-python-client>=2.201.0,<3.0",
   "google-auth>=2.35,<3.0",
