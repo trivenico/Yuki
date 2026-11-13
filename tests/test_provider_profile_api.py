@@ -57,6 +57,8 @@ class ProviderProfileAPITests(unittest.TestCase):
             async def send(message):
                 sent.append(message)
             headers = [(b"authorization", f"Bearer {token}".encode())] if token else []
+            if payload is not None:
+                headers.append((b"content-type", b"application/json"))
             await self.app({"type": "http", "method": method, "path": path,
                             "headers": headers, "query_string": b""}, receive, send)
             return sent[0]["status"], json.loads(sent[1]["body"]), dict(sent[0]["headers"])
@@ -110,6 +112,15 @@ class ProviderProfileAPITests(unittest.TestCase):
             "GET", "/v1/provider-profiles/active", token=self.session.token
         )
         self.assertEqual(body["active_profile"]["name"], "gateway")
+
+    def test_selection_fails_closed_when_vault_credential_is_missing(self):
+        self.request("POST", "/v1/provider-profiles", self.profile_payload(), self.session.token)
+        self.vault.values.clear()
+        status, body, _ = self.request(
+            "PUT", "/v1/provider-profiles/active", {"name": "gateway"}, self.session.token
+        )
+        self.assertEqual((status, body["error"]), (409, "profile_credential_unavailable"))
+        self.assertIsNone(self.store.selected_profile(self.session.user.user_id))
 
     def test_cloud_consent_and_exact_payload_are_mandatory(self):
         status, body, _ = self.request(
