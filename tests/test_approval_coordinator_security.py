@@ -115,6 +115,20 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.assertTrue(correct.ok)
         self.assertEqual(len(self.planner.executed), 1)
 
+    def test_interrupted_confirmation_can_be_confirmed_again(self):
+        store = self.coordinator.pending_store
+        claimed = store.transition(
+            self.outcome.pending_id, expected_status="pending",
+            new_status="claimed", actor="owner", session_id="session-1",
+        )
+        self.assertIsNotNone(claimed)
+        resumed = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirm=lambda _: True,
+        )
+        self.assertEqual(resumed.status, "completed")
+        self.assertEqual(len(self.planner.executed), 1)
+
     def test_unknown_execution_outcome_survives_pending_ttl(self):
         store = self.coordinator.pending_store
         pending_id = self.outcome.pending_id
