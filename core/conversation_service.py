@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Any, Sequence
+import weakref
+from contextlib import contextmanager
+from typing import Any, Callable, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
@@ -20,14 +22,43 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *,
+                 agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
+        if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
+            raise TypeError("agent_loop_for_owner must be callable.")
         self.store = store
         self.agent_loop = agent_loop
-        self._lock = threading.RLock()
+        self.agent_loop_for_owner = agent_loop_for_owner
+        self._loop_owners = weakref.WeakKeyDictionary()
+        self._lock_registry_guard = threading.Lock()
+        self._conversation_locks = {}
+
+    @contextmanager
+    def _conversation_lock(self, key):
+        """Serialize turns for one owner/conversation without blocking others."""
+        with self._lock_registry_guard:
+            entry = self._conversation_locks.get(key)
+            if entry is None:
+                entry = [threading.RLock(), 0]
+                self._conversation_locks[key] = entry
+            entry[1] += 1
+        lock = entry[0]
+        acquired = False
+        try:
+            lock.acquire()
+            acquired = True
+            yield
+        finally:
+            if acquired:
+                lock.release()
+            with self._lock_registry_guard:
+                entry[1] -= 1
+                if entry[1] == 0 and self._conversation_locks.get(key) is entry:
+                    del self._conversation_locks[key]
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
@@ -67,7 +98,7 @@ class ConversationService:
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
 
-        with self._lock:
+        with self._conversation_lock((owner_id, conversation_id)):
             starting_version = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
             )["version"]
@@ -168,7 +199,24 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                execution_loop = self.agent_loop
+                if self.agent_loop_for_owner is not None:
+                    execution_loop = self.agent_loop_for_owner(owner_id)
+                    if not isinstance(execution_loop, AgentExecutionLoop):
+                        raise TypeError("owner agent-loop factory returned an invalid execution loop")
+                    if execution_loop is self.agent_loop:
+                        raise PermissionError("owner agent-loop factory must not return the shared default loop")
+                    try:
+                        previous_owner = self._loop_owners.get(execution_loop)
+                    except TypeError as exc:
+                        raise TypeError("owner agent loops must support weak identity tracking") from exc
+                    if previous_owner is not None and previous_owner != owner_id:
+                        raise PermissionError("an agent execution loop cannot be shared across owners")
+                    self._loop_owners[execution_loop] = owner_id
+                result = execution_loop.run(
+                    user_text, on_text_delta=on_text_delta,
+                    cancellation_requested=cancellation_requested, **kwargs,
+                )
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
