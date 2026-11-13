@@ -532,5 +532,32 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual(store.get(item.pending_id).status, "denied")
 
 
+    def test_unavailable_executor_is_persisted_and_can_resume_after_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            resolvers = [None, self.planner]
+            coordinator = ApprovalCoordinator(
+                pending_store=store,
+                audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: resolvers.pop(0),
+            )
+            pending = coordinator.record(
+                self.planner, action_result(), actor="owner", session_id="session-a"
+            )
+            first = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            )
+            self.assertEqual(first.status, "execution_unavailable")
+            self.assertEqual(store.get(pending.pending_id).status, "execution_unavailable")
+            second = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: self.fail("approval confirmation must not repeat"),
+            )
+            self.assertEqual(second.status, "completed")
+            self.assertEqual(len(self.planner.executed), 1)
+            self.assertEqual(store.get(pending.pending_id).status, "completed")
+
+
 if __name__ == "__main__":
     unittest.main()
