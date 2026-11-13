@@ -68,7 +68,7 @@ def create_manifest(root: str | Path, *, platform: str, runtime_version: str) ->
         raise ValueError("platform must be non-empty bounded text.")
     if not isinstance(runtime_version, str) or not runtime_version.strip() or len(runtime_version) > 100:
         raise ValueError("runtime_version must be non-empty bounded text.")
-    return {
+    manifest = {
         "schema_version": 1,
         "product": "Yuki Portable Runtime",
         "artifact_kind": "unsigned-portable-runtime",
@@ -76,6 +76,8 @@ def create_manifest(root: str | Path, *, platform: str, runtime_version: str) ->
         "runtime_version": runtime_version.strip(),
         "files": _inventory(bundle),
     }
+    _validate_manifest(manifest)
+    return manifest
 
 
 def _validate_manifest(value: Any) -> list[dict[str, Any]]:
