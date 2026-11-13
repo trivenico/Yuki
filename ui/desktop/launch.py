@@ -16,17 +16,13 @@ def _build_services():
     from providers.factory import create_provider
     from companion.conversation import ConversationSession
     from ui.desktop.memory import create_desktop_memory
+    from ui.desktop.storage import prepare_private_desktop_root
     from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
     from automation.task_runtime import TaskRuntime
     from automation.workflow_store import WorkflowRunStore
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
 
-    root = desktop_data_root()
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        root.chmod(0o700)
-    except OSError:
-        pass
+    root = prepare_private_desktop_root(desktop_data_root())
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, load_os_keyring())
     provider = create_provider(load_config())
