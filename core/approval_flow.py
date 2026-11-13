@@ -147,14 +147,22 @@ class ApprovalCoordinator:
         try:
             result = target(action)
         except Exception as exc:
+            # An executor exception does not prove that no external side effect
+            # occurred: a provider may have committed the action before a
+            # timeout, transport reset, or response-decoding failure. Treat the
+            # result as indeterminate and never label it safe to retry.
             try:
-                self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+                self._audit("outcome_unknown", pending_id, actor, pending["skill_id"])
             except Exception:
                 return ApprovalOutcome(
                     False, "recovery_required", pending_id=pending_id,
-                    result={"execution_error": type(exc).__name__, "audit": "unavailable"},
+                    result={"execution_error": type(exc).__name__, "outcome": "unknown",
+                            "audit": "unavailable"},
                 )
-            return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
+            return ApprovalOutcome(
+                False, "recovery_required", pending_id=pending_id,
+                result={"execution_error": type(exc).__name__, "outcome": "unknown"},
+            )
 
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
