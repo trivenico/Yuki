@@ -22,8 +22,8 @@ class ApprovalCoordinator:
             raise ValueError("a required approval audit log with append() is required")
         self.pending_store = pending_store
         self.audit_log = audit_log
-        if planner_resolver is not None and not callable(planner_resolver):
-            raise TypeError("planner_resolver must be callable")
+        if not callable(planner_resolver):
+            raise ValueError("a trusted host planner_resolver is required")
         self.planner_resolver = planner_resolver
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
@@ -111,15 +111,13 @@ class ApprovalCoordinator:
                 return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
             return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
 
-        # When configured by the trusted host, resolve the executor from the
-        # authenticated actor/session rather than accepting a request-supplied
-        # planner object. This prevents executor substitution at approval time.
-        executor = planner
-        if self.planner_resolver is not None:
-            try:
-                executor = self.planner_resolver(actor=actor, session_id=session_id)
-            except Exception:
-                executor = None
+        # The request-supplied planner is deliberately never an execution
+        # authority. Resolve the executor exclusively from trusted host state
+        # using the authenticated actor/session bound to this approval.
+        try:
+            executor = self.planner_resolver(actor=actor, session_id=session_id)
+        except Exception:
+            executor = None
         target = (
             getattr(getattr(executor, "agent", None), "execute_approved_action", None)
             if executor is not None else None
