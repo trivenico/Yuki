@@ -21,4 +21,6 @@ if errorlevel 1 (
   echo See docs/PORTABLE_SSD.md. This launcher does not install packages automatically.
   exit /b 2
 )
+"%YUKI_PYTHON%" scripts\portable_preflight.py
+if errorlevel 1 exit /b 2
 "%YUKI_PYTHON%" main.py
