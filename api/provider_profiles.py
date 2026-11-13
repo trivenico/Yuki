@@ -102,10 +102,13 @@ class AuthenticatedProviderProfileAPI:
                 if set(payload) != {"name"} or not isinstance(payload.get("name"), str):
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 try:
-                    configured = await asyncio.to_thread(
-                        self.store.credential_available, user.user_id, payload["name"]
+                    profiles = await asyncio.to_thread(self.store.list_profiles, user.user_id)
+                    profile = next(
+                        (item for item in profiles if item.name == payload["name"]), None
                     )
-                    if configured is not True:
+                    if profile is None:
+                        return await self._respond(send, 404, {"error": "profile_not_found"})
+                    if profile.credential_configured is not True:
                         return await self._respond(send, 409, {"error": "profile_credential_unavailable"})
                     await asyncio.to_thread(self.store.select_profile, user.user_id, payload["name"])
                 except KeyError:
