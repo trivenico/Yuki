@@ -15,6 +15,11 @@ from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
 
 
+class MemoryAudit:
+    def append(self, **_event):
+        pass
+
+
 class FakePlanner:
     def __init__(self):
         self.executed = []
@@ -31,7 +36,7 @@ def action_result(text="safe note"):
 class ApprovalCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.planner = FakePlanner()
-        self.coordinator = ApprovalCoordinator()
+        self.coordinator = ApprovalCoordinator(audit_log=MemoryAudit())
         self.pending = self.coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -42,6 +47,10 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.planner, pending_id or self.pending.pending_id, actor=actor,
             session_id=session_id, confirm=confirm,
         )
+
+    def test_audit_log_is_mandatory(self):
+        with self.assertRaisesRegex(ValueError, "required approval audit log"):
+            ApprovalCoordinator()
 
     def test_audit_failure_does_not_leave_pending_request_available(self):
         class BrokenAudit:
