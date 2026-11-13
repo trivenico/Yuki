@@ -63,6 +63,11 @@ class GuardedToolRuntime:
         """Return the immutable set of handlers executable by this runtime."""
         return frozenset(self._tools)
 
+    @property
+    def registered_tool_handlers(self) -> tuple[Callable[[str], Any], ...]:
+        """Return handler identities for host-side isolation validation."""
+        return tuple(self._tools.values())
+
     def _record(self, name: str, outcome: str) -> bool:
         if self._audit is None:
             return not self._require_audit
