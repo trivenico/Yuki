@@ -113,3 +113,67 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+def test_persisted_vault_profile_loads_into_runtime_without_catalog_secret(self):
+        class MemoryVault:
+            def __init__(self):
+                self.values = {}
+            def set_secret(self, reference, secret):
+                self.values[reference] = secret
+            def get_secret(self, reference):
+                return self.values.get(reference)
+            def delete_secret(self, reference):
+                self.values.pop(reference, None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            vault = MemoryVault()
+            store = ProviderProfileStore(Path(directory) / "profiles.sqlite", vault)
+            store.save(
+                owner_id="owner:alice", name="persisted_gateway",
+                base_url="https://gateway.example.test/v1",
+                model="vendor/model-x", allowed_host="gateway.example.test",
+                api_key="vault-only-secret",
+            )
+            manager = ProviderManager(environ={})
+            self.assertEqual(manager.load_persisted_profiles(store, "owner:alice"),
+                             ("persisted_gateway",))
+            self.assertEqual(manager.select("persisted_gateway"),
+                             "Selected provider: persisted_gateway")
+            adapter = manager.create_selected_adapter()
+            self.assertIsInstance(adapter, OpenAICompatibleProvider)
+            self.assertTrue(adapter.is_available())
+            entry = next(item for item in manager.catalog()
+                         if item["name"] == "persisted_gateway")
+            self.assertTrue(entry["ready"])
+            self.assertTrue(entry["credential_configured"])
+            self.assertNotIn("vault-only-secret", repr(entry))
+            self.assertNotIn("vault-only-secret", repr(manager.compatible_profiles()))
+            store.close()
+
+    def test_persisted_profile_loader_rejects_wrong_owner_identity(self):
+        class MemoryVault:
+            def set_secret(self, reference, secret): pass
+            def get_secret(self, reference): return None
+            def delete_secret(self, reference): pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ProviderProfileStore(Path(directory) / "profiles.sqlite", MemoryVault())
+            store.save(
+                owner_id="owner:alice", name="persisted_gateway",
+                base_url="https://gateway.example.test/v1",
+                model="vendor/model-x", allowed_host="gateway.example.test",
+                api_key="secret",
+            )
+            manager = ProviderManager(environ={})
+            self.assertEqual(manager.load_persisted_profiles(store, "owner:bob"), ())
+            self.assertNotIn("persisted_gateway", {p["name"] for p in manager.list_providers()})
+            store.close()
+
+    def test_custom_factory_must_return_provider_contract(self):
+        manager = ProviderManager(environ={})
+        manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
+        with self.assertRaisesRegex(TypeError, "generate"):
+            manager._build_adapter("custom")
+
+if __name__ == "__main__":
+    unittest.main()
