@@ -132,6 +132,9 @@ class SpecialistAgentCoordinator:
                     FOREIGN KEY(parent_plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
                 )
             """)
+            hierarchy_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_hierarchy)")}
+            if "parent_subtask_id" not in hierarchy_columns:
+                db.execute("ALTER TABLE agent_plan_hierarchy ADD COLUMN parent_subtask_id TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_hierarchy_parent ON agent_plan_hierarchy(owner_id, parent_plan_id)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_hierarchy_root ON agent_plan_hierarchy(owner_id, root_plan_id)")
             db.execute("""
@@ -413,10 +416,15 @@ class SpecialistAgentCoordinator:
     def submit(
         self, *, actor_id: str, idempotency_key: str,
         subtasks: Iterable[SubtaskSpec], parent_plan_id: str | None = None,
+        parent_subtask_id: str | None = None,
     ) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
+        if parent_plan_id is None and parent_subtask_id is not None:
+            raise AgentPlanError("parent_subtask_id requires parent_plan_id.")
         if parent_plan_id is not None:
+            if not isinstance(parent_subtask_id, str) or not _ID.fullmatch(parent_subtask_id):
+                raise AgentPlanError("parent_subtask_id must identify the delegated parent task.")
             if not isinstance(parent_plan_id, str) or not _ID.fullmatch(parent_plan_id):
                 raise AgentPlanError("parent_plan_id must be a bounded plan identifier.")
             if not self._allowed(actor_id, "agent:delegate", parent_plan_id):
@@ -456,10 +464,14 @@ class SpecialistAgentCoordinator:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 hierarchy = db.execute(
-                    "SELECT parent_plan_id FROM agent_plan_hierarchy WHERE plan_id=? AND owner_id=?",
+                    "SELECT parent_plan_id, parent_subtask_id FROM agent_plan_hierarchy WHERE plan_id=? AND owner_id=?",
                     (existing["plan_id"], actor_id),
                 ).fetchone()
-                if hierarchy is None or hierarchy["parent_plan_id"] != parent_plan_id:
+                if (
+                    hierarchy is None
+                    or hierarchy["parent_plan_id"] != parent_plan_id
+                    or hierarchy["parent_subtask_id"] != parent_subtask_id
+                ):
                     raise WorkflowConflict("idempotency key is already bound to a different delegation parent.")
                 return self._read_plan(db, existing["plan_id"])
             parent = None
@@ -475,8 +487,8 @@ class SpecialistAgentCoordinator:
                 if parent is None:
                     raise KeyError("parent agent plan not found.")
                 parent_dispatched = db.execute(
-                    "SELECT 1 FROM agent_plan_subtasks WHERE plan_id=? AND task_id IS NOT NULL LIMIT 1",
-                    (parent_plan_id,),
+                    "SELECT 1 FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=? AND task_id IS NOT NULL",
+                    (parent_plan_id, parent_subtask_id),
                 ).fetchone()
                 if parent_dispatched is None:
                     raise AgentPlanError("parent plan must be dispatched before it can delegate child work.")
@@ -500,12 +512,13 @@ class SpecialistAgentCoordinator:
                 if root_rows + len(items) > 100:
                     raise AgentPlanError("maximum of 100 subtasks across a delegation tree was reached.")
                 parent_permissions = set()
-                parent_rows = db.execute(
-                    "SELECT permissions_json FROM agent_plan_subtasks WHERE plan_id=?",
-                    (parent_plan_id,),
-                ).fetchall()
-                for permission_row in parent_rows:
-                    parent_permissions.update(json.loads(permission_row["permissions_json"]))
+                parent_row = db.execute(
+                    "SELECT permissions_json FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                    (parent_plan_id, parent_subtask_id),
+                ).fetchone()
+                if parent_row is None:
+                    raise KeyError("parent subtask not found.")
+                parent_permissions.update(json.loads(parent_row["permissions_json"]))
                 requested_permissions = {
                     permission for item in items for permission in item.required_permissions
                 }
@@ -517,9 +530,10 @@ class SpecialistAgentCoordinator:
             )
             db.execute("""
                 INSERT INTO agent_plan_hierarchy(
-                    plan_id, owner_id, parent_plan_id, root_plan_id, depth, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            """, (plan_id, actor_id, parent_plan_id, root_plan_id, depth, now))
+                    plan_id, owner_id, parent_plan_id, parent_subtask_id,
+                    root_plan_id, depth, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (plan_id, actor_id, parent_plan_id, parent_subtask_id, root_plan_id, depth, now))
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
