@@ -37,6 +37,11 @@ class GuardedToolRuntime:
         self._max_argument_chars = max_argument_chars
         self._max_result_chars = max_result_chars
 
+    @property
+    def audit_callback(self):
+        """Return the configured audit sink for owner-isolation validation."""
+        return self._audit
+
     def _record(self, name: str, outcome: str) -> None:
         if self._audit is not None:
             try:
