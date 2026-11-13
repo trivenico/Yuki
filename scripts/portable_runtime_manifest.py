@@ -13,6 +13,7 @@ import os
 import re
 import stat
 import sys
+import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -92,6 +93,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     ):
         raise RuntimeManifestError("Runtime manifest metadata is invalid.")
     seen: set[str] = set()
+    portable_names: set[str] = set()
     for item in value["files"]:
         if not isinstance(item, dict) or set(item) != {"path", "size", "sha256"}:
             raise RuntimeManifestError("Runtime manifest file entry is invalid.")
@@ -99,8 +101,24 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
         if not isinstance(relative, str) or not relative or "\\" in relative:
             raise RuntimeManifestError("Runtime manifest path is invalid.")
         parsed = PurePosixPath(relative)
-        if parsed.is_absolute() or any(part in {"", ".", ".."} for part in relative.split("/")):
+        segments = relative.split("/")
+        if parsed.is_absolute() or any(part in {"", ".", ".."} for part in segments):
             raise RuntimeManifestError("Runtime manifest path escapes the bundle.")
+        for segment in segments:
+            if (
+                segment.endswith((" ", "."))
+                or any(ord(char) < 32 or char in '<>:"|?*' for char in segment)
+                or segment.split(".", 1)[0].upper() in {
+                    "CON", "PRN", "AUX", "NUL",
+                    *(f"COM{number}" for number in range(1, 10)),
+                    *(f"LPT{number}" for number in range(1, 10)),
+                }
+            ):
+                raise RuntimeManifestError("Runtime manifest path is not portable to Windows.")
+        portable_name = unicodedata.normalize("NFC", relative).casefold()
+        if portable_name in portable_names:
+            raise RuntimeManifestError("Runtime manifest contains case-insensitive or Unicode-normalized path collisions.")
+        portable_names.add(portable_name)
         if parsed.as_posix() != relative or relative == MANIFEST_NAME or relative in seen:
             raise RuntimeManifestError("Runtime manifest contains a duplicate or non-canonical path.")
         seen.add(relative)
