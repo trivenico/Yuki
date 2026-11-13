@@ -350,7 +350,7 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             audit=lambda *_: (_ for _ in ()).throw(OSError("audit unavailable")),
             require_audit=True,
         )
-        self.assertIn("denial audit record could not be written", runtime.invoke("write", "sensitive"))
+        self.assertIn("denial audit record could not be written", runtime.invoke("write", "sensitive", execution_context={"actor": "owner:test", "session_id": "session:test", "conversation_id": "conversation:test", "request_id": "request:test"}))
         self.assertEqual(calls, [])
 
     def test_required_authorization_audit_failure_prevents_execution(self):
@@ -361,7 +361,7 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             audit=lambda *_: (_ for _ in ()).throw(OSError("audit unavailable")),
             require_audit=True,
         )
-        result = runtime.invoke("write", "sensitive")
+        result = runtime.invoke("write", "sensitive", execution_context={"actor": "owner:test", "session_id": "session:test", "conversation_id": "conversation:test", "request_id": "request:test"})
         self.assertIn("blocked", result)
         self.assertEqual(calls, [])
 
