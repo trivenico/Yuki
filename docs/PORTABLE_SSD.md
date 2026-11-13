@@ -59,3 +59,23 @@ The launcher scripts are starter launchers, not a portable Python runtime and no
 ## Portability acceptance checklist
 
 Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. These launcher preflight checks improve version and path handling; they do not constitute the complete cross-platform test matrix or a self-contained portable release.
+
+
+## Portable runtime integrity manifests
+
+The repository includes `scripts/portable_runtime_manifest.py` for packaging
+pipelines. After assembling a platform-specific runtime directory, create and
+verify its exact file inventory:
+
+```sh
+python scripts/portable_runtime_manifest.py create ./YukiRuntime --platform windows-x86_64 --runtime-version 3.12.7
+python scripts/portable_runtime_manifest.py verify ./YukiRuntime
+```
+
+The manifest records every regular payload file's relative path, byte size,
+and SHA-256 digest. Verification rejects modified, missing, unexpected,
+non-regular, symbolic-link, duplicate, or path-traversing entries. The
+manifest is explicitly **unsigned**: it detects changes relative to the
+manifest but does not authenticate the publisher. Production distribution
+must additionally sign the manifest or package and verify that signature
+against a trusted release key before execution.
