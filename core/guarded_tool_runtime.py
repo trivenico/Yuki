@@ -125,6 +125,82 @@ class GuardedToolRuntime:
             # control and must fail closed when the sink cannot persist an event.
             return False
 
+    def execute_approved_action(
+        self, action: Mapping[str, Any], *, execution_context: Mapping[str, str]
+    ) -> str:
+        """Execute an immutable approved snapshot through this exact guarded registry.
+
+        Approval is not authorization: the policy must independently map the
+        registered tool to the supplied skill and return literal True from its
+        approved-action authorization hook. No model-supplied executor or
+        handler name can bypass the registry.
+        """
+        required_context = {"actor", "session_id", "conversation_id", "request_id"}
+        if (
+            not isinstance(execution_context, Mapping)
+            or set(execution_context) != required_context
+            or any(not isinstance(v, str) or not v.strip() or len(v) > 256
+                   for v in execution_context.values())
+        ):
+            raise PermissionError("approved execution requires authenticated request context")
+        context = MappingProxyType(dict(execution_context))
+        if not isinstance(action, Mapping) or set(action) != {
+            "tool_name", "skill_id", "arguments", "execution_context"
+        }:
+            raise ValueError("approved action snapshot has an invalid shape")
+        tool_name = action.get("tool_name")
+        skill_id = action.get("skill_id")
+        arguments = action.get("arguments")
+        stored_context = action.get("execution_context")
+        if (
+            not isinstance(tool_name, str) or not tool_name or len(tool_name) > 128
+            or not isinstance(skill_id, str) or not skill_id.strip() or len(skill_id) > 120
+            or not isinstance(arguments, Mapping)
+            or not isinstance(stored_context, Mapping)
+            or dict(stored_context) != dict(context)
+        ):
+            raise ValueError("approved action does not match its authenticated request")
+        if tool_name not in self._tools:
+            self._record(tool_name if isinstance(tool_name, str) else "invalid", "approved_tool_not_found")
+            raise PermissionError("approved tool is not registered in this owner runtime")
+        try:
+            snapshot = json.loads(json.dumps(
+                dict(arguments), ensure_ascii=False, allow_nan=False,
+                sort_keys=True, separators=(",", ":"),
+            ))
+            encoded = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            self._record(tool_name, "approved_arguments_invalid")
+            raise ValueError("approved arguments must be JSON-safe") from exc
+        if len(encoded) > self._max_argument_chars:
+            self._record(tool_name, "approved_arguments_too_large")
+            raise ValueError("approved arguments exceed the guarded runtime limit")
+        skill_resolver = getattr(self._policy, "skill_id_for_tool", None)
+        approved_authorizer = getattr(self._policy, "authorize_approved_tool_context", None)
+        if not callable(skill_resolver) or not callable(approved_authorizer):
+            self._record(tool_name, "approved_execution_policy_unavailable")
+            raise PermissionError("approved execution policy is not configured")
+        try:
+            trusted_skill = skill_resolver(tool_name)
+            authorized = approved_authorizer(tool_name, skill_id, context)
+        except Exception:
+            trusted_skill, authorized = None, False
+        if trusted_skill != skill_id or authorized is not True:
+            self._record(tool_name, "approved_execution_denied")
+            raise PermissionError("approved action failed independent owner policy validation")
+        if not self._record(tool_name, "approved_execution_started"):
+            raise RuntimeError("approved execution start audit failed")
+        try:
+            result = str(self._tools[tool_name](encoded))
+        except Exception as exc:
+            self._record(tool_name, "approved_execution_outcome_unknown")
+            raise RuntimeError("approved tool execution outcome is unknown") from exc
+        if len(result) > self._max_result_chars:
+            result = result[:self._max_result_chars] + "… [truncated]"
+        if not self._record(tool_name, "approved_execution_completed"):
+            raise RuntimeError("approved tool may have completed but completion audit failed")
+        return result
+
     def invoke(self, name: str, argument: str = "", *, execution_context: Mapping[str, str] | None = None) -> str:
         if execution_context is not None:
             required = {"actor", "session_id", "conversation_id", "request_id"}
