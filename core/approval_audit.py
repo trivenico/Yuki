@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 _ALLOWED_EVENTS = frozenset({
-    "requested", "approved", "denied", "executed", "execution_failed",
+    "requested", "approved", "denied", "executed", "execution_started", "execution_failed", "execution_unavailable",
     "execution_started", "outcome_unknown",
 })
 _ZERO_HASH = "0" * 64
