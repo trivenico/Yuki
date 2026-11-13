@@ -12,7 +12,7 @@ python -m venv .venv
 python -m pip install -e '.[training]'
 ```
 
-PyTorch and Safetensors are optional training dependencies. Normal Yuki installation and runtime do not need it for the existing provider paths. For Kaggle, install the repository and training extra in the notebook environment, then point `--corpus` to a reviewed dataset snapshot mounted in the notebook.
+PyTorch, Safetensors, and NumPy are optional training dependencies. Normal Yuki installation and runtime do not need it for the existing provider paths. For Kaggle, install the repository and training extra in the notebook environment, then point `--corpus` to a reviewed dataset snapshot mounted in the notebook.
 
 ## Prepare data
 
