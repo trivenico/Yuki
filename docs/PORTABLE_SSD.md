@@ -61,21 +61,49 @@ The launcher scripts are starter launchers, not a portable Python runtime and no
 Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. These launcher preflight checks improve version and path handling; they do not constitute the complete cross-platform test matrix or a self-contained portable release.
 
 
-## Portable runtime integrity manifests
+## Portable runtime integrity and signed startup
 
-The repository includes `scripts/portable_runtime_manifest.py` for packaging
-pipelines. After assembling a platform-specific runtime directory, create and
-verify its exact file inventory:
+The packaging helper creates a deterministic file inventory and supports
+detached Ed25519 signatures. A production bundle must be signed with a
+private key kept outside the bundle and source repository:
 
 ```sh
-python scripts/portable_runtime_manifest.py create ./YukiRuntime --platform windows-x86_64 --runtime-version 3.12.7
-python scripts/portable_runtime_manifest.py verify ./YukiRuntime
+python scripts/portable_runtime_manifest.py create ./YukiRuntime --platform linux-x86_64 --runtime-version 3.12.7
+python scripts/portable_runtime_manifest.py sign ./YukiRuntime --private-key /secure/release-ed25519-private.pem
+python scripts/portable_runtime_manifest.py verify-signed ./YukiRuntime --public-key /trusted/release-ed25519-public.pem
 ```
 
-The manifest records every regular payload file's relative path, byte size,
-and SHA-256 digest. Verification rejects modified, missing, unexpected,
-non-regular, symbolic-link, duplicate, or path-traversing entries. The
-manifest is explicitly **unsigned**: it detects changes relative to the
-manifest but does not authenticate the publisher. Production distribution
-must additionally sign the manifest or package and verify that signature
-against a trusted release key before execution.
+Before launching Yuki, both portable launchers run `scripts/portable_preflight.py`.
+When a runtime manifest is present, preflight requires a trusted public key
+and verifies the Ed25519 signature plus the complete runtime inventory. Any
+missing key, invalid signature, or changed/missing/extra file stops startup.
+A release launcher/build must also set `YUKI_PORTABLE_REQUIRE_SIGNATURE=1`
+so removing the manifest cannot turn a release into an unsigned development
+checkout. The trusted key must be installed or provisioned independently on
+the host; never trust a key merely because it is on the same removable drive.
+
+Configure the trusted key path on the host before launching:
+
+```sh
+# Linux/macOS
+export YUKI_PORTABLE_REQUIRE_SIGNATURE=1
+export YUKI_PORTABLE_TRUSTED_PUBLIC_KEY=/etc/yuki/release-ed25519-public.pem
+./scripts/portable-yuki-unix.sh
+```
+
+```powershell
+# Windows PowerShell (use a protected, host-local trust-anchor path)
+$env:YUKI_PORTABLE_REQUIRE_SIGNATURE = "1"
+$env:YUKI_PORTABLE_TRUSTED_PUBLIC_KEY = "C:\\ProgramData\\Yuki\\release-ed25519-public.pem"
+.\\scripts\\portable-yuki-windows.bat
+```
+
+A source checkout without a runtime manifest remains usable for development.
+That is not a production release mode. The generic `verify` command checks
+integrity only; production startup must use the signed verification path.
+Signing keys must never be distributed with the bundle. The public key is a
+trust anchor and must be delivered through a separately authenticated channel.
+
+This verification protects files after the manifest is created. It does not
+yet provide a signed installer, trusted-key rotation, revocation, secure
+anti-rollback version policy, or a self-contained Python distribution.
