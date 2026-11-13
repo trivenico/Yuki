@@ -253,5 +253,88 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             )
 
 
+    def test_persistent_store_transitions_are_identity_bound_and_restart_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {"text": "durable"},
+                {"skill_id": "notes.write", "arguments": {"text": "durable"}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(item.status, "pending")
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="intruder", session_id="session-a",
+            ))
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-b",
+            ))
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(claimed.status, "claimed")
+            self.assertEqual(claimed.action["arguments"]["text"], "durable")
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            ))
+
+            restarted = SQLitePendingApprovalStore(path)
+            persisted = restarted.get(item.pending_id)
+            self.assertEqual(persisted.status, "claimed")
+            approved = restarted.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(approved.status, "approved")
+            executing = restarted.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(executing.status, "executing")
+            completed = restarted.transition(
+                item.pending_id, expected_status="executing", new_status="completed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(completed.status, "completed")
+            self.assertEqual(restarted.get(item.pending_id).action["arguments"]["text"], "durable")
+
+    def test_persistent_store_rejects_invalid_and_terminal_state_transitions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="pending", new_status="completed",
+                actor="owner", session_id="session-a",
+            ))
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            approved = store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            executing = store.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            unknown = store.transition(
+                item.pending_id, expected_status="executing", new_status="outcome_unknown",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(unknown.status, "outcome_unknown")
+            self.assertIsNone(store.transition(
+                item.pending_id, expected_status="outcome_unknown", new_status="executing",
+                actor="owner", session_id="session-a",
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()
