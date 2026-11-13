@@ -36,6 +36,7 @@ def build_conversation_application_runtime(
     config: dict[str, Any],
     *,
     agent_loop: AgentExecutionLoop,
+    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     owner_id: str | None = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
 ) -> ConversationApplicationRuntime:
@@ -49,6 +50,8 @@ def build_conversation_application_runtime(
         raise TypeError("config must be a dictionary.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
+        raise TypeError("agent_loop_for_owner must be callable")
     if not callable(store_factory):
         raise TypeError("store_factory must be callable.")
     if owner_id is not None and (
@@ -57,7 +60,7 @@ def build_conversation_application_runtime(
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
     store = store_factory(config)
     try:
-        conversations = ConversationService(store, agent_loop)
+        conversations = ConversationService(store, agent_loop, agent_loop_for_owner=agent_loop_for_owner)
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,
         )

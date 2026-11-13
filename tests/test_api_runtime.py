@@ -56,6 +56,57 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.app.conversations.agent_loop_for_owner, factory)
             runtime.close()
 
+    def test_owner_execution_factory_receives_persisted_owner_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            resolved = []
+            def factory(owner_id):
+                resolved.append(owner_id)
+                return _loop()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=factory,
+            )
+            conversation = runtime.app.conversations.create(owner_id="authenticated-owner")
+            result = runtime.app.conversations.reply(
+                owner_id="authenticated-owner",
+                conversation_id=conversation["conversation_id"],
+                user_text="Hello Yuki",
+                request_id="owner-scoped-request",
+                expected_version=conversation["version"],
+                tools=[],
+            )
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(resolved, ["authenticated-owner"])
+            runtime.close()
+
+    def test_owner_factory_failure_does_not_persist_user_turn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            def broken_factory(owner_id):
+                raise RuntimeError("owner context unavailable")
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=broken_factory,
+            )
+            conversation = runtime.app.conversations.create(owner_id="isolated-owner")
+            with self.assertRaisesRegex(RuntimeError, "owner context unavailable"):
+                runtime.app.conversations.reply(
+                    owner_id="isolated-owner",
+                    conversation_id=conversation["conversation_id"],
+                    user_text="Do not persist this turn",
+                    request_id="factory-failure-request",
+                    expected_version=conversation["version"],
+                    tools=[],
+                )
+            self.assertEqual(runtime.app.conversations.history(
+                owner_id="isolated-owner", conversation_id=conversation["conversation_id"]
+            ), [])
+            self.assertEqual(runtime.store.get_conversation(
+                owner_id="isolated-owner", conversation_id=conversation["conversation_id"]
+            )["version"], conversation["version"])
+            runtime.close()
+
     def test_runtime_rejects_invalid_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
