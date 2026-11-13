@@ -6,6 +6,7 @@ signature and does not authenticate who produced the bundle.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -132,6 +133,71 @@ def verify_manifest(root: str | Path, manifest_path: str | Path | None = None) -
     return value
 
 
+
+def _external_regular_file(path: str | Path, bundle: Path, label: str) -> Path:
+    candidate = Path(path).expanduser()
+    if candidate.is_symlink() or not candidate.is_file():
+        raise RuntimeManifestError(f"{label} must be an existing regular non-symlink file.")
+    resolved = candidate.resolve(strict=True)
+    try:
+        resolved.relative_to(bundle)
+    except ValueError:
+        return resolved
+    raise RuntimeManifestError(f"{label} must be stored outside the portable bundle.")
+
+
+def sign_manifest(bundle: str | Path, private_key_path: str | Path) -> Path:
+    root = Path(bundle).expanduser().resolve(strict=True)
+    verify_manifest(root)
+    key_path = _external_regular_file(private_key_path, root, "Signing private key")
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    except ImportError as exc:
+        raise RuntimeManifestError("Signing requires the optional cryptography dependency.") from exc
+    try:
+        key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeManifestError("Signing private key is unreadable or invalid PEM.") from exc
+    if not isinstance(key, Ed25519PrivateKey):
+        raise RuntimeManifestError("Only Ed25519 release signing keys are accepted.")
+    signature_path = root / SIGNATURE_NAME
+    if signature_path.is_symlink() or (signature_path.exists() and not signature_path.is_file()):
+        raise RuntimeManifestError("Signature destination must be a regular non-symlink file.")
+    manifest_bytes = (root / MANIFEST_NAME).read_bytes()
+    signature = base64.b64encode(key.sign(manifest_bytes)).decode("ascii") + "\n"
+    signature_path.write_text(signature, encoding="ascii")
+    return signature_path
+
+
+def verify_signed_manifest(
+    bundle: str | Path,
+    public_key_path: str | Path,
+) -> dict[str, Any]:
+    root = Path(bundle).expanduser().resolve(strict=True)
+    manifest = verify_manifest(root)
+    key_path = _external_regular_file(public_key_path, root, "Trusted release public key")
+    signature_path = root / SIGNATURE_NAME
+    if signature_path.is_symlink() or not signature_path.is_file() or signature_path.stat().st_size > 1024:
+        raise RuntimeManifestError("Detached runtime signature is missing or invalid.")
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        signature = base64.b64decode(signature_path.read_text(encoding="ascii").strip(), validate=True)
+        key = serialization.load_pem_public_key(key_path.read_bytes())
+    except ImportError as exc:
+        raise RuntimeManifestError("Signature verification requires the optional cryptography dependency.") from exc
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise RuntimeManifestError("Trusted key or detached signature is unreadable or invalid.") from exc
+    if not isinstance(key, Ed25519PublicKey):
+        raise RuntimeManifestError("Only Ed25519 trusted release public keys are accepted.")
+    try:
+        key.verify(signature, (root / MANIFEST_NAME).read_bytes())
+    except Exception as exc:
+        raise RuntimeManifestError("Runtime release signature verification failed.") from exc
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -139,8 +205,14 @@ def main() -> int:
     build.add_argument("bundle", type=Path)
     build.add_argument("--platform", required=True)
     build.add_argument("--runtime-version", required=True)
+    sign = sub.add_parser("sign")
+    sign.add_argument("bundle", type=Path)
+    sign.add_argument("--private-key", required=True, type=Path)
     verify = sub.add_parser("verify")
     verify.add_argument("bundle", type=Path)
+    signed = sub.add_parser("verify-signed")
+    signed.add_argument("bundle", type=Path)
+    signed.add_argument("--public-key", required=True, type=Path)
     args = parser.parse_args()
     try:
         if args.command == "create":
@@ -151,6 +223,12 @@ def main() -> int:
                 raise RuntimeManifestError("Runtime manifest destination must be a regular non-symlink file.")
             output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             print(f"Created unsigned integrity manifest for {len(manifest['files'])} files: {output}")
+        elif args.command == "sign":
+            signature = sign_manifest(args.bundle, args.private_key)
+            print(f"Created detached Ed25519 release signature: {signature}")
+        elif args.command == "verify-signed":
+            manifest = verify_signed_manifest(args.bundle, args.public_key)
+            print(f"Verified signed release: {len(manifest['files'])} files for {manifest['platform']}.")
         else:
             manifest = verify_manifest(args.bundle)
             print(f"Verified {len(manifest['files'])} runtime files for {manifest['platform']}.")
