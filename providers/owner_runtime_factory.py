@@ -86,6 +86,10 @@ class OwnerAgentLoopFactory:
             tool_runtime = self._tool_runtime_for_owner(owner_id)
         if not isinstance(tool_runtime, GuardedToolRuntime):
             raise TypeError("owner tool runtime factory must return GuardedToolRuntime")
+        if self._tool_runtime_for_owner is not None and not tool_runtime.audit_required:
+            raise ValueError(
+                "owner tool runtimes must require successful authorization and completion audit writes"
+            )
 
         policy = tool_runtime.authorization_policy
         audit = getattr(tool_runtime, "audit_callback", None)
