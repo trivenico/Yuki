@@ -160,11 +160,11 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 # A second bearer session for the same owner is isolated too.
                 self.assertEqual(alice_other_session_list, (200, {"approvals": []}))
                 self.assertEqual(alice_other_session_recovery, (200, {"recovery": []}))
-                # Listing recovery is read-only: it neither resolves nor retries it.
+                # The explicit reconciliation request resolves the record without replaying execution.
                 retained = coordinator.pending_store.get_for_identity(
                     recovery.pending_id, actor=alice.user_id, session_id=alice_session_hash,
                 )
-                self.assertEqual(retained.status, "outcome_unknown")
+                self.assertEqual(retained.status, "reconciled_completed")
                 self.assertEqual(executor.executed, [])
                 self.assertEqual(bob_cross[0], 404)
                 self.assertEqual(approved, (200, {
