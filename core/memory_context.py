@@ -77,16 +77,23 @@ class MemoryContextBuilder:
             memory_id = item.get("id")
             category = item.get("category", "note")
             text = item.get("text", "")
-            if not isinstance(memory_id, str) or not isinstance(text, str):
+            if (
+                not isinstance(memory_id, str) or not 1 <= len(memory_id) <= 128
+                or any(ord(char) < 32 or ord(char) == 127 for char in memory_id)
+                or not isinstance(category, str) or not category
+                or len(category) > 32
+                or any(not (char.isalnum() or char in "_.-") for char in category)
+                or not isinstance(text, str)
+            ):
                 continue
-            text = text.strip()
+            text = " ".join(text.split())
             if not text:
                 continue
             if len(text) > self.max_item_chars:
                 text = text[:self.max_item_chars]
                 truncated = True
             # Escape delimiter-like content so a memory cannot close the block.
-            text = text.replace("<", "&lt;").replace(">", "&gt;")
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             line = f"- [{category}; memory_id={memory_id}] {text}"
             extra = len(line) + (1 if lines else 0)
             if used + extra > self.max_chars:
