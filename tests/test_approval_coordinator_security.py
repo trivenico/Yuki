@@ -38,6 +38,32 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
             self.planner, result, actor="owner", session_id="session-1"
         )
 
+    def test_invalid_identity_cannot_claim_or_consume_approval(self):
+        invalid = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor=" ",
+            session_id="session-1", confirm=lambda _: True,
+        )
+        self.assertEqual(invalid.status, "pending_not_found")
+        valid = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirm=lambda _: True,
+        )
+        self.assertTrue(valid.ok)
+        self.assertEqual(len(self.planner.executed), 1)
+
+    def test_missing_confirmation_callback_fails_without_consuming_approval(self):
+        invalid = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirm=None,
+        )
+        self.assertEqual(invalid.status, "approval_confirmation_unavailable")
+        valid = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirm=lambda _: True,
+        )
+        self.assertTrue(valid.ok)
+        self.assertEqual(len(self.planner.executed), 1)
+
     def test_host_resolver_prevents_request_planner_substitution(self):
         trusted = DummyPlanner()
         attacker = DummyPlanner()
