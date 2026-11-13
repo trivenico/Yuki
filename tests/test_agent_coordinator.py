@@ -269,6 +269,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         first = self.coordinator.submit(actor_id="alice", idempotency_key="idem", subtasks=items)
         second = self.coordinator.submit(actor_id="alice", idempotency_key="idem", subtasks=items)
         self.assertEqual(first.plan_id, second.plan_id)
+        self.assertEqual(first.idempotency_key, "idem")
         with self.assertRaises(WorkflowConflict):
             self.coordinator.submit(actor_id="alice", idempotency_key="idem",
                                     subtasks=[SubtaskSpec("a", "different", ("research",))])
