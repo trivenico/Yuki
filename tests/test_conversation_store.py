@@ -212,6 +212,23 @@ class ConversationStoreTests(unittest.TestCase):
                 process.terminate()
                 process.join(5)
         self.assertEqual(process.exitcode, 0)
+        # A dead worker cannot release its durable lease implicitly. Recovery
+        # must wait for expiry, after which a replacement worker can claim it.
+        with self.assertRaises(ConversationConflict):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-before-expiry", ttl_seconds=30,
+            )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        recovered = self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="replacement-after-expiry", ttl_seconds=30,
+        )
+        self.assertGreater(recovered["expires_at"], 0)
 
     def test_generation_lease_is_exclusive_across_independent_store_instances(self):
         second = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
