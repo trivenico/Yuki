@@ -66,7 +66,7 @@ class PortablePreflightTests(unittest.TestCase):
                             "YUKI_PORTABLE_TRUSTED_PUBLIC_KEY": str(key),
                         },
                     )
-            verify.assert_called_once()
+            verify.assert_not_called()
 
     def test_rejects_python_older_than_310(self):
         with tempfile.TemporaryDirectory() as directory:
