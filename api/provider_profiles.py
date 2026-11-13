@@ -108,7 +108,10 @@ class AuthenticatedProviderProfileAPI:
                     )
                     if profile is None:
                         return await self._respond(send, 404, {"error": "profile_not_found"})
-                    if profile.credential_configured is not True:
+                    credential_ready = await asyncio.to_thread(
+                        self.store.credential_available, user.user_id, payload["name"]
+                    )
+                    if credential_ready is not True:
                         return await self._respond(send, 409, {"error": "profile_credential_unavailable"})
                     await asyncio.to_thread(self.store.select_profile, user.user_id, payload["name"])
                 except KeyError:
