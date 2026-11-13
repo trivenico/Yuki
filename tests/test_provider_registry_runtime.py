@@ -1,12 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.profile_store import ProviderProfileStore
 from yuki_providers import ProviderManager
+
 
 class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_registry_reports_only_factory_supported_integrations(self):
@@ -20,7 +22,6 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["gemini"]["implemented"])
 
     def test_default_openai_adapter_is_constructible_without_credentials(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
         adapter = ProviderManager(environ={}).create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertFalse(adapter.is_available())
@@ -41,16 +42,14 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
         manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
-        model = manager.create_selected_agent_model()
-        self.assertIsInstance(model, ProviderAgentAdapter)
+        self.assertIsInstance(manager.create_selected_agent_model(), ProviderAgentAdapter)
 
     def test_selected_ollama_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
         manager = ProviderManager(
             {"provider": "ollama", "ollama_model": "test-model"}, environ={}
         )
-        model = manager.create_selected_agent_model()
-        self.assertIsInstance(model, ProviderAgentAdapter)
+        self.assertIsInstance(manager.create_selected_agent_model(), ProviderAgentAdapter)
 
     def test_text_only_hybrid_provider_fails_closed_for_agent_chat(self):
         manager = ProviderManager(
@@ -108,23 +107,24 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
                 name="my_gateway", base_url="https://gateway.example.test/v1",
                 model="model-x", api_key_env="secret-value",
             )
+
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
         with self.assertRaisesRegex(TypeError, "generate"):
             manager._build_adapter("custom")
 
-if __name__ == "__main__":
-    unittest.main()
-
-def test_persisted_vault_profile_loads_into_runtime_without_catalog_secret(self):
+    def test_persisted_vault_profile_loads_into_runtime_without_catalog_secret(self):
         class MemoryVault:
             def __init__(self):
                 self.values = {}
+
             def set_secret(self, reference, secret):
                 self.values[reference] = secret
+
             def get_secret(self, reference):
                 return self.values.get(reference)
+
             def delete_secret(self, reference):
                 self.values.pop(reference, None)
 
@@ -138,29 +138,44 @@ def test_persisted_vault_profile_loads_into_runtime_without_catalog_secret(self)
                 api_key="vault-only-secret",
             )
             manager = ProviderManager(environ={})
-            self.assertEqual(manager.load_persisted_profiles(store, "owner:alice"),
-                             ("persisted_gateway",))
-            self.assertEqual(manager.select("persisted_gateway"),
-                             "Selected provider: persisted_gateway")
+            self.assertEqual(
+                manager.load_persisted_profiles(store, "owner:alice"),
+                ("persisted_gateway",),
+            )
+            self.assertEqual(
+                manager.select("persisted_gateway"),
+                "Selected provider: persisted_gateway",
+            )
             adapter = manager.create_selected_adapter()
             self.assertIsInstance(adapter, OpenAICompatibleProvider)
             self.assertTrue(adapter.is_available())
-            entry = next(item for item in manager.catalog()
-                         if item["name"] == "persisted_gateway")
+            entry = next(
+                item for item in manager.catalog()
+                if item["name"] == "persisted_gateway"
+            )
             self.assertTrue(entry["ready"])
             self.assertTrue(entry["credential_configured"])
             self.assertNotIn("vault-only-secret", repr(entry))
-            self.assertNotIn("vault-only-secret", repr(manager.compatible_profiles()))
+            self.assertNotIn(
+                "vault-only-secret", repr(manager.compatible_profiles())
+            )
             store.close()
 
     def test_persisted_profile_loader_rejects_wrong_owner_identity(self):
         class MemoryVault:
-            def set_secret(self, reference, secret): pass
-            def get_secret(self, reference): return None
-            def delete_secret(self, reference): pass
+            def set_secret(self, reference, secret):
+                pass
+
+            def get_secret(self, reference):
+                return None
+
+            def delete_secret(self, reference):
+                pass
 
         with tempfile.TemporaryDirectory() as directory:
-            store = ProviderProfileStore(Path(directory) / "profiles.sqlite", MemoryVault())
+            store = ProviderProfileStore(
+                Path(directory) / "profiles.sqlite", MemoryVault()
+            )
             store.save(
                 owner_id="owner:alice", name="persisted_gateway",
                 base_url="https://gateway.example.test/v1",
@@ -168,9 +183,15 @@ def test_persisted_vault_profile_loads_into_runtime_without_catalog_secret(self)
                 api_key="secret",
             )
             manager = ProviderManager(environ={})
-            self.assertEqual(manager.load_persisted_profiles(store, "owner:bob"), ())
-            self.assertNotIn("persisted_gateway", {p["name"] for p in manager.list_providers()})
+            self.assertEqual(
+                manager.load_persisted_profiles(store, "owner:bob"), ()
+            )
+            self.assertNotIn(
+                "persisted_gateway",
+                {profile["name"] for profile in manager.list_providers()},
+            )
             store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
