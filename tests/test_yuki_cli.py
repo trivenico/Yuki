@@ -1,7 +1,11 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from yuki_cli import run_cli
+from yuki_cli import run_cli, _resolve_cli_provider
+from providers.openai_compatible import OpenAICompatibleProvider
+from providers.profile_store import ProviderProfileStore
 
 
 class FakeProvider:
@@ -24,6 +28,145 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_provider_profile_cli_lifecycle_uses_hidden_secret_input(self):
+        class MemoryVault:
+            def __init__(self):
+                self.values = {}
+            def set_secret(self, reference, secret):
+                self.values[reference] = secret
+            def get_secret(self, reference):
+                return self.values.get(reference)
+            def delete_secret(self, reference):
+                self.values.pop(reference, None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "profiles.sqlite"
+            vault = MemoryVault()
+            def store_factory(config, *, create):
+                if not create and not database.exists():
+                    return None
+                return ProviderProfileStore(database, vault)
+            owner_factory = lambda config: "owner:cli"
+            outputs = []
+            code = run_cli(
+                ["provider-profile", "add", "--name", "gateway",
+                 "--endpoint", "https://gateway.example.test/v1",
+                 "--model", "vendor/model-x", "--approved-host", "gateway.example.test"],
+                config_loader=lambda: {}, profile_store_factory=store_factory,
+                owner_id_factory=owner_factory,
+                secret_input_fn=lambda prompt: "never-print-this-secret",
+                output_fn=outputs.append,
+            )
+            self.assertEqual(code, 0)
+            self.assertNotIn("never-print-this-secret", repr(outputs))
+            outputs.clear()
+            code = run_cli(
+                ["provider-profile", "list"], config_loader=lambda: {},
+                profile_store_factory=store_factory, owner_id_factory=owner_factory,
+                output_fn=outputs.append,
+            )
+            self.assertEqual(code, 0)
+            listing = json.loads(outputs[0])
+            self.assertEqual(listing["profiles"][0]["name"], "gateway")
+            self.assertTrue(listing["profiles"][0]["credential_configured"])
+            self.assertNotIn("never-print-this-secret", outputs[0])
+            code = run_cli(
+                ["provider-profile", "select", "gateway"], config_loader=lambda: {},
+                profile_store_factory=store_factory, owner_id_factory=owner_factory,
+                output_fn=outputs.append,
+            )
+            self.assertEqual(code, 0)
+            code = run_cli(
+                ["provider-profile", "verify", "gateway"], config_loader=lambda: {},
+                profile_store_factory=store_factory, owner_id_factory=owner_factory,
+                output_fn=outputs.append,
+            )
+            self.assertEqual(code, 0)
+            verification = json.loads(outputs[-1])
+            self.assertTrue(verification["local_ready"])
+            self.assertFalse(verification["network_checked"])
+            code = run_cli(
+                ["provider-profile", "remove", "gateway"], config_loader=lambda: {},
+                profile_store_factory=store_factory, owner_id_factory=owner_factory,
+                output_fn=outputs.append,
+            )
+            self.assertEqual(code, 0)
+            store = store_factory({}, create=False)
+            self.assertIsNone(store.selected_profile("owner:cli"))
+            store.close()
+
+    def test_profile_select_fails_closed_without_vault_credential(self):
+        class MemoryVault:
+            def __init__(self):
+                self.values = {}
+            def set_secret(self, reference, secret):
+                self.values[reference] = secret
+            def get_secret(self, reference):
+                return self.values.get(reference)
+            def delete_secret(self, reference):
+                self.values.pop(reference, None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "profiles.sqlite"
+            vault = MemoryVault()
+            store = ProviderProfileStore(database, vault)
+            store.save(
+                owner_id="owner:cli", name="gateway",
+                base_url="https://gateway.example.test/v1", model="vendor/model-x",
+                allowed_host="gateway.example.test", api_key="secret",
+            )
+            vault.values.clear()
+            def store_factory(config, *, create):
+                return ProviderProfileStore(database, vault)
+            output = []
+            code = run_cli(
+                ["provider-profile", "select", "gateway"], config_loader=lambda: {},
+                profile_store_factory=store_factory,
+                owner_id_factory=lambda config: "owner:cli", output_fn=output.append,
+            )
+            self.assertEqual(code, 3)
+            reopened = ProviderProfileStore(database, vault)
+            self.assertIsNone(reopened.selected_profile("owner:cli"))
+            reopened.close()
+            store.close()
+
+    def test_selected_saved_profile_resolves_for_runtime_without_plaintext_config(self):
+        class MemoryVault:
+            def __init__(self):
+                self.values = {}
+            def set_secret(self, reference, secret):
+                self.values[reference] = secret
+            def get_secret(self, reference):
+                return self.values.get(reference)
+            def delete_secret(self, reference):
+                self.values.pop(reference, None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            vault = MemoryVault()
+            database = Path(directory) / "profiles.sqlite"
+            store = ProviderProfileStore(database, vault)
+            store.save(
+                owner_id="owner:cli", name="gateway",
+                base_url="https://gateway.example.test/v1", model="vendor/model-x",
+                allowed_host="gateway.example.test", api_key="vault-secret",
+            )
+            store.select_profile("owner:cli", "gateway")
+            def store_factory(config, *, create):
+                if not create and not database.exists():
+                    return None
+                return ProviderProfileStore(database, vault)
+            adapter, opened_store, owner, manager = _resolve_cli_provider(
+                {}, lambda config: self.fail("selected profile must override default provider"),
+                store_factory, lambda config: "owner:cli",
+            )
+            self.assertIsInstance(adapter, OpenAICompatibleProvider)
+            self.assertTrue(adapter.is_available())
+            self.assertEqual(owner, "owner:cli")
+            self.assertEqual(manager.current().name, "gateway")
+            self.assertNotIn("vault-secret", repr(manager.catalog()))
+            opened_store.close()
+            store.close()
+
     def test_chat_uses_persistent_runtime_and_closes_it(self):
         class Conversations:
             def __init__(self):

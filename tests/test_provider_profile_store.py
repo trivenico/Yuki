@@ -123,6 +123,23 @@ class ProviderProfileStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unavailable"):
             self.store.resolve_for_runtime("owner:alice", "gateway")
 
+    def test_delete_fails_closed_when_vault_is_unavailable(self):
+        self.save()
+
+        class UnavailableVault:
+            def set_secret(self, reference, secret):
+                raise RuntimeError("locked")
+            def get_secret(self, reference):
+                raise RuntimeError("locked")
+            def delete_secret(self, reference):
+                raise RuntimeError("locked")
+
+        store = ProviderProfileStore(self.root / "profiles.sqlite", UnavailableVault())
+        self.addCleanup(store.close)
+        with self.assertRaisesRegex(RuntimeError, "profile was not removed"):
+            store.delete("owner:alice", "gateway")
+        self.assertEqual(len(store.list_profiles("owner:alice")), 1)
+
     def test_closed_store_rejects_operations(self):
         self.store.close()
         with self.assertRaisesRegex(RuntimeError, "closed"):
