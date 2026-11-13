@@ -27,6 +27,7 @@ class StoredPendingAction:
     expires_at: str
     actor_hash: str
     session_hash: str
+    status: str = "pending"
 
 
 class SQLitePendingApprovalStore:
@@ -50,13 +51,16 @@ class SQLitePendingApprovalStore:
                 action_json TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 actor_hash TEXT,
-                session_hash TEXT
+                session_hash TEXT,
+                status TEXT NOT NULL DEFAULT 'pending'
             )""")
             columns = {row[1] for row in db.execute("PRAGMA table_info(pending_approvals)")}
             if "actor_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN actor_hash TEXT")
             if "session_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
+            if "status" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
 
     @contextmanager
@@ -102,8 +106,8 @@ class SQLitePendingApprovalStore:
                 if count >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
                 db.execute("""INSERT INTO pending_approvals
-                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')""",
                     (item.pending_id, skill_id, args_json, action_json, expires, actor_hash, session_hash))
                 db.execute("COMMIT")
             except Exception:
@@ -116,7 +120,7 @@ class SQLitePendingApprovalStore:
             return None
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
-            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
+            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, status
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
                 return None
@@ -128,7 +132,46 @@ class SQLitePendingApprovalStore:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
-                                       row[3], row[4], row[5])
+                                       row[3], row[4], row[5], row[6])
+
+    def transition(self, pending_id: str, *, expected_status: str, new_status: str,
+                   actor: str, session_id: str) -> StoredPendingAction | None:
+        """Atomically transition an owner/session-bound approval without deleting it."""
+        allowed = {"pending", "claimed", "approved", "executing", "completed",
+                   "denied", "execution_unavailable", "outcome_unknown"}
+        transitions = {
+            "pending": {"claimed", "denied"},
+            "claimed": {"approved", "denied"},
+            "approved": {"executing", "execution_unavailable"},
+            "executing": {"completed", "outcome_unknown"},
+            "execution_unavailable": {"approved", "denied"},
+        }
+        if (not isinstance(pending_id, str) or not pending_id or
+                expected_status not in allowed or new_status not in allowed or
+                new_status not in transitions.get(expected_status, set()) or
+                not isinstance(actor, str) or not actor.strip() or
+                not isinstance(session_id, str) or not session_id.strip()):
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = db.execute("""UPDATE pending_approvals SET status=?
+                    WHERE pending_id=? AND status=? AND expires_at>? AND actor_hash=? AND session_hash=?""",
+                    (new_status, pending_id, expected_status, now, actor_hash, session_hash))
+                if cursor.rowcount != 1:
+                    db.execute("COMMIT")
+                    return None
+                row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at,
+                    actor_hash, session_hash, status FROM pending_approvals WHERE pending_id=?""",
+                    (pending_id,)).fetchone()
+                db.execute("COMMIT")
+                return StoredPendingAction(pending_id, row[0], json.loads(row[1]),
+                    json.loads(row[2]), row[3], row[4], row[5], row[6])
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
 
     def consume(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
         if not isinstance(pending_id, str) or not pending_id:
@@ -140,7 +183,7 @@ class SQLitePendingApprovalStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
+                row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, status
                     FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
                 if row is None or row[3] <= now or row[4] != actor_hash or row[5] != session_hash:
                     if row is not None and row[3] <= now:
@@ -150,7 +193,7 @@ class SQLitePendingApprovalStore:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 db.execute("COMMIT")
                 return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
-                                           row[3], row[4], row[5])
+                                           row[3], row[4], row[5], row[6])
             except Exception:
                 db.execute("ROLLBACK")
                 raise
