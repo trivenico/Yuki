@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from core.guarded_tool_runtime import GuardedToolRuntime
 from providers.owner_approval_factory import OwnerApprovalRuntimeFactory
 
 
@@ -32,22 +33,36 @@ class OwnerApprovalRuntimeFactoryTests(unittest.TestCase):
                 self.assertTrue((owner_dir / "audit.sqlite3").is_file())
             self.assertNotEqual(alice_dir, bob_dir)
 
-    def test_executor_resolution_is_bound_to_coordinator_owner_and_session(self):
+    def test_executor_resolution_requires_guarded_runtime_and_binds_owner_session(self):
         with tempfile.TemporaryDirectory() as directory:
             resolutions = []
+            class Policy:
+                def authorize_tool(self, name):
+                    return False
+            guarded = GuardedToolRuntime(
+                {}, Policy(), audit=lambda *_: None, require_audit=True,
+            )
             factory = OwnerApprovalRuntimeFactory(
                 directory,
-                planner_resolver_for_owner=lambda owner, session: resolutions.append((owner, session)) or "executor",
+                planner_resolver_for_owner=lambda owner, session: resolutions.append((owner, session)) or guarded,
             )
             coordinator = factory.coordinator_for_owner("owner:alice")
-            self.assertEqual(
-                coordinator.planner_resolver(actor="owner:alice", session_id="session-a"),
-                "executor",
-            )
+            executor = coordinator.planner_resolver(actor="owner:alice", session_id="session-a")
+            self.assertTrue(callable(getattr(executor, "execute_approved_action", None)))
             self.assertIsNone(
                 coordinator.planner_resolver(actor="owner:bob", session_id="session-b"),
             )
             self.assertEqual(resolutions, [("owner:alice", "session-a")])
+
+    def test_executor_resolution_rejects_arbitrary_executor_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            factory = OwnerApprovalRuntimeFactory(
+                directory, planner_resolver_for_owner=lambda *_: object(),
+            )
+            coordinator = factory.coordinator_for_owner("owner:alice")
+            self.assertIsNone(
+                coordinator.planner_resolver(actor="owner:alice", session_id="session-a"),
+            )
 
     def test_rejects_invalid_owner_and_symlink_storage_root(self):
         with tempfile.TemporaryDirectory() as directory:
