@@ -18,7 +18,7 @@ def prepare_private_desktop_root(root: Path) -> Path:
     misleading chmod-based security claim.
     """
     path = Path(root).expanduser()
-    if path.exists() and path.is_symlink():
+    if path.is_symlink():
         raise DesktopStorageError("Desktop data root must not be a symbolic link.")
     try:
         path.mkdir(parents=True, exist_ok=True)
