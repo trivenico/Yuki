@@ -87,6 +87,11 @@ class StructuredToolProtocol:
             raise TypeError("runtime must be a GuardedToolRuntime.")
         self._runtime = runtime
 
+    @property
+    def registered_tool_names(self) -> frozenset[str]:
+        """Names actually executable by this owner-bound guarded runtime."""
+        return frozenset(self._runtime._tools)
+
     def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
