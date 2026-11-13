@@ -31,8 +31,11 @@ class YukiDecoder(nn.Module):
         )
         self.blocks = nn.TransformerEncoder(layer, num_layers=n_layer, enable_nested_tensor=False)
         self.final_norm = nn.LayerNorm(n_embd)
+        # Keep the output projection independent. Safetensors intentionally
+        # rejects aliased tensors in a plain state_dict; an explicit untied
+        # head keeps checkpoints portable and strict-loadable without custom
+        # shared-weight serialization conventions.
         self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
-        self.lm_head.weight = self.token_embedding.weight
 
     def forward(self, token_ids):
         if token_ids.ndim != 2:
