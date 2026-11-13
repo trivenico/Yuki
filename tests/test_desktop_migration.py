@@ -20,6 +20,18 @@ class DesktopMigrationTests(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertTrue((source / "notes.json").exists())
 
+    def test_preview_rejects_reserved_manifest_name_without_overwriting_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            original = source / "migration-manifest.json"
+            original.write_text('{"user_data": "preserve"}', encoding="utf-8")
+            with self.assertRaisesRegex(MigrationError, "reserved migration-manifest"):
+                preview_migration(source, root / "new")
+            self.assertEqual(original.read_text(encoding="utf-8"), '{"user_data": "preserve"}')
+            self.assertFalse((root / "new").exists())
+
     def test_migration_copies_files_and_keeps_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
