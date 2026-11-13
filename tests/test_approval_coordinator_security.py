@@ -179,6 +179,51 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.assertIsNotNone(retained)
         self.assertEqual(retained.status, "outcome_unknown")
 
+    def test_uncertain_action_can_be_reconciled_once_without_reexecution(self):
+        store = self.coordinator.pending_store
+        pending_id = self.outcome.pending_id
+        for expected, new in (("pending", "claimed"), ("claimed", "approved"),
+                              ("approved", "executing"), ("executing", "outcome_unknown")):
+            self.assertIsNotNone(store.transition(
+                pending_id, expected_status=expected, new_status=new,
+                actor="owner", session_id="session-1",
+            ))
+        result = self.coordinator.reconcile(
+            pending_id, actor="owner", session_id="session-1",
+            resolution="completed", evidence_reference="provider-receipt-123",
+        )
+        self.assertEqual(result.status, "reconciled_completed")
+        self.assertEqual(store.get_for_identity(
+            pending_id, actor="owner", session_id="session-1",
+        ).status, "reconciled_completed")
+        retry = self.coordinator.reconcile(
+            pending_id, actor="owner", session_id="session-1",
+            resolution="not_executed", evidence_reference="operator-review-456",
+        )
+        self.assertEqual(retry.status, "reconciliation_not_available")
+        self.assertEqual(self.planner.executed, [])
+
+    def test_reconciliation_requires_evidence_and_correct_identity(self):
+        store = self.coordinator.pending_store
+        pending_id = self.outcome.pending_id
+        for expected, new in (("pending", "claimed"), ("claimed", "approved"),
+                              ("approved", "executing"), ("executing", "outcome_unknown")):
+            store.transition(pending_id, expected_status=expected, new_status=new,
+                             actor="owner", session_id="session-1")
+        wrong_owner = self.coordinator.reconcile(
+            pending_id, actor="intruder", session_id="session-1",
+            resolution="completed", evidence_reference="receipt-1",
+        )
+        missing_evidence = self.coordinator.reconcile(
+            pending_id, actor="owner", session_id="session-1",
+            resolution="completed", evidence_reference=" ",
+        )
+        self.assertEqual(wrong_owner.status, "reconciliation_not_available")
+        self.assertEqual(missing_evidence.status, "invalid_reconciliation")
+        self.assertEqual(store.get_for_identity(
+            pending_id, actor="owner", session_id="session-1",
+        ).status, "outcome_unknown")
+
     def test_completed_approval_is_recognized_as_non_replayable(self):
         first = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
