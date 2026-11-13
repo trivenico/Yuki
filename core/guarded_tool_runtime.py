@@ -42,6 +42,11 @@ class GuardedToolRuntime:
         """Return the configured audit sink for owner-isolation validation."""
         return self._audit
 
+    @property
+    def registered_tool_names(self) -> frozenset[str]:
+        """Return the immutable set of handlers executable by this runtime."""
+        return frozenset(self._tools)
+
     def _record(self, name: str, outcome: str) -> None:
         if self._audit is not None:
             try:
