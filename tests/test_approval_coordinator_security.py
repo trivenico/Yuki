@@ -58,7 +58,7 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
 
     def test_host_resolver_failure_prevents_execution(self):
         coordinator = ApprovalCoordinator(
-            pending_store=self.coordinator.pending_store,
+            pending_store=self.coordinator.pending_store, audit_log=MemoryAudit(),
             planner_resolver=lambda **_: None,
         )
         result = coordinator.record(
