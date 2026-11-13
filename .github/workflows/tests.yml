@@ -48,7 +48,7 @@ jobs:
       - name: Validate Unix launcher syntax
         run: sh -n scripts/portable-yuki-unix.sh
       - name: Run portable runtime preflight tests
-        run: python -m unittest discover -s tests -p "test_portable_preflight.py" -v
+        run: python -m unittest discover -s tests -p "test_portable_*.py" -v
       - name: Validate Windows launcher invariants
         run: |
           python -c 'from pathlib import Path; p=Path("scripts/portable-yuki-windows.bat").read_text(); assert "if not defined YUKI_HOME" in p; assert "sys.version_info < (3, 10)" in p; assert "portable_preflight.py" in p; assert chr(34) + "%YUKI_PYTHON%" + chr(34) + " main.py" in p'
