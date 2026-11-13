@@ -8,6 +8,7 @@ from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
+from providers.yuki_core import YukiCoreProvider
 
 
 def create_provider(config=None, *, environ=None):
@@ -23,6 +24,10 @@ def create_provider(config=None, *, environ=None):
     selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
         return MockProvider()
+    if selected == "yuki-core":
+        model_dir = env.get("YUKI_CORE_MODEL_DIR", cfg.get("yuki_core_model_dir", ""))
+        device = env.get("YUKI_CORE_DEVICE", cfg.get("yuki_core_device", "cpu"))
+        return YukiCoreProvider(model_dir, device=device)
     if selected == "openai":
         model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
         return OpenAICompatibleProvider(
@@ -38,7 +43,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: yuki-core, openai, ollama, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),

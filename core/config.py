@@ -141,6 +141,10 @@ def load_config(path=None):
     database_pool_max = _bounded_int(raw.get("database_pool_max", 10), database_pool_min, 50)
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    yuki_core_model_dir = os.environ.get("YUKI_CORE_MODEL_DIR", str(raw.get("yuki_core_model_dir", ""))).strip()
+    if len(yuki_core_model_dir) > 2048: raise RuntimeError("yuki_core_model_dir is too long.")
+    yuki_core_device = os.environ.get("YUKI_CORE_DEVICE", str(raw.get("yuki_core_device", "cpu"))).strip().lower()
+    if yuki_core_device not in {"cpu", "cuda"}: raise RuntimeError("yuki_core_device must be cpu or cuda.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
@@ -168,7 +172,7 @@ def load_config(path=None):
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
         "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
-        "ollama_base_url": base_url, "ollama_model": model,
+        "ollama_base_url": base_url, "ollama_model": model, "yuki_core_model_dir": yuki_core_model_dir, "yuki_core_device": yuki_core_device,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),
