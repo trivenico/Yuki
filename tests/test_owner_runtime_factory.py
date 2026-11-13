@@ -283,7 +283,10 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
             results[owner] = loop.tool_protocol.dispatch(json.dumps({
                 "tool_calls": [{"id": owner.replace(":", "-"), "name": "owner.read",
                                 "arguments": {"value": "private"}}],
-            }))
+            }), execution_context={
+                "actor": owner, "session_id": "session:" + owner,
+                "conversation_id": "conversation:" + owner, "request_id": "request:" + owner,
+            })
 
         workers = [
             threading.Thread(target=invoke, args=("owner:alice",)),
