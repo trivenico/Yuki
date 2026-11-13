@@ -38,6 +38,11 @@ class GuardedToolRuntime:
         self._max_result_chars = max_result_chars
 
     @property
+    def authorization_policy(self):
+        """Return the policy enforcing authorization for this guarded runtime."""
+        return self._policy
+
+    @property
     def audit_callback(self):
         """Return the configured audit sink for owner-isolation validation."""
         return self._audit
