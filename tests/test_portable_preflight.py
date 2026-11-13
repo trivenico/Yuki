@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.portable_preflight import PortablePreflightError, validate_portable_runtime\nfrom scripts.portable_runtime_manifest import RuntimeManifestError
+from scripts.portable_preflight import PortablePreflightError, validate_portable_runtime
+from scripts.portable_runtime_manifest import RuntimeManifestError
 
 
 class PortablePreflightTests(unittest.TestCase):
