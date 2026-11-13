@@ -77,6 +77,19 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 idempotency_key="conversation-a:request-a",
             )
 
+            recovery = coordinator.pending_store.put(
+                "notes.write", {"text": "uncertain"},
+                {"skill_id": "notes.write", "tool_name": "notes.write",
+                 "arguments": {"text": "uncertain"}},
+                actor=alice.user_id, session_id=alice_session_hash,
+            )
+            for expected, new in (("pending", "claimed"), ("claimed", "approved"),
+                                  ("approved", "executing"), ("executing", "outcome_unknown")):
+                coordinator.pending_store.transition(
+                    recovery.pending_id, expected_status=expected, new_status=new,
+                    actor=alice.user_id, session_id=alice_session_hash,
+                )
+
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=_loop(),
@@ -108,6 +121,8 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
             async def scenario():
                 alice_list = await request("GET", "/v1/approvals", alice_session.token)
                 bob_list = await request("GET", "/v1/approvals", bob_session.token)
+                alice_recovery = await request("GET", "/v1/approvals/recovery", alice_session.token)
+                bob_recovery = await request("GET", "/v1/approvals/recovery", bob_session.token)
                 bob_cross = await request(
                     "POST", f"/v1/approvals/{pending.pending_id}/approve",
                     bob_session.token, {"confirm_action": True},
@@ -120,14 +135,18 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                     "POST", f"/v1/approvals/{pending.pending_id}/approve",
                     alice_session.token, {"confirm_action": True},
                 )
-                return alice_list, bob_list, bob_cross, alice_approved, replay
+                return alice_list, bob_list, alice_recovery, bob_recovery, bob_cross, alice_approved, replay
 
             try:
-                alice_list, bob_list, bob_cross, approved, replay = asyncio.run(scenario())
+                alice_list, bob_list, alice_recovery, bob_recovery, bob_cross, approved, replay = asyncio.run(scenario())
                 self.assertEqual(alice_list[0], 200)
                 self.assertEqual(len(alice_list[1]["approvals"]), 1)
                 self.assertEqual(alice_list[1]["approvals"][0]["pending_id"], pending.pending_id)
                 self.assertEqual(bob_list, (200, {"approvals": []}))
+                self.assertEqual(alice_recovery[0], 200)
+                self.assertEqual(alice_recovery[1]["recovery"][0]["pending_id"], recovery.pending_id)
+                self.assertTrue(alice_recovery[1]["recovery"][0]["requires_reconciliation"])
+                self.assertEqual(bob_recovery, (200, {"recovery": []}))
                 self.assertEqual(bob_cross[0], 404)
                 self.assertEqual(approved, (200, {
                     "ok": True, "status": "completed", "pending_id": pending.pending_id,
