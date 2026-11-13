@@ -153,6 +153,19 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.assertIsNotNone(retained)
         self.assertEqual(retained.status, "outcome_unknown")
 
+    def test_completed_approval_is_recognized_as_non_replayable(self):
+        first = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirm=lambda _: True,
+        )
+        self.assertEqual(first.status, "completed")
+        replay = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirm=lambda _: True,
+        )
+        self.assertEqual(replay.status, "recovery_required")
+        self.assertEqual(len(self.planner.executed), 1)
+
     def test_two_concurrent_approvals_execute_at_most_once(self):
         barrier = threading.Barrier(3)
         outcomes = []
