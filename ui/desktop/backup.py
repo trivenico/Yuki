@@ -91,6 +91,11 @@ _WINDOWS_RESERVED_NAMES = {
 _WINDOWS_FORBIDDEN = set('<>:"\\\\|?*')
 
 
+def _portable_archive_key(path: PurePosixPath) -> tuple[str, ...]:
+    """Normalize a validated path for case-insensitive Windows collision checks."""
+    return tuple(part.casefold() for part in path.parts)
+
+
 def _safe_archive_path(raw_name: str) -> PurePosixPath:
     if not isinstance(raw_name, str) or not raw_name or "\\x00" in raw_name:
         raise BackupError("Backup contains an unsafe cross-platform path.")
@@ -257,7 +262,7 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     raise BackupError("Backup contains too many archive entries.")
                 for member in members:
                     name = _safe_archive_path(member.name)
-                    portable_name = "/".join(part.casefold() for part in name.parts)
+                    portable_name = _portable_archive_key(name)
                     if member.name in seen or portable_name in seen_portable:
                         raise BackupError("Backup contains duplicate or cross-platform-colliding paths.")
                     seen.add(member.name)
