@@ -126,7 +126,10 @@ class SQLitePendingApprovalStore:
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
                 return None
-            if row[3] <= now and row[6] in {"pending", "completed", "denied", "outcome_unknown"}:
+            # outcome_unknown is a durable reconciliation record, not a TTL-bound
+            # pending request. Keep it until an explicit reconciliation workflow
+            # resolves it; deleting it could erase evidence of an external side effect.
+            if row[3] <= now and row[6] in {"pending", "completed", "denied"}:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             # Old rows from before identity binding are rejected, not silently upgraded.
