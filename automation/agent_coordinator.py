@@ -448,6 +448,20 @@ class SpecialistAgentCoordinator:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM agent_plans WHERE owner_id=? AND idempotency_key=?",
+                (actor_id, key),
+            ).fetchone()
+            if existing:
+                if existing["request_digest"] != digest:
+                    raise WorkflowConflict("idempotency key was already used for a different agent plan.")
+                hierarchy = db.execute(
+                    "SELECT parent_plan_id FROM agent_plan_hierarchy WHERE plan_id=? AND owner_id=?",
+                    (existing["plan_id"], actor_id),
+                ).fetchone()
+                if hierarchy is None or hierarchy["parent_plan_id"] != parent_plan_id:
+                    raise WorkflowConflict("idempotency key is already bound to a different delegation parent.")
+                return self._read_plan(db, existing["plan_id"])
             parent = None
             root_plan_id = plan_id
             depth = 0
@@ -491,20 +505,6 @@ class SpecialistAgentCoordinator:
                 }
                 if not requested_permissions <= parent_permissions:
                     raise AgentPlanError("child plan permissions must be a subset of parent plan permissions.")
-            existing = db.execute(
-                "SELECT * FROM agent_plans WHERE owner_id=? AND idempotency_key=?",
-                (actor_id, key),
-            ).fetchone()
-            if existing:
-                if existing["request_digest"] != digest:
-                    raise WorkflowConflict("idempotency key was already used for a different agent plan.")
-                hierarchy = db.execute(
-                    "SELECT parent_plan_id FROM agent_plan_hierarchy WHERE plan_id=? AND owner_id=?",
-                    (existing["plan_id"], actor_id),
-                ).fetchone()
-                if hierarchy is None or hierarchy["parent_plan_id"] != parent_plan_id:
-                    raise WorkflowConflict("idempotency key is already bound to a different delegation parent.")
-                return self._read_plan(db, existing["plan_id"])
             db.execute(
                 "INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at, owner_id, client_key) VALUES (?, ?, ?, ?, ?, ?)",
                 (plan_id, key, digest, now, actor_id, raw_key),
