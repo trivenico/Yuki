@@ -101,7 +101,9 @@ class SQLitePendingApprovalStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                db.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now.isoformat(),))
+                db.execute("""DELETE FROM pending_approvals
+                    WHERE expires_at <= ? AND status IN ('pending', 'completed', 'denied', 'outcome_unknown')""",
+                    (now.isoformat(),))
                 count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
                 if count >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
@@ -124,7 +126,7 @@ class SQLitePendingApprovalStore:
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
                 return None
-            if row[3] <= now:
+            if row[3] <= now and row[6] in {"pending", "completed", "denied", "outcome_unknown"}:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             # Old rows from before identity binding are rejected, not silently upgraded.
@@ -158,9 +160,16 @@ class SQLitePendingApprovalStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                cursor = db.execute("""UPDATE pending_approvals SET status=?
-                    WHERE pending_id=? AND status=? AND expires_at>? AND actor_hash=? AND session_hash=?""",
-                    (new_status, pending_id, expected_status, now, actor_hash, session_hash))
+                if expected_status == "pending":
+                    cursor = db.execute("""UPDATE pending_approvals SET status=?
+                        WHERE pending_id=? AND status=? AND expires_at>? AND actor_hash=? AND session_hash=?""",
+                        (new_status, pending_id, expected_status, now, actor_hash, session_hash))
+                else:
+                    # Once claimed, retain the durable action through approval,
+                    # execution, and reconciliation even after its pending TTL.
+                    cursor = db.execute("""UPDATE pending_approvals SET status=?
+                        WHERE pending_id=? AND status=? AND actor_hash=? AND session_hash=?""",
+                        (new_status, pending_id, expected_status, actor_hash, session_hash))
                 if cursor.rowcount != 1:
                     db.execute("COMMIT")
                     return None
