@@ -280,9 +280,11 @@ class ApprovalCoordinator:
             )
             newly_claimed = item is not None
             if item is None:
-                item = self.pending_store.get(pending_id)
-                if (item is None or item.actor_hash != self.pending_store._identity_hash(actor) or
-                        item.session_hash != self.pending_store._identity_hash(session_id) or
+                identity_get = getattr(self.pending_store, "get_for_identity", None)
+                if not callable(identity_get):
+                    return None
+                item = identity_get(pending_id, actor=actor, session_id=session_id)
+                if (item is None or
                         item.status not in {"approved", "executing", "claimed", "execution_unavailable"}):
                     return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
