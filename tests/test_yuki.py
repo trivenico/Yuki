@@ -118,6 +118,40 @@ class ProviderManagerTests(unittest.TestCase):
         from providers.openai_compatible import OpenAICompatibleProvider
         self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
 
+    def test_cli_add_compatible_provider_selects_session_model(self):
+        from providers.openai_compatible import OpenAICompatibleProvider
+        manager = ProviderManager(environ={"CUSTOM_GATEWAY_KEY": "secret-value"})
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command(
+            "/provider add-compatible gateway | https://gateway.example.test/v1 | vendor/model-a | CUSTOM_GATEWAY_KEY | gateway.example.test",
+            [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys()),
+        )
+        self.assertIn("Selected session-only provider 'gateway'", result)
+        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        self.assertEqual(manager.current().name, "gateway")
+        self.assertNotIn("secret-value", repr(manager.catalog()))
+
+    def test_cli_custom_provider_missing_credential_does_not_switch_active_model(self):
+        from providers.openai_compatible import OpenAICompatibleProvider
+        manager = ProviderManager(environ={})
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        original = agent.provider
+        result = handle_command(
+            "/provider add-compatible gateway | https://gateway.example.test/v1 | vendor/model-a | CUSTOM_GATEWAY_KEY | gateway.example.test",
+            [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys()),
+        )
+        self.assertIn("active model was not changed", result)
+        self.assertEqual(manager.current().name, "openai")
+        self.assertIs(agent.provider, original)
+    def test_cli_custom_provider_rejects_host_mismatch_without_switching(self):
+        manager = ProviderManager(environ={"CUSTOM_GATEWAY_KEY": "secret-value"})
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command(
+            "/provider add-compatible gateway | https://gateway.example.test/v1 | vendor/model-a | CUSTOM_GATEWAY_KEY | attacker.example.test",
+            [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys()),
+        )
+        self.assertIn("Approved host must exactly match", result)
+        self.assertEqual(manager.current().name, "openai")
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
