@@ -243,10 +243,16 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
     def test_hierarchical_delegation_is_bounded_and_inherits_permissions(self):
         parent = self.coordinator.submit(
             actor_id="alice", idempotency_key="hierarchy-parent",
-            subtasks=[SubtaskSpec(
-                "lead", "Coordinate approved research", ("research",),
-                required_permissions=("web:read",),
-            )],
+            subtasks=[
+                SubtaskSpec(
+                    "lead", "Coordinate approved research", ("research",),
+                    required_permissions=("web:read",),
+                ),
+                SubtaskSpec(
+                    "sibling-writer", "Write an approved artifact", ("write",),
+                    required_permissions=("artifact:write",),
+                ),
+            ],
         )
         self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
         child = self.coordinator.submit(
