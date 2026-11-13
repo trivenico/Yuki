@@ -55,12 +55,18 @@ class ApprovalRuntimeAdapter:
         # approval snapshot. Skill identifiers and tool names are distinct
         # namespaces and must not be assumed to be equal.
         bound_action["tool_name"] = tool_name
+        import json
+        request_key = json.dumps(
+            [execution_context["conversation_id"], execution_context["request_id"]],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         outcome = self._coordinator.record(
             None,
             {"action": bound_action},
             actor=execution_context["actor"],
             session_id=execution_context["session_id"],
-            idempotency_key=execution_context["request_id"],
+            idempotency_key=request_key,
         )
         if outcome.status != "pending_approval" or not isinstance(outcome.pending_id, str):
             raise RuntimeError("approval coordinator did not issue a pending request")
