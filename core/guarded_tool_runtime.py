@@ -106,7 +106,11 @@ class GuardedToolRuntime:
                 return "Tool blocked because its required audit record could not be written."
             return "Unknown tool."
         try:
-            contextual_authorizer = getattr(self._policy, "authorize_tool_context", None)\n            if execution_context is not None and callable(contextual_authorizer):\n                authorized = contextual_authorizer(name, execution_context)\n            else:\n                authorized = self._policy.authorize_tool(name)
+            contextual_authorizer = getattr(self._policy, "authorize_tool_context", None)
+            if execution_context is not None and callable(contextual_authorizer):
+                authorized = contextual_authorizer(name, execution_context)
+            else:
+                authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
         if not authorized:
