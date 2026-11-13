@@ -174,10 +174,6 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
                 store.put("skill", {}, {}, actor="owner", session_id="s")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ApprovalOperationIntentTests(unittest.TestCase):
     def test_operation_intent_is_stable_and_action_bound(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -208,3 +204,7 @@ class ApprovalOperationIntentTests(unittest.TestCase):
             store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
             item = store.put("files.delete", {"path": "x"}, {"skill_id": "files.delete", "arguments": {"path": "x"}}, actor="owner-a", session_id="session-a")
             self.assertIsNone(store.ensure_operation_intent(item.pending_id, actor="owner-a", session_id="session-a"))
+
+
+if __name__ == "__main__":
+    unittest.main()

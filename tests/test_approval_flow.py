@@ -603,10 +603,6 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ApprovalOperationContextTests(unittest.TestCase):
     def test_persistent_execution_exposes_durable_operation_context_to_executor(self):
         from core.operation_context import current_operation_context
@@ -626,12 +622,13 @@ class ApprovalOperationContextTests(unittest.TestCase):
                 audit_log=MemoryAudit(),
                 planner_resolver=lambda **_: executor,
             )
+            planner = FakePlanner()
             pending = coordinator.record(
-                self_planner := FakePlanner(), action_result("bind context"),
+                planner, action_result("bind context"),
                 actor="owner-a", session_id="session-a",
             )
             outcome = coordinator.approve(
-                self_planner, pending.pending_id, actor="owner-a",
+                planner, pending.pending_id, actor="owner-a",
                 session_id="session-a", confirm=lambda _action: True,
             )
 
@@ -678,3 +675,7 @@ class ApprovalOperationContextTests(unittest.TestCase):
             self.assertEqual(outcome.status, "recovery_required")
             self.assertTrue(executor.assert_bound)
             self.assertIsNone(current_operation_context())
+
+
+if __name__ == "__main__":
+    unittest.main()
