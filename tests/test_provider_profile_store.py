@@ -71,6 +71,14 @@ class ProviderProfileStoreTests(unittest.TestCase):
         self.assertEqual(reopened.resolve_for_runtime("owner:alice", "gateway")["api_key"],
                          "secret-value")
 
+    def test_accepts_url_safe_owner_ids_with_leading_punctuation(self):
+        for owner_id in ("_owner", "-owner"):
+            with self.subTest(owner_id=owner_id):
+                self.save(owner_id=owner_id, name="gateway")
+                self.assertEqual(self.store.list_profiles(owner_id)[0].name, "gateway")
+                self.store.select_profile(owner_id, "gateway")
+                self.assertEqual(self.store.selected_profile(owner_id), "gateway")
+
     def test_profiles_are_owner_scoped(self):
         self.save()
         self.assertEqual(self.store.list_profiles("owner:bob"), ())
