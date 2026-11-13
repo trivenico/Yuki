@@ -146,6 +146,23 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "cannot be shared across owners"):
             factory("owner:bob")
 
+    def test_factory_rejects_shared_approval_adapter_between_owners(self):
+        class ApprovalAdapter:
+            def __call__(self, tool_name, action, context):
+                return "pending"
+
+        shared_adapter = ApprovalAdapter()
+        factory = OwnerAgentLoopFactory(
+            self.store,
+            tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
+                {}, AllowNothing(), audit=lambda name, outcome: None,
+                require_audit=True, approval_request=shared_adapter,
+            ),
+        )
+        factory("owner:alice")
+        with self.assertRaisesRegex(PermissionError, "approval request adapter cannot be shared"):
+            factory("owner:bob")
+
     def test_factory_rejects_shared_tool_handler_between_owners(self):
         shared_handler = lambda argument: argument
         factory = OwnerAgentLoopFactory(
