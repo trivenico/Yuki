@@ -215,6 +215,24 @@ class ConversationService:
                             self._loop_owners[execution_loop] = owner_id
                         except TypeError as exc:
                             raise TypeError("owner agent loops must support weak identity tracking") from exc
+                # The model-visible tool catalog must never advertise handlers
+                # that are absent from this authenticated owner's guarded runtime.
+                # This prevents a caller-supplied schema from exposing another
+                # owner's tools or creating a misleading authorization surface.
+                protocol = getattr(execution_loop, "tool_protocol", None)
+                registered_names = getattr(protocol, "registered_tool_names", None)
+                if self.agent_loop_for_owner is not None and registered_names is not None:
+                    advertised_names = set()
+                    for definition in tools:
+                        if not isinstance(definition, dict):
+                            raise ValueError("tool definitions must be objects")
+                        function = definition.get("function")
+                        name = function.get("name") if isinstance(function, dict) else None
+                        if not isinstance(name, str) or not name:
+                            raise ValueError("tool definition name is invalid")
+                        advertised_names.add(name)
+                    if advertised_names != set(registered_names):
+                        raise PermissionError("model tool catalog does not match owner guarded runtime")
                 result = execution_loop.run(
                     user_text, on_text_delta=on_text_delta,
                     cancellation_requested=cancellation_requested, **kwargs,
