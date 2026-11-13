@@ -29,6 +29,8 @@ class ProviderManager:
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
         self._compatible_profiles: dict[str, dict] = {}
+        self._vault_profiles: dict[str, dict] = {}
+        self._profile_owner_id: Optional[str] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
@@ -89,6 +91,52 @@ class ProviderManager:
             | {"credential_configured": bool(self._environ.get(profile["api_key_env"], "").strip())}
             for profile in sorted(self._compatible_profiles.values(), key=lambda item: item["name"])
         ]
+    def load_persisted_profiles(self, store, owner_id: str) -> tuple[str, ...]:
+        """Register owner-scoped profiles backed by the OS credential vault.
+
+        The caller must supply an already authenticated owner identity. Secrets
+        are resolved only when a provider adapter is constructed, never during
+        profile listing or catalog generation.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("an authenticated owner identity is required")
+        if self._profile_owner_id is not None and self._profile_owner_id != owner_id:
+            raise PermissionError("provider manager is already bound to a different owner")
+        if not callable(getattr(store, "list_profiles", None)) or not callable(
+            getattr(store, "resolve_for_runtime", None)
+        ):
+            raise TypeError("store must implement the provider profile runtime contract")
+        self._profile_owner_id = owner_id
+        loaded = []
+        for profile in store.list_profiles(owner_id):
+            name = getattr(profile, "name", None)
+            if (not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,47}", name)
+                    or getattr(profile, "owner_id", None) != owner_id):
+                raise ValueError("persisted provider profile identity is invalid")
+            if name in self._providers and name not in self._vault_profiles:
+                raise ValueError("persisted profile conflicts with a registered provider")
+            def factory(profile_name=name, profile_owner=owner_id, profile_store=store):
+                resolved = profile_store.resolve_for_runtime(profile_owner, profile_name)
+                key_env = "YUKI_VAULT_PROFILE_API_KEY"
+                adapter_environ = {key_env: resolved["api_key"]}
+                return OpenAICompatibleProvider(
+                    resolved["model"], api_key_env=key_env,
+                    base_url=resolved["base_url"],
+                    allowed_hosts={resolved["allowed_host"]},
+                    environ=adapter_environ,
+                )
+            self.register(
+                ProviderInfo(name, ("os_credential_vault",), True),
+                factory=factory,
+            )
+            self._vault_profiles[name] = {
+                "name": name, "owner_id": owner_id,
+                "base_url": profile.base_url, "model": profile.model,
+                "allowed_host": profile.allowed_host, "store": store,
+            }
+            loaded.append(name)
+        return tuple(loaded)
+
     def register(self, provider: ProviderInfo, factory=None) -> None:
         if not isinstance(provider, ProviderInfo):
             raise TypeError("provider must be a ProviderInfo instance.")
@@ -193,6 +241,22 @@ class ProviderManager:
                 "credential_configured": configured,
                 "selected": profile["name"] == (self._selected or ""),
                 "status": "api_key_configured" if configured else "api_key_not_configured",
+            })
+        for name, profile in sorted(self._vault_profiles.items()):
+            if name in known:
+                continue
+            checker = getattr(profile["store"], "credential_available", None)
+            credential_configured = (
+                checker(profile["owner_id"], name) is True if callable(checker) else False
+            )
+            catalog.append({
+                "name": name, "label": name, "implemented": True,
+                "ready": credential_configured, "privacy": "cloud_provider",
+                "capabilities": ["text", "tooling_provider_dependent"],
+                "configured_model": profile["model"],
+                "credential_configured": credential_configured,
+                "selected": name == (self._selected or ""),
+                "status": "os_vault_profile",
             })
         return catalog
 
