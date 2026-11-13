@@ -292,6 +292,47 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 subtasks=[SubtaskSpec("collect", "Cross-owner", ("research",))],
             )
 
+    def test_delegation_tree_enforces_depth_and_fanout_limits(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="bounded-root",
+            subtasks=[SubtaskSpec("lead", "Coordinate delegation", ("research",))],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
+        children = []
+        for index in range(5):
+            child = self.coordinator.submit(
+                actor_id="alice", idempotency_key=f"bounded-child-{index}",
+                parent_plan_id=parent.plan_id,
+                subtasks=[SubtaskSpec("work", f"Child work {index}", ("research",))],
+            )
+            children.append(child)
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="bounded-child-overflow",
+                parent_plan_id=parent.plan_id,
+                subtasks=[SubtaskSpec("work", "Excess child", ("research",))],
+            )
+
+        self.coordinator.advance(actor_id="alice", plan_id=children[0].plan_id)
+        grandchild = self.coordinator.submit(
+            actor_id="alice", idempotency_key="bounded-grandchild",
+            parent_plan_id=children[0].plan_id,
+            subtasks=[SubtaskSpec("work", "Grandchild work", ("research",))],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=grandchild.plan_id)
+        great_grandchild = self.coordinator.submit(
+            actor_id="alice", idempotency_key="bounded-great-grandchild",
+            parent_plan_id=grandchild.plan_id,
+            subtasks=[SubtaskSpec("work", "Great-grandchild work", ("research",))],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=great_grandchild.plan_id)
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="excessive-depth",
+                parent_plan_id=great_grandchild.plan_id,
+                subtasks=[SubtaskSpec("work", "Depth overflow", ("research",))],
+            )
+
     def test_child_plan_requires_dispatched_parent(self):
         parent = self.coordinator.submit(
             actor_id="alice", idempotency_key="undispatched-parent",
