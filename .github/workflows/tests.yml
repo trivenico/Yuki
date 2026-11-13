@@ -82,5 +82,6 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_yuki_byte_tokenizer.py" -v
           python -m unittest discover -s tests -p "test_yuki_core_runtime.py" -v
+          python -m unittest discover -s tests -p "test_yuki_core_provider.py" -v
       - name: Validate training CLI
         run: python scripts/train_yuki_core.py --help
