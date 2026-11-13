@@ -57,6 +57,7 @@ class OwnerAgentLoopFactory:
         self._policy_owners = weakref.WeakKeyDictionary()
         self._audit_owners = weakref.WeakKeyDictionary()
         self._handler_owners = weakref.WeakKeyDictionary()
+        self._approval_owners = weakref.WeakKeyDictionary()
         self._lock = threading.RLock()
 
     @property
@@ -102,6 +103,11 @@ class OwnerAgentLoopFactory:
             getattr(handler, "__self__", None) or handler
             for handler in tool_runtime.registered_tool_handlers
         ]
+        approval_callback = tool_runtime.approval_request_callback
+        approval_identity = (
+            getattr(approval_callback, "__self__", None) or approval_callback
+            if approval_callback is not None else None
+        )
         if policy is None or not callable(getattr(policy, "authorize_tool", None)):
             raise TypeError("owner tool runtime must contain an authorization policy")
 
@@ -115,6 +121,10 @@ class OwnerAgentLoopFactory:
                 previous_handler_owners = [
                     self._handler_owners.get(identity) for identity in handler_identities
                 ]
+                previous_approval_owner = (
+                    self._approval_owners.get(approval_identity)
+                    if approval_identity is not None else None
+                )
             except TypeError as exc:
                 raise TypeError("owner runtimes, policies, handlers and audit sinks must support weak identity tracking") from exc
             if previous_owner is not None and previous_owner != owner_id:
@@ -125,12 +135,16 @@ class OwnerAgentLoopFactory:
                 raise PermissionError("a tool audit sink cannot be shared across owners")
             if any(previous is not None and previous != owner_id for previous in previous_handler_owners):
                 raise PermissionError("a tool handler cannot be shared across owners")
+            if previous_approval_owner is not None and previous_approval_owner != owner_id:
+                raise PermissionError("an approval request adapter cannot be shared across owners")
             self._runtime_owners[tool_runtime] = owner_id
             self._policy_owners[policy] = owner_id
             if audit is not None:
                 self._audit_owners[audit_identity] = owner_id
             for identity in handler_identities:
                 self._handler_owners[identity] = owner_id
+            if approval_identity is not None:
+                self._approval_owners[approval_identity] = owner_id
 
         return AgentExecutionLoop(
             model,
