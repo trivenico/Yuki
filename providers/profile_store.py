@@ -95,7 +95,6 @@ class ProviderProfileStore:
         self.path = Path(prepare_private_sqlite_path(database_path))
         self.vault = vault
         self._closed = False
-        self._harden_permissions()
         with closing(self._connect()) as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS provider_profiles (
