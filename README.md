@@ -291,6 +291,36 @@ yuki chat
 
 The installed CLI creates a user-owned configuration from packaged safe defaults on first use. See [installation and provider setup](docs/INSTALLATION.md). This packaging milestone provides the stable CLI entry point; it does not make the broader agent runtime, desktop application, or product production-ready.
 
+
+## Yuki's own model ecosystem
+
+**Yuki is intended to have its own model family and model-serving layer.** It will not be only a front end that forwards every request to a third-party API. The model strategy is to start from capable, already-trained open-weight models and build Yuki-specific models and services on top of them—not to pretrain a foundation model from random initialization as the default path.
+
+The intended model ecosystem includes:
+
+- **Yuki Core:** the primary conversational and reasoning model, adapted for Yuki's interaction style, instruction following, tool-use conventions, and policy-aware workflows.
+- **Yuki Code:** a coding-focused model or adapted coding checkpoint for repository understanding, implementation, debugging, testing, and review.
+- **Yuki Vision:** a vision-language model for supported image and document understanding.
+- **Yuki Speech:** speech recognition, speech generation, and optional voice components selected and evaluated as a coherent voice stack.
+- **Yuki Embeddings and Reranker:** retrieval models for semantic memory, project knowledge, document search, and evidence ranking.
+- **Yuki Specialist adapters:** task-specific adapters or routed models for research, analysis, security, operations, writing, and other specialist domains. These remain governed by the same agent/tool permissions; model specialization never grants authority.
+
+### How Yuki models will be built
+
+1. Select strong open-weight base checkpoints that fit the target quality, hardware, latency, and deployment needs. Verify the actual model licence, commercial-use permissions, redistribution terms, acceptable-use rules, and provenance individually.
+2. Use suitable openly licensed datasets and/or properly licensed synthetic examples for supervised fine-tuning, instruction tuning, domain adaptation, and evaluation. Dataset availability does not itself grant permission to train on it; record source, licence, consent/provenance, filtering, and intended use.
+3. Apply parameter-efficient methods such as LoRA/QLoRA where appropriate before considering expensive full fine-tuning. Use distillation only when the teacher model and generated training data permit it.
+4. Build Yuki-specific tool-use, agent-routing, structured-output, multilingual, safety, and workflow datasets from permitted sources. Keep held-out evaluation sets separate from training data.
+5. Evaluate quality, factuality, tool correctness, prompt-injection resistance, privacy leakage, multilingual performance, latency, memory/GPU use, and regression before promoting a checkpoint.
+6. Version model weights, adapters, tokenizer/configuration, datasets, evaluation reports, licences, and deployment manifests. Support rollback and reproducible model releases.
+7. Serve local models through a provider-neutral inference layer, with optional cloud models as explicitly configured fallbacks or specialist choices. The owner can choose local-only, cloud-enabled, or hybrid routing.
+
+**Important distinctions:** using an open-weight model is not the same as owning its original foundation weights; fine-tuning creates a Yuki-adapted checkpoint/adapter subject to the base model's licence. Retrieval-augmented generation, prompts, tools, and orchestration improve Yuki but do not by themselves create a new trained model. Yuki-specific model releases are a target capability, not a claim that custom-trained Yuki weights already exist in this repository.
+
+User conversations, private files, credentials, and personal memory must never be silently added to training data. Any contribution to model improvement requires separate, informed opt-in, minimization/redaction, retention controls, and a documented deletion policy. Model downloads and training artifacts belong in user-controlled data/model storage, not Git.
+
+Current state: **Partial/Planned.** Yuki has provider adapters and a local Ollama path, but the current repository documentation does not establish a released Yuki-owned fine-tuned model family, curated training corpus, reproducible fine-tuning pipeline, or model-evaluation/release process.
+
 ## Yuki: complete product blueprint and delivery checklist
 
 **Product direction:** build Yuki as a complete, owner-controlled personal AI operating environment—not merely a chat wrapper, a collection of skill stubs, or a demo. The full target architecture, capability catalogue, acceptance criteria, safety rules, and implementation-status definitions are maintained in [Yuki Product Blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md). This blueprint is the source of truth for product scope; update it whenever a capability is added, changed, deferred, or removed.

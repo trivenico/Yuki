@@ -323,6 +323,36 @@ All interfaces and agents should use one coherent path:
 
 No interface or agent may bypass the policy plane. Model output is untrusted input, not authorization.
 
+
+### N. Yuki-owned model ecosystem and training strategy
+
+**Product requirement:** Yuki must develop and ship its own model family/model artifacts over time. The product must not remain solely a wrapper around third-party hosted APIs. This does not mean training a foundation model from scratch. The default strategy is to select capable, already-trained open-weight base models and adapt them into Yuki-specific checkpoints, adapters, and task models.
+
+Target model portfolio:
+- **Yuki Core:** conversational reasoning, instruction following, multilingual interaction, planning, and structured responses.
+- **Yuki Code:** repository comprehension, code generation, debugging, tests, and review.
+- **Yuki Vision:** supported image/document understanding through a suitable vision-language base.
+- **Yuki Speech:** a tested speech-to-text and text-to-speech stack; components may use different specialized models.
+- **Yuki Embeddings/Reranker:** semantic retrieval, memory search, project knowledge ranking, and evidence selection.
+- **Yuki Specialist adapters:** narrowly adapted models for selected agent domains where evaluations justify specialization. Agent permissions remain external policy decisions, never model decisions.
+
+**Build strategy**
+1. Select suitable open-weight checkpoints based on capability, size, inference hardware, latency, context length, language coverage, and deployment constraints.
+2. Review each checkpoint's exact licence and terms: open weights are not automatically OSI-open-source, commercially usable, redistributable, or unrestricted. Track model card, source, version, licence, acceptable-use policy, and provenance.
+3. Build a curated, versioned dataset programme using datasets whose licences and provenance permit the intended use, plus consented or appropriately licensed synthetic examples. Document source, licence, consent, filtering, quality, personal-data handling, and retention.
+4. Start with supervised fine-tuning and parameter-efficient methods (LoRA/QLoRA) when appropriate. Consider full fine-tuning only when evidence justifies the cost. Use teacher-model distillation only where the teacher licence and generated-data terms allow it.
+5. Train for Yuki-specific behavior: tool schemas, structured outputs, agent handoffs, multilingual response quality, domain workflows, safe refusals, prompt-injection robustness, and policy-aware operation.
+6. Maintain separate train/validation/held-out test sets; prevent evaluation leakage and benchmark contamination. Evaluate against strong base-model baselines.
+7. Track factuality, task success, tool-call validity, safety, privacy leakage, memorization, bias, multilingual quality, latency, throughput, and hardware cost. Require human review for high-impact model changes.
+8. Version and sign model artifacts, adapters, tokenizer/configuration, dataset manifests, training code/config, evaluation reports, licence records, and deployment manifests. Support staged rollout, monitoring, rollback, and reproducibility.
+9. Expose model routing as local-only, cloud-enabled, or hybrid. Cloud providers are optional configured capabilities, not a mandatory dependency for every interaction.
+
+**Privacy and governance:** private conversations, memory, files, credentials, and connected-account data are excluded from training by default. Any user-data contribution requires separate informed opt-in, purpose limitation, minimization/redaction, retention/deletion controls, and documented governance. No hidden continual training on user activity.
+
+**Important distinctions:** using an open-weight base model is not the same as owning its original foundation weights. A fine-tuned Yuki checkpoint/adapter remains subject to the base model licence. RAG, prompts, tools, and orchestration are valuable but do not constitute model training. Do not describe Yuki as having its own trained weights until model artifacts and their evaluation/release evidence exist.
+
+Initial status: **Partial/Planned**. Existing local Ollama and cloud provider adapters provide inference foundations. The repository does not yet establish a released Yuki-specific fine-tuned model family, governed training datasets, reproducible fine-tuning pipeline, model registry, or model evaluation/release gates.
+
 ## 5. Autonomy and approval model
 
 - **Tier 0 — Explain:** read context supplied to the model; no external side effects.
@@ -374,11 +404,12 @@ A capability is not complete until all applicable gates pass:
 3. Publish an audited capability inventory mapping each registered skill/agent to a real runtime path, permission, test, and status.
 4. Establish the versioned specialist-agent manifest and coordinator contract before scaling the catalogue toward 100 roles.
 5. Unify provider routing, conversation runtime, memory, task orchestration, and policy enforcement behind the shared application layer.
-6. Build the complete memory lifecycle and project knowledge retrieval.
-7. Deliver end-to-end voice conversation and accessible client experiences.
-8. Implement real integrations one at a time with consent, least privilege, contract tests, and revocation.
-9. Build production observability, deployment, backup/restore, load and security validation.
-10. Track every capability against the tables above; do not mark scaffolds as completed.
+6. Establish the Yuki model programme: base-model selection/licence audit, dataset governance, fine-tuning/evaluation pipeline, model registry, and local inference releases.
+7. Build the complete memory lifecycle and project knowledge retrieval.
+8. Deliver end-to-end voice conversation and accessible client experiences.
+9. Implement real integrations one at a time with consent, least privilege, contract tests, and revocation.
+10. Build production observability, deployment, backup/restore, load and security validation.
+11. Track every capability against the tables above; do not mark scaffolds as completed.
 
 ## 10. Project tracking rule
 
