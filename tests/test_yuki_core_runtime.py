@@ -95,6 +95,17 @@ class YukiCoreRuntimeTests(unittest.TestCase):
         finally:
             outside.unlink(missing_ok=True)
 
+    def test_rejects_model_dimensions_above_runtime_parameter_budget(self):
+        from yuki_training.runtime import YukiCoreRuntime, YukiCoreRuntimeError
+        config_path = self.root / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config.update({"n_embd": 4096, "n_head": 64, "n_layer": 64, "block_size": 8192})
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        self.manifest["artifacts"]["config"]["sha256"] = self._hash(config_path)
+        self._write_manifest()
+        with self.assertRaisesRegex(YukiCoreRuntimeError, "50-million-parameter"):
+            YukiCoreRuntime(self.root)
+
     def test_rejects_oversized_generation_request(self):
         from yuki_training.runtime import YukiCoreRuntime
         runtime = YukiCoreRuntime(self.root)
