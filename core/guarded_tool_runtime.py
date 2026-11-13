@@ -1,8 +1,17 @@
 """Guarded dispatch for explicitly registered CLI tools."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
+
+
+@dataclass(frozen=True)
+class ApprovalRequired:
+    """A policy decision that requires owner approval instead of execution."""
+
+    action: Mapping[str, Any]
 
 
 class GuardedToolRuntime:
@@ -15,6 +24,7 @@ class GuardedToolRuntime:
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
         require_audit: bool = False,
+        approval_request: Callable[[str, dict[str, Any], Mapping[str, str]], str] | None = None,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -37,10 +47,15 @@ class GuardedToolRuntime:
             raise ValueError("require_audit must be a boolean")
         if require_audit and audit is None:
             raise ValueError("required audit mode needs an audit sink")
+        if approval_request is not None and not callable(approval_request):
+            raise TypeError("approval_request must be callable when provided")
+        if approval_request is not None and not require_audit:
+            raise ValueError("approval requests require durable audit mode")
         self._tools = dict(tools)
         self._policy = policy
         self._audit = audit
         self._require_audit = require_audit
+        self._approval_request = approval_request
         self._max_argument_chars = max_argument_chars
         self._max_result_chars = max_result_chars
 
@@ -124,6 +139,36 @@ class GuardedToolRuntime:
                 authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
+        # Approval is a separate decision type, never a truthy authorization.
+        # It snapshots a bounded JSON action and records a pending request; the
+        # registered handler is deliberately not invoked on this path.
+        if isinstance(authorized, ApprovalRequired):
+            if self._approval_request is None or execution_context is None:
+                self._record(name, "approval_unavailable")
+                return "Tool blocked because owner approval is not configured."
+            try:
+                snapshot = json.loads(json.dumps(
+                    dict(authorized.action), ensure_ascii=False, allow_nan=False,
+                    sort_keys=True, separators=(",", ":"),
+                ))
+                if not isinstance(snapshot, dict) or len(json.dumps(
+                    snapshot, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")) > 16 * 1024:
+                    raise ValueError("approval action must be an object no larger than 16 KiB")
+            except (TypeError, ValueError):
+                self._record(name, "invalid_approval_action")
+                return "Tool blocked because its approval action is invalid."
+            if not self._record(name, "approval_requested"):
+                return "Tool blocked because its required approval audit record could not be written."
+            try:
+                pending_id = self._approval_request(name, snapshot, execution_context)
+            except Exception:
+                self._record(name, "approval_request_failed")
+                return "Tool blocked because an approval request could not be created."
+            if not isinstance(pending_id, str) or not pending_id.strip() or len(pending_id) > 256:
+                self._record(name, "approval_request_invalid_result")
+                return "Tool blocked because the approval service returned an invalid request."
+            return json.dumps({"status": "pending_approval", "pending_id": pending_id}, separators=(",", ":"))
         # Authorization is a closed boolean contract. Truthy values such as
         # "false", 1, or custom objects must never grant executable authority.
         if authorized is not True:
