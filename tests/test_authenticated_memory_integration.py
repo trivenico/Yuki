@@ -74,6 +74,10 @@ class AuthenticatedMemoryIntegrationTests(unittest.TestCase):
     def test_consent_is_authenticated_owner_scoped_and_gates_memory(self):
         status, data = self.request("GET", "/v1/memory/consent", token=self.session.token)
         self.assertEqual((status, data), (200, {"enabled": False}))
+        status, denied = self.request(
+            "POST", "/v1/memory", {"text": "must not persist without consent"}, self.session.token
+        )
+        self.assertEqual((status, denied), (403, {"error": "memory_consent_required"}))
 
         status, _ = self.request(
             "POST", "/v1/memory",
@@ -118,6 +122,11 @@ class AuthenticatedMemoryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertNotIn("prefer local inference", self.seen_messages[-1][0]["content"])
+        memory_id = created["memory"]["id"]
+        status, deleted = self.request(
+            "DELETE", f"/v1/memory/{memory_id}", token=self.session.token
+        )
+        self.assertEqual((status, deleted), (200, {"deleted": True}))
 
     def test_memory_endpoints_require_authentication(self):
         status, data = self.request("GET", "/v1/memory/consent")
