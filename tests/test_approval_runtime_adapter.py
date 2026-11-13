@@ -36,12 +36,28 @@ class ApprovalRuntimeAdapterTests(unittest.TestCase):
         pending_id = self.adapter("notes.write", self.action, self.context)
         self.assertTrue(pending_id)
         self.assertEqual(self.audit.events[-1]["event_type"], "requested")
-        pending = self.coordinator.pending_store
-        self.assertIsNone(pending)
+        stored = next(iter(self.coordinator._pending.values()))
+        self.assertEqual(stored["actor"], "owner-a")
+        self.assertEqual(stored["session_id"], "session-a")
+        self.assertEqual(stored["action"]["tool_name"], "notes.write")
+        self.assertEqual(stored["action"]["arguments"]["text"], "owner-approved content")
 
-    def test_rejects_action_for_different_tool(self):
-        with self.assertRaisesRegex(ValueError, "bind its skill_id"):
-            self.adapter("filesystem.delete", self.action, self.context)
+    def test_persists_tool_name_separately_from_skill_id(self):
+        action = {"skill_id": "notes.create", "arguments": {"text": "safe"}}
+        pending_id = self.adapter("notes.write", action, self.context)
+        self.assertTrue(pending_id)
+        stored = next(iter(self.coordinator._pending.values()))
+        self.assertEqual(stored["action"]["skill_id"], "notes.create")
+        self.assertEqual(stored["action"]["tool_name"], "notes.write")
+
+    def test_rejects_conflicting_declared_tool_name(self):
+        action = {
+            "skill_id": "notes.create",
+            "tool_name": "filesystem.delete",
+            "arguments": {},
+        }
+        with self.assertRaisesRegex(ValueError, "valid skill and arguments"):
+            self.adapter("notes.write", action, self.context)
         self.assertEqual(self.audit.events, [])
 
     def test_rejects_incomplete_authenticated_context(self):
@@ -51,7 +67,7 @@ class ApprovalRuntimeAdapterTests(unittest.TestCase):
 
     def test_rejects_non_object_arguments(self):
         action = {"skill_id": "notes.write", "arguments": []}
-        with self.assertRaisesRegex(ValueError, "bind its skill_id"):
+        with self.assertRaisesRegex(ValueError, "valid skill and arguments"):
             self.adapter("notes.write", action, self.context)
         self.assertEqual(self.audit.events, [])
 
