@@ -28,6 +28,8 @@ class AuthenticatedMemoryIntegrationTests(unittest.TestCase):
         self.auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
         self.auth.bootstrap_admin("owner", "a-secure-test-password")
         self.session = self.auth.authenticate("owner", "a-secure-test-password")
+        self.auth.create_account("anotheruser", "another-secure-password")
+        self.other_session = self.auth.authenticate("anotheruser", "another-secure-password")
         self.memory = UserMemoryService(root / "memory", root / "consent.sqlite")
         self.seen_messages = []
 
@@ -132,6 +134,25 @@ class AuthenticatedMemoryIntegrationTests(unittest.TestCase):
             "DELETE", f"/v1/memory/{memory_id}", token=self.session.token
         )
         self.assertEqual((status, deleted), (200, {"deleted": True}))
+
+
+    def test_memory_records_are_isolated_between_authenticated_owners(self):
+        self.request("PUT", "/v1/memory/consent", {"enabled": True}, self.session.token)
+        _, created = self.request(
+            "POST", "/v1/memory",
+            {"text": "private preference"}, self.session.token
+        )
+        memory_id = created["memory"]["id"]
+
+        status, other_list = self.request("GET", "/v1/memory", token=self.other_session.token)
+        self.assertEqual((status, other_list), (200, {"memories": []}))
+        status, other_delete = self.request(
+            "DELETE", f"/v1/memory/{memory_id}", token=self.other_session.token
+        )
+        self.assertEqual((status, other_delete), (200, {"deleted": False}))
+        status, owner_list = self.request("GET", "/v1/memory", token=self.session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(owner_list["memories"]), 1)
 
     def test_memory_endpoints_require_authentication(self):
         status, data = self.request("GET", "/v1/memory/consent")
