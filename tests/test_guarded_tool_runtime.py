@@ -1,7 +1,7 @@
 """Tests for guarded CLI tool dispatch."""
 import unittest
 
-from core.guarded_tool_runtime import GuardedToolRuntime
+from core.guarded_tool_runtime import ApprovalRequired, GuardedToolRuntime
 
 
 class Policy:
@@ -79,6 +79,99 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             "conversation_id": "conversation-a", "request_id": "request-a",
         }
         self.assertIn("blocked", runtime.invoke("write", "payload", execution_context=context))
+        self.assertEqual(calls, [])
+
+    def test_approval_required_creates_pending_request_without_running_handler(self):
+        calls = []
+        approvals = []
+        events = []
+
+        class ApprovalPolicy:
+            def authorize_tool(self, name):
+                return False
+
+            def authorize_tool_context(self, name, context):
+                return ApprovalRequired({
+                    "skill_id": "notes.write",
+                    "arguments": {"text": "owner-approved content"},
+                })
+
+        def request_approval(name, action, context):
+            approvals.append((name, action, dict(context)))
+            return "pending-123"
+
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value) or "written"},
+            ApprovalPolicy(),
+            audit=lambda name, outcome: events.append((name, outcome)),
+            require_audit=True,
+            approval_request=request_approval,
+        )
+        context = {
+            "actor": "owner-a", "session_id": "session-a",
+            "conversation_id": "conversation-a", "request_id": "request-a",
+        }
+        result = runtime.invoke("write", "{}", execution_context=context)
+        self.assertEqual(
+            result,
+            '{"status":"pending_approval","pending_id":"pending-123"}',
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(approvals[0][0], "write")
+        self.assertEqual(approvals[0][1]["skill_id"], "notes.write")
+        self.assertEqual(approvals[0][2], context)
+        self.assertEqual(events, [("tool:write", "approval_requested")])
+
+    def test_approval_required_fails_closed_without_host_approval_service(self):
+        calls = []
+
+        class ApprovalPolicy:
+            def authorize_tool(self, name):
+                return False
+
+            def authorize_tool_context(self, name, context):
+                return ApprovalRequired({"skill_id": "notes.write", "arguments": {}})
+
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value)},
+            ApprovalPolicy(),
+            audit=lambda *_: None,
+            require_audit=True,
+        )
+        context = {
+            "actor": "owner-a", "session_id": "session-a",
+            "conversation_id": "conversation-a", "request_id": "request-a",
+        }
+        self.assertIn("approval is not configured", runtime.invoke("write", "{}", execution_context=context))
+        self.assertEqual(calls, [])
+
+    def test_approval_required_does_not_create_request_if_audit_fails(self):
+        calls = []
+        approvals = []
+
+        class ApprovalPolicy:
+            def authorize_tool(self, name):
+                return False
+
+            def authorize_tool_context(self, name, context):
+                return ApprovalRequired({"skill_id": "notes.write", "arguments": {}})
+
+        def broken_audit(*_):
+            raise OSError("audit unavailable")
+
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value)},
+            ApprovalPolicy(),
+            audit=broken_audit,
+            require_audit=True,
+            approval_request=lambda *args: approvals.append(args) or "pending-123",
+        )
+        context = {
+            "actor": "owner-a", "session_id": "session-a",
+            "conversation_id": "conversation-a", "request_id": "request-a",
+        }
+        self.assertIn("audit record could not be written", runtime.invoke("write", "{}", execution_context=context))
+        self.assertEqual(approvals, [])
         self.assertEqual(calls, [])
 
     def test_policy_exception_denies_execution(self):
