@@ -197,7 +197,6 @@ class ConversationStoreTests(unittest.TestCase):
             )
             self.assertGreater(second_lease["expires_at"], first_lease["expires_at"] - 30)
         finally:
-            second.close()
 
     def test_expired_lease_can_be_reclaimed_but_old_token_cannot_release_new_lease(self):
         second = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
@@ -225,7 +224,6 @@ class ConversationStoreTests(unittest.TestCase):
                 lease_token="replacement-worker",
             ))
         finally:
-            second.close()
 
 if __name__ == "__main__":
     unittest.main()
