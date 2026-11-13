@@ -75,7 +75,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install Yuki training and inference dependencies
-        run: python -m pip install -e ".[training]"
+        run: python -m pip install -e ".[training]" "numpy>=1.26,<3.0"
       - name: Validate dependency consistency
         run: python -m pip check
       - name: Run Yuki-Core tokenizer and verified-runtime tests
