@@ -31,7 +31,7 @@ class StoredPendingAction:
 
 
 class SQLitePendingApprovalStore:
-    """Bounded, restart-persistent pending approvals with atomic one-time claims."""
+    """Bounded, restart-persistent approval records with atomic lifecycle transitions."""
 
     def __init__(self, database_path: str, *, ttl_seconds: int = 300, max_pending: int = 128):
         if not isinstance(database_path, str) or not database_path.strip():
@@ -184,6 +184,7 @@ class SQLitePendingApprovalStore:
                 raise
 
     def consume(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
+        """Legacy destructive claim; new execution flows must use transition()."""
         if not isinstance(pending_id, str) or not pending_id:
             return None
         if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
