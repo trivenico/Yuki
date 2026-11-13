@@ -165,7 +165,8 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                     recovery.pending_id, actor=alice.user_id, session_id=alice_session_hash,
                 )
                 self.assertEqual(retained.status, "reconciled_completed")
-                self.assertEqual(executor.executed, [])
+                # The separate approved note ran once; reconciliation did not replay the uncertain action.
+                self.assertEqual(executor.executed, [{"text": "approved note"}])
                 self.assertEqual(bob_cross[0], 404)
                 self.assertEqual(approved, (200, {
                     "ok": True, "status": "completed", "pending_id": pending.pending_id,
