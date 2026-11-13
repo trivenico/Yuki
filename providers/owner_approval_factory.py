@@ -24,6 +24,8 @@ class _OwnerBoundApprovedToolExecutor:
     def __init__(self, runtime: GuardedToolRuntime, owner_id: str, session_id: str):
         if not isinstance(runtime, GuardedToolRuntime):
             raise TypeError("approved execution requires a GuardedToolRuntime")
+        if not runtime.audit_required or not callable(runtime.audit_callback):
+            raise ValueError("approved execution requires a durable-audit guarded runtime")
         self._runtime = runtime
         self._owner_id = owner_id
         self._session_id = session_id
