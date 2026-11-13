@@ -1,7 +1,8 @@
 """Guarded dispatch for explicitly registered CLI tools."""
 from __future__ import annotations
 
-from typing import Any, Callable
+from types import MappingProxyType
+from typing import Any, Callable, Mapping
 
 
 class GuardedToolRuntime:
@@ -79,7 +80,16 @@ class GuardedToolRuntime:
             # control and must fail closed when the sink cannot persist an event.
             return False
 
-    def invoke(self, name: str, argument: str = "") -> str:
+    def invoke(self, name: str, argument: str = "", *, execution_context: Mapping[str, str] | None = None) -> str:
+        if execution_context is not None:
+            required = {"actor", "session_id", "conversation_id", "request_id"}
+            if (not isinstance(execution_context, Mapping)
+                    or set(execution_context) != required
+                    or any(not isinstance(value, str) or not value.strip() or len(value) > 256
+                           for value in execution_context.values())):
+                return "Tool blocked because its authenticated execution context is invalid."
+            # Policies receive an immutable host-created snapshot, never model data.
+            execution_context = MappingProxyType(dict(execution_context))
         if not isinstance(name, str) or not name or len(name) > 128:
             recorded = self._record("invalid", "invalid_name")
             if self._require_audit and not recorded:
@@ -96,7 +106,7 @@ class GuardedToolRuntime:
                 return "Tool blocked because its required audit record could not be written."
             return "Unknown tool."
         try:
-            authorized = self._policy.authorize_tool(name)
+            contextual_authorizer = getattr(self._policy, "authorize_tool_context", None)\n            if execution_context is not None and callable(contextual_authorizer):\n                authorized = contextual_authorizer(name, execution_context)\n            else:\n                authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
         if not authorized:
