@@ -121,6 +121,20 @@ class SpecialistAgentCoordinator:
                 db.execute("ALTER TABLE agent_plans ADD COLUMN client_key TEXT NOT NULL DEFAULT ''")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_owner_idempotency ON agent_plans(owner_id, idempotency_key)")
             db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_plan_hierarchy (
+                    plan_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    parent_plan_id TEXT,
+                    root_plan_id TEXT NOT NULL,
+                    depth INTEGER NOT NULL CHECK(depth BETWEEN 0 AND 3),
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE,
+                    FOREIGN KEY(parent_plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_hierarchy_parent ON agent_plan_hierarchy(owner_id, parent_plan_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_hierarchy_root ON agent_plan_hierarchy(owner_id, root_plan_id)")
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_subtasks (
                     plan_id TEXT NOT NULL,
                     subtask_id TEXT NOT NULL,
@@ -396,9 +410,17 @@ class SpecialistAgentCoordinator:
             # Deterministic least-overprovisioned match, then stable ID tie-break.
             return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
 
-    def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
+    def submit(
+        self, *, actor_id: str, idempotency_key: str,
+        subtasks: Iterable[SubtaskSpec], parent_plan_id: str | None = None,
+    ) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
+        if parent_plan_id is not None:
+            if not isinstance(parent_plan_id, str) or not _ID.fullmatch(parent_plan_id):
+                raise AgentPlanError("parent_plan_id must be a bounded plan identifier.")
+            if not self._allowed(actor_id, "agent:delegate", parent_plan_id):
+                raise PermissionError("hierarchical delegation is not authorized.")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
@@ -426,6 +448,49 @@ class SpecialistAgentCoordinator:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            parent = None
+            root_plan_id = plan_id
+            depth = 0
+            if parent_plan_id is not None:
+                parent = db.execute("""
+                    SELECT h.*, p.owner_id AS plan_owner
+                    FROM agent_plan_hierarchy h
+                    JOIN agent_plans p ON p.plan_id=h.plan_id
+                    WHERE h.plan_id=? AND h.owner_id=? AND p.owner_id=?
+                """, (parent_plan_id, actor_id, actor_id)).fetchone()
+                if parent is None:
+                    raise KeyError("parent agent plan not found.")
+                depth = int(parent["depth"]) + 1
+                if depth > 3:
+                    raise AgentPlanError("maximum delegation depth of 3 was reached.")
+                child_count = db.execute(
+                    "SELECT COUNT(*) FROM agent_plan_hierarchy WHERE owner_id=? AND parent_plan_id=?",
+                    (actor_id, parent_plan_id),
+                ).fetchone()[0]
+                if child_count >= 5:
+                    raise AgentPlanError("maximum of 5 direct child plans was reached.")
+                root_plan_id = parent["root_plan_id"]
+                root_rows = db.execute("""
+                    SELECT COALESCE(SUM(s_count), 0) FROM (
+                        SELECT COUNT(*) AS s_count FROM agent_plan_subtasks s
+                        JOIN agent_plan_hierarchy h ON h.plan_id=s.plan_id
+                        WHERE h.owner_id=? AND h.root_plan_id=?
+                    )
+                """, (actor_id, root_plan_id)).fetchone()[0]
+                if root_rows + len(items) > 100:
+                    raise AgentPlanError("maximum of 100 subtasks across a delegation tree was reached.")
+                parent_permissions = set()
+                parent_rows = db.execute(
+                    "SELECT permissions_json FROM agent_plan_subtasks WHERE plan_id=?",
+                    (parent_plan_id,),
+                ).fetchall()
+                for permission_row in parent_rows:
+                    parent_permissions.update(json.loads(permission_row["permissions_json"]))
+                requested_permissions = {
+                    permission for item in items for permission in item.required_permissions
+                }
+                if not requested_permissions <= parent_permissions:
+                    raise AgentPlanError("child plan permissions must be a subset of parent plan permissions.")
             existing = db.execute(
                 "SELECT * FROM agent_plans WHERE owner_id=? AND idempotency_key=?",
                 (actor_id, key),
@@ -433,11 +498,22 @@ class SpecialistAgentCoordinator:
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
+                hierarchy = db.execute(
+                    "SELECT parent_plan_id FROM agent_plan_hierarchy WHERE plan_id=? AND owner_id=?",
+                    (existing["plan_id"], actor_id),
+                ).fetchone()
+                if hierarchy is None or hierarchy["parent_plan_id"] != parent_plan_id:
+                    raise WorkflowConflict("idempotency key is already bound to a different delegation parent.")
                 return self._read_plan(db, existing["plan_id"])
             db.execute(
                 "INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at, owner_id, client_key) VALUES (?, ?, ?, ?, ?, ?)",
                 (plan_id, key, digest, now, actor_id, raw_key),
             )
+            db.execute("""
+                INSERT INTO agent_plan_hierarchy(
+                    plan_id, owner_id, parent_plan_id, root_plan_id, depth, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (plan_id, actor_id, parent_plan_id, root_plan_id, depth, now))
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
