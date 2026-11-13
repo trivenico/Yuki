@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import hashlib
 import re
 import queue
 import threading
@@ -210,7 +211,7 @@ class YukiConversationAPI:
                     return await self._respond(send, 500, {"error": "tool_configuration_error"})
                 return await self._stream_reply(
                     send, receive=receive, owner_id=user.user_id, conversation_id=conversation_id,
-                    payload=payload, tools=tools,
+                    payload=payload, tools=tools, session_id=hashlib.sha256(session_token.encode("utf-8")).hexdigest(),
                 )
 
             if match and method == "GET":
@@ -249,6 +250,7 @@ class YukiConversationAPI:
                     request_id=payload["request_id"],
                     expected_version=payload["expected_version"],
                     tools=tools,
+                    session_id=hashlib.sha256(session_token.encode("utf-8")).hexdigest(),
                 )
                 return await self._respond(send, 200, result)
 
@@ -300,6 +302,7 @@ class YukiConversationAPI:
                     tools=tools,
                     on_text_delta=lambda text: publish({"type": "delta", "text": text}),
                     cancellation_requested=cancellation.is_set,
+                    session_id=session_id,
                 )
                 publish({"type": "cancelled" if result.get("status") == "cancelled" else "completed", "result": result})
             except ConversationNotFound:
