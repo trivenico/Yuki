@@ -84,6 +84,52 @@ class ConversationServiceTests(unittest.TestCase):
             self.send(owner="owner-b")
         self.assertEqual(self.observed, [])
 
+    def test_authenticated_session_context_reaches_owner_tool_policy(self):
+        observed = []
+
+        class ContextPolicy:
+            def authorize_tool(self, name):
+                return False
+
+            def authorize_tool_context(self, name, context):
+                observed.append((name, dict(context)))
+                return context["actor"] == "owner-a"
+
+        def factory(owner_id):
+            runtime = GuardedToolRuntime(
+                {"owner.read": lambda raw: "private-data"},
+                ContextPolicy(),
+            )
+            responses = iter([
+                {"text": "", "tool_calls": {"tool_calls": [
+                    {"id": "read_1", "name": "owner.read", "arguments": {}}
+                ]}},
+                {"text": "Done", "tool_calls": {"tool_calls": []}},
+            ])
+            return AgentExecutionLoop(lambda **kwargs: next(responses), StructuredToolProtocol(runtime))
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        definition = [{
+            "type": "function",
+            "function": {"name": "owner.read", "parameters": {"type": "object", "properties": {}}},
+        }]
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Read my data",
+            request_id="authenticated-context-request",
+            expected_version=0,
+            tools=definition,
+            session_id="sha256-session-digest",
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(observed, [("owner.read", {
+            "actor": "owner-a",
+            "session_id": "sha256-session-digest",
+            "conversation_id": self.conversation["conversation_id"],
+            "request_id": "authenticated-context-request",
+        })])
+
     def test_owner_factory_routes_authenticated_owners_to_distinct_loops(self):
         loops = {}
         invoked = []
