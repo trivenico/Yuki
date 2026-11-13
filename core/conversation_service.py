@@ -80,7 +80,7 @@ class ConversationService:
         token = str(uuid.uuid4())
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
         try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
+            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, lease_token=token)
         finally:
             self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
 
@@ -88,7 +88,7 @@ class ConversationService:
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
-        on_text_delta=None, cancellation_requested=None,
+        on_text_delta=None, cancellation_requested=None, lease_token: str | None = None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
@@ -130,7 +130,7 @@ class ConversationService:
                 if following and following[0]["role"] == "assistant":
                     self.store.finish_generation(
                         owner_id=owner_id, conversation_id=conversation_id,
-                        request_id=generation["request_id"], status="completed",
+                        request_id=generation["request_id"], status="completed", lease_token=lease_token,
                     )
                 elif user_message is not None:
                     self.store.append_message(
@@ -138,11 +138,11 @@ class ConversationService:
                         role="assistant",
                         content="This response was interrupted before completion. Please submit a new request; Yuki will not automatically repeat potentially side-effecting actions.",
                         idempotency_key="assistant:" + generation["request_id"],
-                        expected_version=conversation_now["version"],
+                        expected_version=conversation_now["version"], generation_lease_token=lease_token,
                     )
                     self.store.finish_generation(
                         owner_id=owner_id, conversation_id=conversation_id,
-                        request_id=generation["request_id"], status="interrupted",
+                        request_id=generation["request_id"], status="interrupted", lease_token=lease_token,
                     )
             # Check ownership and stale versions before invoking a model.
             conversation = self.store.get_conversation(
@@ -194,7 +194,7 @@ class ConversationService:
             status, answer, model_turns, tool_calls = "completed", "", 0, 0
             self.store.update_generation_checkpoint(
                 owner_id=owner_id, conversation_id=conversation_id,
-                request_id=request_id, checkpoint={"phase": "model_running"},
+                request_id=request_id, checkpoint={"phase": "model_running"}, lease_token=lease_token,
             )
             try:
                 kwargs = {"tools": list(tools), "history": history}
@@ -257,12 +257,13 @@ class ConversationService:
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="assistant", content=answer,
                 idempotency_key=f"assistant:{request_id}",
-                expected_version=user_result["version"],
+                expected_version=user_result["version"], generation_lease_token=lease_token,
             )
             self.store.finish_generation(
                 owner_id=owner_id, conversation_id=conversation_id,
                 request_id=request_id,
                 status=status if status in {"completed", "failed", "cancelled"} else "failed",
+                lease_token=lease_token,
             )
             return {
                 "conversation_id": conversation_id,
