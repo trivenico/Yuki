@@ -634,7 +634,10 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:read", plan_id):
             raise PermissionError("agent plan read is not authorized.")
         with self._connect() as db:
-            row = db.execute("SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            row = db.execute(
+                "SELECT plan_id FROM agent_plans WHERE plan_id=? AND owner_id=?",
+                (plan_id, actor_id),
+            ).fetchone()
             if row is None:
                 raise KeyError("agent plan not found.")
             return self._read_plan(db, plan_id)
