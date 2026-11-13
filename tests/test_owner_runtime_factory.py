@@ -3,13 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.guarded_tool_runtime import GuardedToolRuntime
+from core.guarded_tool_runtime import ApprovalRequired, GuardedToolRuntime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.owner_runtime_factory import OwnerAgentLoopFactory
+from providers.owner_approval_factory import OwnerApprovalRuntimeFactory
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.profile_store import ProviderProfileStore
 
@@ -54,6 +55,71 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         self.directory.cleanup()
+
+
+    def test_owner_factory_injects_durable_approval_adapter_before_tool_dispatch(self):
+        with tempfile.TemporaryDirectory() as approval_directory:
+            approval_factory = OwnerApprovalRuntimeFactory(
+                approval_directory,
+                planner_resolver_for_owner=lambda owner, session: None,
+            )
+            handler_calls = []
+
+            class ApprovalPolicy:
+                def authorize_tool(self, name):
+                    return False
+
+                def authorize_tool_context(self, name, context):
+                    return ApprovalRequired({
+                        "skill_id": "notes.write",
+                        "arguments": {"text": "owner-approved note"},
+                    })
+
+            def runtime_for_owner(owner):
+                return GuardedToolRuntime(
+                    {"notes.write": lambda argument: handler_calls.append((owner, argument))},
+                    ApprovalPolicy(),
+                    audit=lambda name, outcome: None,
+                    require_audit=True,
+                )
+
+            factory = OwnerAgentLoopFactory(
+                self.store,
+                tool_runtime_for_owner=runtime_for_owner,
+                approval_adapter_for_owner=approval_factory.adapter_for_owner,
+            )
+            alice = factory("owner:alice")
+            bob = factory("owner:bob")
+            alice_runtime = alice.tool_protocol._runtime
+            bob_runtime = bob.tool_protocol._runtime
+            self.assertIsNot(
+                alice_runtime.approval_request_callback,
+                bob_runtime.approval_request_callback,
+            )
+
+            context = {
+                "actor": "owner:alice",
+                "session_id": "session-a",
+                "conversation_id": "conversation-a",
+                "request_id": "request-a",
+            }
+            envelope = json.dumps({"tool_calls": [{
+                "id": "call-1", "name": "notes.write", "arguments": {"text": "hello"},
+            }]})
+            result = alice.tool_protocol.dispatch(envelope, execution_context=context)
+            payload = json.loads(result[0].output)
+            self.assertEqual(payload["status"], "pending_approval")
+            self.assertEqual(handler_calls, [])
+
+            stored = approval_factory.coordinator_for_owner("owner:alice").pending_store.get_for_identity(
+                payload["pending_id"], actor="owner:alice", session_id="session-a",
+            )
+            self.assertIsNotNone(stored)
+            self.assertIsNone(
+                approval_factory.coordinator_for_owner("owner:bob").pending_store.get_for_identity(
+                    payload["pending_id"], actor="owner:alice", session_id="session-a",
+                )
+            )
 
     def test_factory_resolves_distinct_owner_profiles_and_vault_credentials(self):
         factory = OwnerAgentLoopFactory(
