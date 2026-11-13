@@ -292,6 +292,28 @@ class ApprovalCoordinator:
                 )
         return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
 
+    def deny(self, pending_id: str, *, actor: str, session_id: str) -> ApprovalOutcome:
+        """Deny a still-pending owner/session-bound request exactly once."""
+        if (self.pending_store is None or
+                not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256):
+            return ApprovalOutcome(False, "pending_not_found",
+                                   pending_id=pending_id if isinstance(pending_id, str) else None)
+        pending = self.pending_store.transition(
+            pending_id, expected_status="pending", new_status="denied",
+            actor=actor, session_id=session_id,
+        )
+        if pending is None:
+            return ApprovalOutcome(False, "pending_not_found",
+                                   pending_id=pending_id if isinstance(pending_id, str) else None)
+        try:
+            self._audit("denied", pending_id, actor, pending.skill_id)
+        except Exception:
+            # Denied state is durable even if the audit sink is unavailable;
+            # never restore a denied action to an executable state.
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+        return ApprovalOutcome(True, "approval_denied", pending_id=pending_id)
+
     def _claim(self, pending_id, *, actor, session_id):
         if not isinstance(pending_id, str) or not pending_id:
             return None
