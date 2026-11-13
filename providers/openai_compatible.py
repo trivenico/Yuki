@@ -47,6 +47,71 @@ def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
         raise ValueError("Cloud endpoint host is not trusted; add its exact hostname to YUKI_CLOUD_ALLOWED_HOSTS.")
     return normalized
 
+
+# Resolve once, reject mixed/private DNS answers, and connect to the validated
+# address directly. TLS still authenticates the original hostname.
+import http.client
+import socket
+import ssl
+
+
+def _resolve_public_address(host: str, port: int) -> str:
+    try:
+        answers = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("Cloud provider hostname could not be resolved safely.") from exc
+    addresses = set()
+    for answer in answers:
+        try:
+            address = ipaddress.ip_address(answer[4][0].split("%", 1)[0])
+        except (ValueError, IndexError, TypeError) as exc:
+            raise ValueError("Cloud provider DNS returned an invalid address.") from exc
+        if not address.is_global or address.is_multicast or address.is_unspecified:
+            raise ValueError("Cloud provider DNS resolved to a non-public address.")
+        addresses.add(str(address))
+    if not addresses:
+        raise ValueError("Cloud provider hostname has no usable public address.")
+    return sorted(addresses)[0]
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host, pinned_ip, **kwargs):
+        super().__init__(host, **kwargs)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        raw = socket.create_connection((self._pinned_ip, self.port), self.timeout, self.source_address)
+        try:
+            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+        except Exception:
+            raw.close()
+            raise
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, pinned_ip):
+        super().__init__(context=ssl.create_default_context())
+        self._pinned_ip = pinned_ip
+
+    def https_open(self, request):
+        return self.do_open(
+            lambda host, **kwargs: _PinnedHTTPSConnection(host, self._pinned_ip, **kwargs),
+            request,
+        )
+
+
+def _build_pinned_opener(base_url: str):
+    parsed = urlsplit(base_url)
+    host = (parsed.hostname or "").rstrip(".").lower()
+    port = parsed.port or 443
+    pinned_ip = _resolve_public_address(host, port)
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _PinnedHTTPSHandler(pinned_ip),
+        _RejectRedirects(),
+    )
+
+
 class OpenAICompatibleProvider:
     """Chat Completions adapter. API keys come from environment variables only."""
     def __init__(self, model, *, api_key_env="OPENAI_API_KEY",
@@ -89,7 +154,7 @@ class OpenAICompatibleProvider:
         try:
             # Deliberately disable automatic redirects: even a valid initial host must
             # not redirect credentials/prompts to an unreviewed destination.
-            opener = urllib.request.build_opener(_RejectRedirects())
+            opener = _build_pinned_opener(self.base_url)
             with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -160,7 +225,7 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
+            opener = _build_pinned_opener(self.base_url)
             with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -265,7 +330,7 @@ class OpenAICompatibleProvider:
         finish_reason = None
         saw_done = False
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
+            opener = _build_pinned_opener(self.base_url)
             with opener.open(request, timeout=self.timeout) as response:
                 while True:
                     line = response.readline(65_537)
@@ -409,7 +474,7 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
+            opener = _build_pinned_opener(self.base_url)
             with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
