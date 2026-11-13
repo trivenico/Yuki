@@ -36,6 +36,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        memory_service: Any | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -52,6 +53,9 @@ class YukiConversationAPI:
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
         self.provider_selector = provider_selector
+        if memory_service is not None and not all(callable(getattr(memory_service, name, None)) for name in ("status", "set_enabled", "remember", "list", "forget")):
+            raise TypeError("memory_service must provide status, set_enabled, remember, list and forget.")
+        self.memory_service = memory_service
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -152,6 +156,45 @@ class YukiConversationAPI:
                     return await self._respond(send, 200, {"providers": safe})
                 except Exception:
                     return await self._respond(send, 500, {"error": "provider_catalog_unavailable"})
+
+            if path == "/v1/memory/consent" and method in {"GET", "PUT"}:
+                if self.memory_service is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                if method == "GET":
+                    state = await asyncio.to_thread(self.memory_service.status, user)
+                    return await self._respond(send, 200, state)
+                payload = await self._body(receive)
+                if set(payload) != {"enabled"} or type(payload.get("enabled")) is not bool:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                state = await asyncio.to_thread(self.memory_service.set_enabled, user, payload["enabled"])
+                return await self._respond(send, 200, state)
+
+            if path == "/v1/memory" and method in {"GET", "POST"}:
+                if self.memory_service is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                if method == "GET":
+                    items = await asyncio.to_thread(self.memory_service.list, user, limit=50)
+                    return await self._respond(send, 200, {"memories": items})
+                payload = await self._body(receive)
+                if set(payload) - {"text", "category"} or not isinstance(payload.get("text"), str):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                category = payload.get("category", "note")
+                if not isinstance(category, str):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                item = await asyncio.to_thread(
+                    self.memory_service.remember, user, payload["text"], category=category
+                )
+                return await self._respond(send, 201, {"memory": item})
+
+            forget_match = re.fullmatch(r"/v1/memory/([^/]+)", path)
+            if forget_match and method == "DELETE":
+                if self.memory_service is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                memory_id = forget_match.group(1)
+                if len(memory_id) > 128:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                deleted = await asyncio.to_thread(self.memory_service.forget, user, memory_id)
+                return await self._respond(send, 200, {"deleted": bool(deleted)})
 
             if method == "GET" and path == "/v1/conversations":
                 items = await asyncio.to_thread(
