@@ -39,6 +39,7 @@ class YukiConversationAPI:
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         approval_runtime_factory: Any | None = None,
+        provider_receipt_verifier_for_owner: Callable[[str], Any] | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -60,6 +61,9 @@ class YukiConversationAPI:
         ):
             raise TypeError("approval_runtime_factory must provide coordinator_for_owner")
         self.approval_runtime_factory = approval_runtime_factory
+        if provider_receipt_verifier_for_owner is not None and not callable(provider_receipt_verifier_for_owner):
+            raise TypeError("provider_receipt_verifier_for_owner must be callable")
+        self.provider_receipt_verifier_for_owner = provider_receipt_verifier_for_owner
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -151,7 +155,7 @@ class YukiConversationAPI:
                     "status": item.status,
                 } for item in items]})
 
-            approval_match = re.fullmatch(r"/v1/approvals/([A-Za-z0-9_-]{20,80})/(approve|deny|reconcile)", path)
+            approval_match = re.fullmatch(r"/v1/approvals/([A-Za-z0-9_-]{20,80})/(approve|deny|reconcile|verify-reconcile)", path)
             if approval_match and method == "POST":
                 if self.approval_runtime_factory is None:
                     return await self._respond(send, 503, {"error": "approval_service_unavailable"})
@@ -176,6 +180,23 @@ class YukiConversationAPI:
                         coordinator.deny, pending_id,
                         actor=user.user_id, session_id=session_id,
                     )
+                elif operation == "verify-reconcile":
+                    if set(payload) != {"evidence_reference"} or not isinstance(payload.get("evidence_reference"), str):
+                        return await self._respond(send, 400, {"error": "provider_evidence_reference_required"})
+                    if self.provider_receipt_verifier_for_owner is None:
+                        return await self._respond(send, 503, {"error": "provider_receipt_verification_unavailable"})
+                    try:
+                        verifier_registry = self.provider_receipt_verifier_for_owner(user.user_id)
+                    except Exception:
+                        verifier_registry = None
+                    if verifier_registry is None:
+                        return await self._respond(send, 503, {"error": "provider_receipt_verification_unavailable"})
+                    outcome = await asyncio.to_thread(
+                        coordinator.reconcile_verified_provider, pending_id,
+                        actor=user.user_id, session_id=session_id,
+                        evidence_reference=payload["evidence_reference"],
+                        verifier_registry=verifier_registry,
+                    )
                 else:
                     if (set(payload) != {"resolution", "evidence_reference"}
                             or not isinstance(payload.get("resolution"), str)
@@ -191,9 +212,11 @@ class YukiConversationAPI:
                 status_code = 200 if outcome.ok else (
                     404 if outcome.status == "pending_not_found" else
                     409 if outcome.status in {"recovery_required", "approval_denied",
-                                               "reconciliation_not_available", "reconciliation_conflict"} else
+                                               "reconciliation_not_available", "reconciliation_conflict",
+                                               "provider_receipt_unverified", "provider_identity_unavailable"} else
                     503 if outcome.status in {"execution_unavailable", "audit_unavailable",
-                                               "approval_confirmation_unavailable"} else 400
+                                               "approval_confirmation_unavailable", "provider_verification_unavailable",
+                                               "operation_intent_unavailable"} else 400
                 )
                 return await self._respond(send, status_code, {
                     "ok": outcome.ok, "status": outcome.status,
