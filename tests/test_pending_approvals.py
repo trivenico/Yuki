@@ -61,6 +61,43 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.put("skill", {"x": "a" * (17 * 1024)}, {}, actor="owner", session_id="s")
 
+    def test_idempotency_returns_same_owner_session_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            action = {"skill_id": "notes.write", "arguments": {"text": "hello"}}
+            first = store.put(
+                "notes.write", {"text": "hello"}, action,
+                actor="owner", session_id="session-a", idempotency_key="conversation:request",
+            )
+            retry = store.put(
+                "notes.write", {"text": "hello"}, action,
+                actor="owner", session_id="session-a", idempotency_key="conversation:request",
+            )
+            self.assertTrue(first.created)
+            self.assertFalse(retry.created)
+            self.assertEqual(first.pending_id, retry.pending_id)
+
+    def test_idempotency_rejects_changed_action_and_isolates_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            first = store.put(
+                "notes.write", {"text": "hello"},
+                {"skill_id": "notes.write", "arguments": {"text": "hello"}},
+                actor="owner", session_id="session-a", idempotency_key="request-1",
+            )
+            with self.assertRaisesRegex(ValueError, "different action"):
+                store.put(
+                    "notes.write", {"text": "changed"},
+                    {"skill_id": "notes.write", "arguments": {"text": "changed"}},
+                    actor="owner", session_id="session-a", idempotency_key="request-1",
+                )
+            other_session = store.put(
+                "notes.write", {"text": "hello"},
+                {"skill_id": "notes.write", "arguments": {"text": "hello"}},
+                actor="owner", session_id="session-b", idempotency_key="request-1",
+            )
+            self.assertNotEqual(first.pending_id, other_session.pending_id)
+
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp, max_pending=1)
