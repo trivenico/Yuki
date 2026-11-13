@@ -81,19 +81,35 @@ def _inventory(root: Path) -> list[Path]:
     return sorted(files, key=lambda p: p.relative_to(root).as_posix())
 
 
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+    *(f"COM{i}" for i in ("¹", "²", "³")),
+    *(f"LPT{i}" for i in ("¹", "²", "³")),
+}
+_WINDOWS_FORBIDDEN = set('<>:"\\\\|?*')
+
+
 def _safe_archive_path(raw_name: str) -> PurePosixPath:
-    if (
-        not isinstance(raw_name, str)
-        or not raw_name
-        or "\\" in raw_name
-        or "\x00" in raw_name
-        or ":" in raw_name
-    ):
+    if not isinstance(raw_name, str) or not raw_name or "\\x00" in raw_name:
         raise BackupError("Backup contains an unsafe cross-platform path.")
-    path = PurePosixPath(raw_name)
-    if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+    # Validate raw segments before PurePosixPath normalizes away dot segments.
+    if raw_name.startswith("/") or "\\\\" in raw_name:
+        raise BackupError("Backup contains an unsafe cross-platform path.")
+    segments = raw_name.split("/")
+    if any(segment in {"", ".", ".."} for segment in segments):
         raise BackupError("Backup contains an unsafe path.")
-    return path
+    for segment in segments:
+        if (
+            segment.endswith((".", " "))
+            or any(ord(char) < 32 or char in _WINDOWS_FORBIDDEN for char in segment)
+        ):
+            raise BackupError("Backup contains a path that is not portable across operating systems.")
+        device_stem = segment.split(".", 1)[0].upper()
+        if device_stem in _WINDOWS_RESERVED_NAMES:
+            raise BackupError("Backup contains a reserved Windows device path.")
+    return PurePosixPath(*segments)
 
 
 def _sha256_file(path: Path) -> str:
@@ -232,6 +248,7 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
         stage.mkdir(mode=0o700)
         manifest = None
         seen = set()
+        seen_portable = set()
         total = 0
         try:
             with tarfile.open(fileobj=BytesIO(plaintext), mode="r:") as archive:
@@ -240,9 +257,11 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     raise BackupError("Backup contains too many archive entries.")
                 for member in members:
                     name = _safe_archive_path(member.name)
-                    if member.name in seen:
-                        raise BackupError("Backup contains duplicate paths.")
+                    portable_name = "/".join(part.casefold() for part in name.parts)
+                    if member.name in seen or portable_name in seen_portable:
+                        raise BackupError("Backup contains duplicate or cross-platform-colliding paths.")
                     seen.add(member.name)
+                    seen_portable.add(portable_name)
                     if member.name == "YUKI_BACKUP_MANIFEST.json":
                         if not member.isfile():
                             raise BackupError("Backup manifest is not a regular file.")
