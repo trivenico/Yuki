@@ -88,6 +88,9 @@ class OwnerAgentLoopFactory:
 
         policy = getattr(tool_runtime, "_policy", None)
         audit = getattr(tool_runtime, "audit_callback", None)
+        # Bound-method objects are recreated on attribute access; key them by
+        # their owning sink instance so two owners cannot share one sink object.
+        audit_identity = getattr(audit, "__self__", None) or audit
         if policy is None or not callable(getattr(policy, "authorize_tool", None)):
             raise TypeError("owner tool runtime must contain an authorization policy")
 
@@ -97,7 +100,7 @@ class OwnerAgentLoopFactory:
             try:
                 previous_owner = self._runtime_owners.get(tool_runtime)
                 previous_policy_owner = self._policy_owners.get(policy)
-                previous_audit_owner = self._audit_owners.get(audit) if audit is not None else None
+                previous_audit_owner = self._audit_owners.get(audit_identity) if audit is not None else None
             except TypeError as exc:
                 raise TypeError("owner tool runtime and policy must support weak identity tracking") from exc
             if previous_owner is not None and previous_owner != owner_id:
@@ -110,7 +113,7 @@ class OwnerAgentLoopFactory:
             self._policy_owners[policy] = owner_id
             if audit is not None:
                 try:
-                    self._audit_owners[audit] = owner_id
+                    self._audit_owners[audit_identity] = owner_id
                 except TypeError as exc:
                     raise TypeError("owner audit sinks must support weak identity tracking") from exc
 
