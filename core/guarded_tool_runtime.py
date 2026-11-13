@@ -106,11 +106,18 @@ class GuardedToolRuntime:
             if self._require_audit and not recorded:
                 return "Tool blocked because its required audit record could not be written."
             return "Unknown tool."
+        contextual_authorizer = getattr(self._policy, "authorize_tool_context", None)
+        if callable(contextual_authorizer) and execution_context is None:
+            recorded = self._record(name, "missing_authenticated_execution_context")
+            if self._require_audit and not recorded:
+                return "Tool blocked because its required audit record could not be written."
+            return "Tool blocked because authenticated execution context is required."
         try:
-            contextual_authorizer = getattr(self._policy, "authorize_tool_context", None)
-            if execution_context is not None and callable(contextual_authorizer):
+            if callable(contextual_authorizer):
                 authorized = contextual_authorizer(name, execution_context)
             else:
+                # Legacy policies remain supported only when they do not declare
+                # the stronger authenticated-context authorization contract.
                 authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
