@@ -77,6 +77,40 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             with self.subTest(result_limit=value), self.assertRaises(ValueError):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), max_result_chars=value)
 
+    def test_required_audit_rejects_missing_sink(self):
+        with self.assertRaisesRegex(ValueError, "needs an audit sink"):
+            GuardedToolRuntime({"echo": lambda value: value}, Policy(), require_audit=True)
+
+    def test_required_authorization_audit_failure_prevents_execution(self):
+        calls = []
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value) or "written"},
+            Policy(),
+            audit=lambda *_: (_ for _ in ()).throw(OSError("audit unavailable")),
+            require_audit=True,
+        )
+        result = runtime.invoke("write", "sensitive")
+        self.assertIn("blocked", result)
+        self.assertEqual(calls, [])
+
+    def test_required_completion_audit_failure_reports_recovery_without_retry_signal(self):
+        calls = []
+        events = []
+
+        def audit(action, outcome):
+            events.append((action, outcome))
+            if outcome == "completed":
+                raise OSError("audit unavailable")
+
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value) or "written"},
+            Policy(), audit=audit, require_audit=True,
+        )
+        result = runtime.invoke("write", "sensitive")
+        self.assertIn("inspect activity before retrying", result)
+        self.assertEqual(calls, ["sensitive"])
+        self.assertEqual(events, [("tool:write", "authorized"), ("tool:write", "completed")])
+
     def test_audit_failure_does_not_change_authorization_or_result(self):
         runtime = GuardedToolRuntime(
             {"echo": lambda argument: argument},
