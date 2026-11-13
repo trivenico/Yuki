@@ -4,13 +4,20 @@ from providers.factory import create_provider
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
-from providers.openai_compatible import OpenAICompatibleProvider
 from providers.ollama import OllamaProvider
 
 
 class ProviderFactoryTests(unittest.TestCase):
-    def test_default_factory_uses_real_openai_provider(self):
-        self.assertIsInstance(create_provider({}), OpenAICompatibleProvider)
+    def test_default_factory_uses_local_ollama_without_cloud_fallback(self):
+        provider = create_provider({}, environ={})
+        self.assertIsInstance(provider, OllamaProvider)
+        self.assertEqual(provider.model, "qwen2.5:7b")
+        self.assertEqual(provider.base_url, "http://127.0.0.1:11434")
+
+    def test_cloud_provider_requires_explicit_selection(self):
+        from providers.openai_compatible import OpenAICompatibleProvider
+        provider = create_provider({"provider": "openai"}, environ={"OPENAI_API_KEY": "test-key"})
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
