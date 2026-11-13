@@ -138,6 +138,14 @@ class ApprovalCoordinator:
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
+        # Persist a start marker before dispatch. If this write fails, the
+        # executor is never called; after it succeeds, recovery can distinguish
+        # an action that may have crossed the execution boundary.
+        try:
+            self._audit("execution_started", pending_id, actor, pending["skill_id"])
+        except Exception:
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+
         try:
             result = target(action)
         except Exception as exc:
