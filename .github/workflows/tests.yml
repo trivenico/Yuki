@@ -65,6 +65,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_desktop_backup.py" -v
       - name: Run encrypted desktop memory tests
         run: python -m unittest discover -s tests -p "test_desktop_memory.py" -v
+      - name: Run private desktop storage tests
+        run: python -m unittest discover -s tests -p "test_desktop_storage.py" -v
       - name: Run desktop backup controller tests
         run: python -m unittest discover -s tests -p "test_desktop_controller.py" -v
 
