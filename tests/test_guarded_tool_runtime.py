@@ -49,6 +49,38 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy())
         self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
 
+    def test_policy_must_return_literal_true_to_authorize(self):
+        for decision in ("false", 1, object(), None):
+            with self.subTest(decision=type(decision).__name__):
+                calls = []
+                class NonBooleanPolicy:
+                    def authorize_tool(self, name):
+                        return decision
+                runtime = GuardedToolRuntime(
+                    {"write": lambda value: calls.append(value) or "written"},
+                    NonBooleanPolicy(),
+                )
+                self.assertIn("blocked", runtime.invoke("write", "payload"))
+                self.assertEqual(calls, [])
+
+    def test_contextual_policy_must_return_literal_true_to_authorize(self):
+        calls = []
+        class NonBooleanContextPolicy:
+            def authorize_tool(self, name):
+                return True
+            def authorize_tool_context(self, name, context):
+                return "true"
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value) or "written"},
+            NonBooleanContextPolicy(),
+        )
+        context = {
+            "actor": "owner-a", "session_id": "session-a",
+            "conversation_id": "conversation-a", "request_id": "request-a",
+        }
+        self.assertIn("blocked", runtime.invoke("write", "payload", execution_context=context))
+        self.assertEqual(calls, [])
+
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
             def authorize_tool(self, name):
