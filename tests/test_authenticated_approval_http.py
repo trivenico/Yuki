@@ -55,6 +55,7 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
             alice = auth.create_account("alice", "alice-secure-password")
             bob = auth.create_account("bob", "bob-secure-password")
             alice_session = auth.authenticate("alice", "alice-secure-password")
+            alice_second_session = auth.authenticate("alice", "alice-secure-password")
             bob_session = auth.authenticate("bob", "bob-secure-password")
             executor = _Executor()
             approvals = OwnerApprovalRuntimeFactory(
@@ -122,6 +123,8 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 alice_list = await request("GET", "/v1/approvals", alice_session.token)
                 bob_list = await request("GET", "/v1/approvals", bob_session.token)
                 alice_recovery = await request("GET", "/v1/approvals/recovery", alice_session.token)
+                alice_other_session_list = await request("GET", "/v1/approvals", alice_second_session.token)
+                alice_other_session_recovery = await request("GET", "/v1/approvals/recovery", alice_second_session.token)
                 bob_recovery = await request("GET", "/v1/approvals/recovery", bob_session.token)
                 bob_cross = await request(
                     "POST", f"/v1/approvals/{pending.pending_id}/approve",
@@ -135,10 +138,12 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                     "POST", f"/v1/approvals/{pending.pending_id}/approve",
                     alice_session.token, {"confirm_action": True},
                 )
-                return alice_list, bob_list, alice_recovery, bob_recovery, bob_cross, alice_approved, replay
+                return (alice_list, bob_list, alice_recovery, alice_other_session_list,
+                        alice_other_session_recovery, bob_recovery, bob_cross, alice_approved, replay)
 
             try:
-                alice_list, bob_list, alice_recovery, bob_recovery, bob_cross, approved, replay = asyncio.run(scenario())
+                (alice_list, bob_list, alice_recovery, alice_other_session_list,
+                 alice_other_session_recovery, bob_recovery, bob_cross, approved, replay) = asyncio.run(scenario())
                 self.assertEqual(alice_list[0], 200)
                 self.assertEqual(len(alice_list[1]["approvals"]), 1)
                 self.assertEqual(alice_list[1]["approvals"][0]["pending_id"], pending.pending_id)
@@ -147,6 +152,15 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 self.assertEqual(alice_recovery[1]["recovery"][0]["pending_id"], recovery.pending_id)
                 self.assertTrue(alice_recovery[1]["recovery"][0]["requires_reconciliation"])
                 self.assertEqual(bob_recovery, (200, {"recovery": []}))
+                # A second bearer session for the same owner is isolated too.
+                self.assertEqual(alice_other_session_list, (200, {"approvals": []}))
+                self.assertEqual(alice_other_session_recovery, (200, {"recovery": []}))
+                # Listing recovery is read-only: it neither resolves nor retries it.
+                retained = coordinator.pending_store.get_for_identity(
+                    recovery.pending_id, actor=alice.user_id, session_id=alice_session_hash,
+                )
+                self.assertEqual(retained.status, "outcome_unknown")
+                self.assertEqual(executor.executed, [])
                 self.assertEqual(bob_cross[0], 404)
                 self.assertEqual(approved, (200, {
                     "ok": True, "status": "completed", "pending_id": pending.pending_id,
