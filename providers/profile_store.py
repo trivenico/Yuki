@@ -211,7 +211,7 @@ class ProviderProfileStore:
         owner = self._validate_owner(owner_id)
         with closing(self._connect()) as db:
             rows = db.execute("""
-                SELECT owner_id,name,base_url,model,allowed_host,created_at,updated_at
+                SELECT owner_id,name,base_url,model,allowed_host,credential_ref,created_at,updated_at
                 FROM provider_profiles WHERE owner_id=? ORDER BY name
             """, (owner,)).fetchall()
         profiles = []
