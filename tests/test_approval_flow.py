@@ -80,8 +80,8 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                     self.planner, action_result(), actor="owner", session_id="session-a"
                 )
             with store._connect() as db:
-                count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
-            self.assertEqual(count, 0)
+                rows = db.execute("SELECT status FROM pending_approvals").fetchall()
+            self.assertEqual(rows, [("denied",)])
             self.assertEqual(self.planner.executed, [])
 
     def test_approval_audit_failure_prevents_execution(self):
