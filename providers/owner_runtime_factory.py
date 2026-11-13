@@ -56,6 +56,7 @@ class OwnerAgentLoopFactory:
         self._runtime_owners = weakref.WeakKeyDictionary()
         self._policy_owners = weakref.WeakKeyDictionary()
         self._audit_owners = weakref.WeakKeyDictionary()
+        self._handler_owners = weakref.WeakKeyDictionary()
         self._lock = threading.RLock()
 
     @property
@@ -91,6 +92,12 @@ class OwnerAgentLoopFactory:
         # Bound-method objects are recreated on attribute access; key them by
         # their owning sink instance so two owners cannot share one sink object.
         audit_identity = getattr(audit, "__self__", None) or audit
+        # Handler functions and bound-method owners are executable authority:
+        # sharing one across owners can bypass otherwise isolated policies.
+        handler_identities = [
+            getattr(handler, "__self__", None) or handler
+            for handler in tool_runtime._tools.values()
+        ]
         if policy is None or not callable(getattr(policy, "authorize_tool", None)):
             raise TypeError("owner tool runtime must contain an authorization policy")
 
@@ -101,21 +108,25 @@ class OwnerAgentLoopFactory:
                 previous_owner = self._runtime_owners.get(tool_runtime)
                 previous_policy_owner = self._policy_owners.get(policy)
                 previous_audit_owner = self._audit_owners.get(audit_identity) if audit is not None else None
+                previous_handler_owners = [
+                    self._handler_owners.get(identity) for identity in handler_identities
+                ]
             except TypeError as exc:
-                raise TypeError("owner tool runtime and policy must support weak identity tracking") from exc
+                raise TypeError("owner runtimes, policies, handlers and audit sinks must support weak identity tracking") from exc
             if previous_owner is not None and previous_owner != owner_id:
                 raise PermissionError("a guarded tool runtime cannot be shared across owners")
             if previous_policy_owner is not None and previous_policy_owner != owner_id:
                 raise PermissionError("a tool authorization policy cannot be shared across owners")
             if previous_audit_owner is not None and previous_audit_owner != owner_id:
                 raise PermissionError("a tool audit sink cannot be shared across owners")
+            if any(previous is not None and previous != owner_id for previous in previous_handler_owners):
+                raise PermissionError("a tool handler cannot be shared across owners")
             self._runtime_owners[tool_runtime] = owner_id
             self._policy_owners[policy] = owner_id
             if audit is not None:
-                try:
-                    self._audit_owners[audit_identity] = owner_id
-                except TypeError as exc:
-                    raise TypeError("owner audit sinks must support weak identity tracking") from exc
+                self._audit_owners[audit_identity] = owner_id
+            for identity in handler_identities:
+                self._handler_owners[identity] = owner_id
 
         return AgentExecutionLoop(
             model,
