@@ -11,6 +11,23 @@ import threading
 from typing import Callable, Any
 
 
+def _callable_code_identity(target: Any) -> Any:
+    """Return the Python code object for a function, method, or callable object.
+
+    This detects some in-place code replacement. It is not a sandbox and does
+    not make mutable globals, closures, defaults, or instance state immutable.
+    """
+    if target is None:
+        return None
+    function = getattr(target, "__func__", target)
+    code = getattr(function, "__code__", None)
+    if code is not None:
+        return code
+    call_method = getattr(type(target), "__call__", None)
+    call_function = getattr(call_method, "__func__", call_method)
+    return getattr(call_function, "__code__", None)
+
+
 @dataclass(frozen=True)
 class SkillInvocationResult:
     ok: bool
@@ -23,7 +40,12 @@ class SkillInvocationResult:
 class OneShotSkillApprovals:
     """Thread-safe, process-local one-shot approvals bound to exact arguments."""
 
-    def __init__(self) -> None:
+    DEFAULT_MAX_PENDING = 4096
+
+    def __init__(self, max_pending: int = DEFAULT_MAX_PENDING) -> None:
+        if not isinstance(max_pending, int) or isinstance(max_pending, bool) or max_pending < 1:
+            raise ValueError("max_pending must be a positive integer.")
+        self._max_pending = max_pending
         self._approved: set[tuple[str, str]] = set()
         self._lock = threading.Lock()
 
@@ -44,6 +66,8 @@ class OneShotSkillApprovals:
     def approve(self, skill_name: str, argument: str = "") -> None:
         key = self._key(skill_name, argument)
         with self._lock:
+            if key not in self._approved and len(self._approved) >= self._max_pending:
+                raise RuntimeError("Pending skill approvals limit reached.")
             self._approved.add(key)
 
     def consume(self, skill_name: str, argument: str = "") -> bool:
@@ -214,6 +238,7 @@ def invoke_registered_skill(
     audit: Callable[[str, str], None] | None = None,
     max_result_chars: int = 2000,
     expected_skill: Any = None,
+    expected_execution: tuple[Any, Any, str, bool, Any] | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -261,10 +286,53 @@ def invoke_registered_skill(
             skill_name, "skill_identity_changed"
         )
 
-    risk = str(getattr(skill, "risk", "high")).lower()
+    current_risk = str(getattr(skill, "risk", "high")).lower()
+    current_requires_approval = bool(getattr(skill, "requires_approval", True))
+    current_execute = getattr(skill, "execute", None)
+    if not callable(current_execute):
+        current_execute = getattr(skill, "run", None)
+
+    if expected_execution is not None:
+        approved_skill, approved_execute, approved_risk, approved_requires_approval, approved_code = expected_execution
+        same_callable = (
+            getattr(current_execute, "__self__", None) is getattr(approved_execute, "__self__", None)
+            and getattr(current_execute, "__func__", None) is getattr(approved_execute, "__func__", None)
+            if callable(current_execute) and callable(approved_execute)
+            and (hasattr(current_execute, "__self__") or hasattr(approved_execute, "__self__"))
+            else current_execute is approved_execute
+        )
+        current_code = _callable_code_identity(current_execute)
+        approved_code_at_dispatch = _callable_code_identity(approved_execute)
+        if (
+            skill is not approved_skill
+            or current_code is not approved_code
+            or approved_code_at_dispatch is not approved_code
+            or current_risk != approved_risk
+            or current_requires_approval != approved_requires_approval
+            or not callable(approved_execute)
+            or not same_callable
+        ):
+            approvals.consume(skill_name, argument)
+            record("skill_execution_changed")
+            return SkillInvocationResult(
+                False,
+                "Skill execution target or authorization metadata changed after approval.",
+                skill_name,
+                "skill_execution_changed",
+            )
+        # Authorization and dispatch use the reviewed snapshot. Never re-resolve
+        # a callable after this check; that would reintroduce a check/use gap.
+        risk = approved_risk
+        requires_approval = approved_requires_approval
+        execute = approved_execute
+    else:
+        risk = current_risk
+        requires_approval = current_requires_approval
+        execute = current_execute
+
     known_risks = {"low", "medium", "high", "critical"}
     needs_approval = (
-        bool(getattr(skill, "requires_approval", True))
+        requires_approval
         or risk not in known_risks
         or risk in {"high", "critical"}
     )
@@ -272,9 +340,6 @@ def invoke_registered_skill(
         record("approval_required")
         return SkillInvocationResult(False, "Explicit one-shot approval is required.", skill_name, "approval_required")
 
-    execute = getattr(skill, "execute", None)
-    if not callable(execute):
-        execute = getattr(skill, "run", None)
     if not callable(execute):
         record("invalid_skill")
         return SkillInvocationResult(False, "Registered skill has no supported run()/execute() interface.", skill_name, "invalid_skill")
