@@ -151,7 +151,7 @@ class YukiConversationAPI:
                     "status": item.status,
                 } for item in items]})
 
-            approval_match = re.fullmatch(r"/v1/approvals/([A-Za-z0-9_-]{20,80})/(approve|deny)", path)
+            approval_match = re.fullmatch(r"/v1/approvals/([A-Za-z0-9_-]{20,80})/(approve|deny|reconcile)", path)
             if approval_match and method == "POST":
                 if self.approval_runtime_factory is None:
                     return await self._respond(send, 503, {"error": "approval_service_unavailable"})
@@ -169,16 +169,28 @@ class YukiConversationAPI:
                         actor=user.user_id, session_id=session_id,
                         confirm=lambda action: payload["confirm_action"] is True,
                     )
-                else:
+                elif operation == "deny":
                     if payload:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     outcome = await asyncio.to_thread(
                         coordinator.deny, pending_id,
                         actor=user.user_id, session_id=session_id,
                     )
+                else:
+                    if (set(payload) != {"resolution", "evidence_reference"}
+                            or payload.get("resolution") not in {"completed", "not_executed"}
+                            or not isinstance(payload.get("evidence_reference"), str)):
+                        return await self._respond(send, 400, {"error": "valid_reconciliation_evidence_required"})
+                    outcome = await asyncio.to_thread(
+                        coordinator.reconcile, pending_id,
+                        actor=user.user_id, session_id=session_id,
+                        resolution=payload["resolution"],
+                        evidence_reference=payload["evidence_reference"],
+                    )
                 status_code = 200 if outcome.ok else (
                     404 if outcome.status == "pending_not_found" else
-                    409 if outcome.status in {"recovery_required", "approval_denied"} else
+                    409 if outcome.status in {"recovery_required", "approval_denied",
+                                               "reconciliation_not_available", "reconciliation_conflict"} else
                     503 if outcome.status in {"execution_unavailable", "audit_unavailable",
                                                "approval_confirmation_unavailable"} else 400
                 )
