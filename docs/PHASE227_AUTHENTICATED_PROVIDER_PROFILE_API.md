@@ -31,8 +31,11 @@ activate a different provider adapter for each user's chat requests. The current
 conversation execution loop is shared by the server runtime, so mutating its
 provider would create cross-user selection leakage. Per-owner execution context
 and request-scoped adapter construction must be implemented before selected
-profiles affect chat. Connection-time DNS/IP destination pinning and redirect
-rejection also remain required before custom endpoints are production-safe.
-The deployment must terminate TLS before accepting API-key request bodies.
+profiles affect chat. Connection-time DNS/IP pinning, private-address rejection and redirect blocking
+are implemented in the preceding provider transport phase. Network-layer egress
+restrictions remain required as defense in depth. The deployment must terminate
+TLS before accepting API-key request bodies and redact request bodies from access,
+error and tracing telemetry. Apply per-owner rate limits to create/rotate and
+verify operations at the API gateway or authenticated middleware layer.
 
 This is a draft engineering phase, not a production release.
