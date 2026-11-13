@@ -1,7 +1,10 @@
 """Tests for the guarded-runtime to durable-approval adapter."""
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.approval_flow import ApprovalCoordinator
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.approval_runtime_adapter import ApprovalRuntimeAdapter
 
 
@@ -15,8 +18,13 @@ class AuditLog:
 
 class ApprovalRuntimeAdapterTests(unittest.TestCase):
     def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.store = SQLitePendingApprovalStore(
+            str(Path(self.directory.name) / "pending.sqlite3")
+        )
         self.audit = AuditLog()
         self.coordinator = ApprovalCoordinator(
+            pending_store=self.store,
             audit_log=self.audit,
             planner_resolver=lambda **_: None,
         )
@@ -32,23 +40,29 @@ class ApprovalRuntimeAdapterTests(unittest.TestCase):
             "arguments": {"text": "owner-approved content"},
         }
 
+    def tearDown(self):
+        self.directory.cleanup()
+
     def test_records_owner_session_bound_pending_approval(self):
         pending_id = self.adapter("notes.write", self.action, self.context)
         self.assertTrue(pending_id)
         self.assertEqual(self.audit.events[-1]["event_type"], "requested")
-        stored = next(iter(self.coordinator._pending.values()))
-        self.assertEqual(stored["actor"], "owner-a")
-        self.assertEqual(stored["session_id"], "session-a")
-        self.assertEqual(stored["action"]["tool_name"], "notes.write")
-        self.assertEqual(stored["action"]["arguments"]["text"], "owner-approved content")
+        stored = self.store.get_for_identity(
+            pending_id, actor="owner-a", session_id="session-a"
+        )
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.action["tool_name"], "notes.write")
+        self.assertEqual(stored.action["arguments"]["text"], "owner-approved content")
 
     def test_persists_tool_name_separately_from_skill_id(self):
         action = {"skill_id": "notes.create", "arguments": {"text": "safe"}}
         pending_id = self.adapter("notes.write", action, self.context)
         self.assertTrue(pending_id)
-        stored = next(iter(self.coordinator._pending.values()))
-        self.assertEqual(stored["action"]["skill_id"], "notes.create")
-        self.assertEqual(stored["action"]["tool_name"], "notes.write")
+        stored = self.store.get_for_identity(
+            pending_id, actor="owner-a", session_id="session-a"
+        )
+        self.assertEqual(stored.action["skill_id"], "notes.create")
+        self.assertEqual(stored.action["tool_name"], "notes.write")
 
     def test_rejects_conflicting_declared_tool_name(self):
         action = {
