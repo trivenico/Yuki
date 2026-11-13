@@ -62,6 +62,27 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeManifestError, "duplicate"):
             verify_manifest(self.root)
 
+    def test_manifest_rejects_windows_drive_and_reserved_names(self):
+        manifest = self._write_manifest()
+        manifest["files"][0]["path"] = "C:/outside.dll"
+        (self.root / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeManifestError, "not portable to Windows"):
+            verify_manifest(self.root)
+
+        manifest["files"][0]["path"] = "payload/CON.txt"
+        (self.root / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeManifestError, "not portable to Windows"):
+            verify_manifest(self.root)
+
+    def test_manifest_rejects_case_insensitive_path_collisions(self):
+        manifest = self._write_manifest()
+        manifest["files"][0]["path"] = "payload/Model.bin"
+        manifest["files"][1]["path"] = "payload/model.bin"
+        manifest["files"].sort(key=lambda item: item["path"])
+        (self.root / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeManifestError, "case-insensitive"):
+            verify_manifest(self.root)
+
     def test_symlink_payload_is_rejected(self):
         self._write_manifest()
         link = self.root / "python" / "linked-python"
