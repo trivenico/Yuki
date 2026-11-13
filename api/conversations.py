@@ -89,7 +89,7 @@ class YukiConversationAPI:
                 await asyncio.to_thread(self.auth.revoke_session, token)
                 return await self._respond(send, 200, {"logged_out": True})
 
-            user, _ = await self._principal(scope)
+            user, session_token = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
 
@@ -263,7 +263,7 @@ class YukiConversationAPI:
             # Never leak credentials, provider output, SQL, or internal traces.
             return await self._respond(send, 500, {"error": "internal_error"})
 
-    async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools):
+    async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools, session_id):
         """Run synchronous generation off-loop and emit bounded SSE events."""
         loop = asyncio.get_running_loop()
         events = asyncio.Queue(maxsize=64)
