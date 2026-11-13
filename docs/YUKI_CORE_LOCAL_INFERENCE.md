@@ -18,3 +18,12 @@ Install the optional dependencies with `pip install -e '.[training]'`. CUDA can 
 ## Limitations
 
 This is an initial local inference path for a tiny byte-level training prototype. It is not yet a capable general assistant, production model server, streaming endpoint, quantized runtime, or multimodal model. Production promotion still requires signed release manifests, independent provenance and license review, model-quality and safety evaluations, resource limits at the service boundary, performance testing, and a maintained deployment lifecycle.
+
+## Application integration boundary
+
+When this runtime is exposed through an authenticated multi-user API, compose it
+inside an owner-scoped execution context. The API must derive the owner identity
+from its authenticated session and supply the corresponding guarded execution
+loop; request payloads must never select a model runtime, provider endpoint, or
+tool authority. Keep this low-level local inference runtime separate from
+tenant authorization and tool execution.
