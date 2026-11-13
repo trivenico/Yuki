@@ -251,7 +251,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
         child = self.coordinator.submit(
             actor_id="alice", idempotency_key="hierarchy-child",
-            parent_plan_id=parent.plan_id,
+            parent_plan_id=parent.plan_id, parent_subtask_id="lead",
             subtasks=[SubtaskSpec(
                 "collect", "Collect cited public sources", ("research",),
                 required_permissions=("web:read",),
@@ -260,7 +260,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(
             self.coordinator.submit(
                 actor_id="alice", idempotency_key="hierarchy-child",
-                parent_plan_id=parent.plan_id,
+                parent_plan_id=parent.plan_id, parent_subtask_id="lead",
                 subtasks=[SubtaskSpec(
                     "collect", "Collect cited public sources", ("research",),
                     required_permissions=("web:read",),
@@ -273,7 +273,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(
                 actor_id="alice", idempotency_key="hierarchy-escalation",
-                parent_plan_id=parent.plan_id,
+                parent_plan_id=parent.plan_id, parent_subtask_id="lead",
                 subtasks=[SubtaskSpec(
                     "write", "Attempt permission escalation", ("write",),
                     required_permissions=("artifact:write",),
@@ -288,7 +288,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             shared.submit(
                 actor_id="bob", idempotency_key="cross-owner-child",
-                parent_plan_id=parent.plan_id,
+                parent_plan_id=parent.plan_id, parent_subtask_id="lead",
                 subtasks=[SubtaskSpec("collect", "Cross-owner", ("research",))],
             )
 
@@ -302,27 +302,27 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         for index in range(5):
             child = self.coordinator.submit(
                 actor_id="alice", idempotency_key=f"bounded-child-{index}",
-                parent_plan_id=parent.plan_id,
+                parent_plan_id=parent.plan_id, parent_subtask_id="lead",
                 subtasks=[SubtaskSpec("work", f"Child work {index}", ("research",))],
             )
             children.append(child)
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(
                 actor_id="alice", idempotency_key="bounded-child-overflow",
-                parent_plan_id=parent.plan_id,
+                parent_plan_id=parent.plan_id, parent_subtask_id="lead",
                 subtasks=[SubtaskSpec("work", "Excess child", ("research",))],
             )
 
         self.coordinator.advance(actor_id="alice", plan_id=children[0].plan_id)
         grandchild = self.coordinator.submit(
             actor_id="alice", idempotency_key="bounded-grandchild",
-            parent_plan_id=children[0].plan_id,
+            parent_plan_id=children[0].plan_id, parent_subtask_id="work",
             subtasks=[SubtaskSpec("work", "Grandchild work", ("research",))],
         )
         self.coordinator.advance(actor_id="alice", plan_id=grandchild.plan_id)
         great_grandchild = self.coordinator.submit(
             actor_id="alice", idempotency_key="bounded-great-grandchild",
-            parent_plan_id=grandchild.plan_id,
+            parent_plan_id=grandchild.plan_id, parent_subtask_id="work",
             subtasks=[SubtaskSpec("work", "Great-grandchild work", ("research",))],
         )
         self.coordinator.advance(actor_id="alice", plan_id=great_grandchild.plan_id)
@@ -341,7 +341,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(
                 actor_id="alice", idempotency_key="premature-child",
-                parent_plan_id=parent.plan_id,
+                parent_plan_id=parent.plan_id, parent_subtask_id="lead",
                 subtasks=[SubtaskSpec("collect", "Collect", ("research",))],
             )
 
