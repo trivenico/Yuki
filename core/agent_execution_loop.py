@@ -253,7 +253,7 @@ class AgentExecutionLoop:
 
             messages.append({"role": "assistant", "content": text or encoded_envelope})
             try:
-                results = self.tool_protocol.dispatch(encoded_envelope)
+                results = self.tool_protocol.dispatch(encoded_envelope, execution_context=execution_context)
                 formatted = self.tool_protocol.format_results(results)
             except Exception as exc:
                 self._event("agent.tool_dispatch_failed", error_type=type(exc).__name__)
