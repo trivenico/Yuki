@@ -49,6 +49,10 @@ def validate_portable_runtime(
         manifest_path = root / MANIFEST_NAME
         require_signature = env.get("YUKI_PORTABLE_REQUIRE_SIGNATURE", "").strip() == "1"
         trusted_key = env.get("YUKI_PORTABLE_TRUSTED_PUBLIC_KEY", "").strip()
+        if require_signature and not manifest_path.is_file():
+            raise PortablePreflightError(
+                "Portable release signature or runtime integrity verification failed."
+            )
         if require_signature or manifest_path.exists() or trusted_key:
             if not trusted_key:
                 raise PortablePreflightError(
