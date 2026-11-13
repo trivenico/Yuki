@@ -1,6 +1,8 @@
 # Yuki
 
-Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations.
+Yuki is being built as a JARVIS-inspired, owner-controlled personal AI operating environment: one coherent assistant that can understand permissioned context, coordinate specialist agents, help across projects and everyday digital work, and operate approved tools across local and cloud environments. The target experience includes multimodal interaction, contextual assistance, a governed 100-role specialist workforce, secure computer use, portable desktop access, and persistent cloud/local continuity.
+
+**Product vision and capability status:** see the [Yuki Product Blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md). This is the complete product direction, not a claim that every capability is already implemented or production-ready.
 
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
