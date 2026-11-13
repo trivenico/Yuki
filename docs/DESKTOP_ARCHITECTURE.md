@@ -77,6 +77,7 @@ The UI thread must never perform provider calls, filesystem indexing, or worker 
 - Treat provider output, conversation history, imported skills, memory entries, and task descriptions as untrusted data.
 - Keep secrets in environment variables or the OS credential store; never put them in Qt settings, logs, crash reports, or UI state snapshots.
 - Store desktop preferences separately from private task/conversation data. Respect the existing user-data root and file-permission rules.
+- Desktop saved memory uses AES-256-GCM with its encryption key held in the OS keyring; the encrypted file lives under the private desktop data root, never the process working directory. If secure keyring or cryptography support is unavailable, startup fails closed rather than writing plaintext memory.
 - Make memory save consent and memory-context consent separate, visible, revocable controls.
 - Redact provider exceptions and task event payloads at the application boundary. Do not display raw stack traces by default.
 - Do not expose a local network server in the first slice. If a future process boundary is required, design authenticated IPC, origin restrictions, replay protection, and lifecycle ownership as a separate security review.
