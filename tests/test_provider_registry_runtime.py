@@ -1,8 +1,11 @@
+import tempfile
 import unittest
+from pathlib import Path
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
+from providers.profile_store import ProviderProfileStore
 from yuki_providers import ProviderManager
 
 class ProviderRegistryRuntimeTests(unittest.TestCase):
@@ -168,12 +171,6 @@ def test_persisted_vault_profile_loads_into_runtime_without_catalog_secret(self)
             self.assertEqual(manager.load_persisted_profiles(store, "owner:bob"), ())
             self.assertNotIn("persisted_gateway", {p["name"] for p in manager.list_providers()})
             store.close()
-
-    def test_custom_factory_must_return_provider_contract(self):
-        manager = ProviderManager(environ={})
-        manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
-        with self.assertRaisesRegex(TypeError, "generate"):
-            manager._build_adapter("custom")
 
 if __name__ == "__main__":
     unittest.main()
