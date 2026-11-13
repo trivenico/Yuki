@@ -1,4 +1,5 @@
 """Security regression tests for approval coordinator behavior."""
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -113,6 +114,28 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         )
         self.assertTrue(correct.ok)
         self.assertEqual(len(self.planner.executed), 1)
+
+    def test_unknown_execution_outcome_survives_pending_ttl(self):
+        store = self.coordinator.pending_store
+        pending_id = self.outcome.pending_id
+        for expected, new in (
+            ("pending", "claimed"),
+            ("claimed", "approved"),
+            ("approved", "executing"),
+            ("executing", "outcome_unknown"),
+        ):
+            self.assertIsNotNone(store.transition(
+                pending_id, expected_status=expected, new_status=new,
+                actor="owner", session_id="session-1",
+            ))
+        with sqlite3.connect(store.database_path) as db:
+            db.execute(
+                "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
+                ("2000-01-01T00:00:00+00:00", pending_id),
+            )
+        retained = store.get(pending_id)
+        self.assertIsNotNone(retained)
+        self.assertEqual(retained.status, "outcome_unknown")
 
     def test_two_concurrent_approvals_execute_at_most_once(self):
         barrier = threading.Barrier(3)
