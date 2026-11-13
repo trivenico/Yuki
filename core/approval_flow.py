@@ -105,43 +105,46 @@ class ApprovalCoordinator:
                 False, "recovery_required", pending_id=pending_id,
                 result={"outcome": "unknown", "reason": "execution_was_already_claimed"},
             )
-        if persistent and state == "claimed_new":
-            action = pending["action"]
-            import json
-            display_action = json.loads(json.dumps(action))
-            try:
-                confirmed = confirm(display_action) is True
-            except Exception:
-                confirmed = False
-            if not confirmed:
-                transitioned = self.pending_store.transition(
-                    pending_id, expected_status="claimed", new_status="denied",
+        if persistent:
+            if state == "claimed_new":
+                action = pending["action"]
+                import json
+                display_action = json.loads(json.dumps(action))
+                try:
+                    confirmed = confirm(display_action) is True
+                except Exception:
+                    confirmed = False
+                if not confirmed:
+                    transitioned = self.pending_store.transition(
+                        pending_id, expected_status="claimed", new_status="denied",
+                        actor=actor, session_id=session_id,
+                    )
+                    if transitioned is None:
+                        return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
+                    try:
+                        self._audit("denied", pending_id, actor, pending["skill_id"])
+                    except Exception:
+                        return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+                    return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
+                approved = self.pending_store.transition(
+                    pending_id, expected_status="claimed", new_status="approved",
                     actor=actor, session_id=session_id,
                 )
-                if transitioned is None:
+                if approved is None:
                     return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
-                try:
-                    self._audit("denied", pending_id, actor, pending["skill_id"])
-                except Exception:
-                    return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
-                return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
-            approved = self.pending_store.transition(
-                pending_id, expected_status="claimed", new_status="approved",
-                actor=actor, session_id=session_id,
-            )
-            if approved is None:
-                return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
-            pending["status"] = "approved"
-        elif persistent and state != "approved":
-            # A process may have stopped while the confirmation callback was in
-            # progress. Do not replay the callback or infer that approval occurred.
-            return ApprovalOutcome(
-                False, "recovery_required", pending_id=pending_id,
-                result={"reason": "approval_confirmation_requires_reconciliation", "state": state},
-            )
+                pending["status"] = "approved"
+            elif state != "approved":
+                # A process may have stopped while confirmation was in progress
+                # or after execution crossed its boundary. Never replay either.
+                return ApprovalOutcome(
+                    False, "recovery_required", pending_id=pending_id,
+                    result={"reason": "approval_requires_reconciliation", "state": state},
+                )
+            # An already-approved durable record resumes without asking for
+            # confirmation again; the original confirmation is persisted.
         else:
-            # The non-persistent compatibility path retains the existing one-shot
-            # in-memory claim and confirmation semantics.
+            # The non-persistent compatibility path retains the existing
+            # one-shot in-memory claim and confirmation semantics.
             action = pending["action"]
             import json
             display_action = json.loads(json.dumps(action))
