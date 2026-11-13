@@ -158,6 +158,17 @@ class AgentExecutionLoopTests(unittest.TestCase):
                         "Test", tools=self.tools)
         self.assertEqual(self.invocations, [])
 
+    def test_non_finite_model_tool_arguments_fail_before_dispatch(self):
+        for invalid in (float("nan"), float("inf"), float("-inf")):
+            response = {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "call_bad", "name": "echo", "arguments": {"value": invalid}}
+            ]}}
+            with self.subTest(value=invalid), self.assertRaises(AgentExecutionError):
+                AgentExecutionLoop(
+                    lambda **kwargs: response, self.protocol
+                ).run("Reject non-finite arguments", tools=self.tools)
+        self.assertEqual(self.invocations, [])
+
     def test_model_failure_is_wrapped_and_reported(self):
         events = []
         def fail(**kwargs):
