@@ -57,6 +57,7 @@ def _inventory(root: Path) -> list[Path]:
     if not root.is_dir():
         raise BackupError("Backup source must be a directory.")
     files = []
+    portable_paths = set()
     for current, dirs, names in os.walk(root, followlinks=False):
         base = Path(current)
         for name in dirs:
@@ -66,6 +67,17 @@ def _inventory(root: Path) -> list[Path]:
             item = base / name
             if item.is_symlink() or not item.is_file():
                 raise BackupError("Backup source contains an unsupported file.")
+            relative = PurePosixPath(item.relative_to(root).as_posix())
+            try:
+                validated = _safe_archive_path(relative.as_posix())
+            except BackupError:
+                raise
+            portable_key = _portable_archive_key(validated)
+            if portable_key in portable_paths:
+                raise BackupError("Backup source contains paths that collide on a supported operating system.")
+            portable_paths.add(portable_key)
+            if relative.as_posix().casefold() == "yuki_backup_manifest.json":
+                raise BackupError("Source contains the reserved backup manifest filename.")
             files.append(item)
     database_paths = {
         item for item in files if item.suffix.lower() in SQLITE_SUFFIXES
