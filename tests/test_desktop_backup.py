@@ -77,10 +77,19 @@ class DesktopBackupTests(unittest.TestCase):
 
     def test_rejects_cross_platform_archive_path_traversal(self):
         from ui.desktop.backup import _safe_archive_path
-        for name in ("../escape", "..\\\\escape", "C:/Windows/system.ini", "/absolute/path"):
+        for name in ("../escape", "..\\\\escape", "C:/Windows/system.ini", "/absolute/path", "folder/./file", "CON", "nul.txt", "LPT1.log", "trailing. ", "name:stream", "bad?.txt"):
             with self.subTest(name=name):
                 with self.assertRaises(BackupError):
                     _safe_archive_path(name)
+
+    def test_rejects_case_colliding_archive_paths(self):
+        from ui.desktop.backup import _safe_archive_path
+        paths = ("Config.json", "config.json")
+        normalized = set()
+        for raw in paths:
+            portable = "/".join(part.casefold() for part in _safe_archive_path(raw).parts)
+            self.assertNotIn(portable, normalized)
+            normalized.add(portable)
 
     def test_rejects_symbolic_link_source(self):
         with tempfile.TemporaryDirectory() as directory:
