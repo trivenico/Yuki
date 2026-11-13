@@ -18,6 +18,8 @@ class ApprovalCoordinator:
     def __init__(self, *, pending_store=None, audit_log=None, planner_resolver=None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if audit_log is None or not callable(getattr(audit_log, "append", None)):
+            raise ValueError("a required approval audit log with append() is required")
         self.pending_store = pending_store
         self.audit_log = audit_log
         if planner_resolver is not None and not callable(planner_resolver):
@@ -177,6 +179,5 @@ class ApprovalCoordinator:
             return self._pending.pop(pending_id)
 
     def _audit(self, event_type, pending_id, actor, skill_id):
-        if self.audit_log is not None:
-            self.audit_log.append(event_type=event_type, pending_id=pending_id,
-                                  actor=actor, skill_id=skill_id)
+        self.audit_log.append(event_type=event_type, pending_id=pending_id,
+                              actor=actor, skill_id=skill_id)
