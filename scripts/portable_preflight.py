@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from scripts.portable_runtime_manifest import MANIFEST_NAME, RuntimeManifestError, verify_signed_manifest
+
 
 class PortablePreflightError(RuntimeError):
     """Raised when the selected portable runtime cannot safely start."""
@@ -15,12 +17,15 @@ def validate_portable_runtime(
     *,
     version_info: tuple[int, ...] | None = None,
     data_home: str | os.PathLike[str] | None = None,
+    bundle_root: str | os.PathLike[str] | None = None,
+    environ: dict[str, str] | None = None,
 ) -> Path:
+    env = os.environ if environ is None else environ
     version = version_info if version_info is not None else sys.version_info[:3]
     if tuple(version[:2]) < (3, 10):
         raise PortablePreflightError("Python 3.10 or newer is required.")
 
-    raw_home = data_home if data_home is not None else os.environ.get("YUKI_HOME", "")
+    raw_home = data_home if data_home is not None else env.get("YUKI_HOME", "")
     if not str(raw_home).strip():
         raise PortablePreflightError("YUKI_HOME must identify the portable data directory.")
 
@@ -39,7 +44,23 @@ def validate_portable_runtime(
         ) as probe:
             probe.write("Yuki portable runtime preflight")
             probe.flush()
-        return candidate.resolve()
+        resolved_home = candidate.resolve()
+        root = Path(bundle_root).expanduser().resolve(strict=True) if bundle_root is not None else Path(__file__).resolve().parents[1]
+        manifest_path = root / MANIFEST_NAME
+        require_signature = env.get("YUKI_PORTABLE_REQUIRE_SIGNATURE", "").strip() == "1"
+        trusted_key = env.get("YUKI_PORTABLE_TRUSTED_PUBLIC_KEY", "").strip()
+        if require_signature or manifest_path.exists() or trusted_key:
+            if not trusted_key:
+                raise PortablePreflightError(
+                    "A trusted release public key is required to start this portable runtime."
+                )
+            try:
+                verify_signed_manifest(root, trusted_key)
+            except (OSError, ValueError, RuntimeManifestError) as exc:
+                raise PortablePreflightError(
+                    "Portable release signature or runtime integrity verification failed."
+                ) from exc
+        return resolved_home
     except PortablePreflightError:
         raise
     except OSError as exc:
