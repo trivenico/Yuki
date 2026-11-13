@@ -207,6 +207,14 @@ A specialist must not be marked enabled until all of the following are true:
 
 No specialist may silently record microphone/camera/screen data, access credentials outside approved secret interfaces, bypass OS or enterprise controls, run arbitrary model-generated shell/code, scrape or spam platforms, create fake engagement, submit purchases/messages/publications without the required owner approval, or train on private owner data by default. Yuki must remain transparent about AI identity, uncertainty, data flows, and which capabilities are actually available.
 
+## Machine-readable catalogue
+
+- Canonical target roster: `config/yuki_agent_catalog.json` (exactly 100 role descriptors; all remain `proposed`, with no permissions, tool classes, handler references, or evaluation references).
+- Loader and validator: `automation/agent_catalog.py` (`load_agent_catalog`, `validate_agent_catalog`). Loading this file never registers or executes a specialist.
+- Regression coverage: `tests/test_agent_catalog.py`.
+
+The manifest is a catalogue of intended responsibilities, not a plugin registry or authorization source. A separate reviewed deployment configuration must provide a handler, evaluation evidence, and least-privilege permissions before a role can be enabled.
+
 ## Current implementation boundary
 
 Repository foundations already include a capability manifest, a bounded specialist coordinator, durable task records, a provider-backed specialist worker, and authorized read-only specialist tools. Those foundations are experimental and bounded. They do **not** establish that all 100 specialists exist, that a distributed agent fleet is running, or that large hierarchical plans are implemented. The next engineering steps are a machine-validated role manifest, hierarchical durable delegation, per-role evaluation contracts, and deployment-backed specialists promoted one at a time.
