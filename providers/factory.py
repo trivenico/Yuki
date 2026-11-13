@@ -13,14 +13,14 @@ from providers.openai_compatible import OpenAICompatibleProvider
 def create_provider(config=None, *, environ=None):
     """Build the configured real provider without implicit fallback.
 
-    OpenAI is the default. Hybrid routing keeps general tasks local and only
-    routes explicitly allow-listed task names to cloud. API keys are read from
+    Ollama is the default. Cloud providers are selected explicitly; hybrid routing
+    keeps general tasks local and only routes explicitly allow-listed task names to cloud. API keys are read from
     the process environment, never from YAML or committed files. The mock
     adapter remains available only to tests that call this factory explicitly.
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
-    selected = str(cfg.get("provider", "openai")).strip().lower()
+    selected = str(cfg.get("provider", "ollama")).strip().lower()
     if selected == "mock":
         return MockProvider()
     if selected == "openai":
