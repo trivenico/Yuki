@@ -57,8 +57,9 @@ def main() -> int:
     try:
         import torch
         import torch.nn.functional as F
+        from safetensors.torch import save_file
     except ImportError as exc:
-        raise SystemExit("PyTorch is optional. Install it with: pip install -e '.[training]'") from exc
+        raise SystemExit("Training dependencies are optional. Install them with: pip install -e '.[training]'") from exc
 
     from yuki_training.byte_tokenizer import ByteTokenizer
     from yuki_training.decoder import YukiDecoder
@@ -110,8 +111,16 @@ def main() -> int:
             print(f"step={step}/{args.steps} train_loss={loss.item():.4f}", flush=True)
 
     args.output.mkdir(parents=True, exist_ok=True)
-    weights_path = args.output / "weights.pt"
-    torch.save({"state_dict": model.cpu().state_dict(), "model_config": model_config, "seed": args.seed}, weights_path)
+    weights_path = args.output / "weights.safetensors"
+    state_dict = {
+        name: tensor.detach().to(device="cpu").contiguous()
+        for name, tensor in model.state_dict().items()
+    }
+    save_file(state_dict, str(weights_path), metadata={
+        "format": "pt", "architecture": "yuki_decoder_v1",
+        "model_id": "yuki-core", "version": "0.1.0",
+        "seed": str(args.seed),
+    })
     tokenizer_path = args.output / "tokenizer.json"
     tokenizer_path.write_text(json.dumps(ByteTokenizer().to_manifest(), indent=2) + "\n", encoding="utf-8")
     config_path = args.output / "config.json"
