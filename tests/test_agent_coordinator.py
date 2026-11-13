@@ -23,7 +23,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
         self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
-            "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
+            "agent:plan", "agent:delegate", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
         }
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
@@ -239,6 +239,64 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.submit(actor_id="alice", idempotency_key="no-route", subtasks=[
                 SubtaskSpec("a", "A", ("unknown-capability",)),
             ])
+
+    def test_hierarchical_delegation_is_bounded_and_inherits_permissions(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hierarchy-parent",
+            subtasks=[SubtaskSpec(
+                "lead", "Coordinate approved research", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
+        child = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hierarchy-child",
+            parent_plan_id=parent.plan_id,
+            subtasks=[SubtaskSpec(
+                "collect", "Collect cited public sources", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        self.assertEqual(
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="hierarchy-child",
+                parent_plan_id=parent.plan_id,
+                subtasks=[SubtaskSpec(
+                    "collect", "Collect cited public sources", ("research",),
+                    required_permissions=("web:read",),
+                )],
+            ).plan_id,
+            child.plan_id,
+        )
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=child.plan_id)
+        self.assertIsNotNone(dispatched.subtasks[0].task_id)
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="hierarchy-escalation",
+                parent_plan_id=parent.plan_id,
+                subtasks=[SubtaskSpec(
+                    "write", "Attempt permission escalation", ("write",),
+                    required_permissions=("artifact:write",),
+                )],
+            )
+        with self.assertRaises(KeyError):
+            self.coordinator.submit(
+                actor_id="bob", idempotency_key="cross-owner-child",
+                parent_plan_id=parent.plan_id,
+                subtasks=[SubtaskSpec("collect", "Cross-owner", ("research",))],
+            )
+
+    def test_child_plan_requires_dispatched_parent(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="undispatched-parent",
+            subtasks=[SubtaskSpec("lead", "Coordinate", ("research",))],
+        )
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="premature-child",
+                parent_plan_id=parent.plan_id,
+                subtasks=[SubtaskSpec("collect", "Collect", ("research",))],
+            )
 
     def test_agent_plans_are_owner_scoped(self):
         shared_auth = lambda actor, action, resource: actor in {"alice", "bob"} and action in {
