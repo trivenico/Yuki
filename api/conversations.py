@@ -24,6 +24,7 @@ from core.conversation_store import (
 
 _MAX_BODY_BYTES = 24_000
 _CONVERSATION_ID = re.compile(r"^[A-Za-z0-9-]{16,64}$")
+_PENDING_ID = re.compile(r"^[A-Za-z0-9_-]{20,80}$")
 
 
 class YukiConversationAPI:
@@ -37,6 +38,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        approval_runtime_factory: Any | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -53,6 +55,11 @@ class YukiConversationAPI:
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
         self.provider_selector = provider_selector
+        if approval_runtime_factory is not None and not callable(
+            getattr(approval_runtime_factory, "coordinator_for_owner", None)
+        ):
+            raise TypeError("approval_runtime_factory must provide coordinator_for_owner")
+        self.approval_runtime_factory = approval_runtime_factory
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -93,6 +100,68 @@ class YukiConversationAPI:
             user, session_token = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            # Approval endpoints are bound exclusively to the authenticated
+            # owner and hashed bearer session. Request bodies never carry identity,
+            # executor, callback, or arbitrary action data.
+            if path == "/v1/approvals":
+                if self.approval_runtime_factory is None:
+                    return await self._respond(send, 503, {"error": "approval_service_unavailable"})
+                if method != "GET":
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                session_id = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+                coordinator = self.approval_runtime_factory.coordinator_for_owner(user.user_id)
+                store = coordinator.pending_store
+                if store is None or not callable(getattr(store, "list_pending_for_identity", None)):
+                    return await self._respond(send, 503, {"error": "durable_approval_store_unavailable"})
+                items = await asyncio.to_thread(
+                    store.list_pending_for_identity,
+                    actor=user.user_id, session_id=session_id, limit=50,
+                )
+                return await self._respond(send, 200, {"approvals": [{
+                    "pending_id": item.pending_id,
+                    "skill_id": item.skill_id,
+                    "arguments": item.arguments,
+                    "action": item.action,
+                    "expires_at": item.expires_at,
+                    "status": item.status,
+                } for item in items]})
+
+            approval_match = re.fullmatch(r"/v1/approvals/([A-Za-z0-9_-]{20,80})/(approve|deny)", path)
+            if approval_match and method == "POST":
+                if self.approval_runtime_factory is None:
+                    return await self._respond(send, 503, {"error": "approval_service_unavailable"})
+                pending_id, operation = approval_match.groups()
+                if not _PENDING_ID.fullmatch(pending_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                payload = await self._body(receive)
+                session_id = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+                coordinator = self.approval_runtime_factory.coordinator_for_owner(user.user_id)
+                if operation == "approve":
+                    if set(payload) != {"confirm_action"} or payload.get("confirm_action") is not True:
+                        return await self._respond(send, 400, {"error": "explicit_action_confirmation_required"})
+                    outcome = await asyncio.to_thread(
+                        coordinator.approve, None, pending_id,
+                        actor=user.user_id, session_id=session_id,
+                        confirm=lambda action: payload["confirm_action"] is True,
+                    )
+                else:
+                    if payload:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    outcome = await asyncio.to_thread(
+                        coordinator.deny, pending_id,
+                        actor=user.user_id, session_id=session_id,
+                    )
+                status_code = 200 if outcome.ok else (
+                    404 if outcome.status == "pending_not_found" else
+                    409 if outcome.status in {"recovery_required", "approval_denied"} else
+                    503 if outcome.status in {"execution_unavailable", "audit_unavailable",
+                                               "approval_confirmation_unavailable"} else 400
+                )
+                return await self._respond(send, status_code, {
+                    "ok": outcome.ok, "status": outcome.status,
+                    "pending_id": outcome.pending_id,
+                })
 
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {
