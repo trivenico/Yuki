@@ -219,7 +219,9 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
             ("owner:alice", "owner.read"), ("owner:bob", "owner.read"),
         ])
         self.assertCountEqual(audits, [
+            ("owner:alice", "tool:owner.read", "authorized"),
             ("owner:alice", "tool:owner.read", "completed"),
+            ("owner:bob", "tool:owner.read", "authorized"),
             ("owner:bob", "tool:owner.read", "completed"),
         ])
 
