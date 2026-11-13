@@ -79,10 +79,46 @@ class ConversationService:
     def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
         token = str(uuid.uuid4())
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
+        stop_heartbeat = threading.Event()
+        lease_lost = threading.Event()
+
+        def renew_lease():
+            while not stop_heartbeat.wait(60):
+                try:
+                    renewed = self.store.renew_generation_lease(
+                        owner_id=owner_id, conversation_id=conversation_id,
+                        lease_token=token, ttl_seconds=3600,
+                    )
+                except Exception:
+                    renewed = False
+                if not renewed:
+                    lease_lost.set()
+                    return
+
+        heartbeat = threading.Thread(
+            target=renew_lease, name="yuki-generation-lease", daemon=True,
+        )
+        heartbeat.start()
+
+        def should_cancel():
+            if lease_lost.is_set():
+                return True
+            return bool(cancellation_requested and cancellation_requested())
+
         try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, lease_token=token)
+            return self._reply_unleased(
+                owner_id=owner_id, conversation_id=conversation_id,
+                user_text=user_text, request_id=request_id,
+                expected_version=expected_version, tools=tools,
+                system_text=system_text, on_text_delta=on_text_delta,
+                cancellation_requested=should_cancel, lease_token=token,
+            )
         finally:
-            self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
+            stop_heartbeat.set()
+            heartbeat.join(timeout=2)
+            self.store.release_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id, lease_token=token,
+            )
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
