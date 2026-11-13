@@ -105,7 +105,7 @@ class CognitiveContextEngine:
                 or not isinstance(v, str) or len(v) > 2000
                 for k, v in profile.items()
             ):
-                raise RuntimeError("identity profile fields must be bounded strings.")
+                raise RuntimeError("identity profile fields must be strings and bounded.")
             identity_revision = revision
             identity_profile = tuple(sorted((k[:100], v[:300]) for k, v in profile.items()))
 
