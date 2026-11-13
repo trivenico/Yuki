@@ -116,7 +116,7 @@ class ConversationService:
                 expected_version=expected_version, tools=tools,
                 system_text=system_text, on_text_delta=on_text_delta,
                 cancellation_requested=should_cancel, lease_token=token,
-                user_cancelled=user_cancelled,
+                user_cancelled=user_cancelled, session_id=session_id,
             )
         finally:
             stop_heartbeat.set()
@@ -130,7 +130,7 @@ class ConversationService:
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
         on_text_delta=None, cancellation_requested=None, lease_token: str | None = None,
-        user_cancelled: threading.Event | None = None,
+        user_cancelled: threading.Event | None = None, session_id: str | None = None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
