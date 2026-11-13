@@ -103,6 +103,9 @@ class ProviderProfileAPITests(unittest.TestCase):
         self.assertEqual(status, 201, body)
         owner_id = self.session.user.user_id
         self.assertTrue(self.store.credential_available(owner_id, "gateway"))
+        listed = self.store.list_profiles(owner_id)
+        self.assertEqual(len(listed), 1)
+        self.assertTrue(listed[0].credential_configured)
         status, body, _ = self.request("GET", "/v1/provider-profiles", token=self.other.token)
         self.assertEqual((status, body["profiles"]), (200, []))
         status, body, _ = self.request(
