@@ -139,6 +139,27 @@ class SQLitePendingApprovalStore:
             return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
                                        row[3], row[4], row[5], row[6])
 
+    def get_for_identity(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
+        """Read an approval only when both authenticated identity bindings match."""
+        if (not isinstance(pending_id, str) or not pending_id or
+                not isinstance(actor, str) or not actor.strip() or
+                not isinstance(session_id, str) or not session_id.strip()):
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        with self._connect() as db:
+            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at,
+                actor_hash, session_hash, status FROM pending_approvals
+                WHERE pending_id=? AND actor_hash=? AND session_hash=?""",
+                (pending_id, actor_hash, session_hash)).fetchone()
+            if row is None:
+                return None
+            if row[3] <= now and row[6] in {"pending", "completed", "denied"}:
+                db.execute("DELETE FROM pending_approvals WHERE pending_id=?", (pending_id,))
+                return None
+            return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
+                row[3], row[4], row[5], row[6])
+
     def transition(self, pending_id: str, *, expected_status: str, new_status: str,
                    actor: str, session_id: str) -> StoredPendingAction | None:
         """Atomically transition an owner/session-bound approval without deleting it."""
