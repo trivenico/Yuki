@@ -31,6 +31,42 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
             self.planner, result, actor="owner", session_id="session-1"
         )
 
+    def test_host_resolver_prevents_request_planner_substitution(self):
+        trusted = DummyPlanner()
+        attacker = DummyPlanner()
+        coordinator = ApprovalCoordinator(
+            pending_store=self.coordinator.pending_store,
+            planner_resolver=lambda *, actor, session_id: trusted
+                if (actor, session_id) == ("owner", "session-1") else None,
+        )
+        result = coordinator.record(
+            trusted, SimpleNamespace(action=self.action),
+            actor="owner", session_id="session-1",
+        )
+        outcome = coordinator.approve(
+            attacker, result.pending_id, actor="owner", session_id="session-1",
+            confirm=lambda _: True,
+        )
+        self.assertTrue(outcome.ok)
+        self.assertEqual(len(trusted.executed), 1)
+        self.assertEqual(attacker.executed, [])
+
+    def test_host_resolver_failure_prevents_execution(self):
+        coordinator = ApprovalCoordinator(
+            pending_store=self.coordinator.pending_store,
+            planner_resolver=lambda **_: None,
+        )
+        result = coordinator.record(
+            self.planner, SimpleNamespace(action=self.action),
+            actor="owner", session_id="session-1",
+        )
+        outcome = coordinator.approve(
+            self.planner, result.pending_id, actor="owner", session_id="session-1",
+            confirm=lambda _: True,
+        )
+        self.assertEqual(outcome.status, "execution_unavailable")
+        self.assertEqual(self.planner.executed, [])
+
     def test_confirmation_callback_cannot_mutate_executed_snapshot(self):
         def mutate_for_display(display):
             display["arguments"]["text"] = "tampered"
