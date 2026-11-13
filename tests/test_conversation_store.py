@@ -195,7 +195,7 @@ class ConversationStoreTests(unittest.TestCase):
                 owner_id=self.owner, conversation_id=conversation_id,
                 lease_token="worker-two-token", ttl_seconds=30,
             )
-            self.assertGreater(second_lease["expires_at"], first_lease["expires_at"] - 30)
+            self.assertGreater(second_lease["expires_at"], first_lease["expires_at"])
         finally:
 
     def test_expired_lease_can_be_reclaimed_but_old_token_cannot_release_new_lease(self):
