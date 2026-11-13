@@ -119,7 +119,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
                 raise RuntimeManifestError("Runtime manifest path is not portable to Windows.")
         portable_name = unicodedata.normalize("NFC", relative).casefold()
         if portable_name in portable_names:
-            raise RuntimeManifestError("Runtime manifest contains case-insensitive or Unicode-normalized path collisions.")
+            raise RuntimeManifestError("Runtime manifest contains duplicate, case-insensitive, or Unicode-normalized path collisions.")
         portable_names.add(portable_name)
         if parsed.as_posix() != relative or relative == MANIFEST_NAME or relative in seen:
             raise RuntimeManifestError("Runtime manifest contains a duplicate or non-canonical path.")
