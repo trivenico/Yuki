@@ -110,7 +110,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
             if (
                 segment.endswith((" ", "."))
                 or any(ord(char) < 32 or char in '<>:"|?*' for char in segment)
-                or segment.split(".", 1)[0].upper() in {
+                or segment.split(".", 1)[0].rstrip(" .").upper() in {
                     "CON", "PRN", "AUX", "NUL",
                     *(f"COM{number}" for number in range(1, 10)),
                     *(f"LPT{number}" for number in range(1, 10)),
@@ -156,8 +156,8 @@ def verify_manifest(root: str | Path, manifest_path: str | Path | None = None) -
 
 def _external_regular_file(path: str | Path, bundle: Path, label: str) -> Path:
     candidate = Path(path).expanduser()
-    if candidate.is_symlink() or not candidate.is_file():
-        raise RuntimeManifestError(f"{label} must be an existing regular non-symlink file.")
+    if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size > 65536:
+        raise RuntimeManifestError(f"{label} must be an existing regular non-symlink file no larger than 64 KiB.")
     resolved = candidate.resolve(strict=True)
     try:
         resolved.relative_to(bundle)
