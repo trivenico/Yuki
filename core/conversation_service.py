@@ -76,7 +76,7 @@ class ConversationService:
             limit=limit, after_sequence=after_sequence,
         )
 
-    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
+    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None, session_id: str | None = None) -> dict[str, Any]:
         token = str(uuid.uuid4())
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=120)
         stop_heartbeat = threading.Event()
@@ -279,7 +279,7 @@ class ConversationService:
                         raise PermissionError("model tool catalog does not match owner guarded runtime")
                 result = execution_loop.run(
                     user_text, on_text_delta=on_text_delta,
-                    cancellation_requested=cancellation_requested, **kwargs,
+                    cancellation_requested=cancellation_requested,\n                    execution_context=({\n                        "actor": owner_id, "session_id": session_id,\n                        "conversation_id": conversation_id, "request_id": request_id,\n                    } if session_id is not None else None), **kwargs,
                 )
                 status = result.status
                 model_turns = result.model_turns
