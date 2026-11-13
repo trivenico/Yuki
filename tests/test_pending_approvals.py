@@ -125,6 +125,47 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
                 actor="other", session_id="session-a",
             )[0].arguments["text"], "three")
 
+    def test_recovery_list_is_identity_scoped_and_retains_uncertain_states(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            unknown = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            store.transition(unknown.pending_id, expected_status="pending", new_status="claimed",
+                            actor="owner", session_id="session-a")
+            store.transition(unknown.pending_id, expected_status="claimed", new_status="approved",
+                            actor="owner", session_id="session-a")
+            store.transition(unknown.pending_id, expected_status="approved", new_status="executing",
+                            actor="owner", session_id="session-a")
+            store.transition(unknown.pending_id, expected_status="executing", new_status="outcome_unknown",
+                            actor="owner", session_id="session-a")
+            unavailable = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            store.transition(unavailable.pending_id, expected_status="pending", new_status="claimed",
+                             actor="owner", session_id="session-a")
+            store.transition(unavailable.pending_id, expected_status="claimed", new_status="approved",
+                             actor="owner", session_id="session-a")
+            store.transition(unavailable.pending_id, expected_status="approved", new_status="execution_unavailable",
+                             actor="owner", session_id="session-a")
+            other = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-b",
+            )
+            store.transition(other.pending_id, expected_status="pending", new_status="claimed",
+                             actor="owner", session_id="session-b")
+            items = store.list_recovery_for_identity(actor="owner", session_id="session-a")
+            self.assertEqual({item.pending_id for item in items}, {unknown.pending_id, unavailable.pending_id})
+            self.assertEqual({item.status for item in items}, {"outcome_unknown", "execution_unavailable"})
+            self.assertEqual(store.list_recovery_for_identity(
+                actor="owner", session_id="session-b",
+            )[0].pending_id, other.pending_id)
+            self.assertEqual(store.list_recovery_for_identity(
+                actor="intruder", session_id="session-a",
+            ), [])
+
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp, max_pending=1)
