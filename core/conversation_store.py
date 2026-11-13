@@ -211,14 +211,18 @@ class ConversationStore:
                     raise ConversationNotFound("conversation not found.")
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
-                if generation_lease_token is not None:
-                    lease = db.execute(
-                        """SELECT 1 FROM conversation_generation_leases
-                           WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
-                        (conversation_id, owner, generation_lease_token, time.time()),
-                    ).fetchone()
-                    if lease is None:
-                        raise ConversationConflict("generation lease is no longer owned by this worker.")
+                lease = db.execute(
+                    """SELECT owner_id, lease_token, expires_at FROM conversation_generation_leases
+                       WHERE conversation_id=?""",
+                    (conversation_id,),
+                ).fetchone()
+                if lease is not None and (
+                    generation_lease_token is None
+                    or lease["owner_id"] != owner
+                    or lease["lease_token"] != generation_lease_token
+                    or lease["expires_at"] <= time.time()
+                ):
+                    raise ConversationConflict("generation lease is no longer owned by this worker.")
                 previous = db.execute(
                     """SELECT * FROM conversation_messages
                        WHERE conversation_id=? AND idempotency_key=?""",
@@ -393,8 +397,10 @@ class ConversationStore:
             if lease_token is None:
                 cursor = db.execute(
                     """UPDATE conversation_generation_runs SET checkpoint=?, updated_at=?
-                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                    (encoded, self._now(), owner, conversation_id, request_id.strip()),
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                         AND NOT EXISTS (SELECT 1 FROM conversation_generation_leases l
+                           WHERE l.conversation_id=?)""",
+                    (encoded, self._now(), owner, conversation_id, request_id.strip(), conversation_id),
                 )
             else:
                 cursor = db.execute(
@@ -419,8 +425,10 @@ class ConversationStore:
             if lease_token is None:
                 cursor = db.execute(
                     """UPDATE conversation_generation_runs SET status=?, updated_at=?, finished_at=?
-                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                    (status, now, now, owner, conversation_id, request_id.strip()),
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                         AND NOT EXISTS (SELECT 1 FROM conversation_generation_leases l
+                           WHERE l.conversation_id=?)""",
+                    (status, now, now, owner, conversation_id, request_id.strip(), conversation_id),
                 )
             else:
                 cursor = db.execute(
