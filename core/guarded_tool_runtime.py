@@ -107,7 +107,10 @@ class GuardedToolRuntime:
                 return "Tool blocked because its required audit record could not be written."
             return "Unknown tool."
         contextual_authorizer = getattr(self._policy, "authorize_tool_context", None)
-        if callable(contextual_authorizer) and execution_context is None:
+        # Production runtimes require durable audit and authenticated identity.
+        # Do not let a legacy name-only policy turn missing request identity into
+        # an executable operation merely because it lacks the contextual hook.
+        if (callable(contextual_authorizer) or self._require_audit) and execution_context is None:
             recorded = self._record(name, "missing_authenticated_execution_context")
             if self._require_audit and not recorded:
                 return "Tool blocked because its required audit record could not be written."
