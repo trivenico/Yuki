@@ -164,7 +164,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertTrue(outcome.ok)
             events = list(reversed(audit_log.list_events()))
             self.assertEqual([event["event_type"] for event in events],
-                             ["requested", "approved", "executed"])
+                             ["requested", "approved", "execution_started", "executed"])
             self.assertNotIn("persisted", str(events))
 
 
