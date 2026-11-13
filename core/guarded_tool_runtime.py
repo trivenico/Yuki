@@ -79,6 +79,31 @@ class GuardedToolRuntime:
         """Return the host approval-request adapter, if one is configured."""
         return self._approval_request
 
+    def with_approval_request(self, callback: Callable[[str, dict[str, Any], Mapping[str, str]], str]):
+        """Return an equivalent runtime with a durable host approval adapter attached.
+
+        This is an immutable composition operation: an existing, different
+        adapter cannot be silently replaced, and approval remains unavailable
+        unless required audit mode is enabled.
+        """
+        if not callable(callback):
+            raise TypeError("approval request adapter must be callable")
+        if not self._require_audit:
+            raise ValueError("approval requests require durable audit mode")
+        if self._approval_request is not None:
+            if self._approval_request is callback:
+                return self
+            raise ValueError("guarded runtime already has a different approval adapter")
+        return GuardedToolRuntime(
+            self._tools,
+            self._policy,
+            audit=self._audit,
+            max_argument_chars=self._max_argument_chars,
+            max_result_chars=self._max_result_chars,
+            require_audit=True,
+            approval_request=callback,
+        )
+
     @property
     def registered_tool_names(self) -> frozenset[str]:
         """Return the immutable set of handlers executable by this runtime."""
