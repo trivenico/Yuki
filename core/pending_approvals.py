@@ -147,6 +147,7 @@ class SQLitePendingApprovalStore:
             "execution_unavailable": {"approved", "denied"},
         }
         if (not isinstance(pending_id, str) or not pending_id or
+                not isinstance(expected_status, str) or not isinstance(new_status, str) or
                 expected_status not in allowed or new_status not in allowed or
                 new_status not in transitions.get(expected_status, set()) or
                 not isinstance(actor, str) or not actor.strip() or
