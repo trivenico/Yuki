@@ -89,7 +89,10 @@ class CognitiveContextEngine:
                 raise RuntimeError("identity_core returned an invalid snapshot.")
             revision = snapshot.get("revision")
             profile = snapshot.get("profile")
-            if type(revision) is not int or revision < 0 or not isinstance(profile, dict):
+            if (
+                type(revision) is not int or revision < 0
+                or not isinstance(profile, dict) or len(profile) > 64
+            ):
                 raise RuntimeError("identity_core returned an invalid profile revision.")
             if snapshot.get("authority") != "configuration_only":
                 raise RuntimeError("identity profile authority is not configuration_only.")
@@ -97,10 +100,14 @@ class CognitiveContextEngine:
                 "may_grant_tool_permissions"
             ) is not False:
                 raise RuntimeError("identity profile must not grant policy or tool authority.")
-            if any(not isinstance(k, str) or not isinstance(v, str) for k, v in profile.items()):
-                raise RuntimeError("identity profile fields must be strings.")
+            if any(
+                not isinstance(k, str) or not k.strip() or len(k) > 100
+                or not isinstance(v, str) or len(v) > 2000
+                for k, v in profile.items()
+            ):
+                raise RuntimeError("identity profile fields must be bounded strings.")
             identity_revision = revision
-            identity_profile = tuple(sorted((k, v[:300]) for k, v in profile.items()))
+            identity_profile = tuple(sorted((k[:100], v[:300]) for k, v in profile.items()))
 
         memory_text = ""
         memory_ids: tuple[str, ...] = ()
@@ -113,7 +120,7 @@ class CognitiveContextEngine:
                     warnings.append("Retrieved memory was truncated to configured context limits.")
             except PermissionError:
                 warnings.append("Memory retrieval was unavailable because consent was not granted.")
-            except (OSError, ValueError):
+            except (OSError, ValueError, RuntimeError):
                 warnings.append("Memory retrieval was unavailable; planning continued without it.")
 
         plan = self.planner.propose(goal, memory_context=(memory_text,) if memory_text else ())
