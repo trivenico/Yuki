@@ -227,7 +227,7 @@ class AgentExecutionLoop:
             if not isinstance(envelope, Mapping):
                 raise AgentExecutionError("model tool_calls must be a structured envelope.")
             try:
-                encoded_envelope = json.dumps(dict(envelope), ensure_ascii=False, separators=(",", ":"))
+                encoded_envelope = json.dumps(dict(envelope), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
                 from core.structured_tool_protocol import parse_tool_calls
                 parsed = parse_tool_calls(encoded_envelope)
             except (TypeError, ValueError) as exc:
