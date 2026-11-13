@@ -114,7 +114,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             verify_signed_bundle(self.bundle, self.public_path)
 
     def test_staging_revalidates_host_controlled_copy(self):
-        with stage_verified_bundle(self.bundle, self.public_path, self.root / "host-temp") as temp_dir:
+        with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
             staged = Path(temp_dir)
             self.assertTrue((staged / "payload.txt").is_file())
             self.assertEqual((staged / "payload.txt").read_text(encoding="utf-8"), "verified payload")
