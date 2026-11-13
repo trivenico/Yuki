@@ -28,6 +28,7 @@ class StoredPendingAction:
     actor_hash: str
     session_hash: str
     status: str = "pending"
+    created: bool = True
 
 
 class SQLitePendingApprovalStore:
@@ -61,7 +62,12 @@ class SQLitePendingApprovalStore:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
             if "status" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+            if "idempotency_hash" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN idempotency_hash TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
+            db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_approval_idempotency
+                ON pending_approvals(actor_hash, session_hash, idempotency_hash)
+                WHERE idempotency_hash IS NOT NULL""")
 
     @contextmanager
     def _connect(self):
@@ -87,12 +93,21 @@ class SQLitePendingApprovalStore:
         return encoded
 
     def put(self, skill_id: str, arguments: dict[str, Any], action: dict[str, Any], *,
-            actor: str, session_id: str) -> StoredPendingAction:
+            actor: str, session_id: str, idempotency_key: str | None = None) -> StoredPendingAction:
         if not isinstance(skill_id, str) or not skill_id.strip() or len(skill_id) > 120:
             raise ValueError("skill_id is required and must be bounded.")
         if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("Trusted actor and session identity are required.")
+        if idempotency_key is not None and (
+            not isinstance(idempotency_key, str) or not idempotency_key.strip()
+            or len(idempotency_key) > 256
+        ):
+            raise ValueError("idempotency_key must be non-empty bounded text")
         args_json, action_json = self._encode(arguments), self._encode(action)
+        action_hash = hashlib.sha256(action_json.encode("utf-8")).hexdigest()
+        idempotency_hash = (
+            self._identity_hash(idempotency_key) if idempotency_key is not None else None
+        )
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(seconds=self.ttl_seconds)).isoformat()
         actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
@@ -101,6 +116,21 @@ class SQLitePendingApprovalStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                if idempotency_hash is not None:
+                    existing = db.execute("""SELECT pending_id, skill_id, arguments_json,
+                        action_json, expires_at, actor_hash, session_hash, status
+                        FROM pending_approvals
+                        WHERE actor_hash=? AND session_hash=? AND idempotency_hash=?""",
+                        (actor_hash, session_hash, idempotency_hash)).fetchone()
+                    if existing is not None:
+                        existing_hash = hashlib.sha256(existing[3].encode("utf-8")).hexdigest()
+                        if existing_hash != action_hash:
+                            raise ValueError("idempotency key was already used for a different action")
+                        db.execute("COMMIT")
+                        return StoredPendingAction(
+                            existing[0], existing[1], json.loads(existing[2]), json.loads(existing[3]),
+                            existing[4], existing[5], existing[6], existing[7], False,
+                        )
                 db.execute("""DELETE FROM pending_approvals
                     WHERE expires_at <= ? AND status IN ('pending', 'completed', 'denied')""",
                     (now.isoformat(),))
@@ -108,9 +138,9 @@ class SQLitePendingApprovalStore:
                 if count >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
                 db.execute("""INSERT INTO pending_approvals
-                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')""",
-                    (item.pending_id, skill_id, args_json, action_json, expires, actor_hash, session_hash))
+                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, status, idempotency_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                    (item.pending_id, skill_id, args_json, action_json, expires, actor_hash, session_hash, idempotency_hash))
                 db.execute("COMMIT")
             except Exception:
                 db.execute("ROLLBACK")
