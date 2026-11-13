@@ -50,7 +50,9 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
             relative = path.relative_to(root).as_posix()
             if relative in {MANIFEST_NAME, SIGNATURE_NAME}:
                 continue
-            if path.is_symlink() or not path.is_file():
+            if path.is_symlink():
+                raise RuntimeManifestError(f"Runtime bundle contains a symbolic-link file: {relative}")
+            if not path.is_file():
                 raise RuntimeManifestError(f"Runtime bundle contains a non-regular file: {relative}")
             size, digest = _hash_file(path)
             files.append({"path": relative, "size": size, "sha256": digest})
@@ -168,8 +170,8 @@ def _external_regular_file(path: str | Path, bundle: Path, label: str) -> Path:
 
 def sign_manifest(bundle: str | Path, private_key_path: str | Path) -> Path:
     root = Path(bundle).expanduser().resolve(strict=True)
-    verify_manifest(root)
     key_path = _external_regular_file(private_key_path, root, "Signing private key")
+    verify_manifest(root)
     try:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
