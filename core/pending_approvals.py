@@ -64,6 +64,12 @@ class SQLitePendingApprovalStore:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
             if "idempotency_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN idempotency_hash TEXT")
+            if "reconciliation_resolution" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN reconciliation_resolution TEXT")
+            if "reconciliation_evidence_hash" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN reconciliation_evidence_hash TEXT")
+            if "reconciled_at" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN reconciled_at TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
             db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_approval_idempotency
                 ON pending_approvals(actor_hash, session_hash, idempotency_hash)
@@ -284,6 +290,47 @@ class SQLitePendingApprovalStore:
                 db.execute("COMMIT")
                 return StoredPendingAction(pending_id, row[0], json.loads(row[1]),
                     json.loads(row[2]), row[3], row[4], row[5], row[6])
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
+    def reconcile(self, pending_id: str, *, actor: str, session_id: str,
+                  resolution: str, evidence_reference: str) -> StoredPendingAction | None:
+        """Record an owner-attested, evidence-referenced resolution exactly once.
+
+        This operation never executes or retries the action. Only an uncertain
+        in-flight record can be reconciled, and the evidence reference is hashed.
+        """
+        if (not isinstance(pending_id, str) or not pending_id or
+                not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256 or
+                resolution not in {"completed", "not_executed"} or
+                not isinstance(evidence_reference, str) or not evidence_reference.strip() or
+                len(evidence_reference) > 512):
+            return None
+        actor_hash = self._identity_hash(actor)
+        session_hash = self._identity_hash(session_id)
+        evidence_hash = self._identity_hash(evidence_reference.strip())
+        now = datetime.now(timezone.utc).isoformat()
+        terminal = "reconciled_completed" if resolution == "completed" else "reconciled_not_executed"
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = db.execute("""UPDATE pending_approvals
+                    SET status=?, reconciliation_resolution=?, reconciliation_evidence_hash=?, reconciled_at=?
+                    WHERE pending_id=? AND actor_hash=? AND session_hash=?
+                    AND status IN ('executing','outcome_unknown')
+                    AND reconciliation_resolution IS NULL""",
+                    (terminal, resolution, evidence_hash, now, pending_id, actor_hash, session_hash))
+                if cursor.rowcount != 1:
+                    db.execute("COMMIT")
+                    return None
+                row = db.execute("""SELECT skill_id,arguments_json,action_json,expires_at,
+                    actor_hash,session_hash,status FROM pending_approvals WHERE pending_id=?""",
+                    (pending_id,)).fetchone()
+                db.execute("COMMIT")
+                return StoredPendingAction(pending_id,row[0],json.loads(row[1]),json.loads(row[2]),
+                    row[3],row[4],row[5],row[6])
             except Exception:
                 db.execute("ROLLBACK")
                 raise

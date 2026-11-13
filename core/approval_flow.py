@@ -292,6 +292,34 @@ class ApprovalCoordinator:
                 )
         return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
 
+    def reconcile(self, pending_id: str, *, actor: str, session_id: str,
+                  resolution: str, evidence_reference: str) -> ApprovalOutcome:
+        """Record an explicit owner-attested resolution without replaying work."""
+        if (self.pending_store is None or
+                not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256 or
+                resolution not in {"completed", "not_executed"} or
+                not isinstance(evidence_reference, str) or not evidence_reference.strip() or
+                len(evidence_reference) > 512):
+            return ApprovalOutcome(False, "invalid_reconciliation", pending_id=pending_id)
+        current = self.pending_store.get_for_identity(
+            pending_id, actor=actor, session_id=session_id,
+        )
+        if current is None or current.status not in {"executing", "outcome_unknown"}:
+            return ApprovalOutcome(False, "reconciliation_not_available", pending_id=pending_id)
+        event = "reconciled_executed" if resolution == "completed" else "reconciled_not_executed"
+        try:
+            self._audit(event, pending_id, actor, current.skill_id)
+        except Exception:
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+        reconciled = self.pending_store.reconcile(
+            pending_id, actor=actor, session_id=session_id,
+            resolution=resolution, evidence_reference=evidence_reference,
+        )
+        if reconciled is None:
+            return ApprovalOutcome(False, "reconciliation_conflict", pending_id=pending_id)
+        return ApprovalOutcome(True, "reconciled_" + resolution, pending_id=pending_id)
+
     def deny(self, pending_id: str, *, actor: str, session_id: str) -> ApprovalOutcome:
         """Deny a still-pending owner/session-bound request exactly once."""
         if (self.pending_store is None or
