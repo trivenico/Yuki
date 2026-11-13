@@ -17,7 +17,10 @@ class ModelRegistryError(ValueError):
 def _safe_file(root: Path, relative: Any, label: str) -> Path:
     if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
         raise ModelRegistryError(f"{label} path must be a non-empty relative path.")
-    candidate = (root / relative).resolve(strict=True)
+    try:
+        candidate = (root / relative).resolve(strict=True)
+    except OSError as exc:
+        raise ModelRegistryError(f"{label} file does not exist or cannot be resolved.") from exc
     try:
         candidate.relative_to(root)
     except ValueError as exc:
@@ -51,17 +54,17 @@ class ModelRegistry:
         required = {"schema_version","model_id","version","family","architecture","origin","license","training_data","tasks","artifacts"}
         if not isinstance(data, dict) or set(data) != required:
             raise ModelRegistryError("Model manifest has missing or unsupported fields.")
-        if data["schema_version"] != 1:
+        if isinstance(data["schema_version"], bool) or data["schema_version"] != 1:
             raise ModelRegistryError("Unsupported model manifest schema version.")
         if not isinstance(data["model_id"], str) or not _ID.fullmatch(data["model_id"]):
             raise ModelRegistryError("model_id is invalid.")
         if not isinstance(data["version"], str) or not _VERSION.fullmatch(data["version"]):
             raise ModelRegistryError("version must use semantic versioning.")
-        if data["family"] not in _ALLOWED_FAMILIES:
+        if not isinstance(data["family"], str) or data["family"] not in _ALLOWED_FAMILIES:
             raise ModelRegistryError("Unsupported model family.")
         if not isinstance(data["architecture"], str) or not data["architecture"].strip() or len(data["architecture"]) > 120:
             raise ModelRegistryError("architecture must be a non-empty identifier.")
-        if data["origin"] not in _ALLOWED_ORIGINS:
+        if not isinstance(data["origin"], str) or data["origin"] not in _ALLOWED_ORIGINS:
             raise ModelRegistryError("Only random initialization or a prior Yuki checkpoint is allowed.")
         for field in ("license","training_data"):
             if not isinstance(data[field], str) or not data[field].strip() or len(data[field]) > 4000:
