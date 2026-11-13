@@ -18,7 +18,7 @@ from core.sqlite_file_security import prepare_private_sqlite_path
 from urllib.parse import urlsplit
 
 
-_OWNER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$")
+_OWNER = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._:@/-]{0,255}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 _ENV_REF = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _SERVICE = "yuki.provider-profile.v1"
