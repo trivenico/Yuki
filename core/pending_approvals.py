@@ -172,6 +172,32 @@ class SQLitePendingApprovalStore:
             row[5], row[6], row[7],
         ) for row in rows]
 
+    def list_recovery_for_identity(self, *, actor: str, session_id: str,
+                                   limit: int = 50) -> list[StoredPendingAction]:
+        """List owner/session-bound approvals requiring recovery or reconciliation.
+
+        Recovery records are deliberately not subject to the pending TTL. This
+        read-only view never changes state or authorizes execution.
+        """
+        if (not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256):
+            return []
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        recovery_states = ("claimed", "approved", "executing", "execution_unavailable", "outcome_unknown")
+        placeholders = ",".join("?" for _ in recovery_states)
+        with self._connect() as db:
+            rows = db.execute(f"""SELECT pending_id,skill_id,arguments_json,action_json,
+                expires_at,actor_hash,session_hash,status FROM pending_approvals
+                WHERE actor_hash=? AND session_hash=? AND status IN ({placeholders})
+                ORDER BY expires_at ASC LIMIT ?""",
+                (actor_hash, session_hash, *recovery_states, limit)).fetchall()
+        return [StoredPendingAction(
+            row[0], row[1], json.loads(row[2]), json.loads(row[3]), row[4],
+            row[5], row[6], row[7],
+        ) for row in rows]
+
     def get(self, pending_id: str) -> StoredPendingAction | None:
         if not isinstance(pending_id, str) or not pending_id:
             return None
