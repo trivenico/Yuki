@@ -71,6 +71,12 @@ class SQLitePendingApprovalStore:
             if "reconciled_at" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN reconciled_at TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
+            db.execute("""CREATE TABLE IF NOT EXISTS approval_operation_intents (
+                pending_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE,
+                action_digest TEXT NOT NULL, created_at TEXT NOT NULL,
+                actor_hash TEXT NOT NULL, session_hash TEXT NOT NULL,
+                FOREIGN KEY(pending_id) REFERENCES pending_approvals(pending_id) ON DELETE CASCADE
+            )""")
             db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_approval_idempotency
                 ON pending_approvals(actor_hash, session_hash, idempotency_hash)
                 WHERE idempotency_hash IS NOT NULL""")
@@ -367,3 +373,45 @@ class SQLitePendingApprovalStore:
             pending_id, expected_status="pending", new_status="denied",
             actor=actor, session_id=session_id,
         ) is not None
+
+
+    def ensure_operation_intent(self, pending_id: str, *, actor: str, session_id: str):
+        """Persist one immutable operation id and action digest before side effects."""
+        if (not isinstance(pending_id, str) or not pending_id or
+                not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256):
+            return None
+        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT action_json,status FROM pending_approvals WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, actor_hash, session_hash)).fetchone()
+                if row is None or row[1] != "approved":
+                    db.execute("COMMIT")
+                    return None
+                action_digest = hashlib.sha256(row[0].encode("utf-8")).hexdigest()
+                existing = db.execute("SELECT operation_id,action_digest,created_at FROM approval_operation_intents WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, actor_hash, session_hash)).fetchone()
+                if existing is not None:
+                    if existing[1] != action_digest:
+                        raise RuntimeError("durable operation intent action digest mismatch")
+                    db.execute("COMMIT")
+                    return {"pending_id": pending_id, "operation_id": existing[0], "action_digest": existing[1], "created_at": existing[2]}
+                operation_id = secrets.token_urlsafe(32)
+                created_at = datetime.now(timezone.utc).isoformat()
+                db.execute("INSERT INTO approval_operation_intents (pending_id,operation_id,action_digest,created_at,actor_hash,session_hash) VALUES (?,?,?,?,?,?)", (pending_id, operation_id, action_digest, created_at, actor_hash, session_hash))
+                db.execute("COMMIT")
+                return {"pending_id": pending_id, "operation_id": operation_id, "action_digest": action_digest, "created_at": created_at}
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
+
+    def get_operation_intent(self, pending_id: str, *, actor: str, session_id: str):
+        """Read an existing operation intent only for its bound owner and session."""
+        if not isinstance(pending_id, str) or not pending_id or not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
+            return None
+        with self._connect() as db:
+            row = db.execute("SELECT operation_id,action_digest,created_at FROM approval_operation_intents WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, self._identity_hash(actor), self._identity_hash(session_id))).fetchone()
+        if row is None:
+            return None
+        return {"pending_id": pending_id, "operation_id": row[0], "action_digest": row[1], "created_at": row[2]}

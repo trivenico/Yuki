@@ -238,6 +238,16 @@ class ApprovalCoordinator:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         if persistent:
+            # Persist immutable correlation material before any external side effect.
+            ensure_intent = getattr(self.pending_store, "ensure_operation_intent", None)
+            if not callable(ensure_intent):
+                return ApprovalOutcome(False, "operation_intent_unavailable", pending_id=pending_id)
+            try:
+                operation_intent = ensure_intent(pending_id, actor=actor, session_id=session_id)
+            except Exception:
+                operation_intent = None
+            if not isinstance(operation_intent, dict) or not operation_intent.get("operation_id"):
+                return ApprovalOutcome(False, "operation_intent_unavailable", pending_id=pending_id)
             executing = self.pending_store.transition(
                 pending_id, expected_status="approved", new_status="executing",
                 actor=actor, session_id=session_id,
