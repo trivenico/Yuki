@@ -20,13 +20,24 @@ class _DenyAll:
         return False
 
 
+class _ApprovedPolicy:
+    def authorize_tool(self, name):
+        return False
+
+    def skill_id_for_tool(self, name):
+        return "notes.write" if name == "notes.write" else None
+
+    def authorize_approved_tool_context(self, name, skill_id, context):
+        return name == "notes.write" and skill_id == "notes.write" and bool(context.get("actor"))
+
+
 class _Executor:
     def __init__(self):
         self.executed = []
-
-    def execute_approved_action(self, action):
-        self.executed.append(action)
-        return SimpleNamespace(ok=True, result="executed")
+        self.runtime = GuardedToolRuntime(
+            {"notes.write": lambda raw: self.executed.append(json.loads(raw)) or "executed"},
+            _ApprovedPolicy(), audit=lambda *_: None, require_audit=True,
+        )
 
 
 def _loop():
@@ -48,7 +59,7 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
             executor = _Executor()
             approvals = OwnerApprovalRuntimeFactory(
                 root / "approvals",
-                planner_resolver_for_owner=lambda owner, session: executor if owner == alice.user_id else None,
+                planner_resolver_for_owner=lambda owner, session: executor.runtime if owner == alice.user_id else None,
             )
             alice_session_hash = hashlib.sha256(alice_session.token.encode()).hexdigest()
             coordinator = approvals.coordinator_for_owner(alice.user_id)
@@ -57,6 +68,10 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 SimpleNamespace(action={
                     "skill_id": "notes.write", "tool_name": "notes.write",
                     "arguments": {"text": "approved note"},
+                    "execution_context": {
+                        "actor": alice.user_id, "session_id": alice_session_hash,
+                        "conversation_id": "conversation-a", "request_id": "request-a",
+                    },
                 }),
                 actor=alice.user_id, session_id=alice_session_hash,
                 idempotency_key="conversation-a:request-a",
@@ -130,12 +145,17 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
             session = auth.authenticate("owner", "owner-secure-password")
             executor = _Executor()
             approvals = OwnerApprovalRuntimeFactory(
-                root / "approvals", planner_resolver_for_owner=lambda *_: executor,
+                root / "approvals", planner_resolver_for_owner=lambda *_: executor.runtime,
             )
             session_hash = hashlib.sha256(session.token.encode()).hexdigest()
             pending = approvals.coordinator_for_owner(owner.user_id).record(
                 None, SimpleNamespace(action={
-                    "skill_id": "notes.write", "arguments": {"text": "no"},
+                    "skill_id": "notes.write", "tool_name": "notes.write",
+                    "arguments": {"text": "no"},
+                    "execution_context": {
+                        "actor": owner.user_id, "session_id": session_hash,
+                        "conversation_id": "conversation-b", "request_id": "request-b",
+                    },
                 }), actor=owner.user_id, session_id=session_hash,
             )
             runtime = build_conversation_runtime(
