@@ -83,13 +83,10 @@ class DesktopBackupTests(unittest.TestCase):
                     _safe_archive_path(name)
 
     def test_rejects_case_colliding_archive_paths(self):
-        from ui.desktop.backup import _safe_archive_path
-        paths = ("Config.json", "config.json")
-        normalized = set()
-        for raw in paths:
-            portable = "/".join(part.casefold() for part in _safe_archive_path(raw).parts)
-            self.assertNotIn(portable, normalized)
-            normalized.add(portable)
+        from ui.desktop.backup import _portable_archive_key, _safe_archive_path
+        first = _portable_archive_key(_safe_archive_path("Config.json"))
+        second = _portable_archive_key(_safe_archive_path("config.json"))
+        self.assertEqual(first, second)
 
     def test_rejects_symbolic_link_source(self):
         with tempfile.TemporaryDirectory() as directory:
