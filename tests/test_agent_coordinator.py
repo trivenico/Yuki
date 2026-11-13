@@ -240,6 +240,30 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 SubtaskSpec("a", "A", ("unknown-capability",)),
             ])
 
+    def test_agent_plans_are_owner_scoped(self):
+        shared_auth = lambda actor, action, resource: actor in {"alice", "bob"} and action in {
+            "agent:plan", "agent:read", "agent:dispatch", "agent:cancel"
+        }
+        shared = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=shared_auth,
+        )
+        plan = shared.submit(
+            actor_id="alice", idempotency_key="same-client-key",
+            subtasks=[SubtaskSpec("private", "Private owner task", ("research",))],
+        )
+        bob_plan = shared.submit(
+            actor_id="bob", idempotency_key="same-client-key",
+            subtasks=[SubtaskSpec("private", "Private owner task", ("research",))],
+        )
+        self.assertNotEqual(plan.plan_id, bob_plan.plan_id)
+        self.assertEqual(shared.get_plan(actor_id="alice", plan_id=plan.plan_id).plan_id, plan.plan_id)
+        with self.assertRaises(KeyError):
+            shared.get_plan(actor_id="bob", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            shared.advance(actor_id="bob", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            shared.cancel_plan(actor_id="bob", plan_id=plan.plan_id)
+
     def test_idempotency_and_payload_conflict(self):
         items = [SubtaskSpec("a", "A", ("research",))]
         first = self.coordinator.submit(actor_id="alice", idempotency_key="idem", subtasks=items)
