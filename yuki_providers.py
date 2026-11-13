@@ -242,6 +242,22 @@ class ProviderManager:
                 "selected": profile["name"] == (self._selected or ""),
                 "status": "api_key_configured" if configured else "api_key_not_configured",
             })
+        for name, profile in sorted(self._vault_profiles.items()):
+            if name in known:
+                continue
+            checker = getattr(profile["store"], "credential_available", None)
+            credential_configured = (
+                checker(profile["owner_id"], name) is True if callable(checker) else False
+            )
+            catalog.append({
+                "name": name, "label": name, "implemented": True,
+                "ready": credential_configured, "privacy": "cloud_provider",
+                "capabilities": ["text", "tooling_provider_dependent"],
+                "configured_model": profile["model"],
+                "credential_configured": credential_configured,
+                "selected": name == (self._selected or ""),
+                "status": "os_vault_profile",
+            })
         return catalog
 
     def routing_registry(self):
