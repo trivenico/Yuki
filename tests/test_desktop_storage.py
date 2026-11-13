@@ -31,6 +31,18 @@ class DesktopStorageTests(unittest.TestCase):
             with self.assertRaisesRegex(DesktopStorageError, "symbolic link"):
                 prepare_private_desktop_root(link)
 
+    def test_rejects_dangling_symlink_root(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            link = Path(directory) / "dangling"
+            try:
+                link.symlink_to(Path(directory) / "missing", target_is_directory=True)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+            with self.assertRaisesRegex(DesktopStorageError, "symbolic link"):
+                prepare_private_desktop_root(link)
+
     def test_rejects_non_directory_root(self):
         with tempfile.TemporaryDirectory() as directory:
             file_path = Path(directory) / "not-a-directory"
