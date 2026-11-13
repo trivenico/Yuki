@@ -81,7 +81,7 @@ class ApprovalCoordinator:
             # Never leave an un-audited approval request available for later execution.
             if self.pending_store is not None:
                 try:
-                    self.pending_store.deny(pending_id)
+                    self.pending_store.deny(pending_id, actor=actor, session_id=session_id)
                 except Exception:
                     pass
             else:
