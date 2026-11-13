@@ -123,6 +123,11 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 alice_list = await request("GET", "/v1/approvals", alice_session.token)
                 bob_list = await request("GET", "/v1/approvals", bob_session.token)
                 alice_recovery = await request("GET", "/v1/approvals/recovery", alice_session.token)
+                alice_reconciled = await request(
+                    "POST", f"/v1/approvals/{recovery.pending_id}/reconcile",
+                    alice_session.token,
+                    {"resolution": "completed", "evidence_reference": "provider-receipt-123"},
+                )
                 alice_other_session_list = await request("GET", "/v1/approvals", alice_second_session.token)
                 alice_other_session_recovery = await request("GET", "/v1/approvals/recovery", alice_second_session.token)
                 bob_recovery = await request("GET", "/v1/approvals/recovery", bob_session.token)
@@ -139,11 +144,11 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                     alice_session.token, {"confirm_action": True},
                 )
                 return (alice_list, bob_list, alice_recovery, alice_other_session_list,
-                        alice_other_session_recovery, bob_recovery, bob_cross, alice_approved, replay)
+                        alice_other_session_recovery, bob_recovery, bob_cross, alice_approved, replay, alice_reconciled)
 
             try:
                 (alice_list, bob_list, alice_recovery, alice_other_session_list,
-                 alice_other_session_recovery, bob_recovery, bob_cross, approved, replay) = asyncio.run(scenario())
+                 alice_other_session_recovery, bob_recovery, bob_cross, approved, replay, alice_reconciled) = asyncio.run(scenario())
                 self.assertEqual(alice_list[0], 200)
                 self.assertEqual(len(alice_list[1]["approvals"]), 1)
                 self.assertEqual(alice_list[1]["approvals"][0]["pending_id"], pending.pending_id)
@@ -167,6 +172,14 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 }))
                 self.assertEqual(replay[0], 409)
                 self.assertEqual(replay[1]["status"], "recovery_required")
+                self.assertEqual(alice_reconciled, (200, {
+                    "ok": True, "status": "reconciled_completed",
+                    "pending_id": recovery.pending_id,
+                }))
+                reconciled = coordinator.pending_store.get_for_identity(
+                    recovery.pending_id, actor=alice.user_id, session_id=alice_session_hash,
+                )
+                self.assertEqual(reconciled.status, "reconciled_completed")
                 self.assertEqual(len(executor.executed), 1)
             finally:
                 runtime.close()
