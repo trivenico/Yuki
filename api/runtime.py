@@ -78,6 +78,7 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    memory_service: Any | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -130,11 +131,13 @@ def build_conversation_runtime(
 
     application = build_conversation_application_runtime(
         config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+        memory_service=memory_service,
     )
     try:
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            memory_service=memory_service,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
