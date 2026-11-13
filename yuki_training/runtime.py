@@ -100,6 +100,9 @@ class YukiCoreRuntime:
                     or any(ch not in "0123456789abcdef" for ch in expected)):
                 raise YukiCoreRuntimeError(f"{name} SHA-256 is invalid")
             path = _contained_file(root, descriptor["path"], name)
+            max_bytes = 256 * 1024 * 1024 if name == "weights" else 64 * 1024
+            if path.stat().st_size > max_bytes:
+                raise YukiCoreRuntimeError(f"{name} artifact exceeds the size limit")
             if _sha256(path) != expected:
                 raise YukiCoreRuntimeError(f"{name} integrity verification failed")
             verified[name] = path
@@ -120,6 +123,13 @@ class YukiCoreRuntime:
             raise YukiCoreRuntimeError("model dimensions exceed runtime safety limits")
         if config["n_embd"] % config["n_head"]:
             raise YukiCoreRuntimeError("n_embd must be divisible by n_head")
+        estimated_parameters = (
+            2 * config["vocab_size"] * config["n_embd"]
+            + config["block_size"] * config["n_embd"]
+            + config["n_layer"] * (12 * config["n_embd"] ** 2 + 13 * config["n_embd"])
+        )
+        if estimated_parameters > 50_000_000:
+            raise YukiCoreRuntimeError("model configuration exceeds the 50-million-parameter runtime limit")
         dropout = config["dropout"]
         if isinstance(dropout, bool) or not isinstance(dropout, (int, float)) or not 0 <= dropout < 1:
             raise YukiCoreRuntimeError("model dropout is invalid")
