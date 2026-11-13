@@ -21,9 +21,44 @@ class FirstPartyArtifactRegistryTests(unittest.TestCase):
         loaded=ModelRegistry(self.root).load("yuki-core.json")
         self.assertTrue(loaded["verified"]); self.assertEqual(loaded["origin"],"random_init")
         self.assertEqual(set(loaded["artifacts"]),{"weights","tokenizer","config"})
-    def test_rejects_external_checkpoint_origin(self):
-        self.data["origin"]="huggingface_base_model"; self.write()
-        with self.assertRaises(ModelRegistryError): ModelRegistry(self.root).load("yuki-core.json")
+    def test_rejects_external_checkpoint_without_lineage(self):
+        self.data["origin"]="third_party_checkpoint"; self.write()
+        with self.assertRaisesRegex(ModelRegistryError, "lineage"):
+            ModelRegistry(self.root).load("yuki-core.json")
+
+    def test_accepts_external_checkpoint_with_exact_lineage(self):
+        self.data["origin"]="third_party_checkpoint"
+        self.data["lineage"]={
+            "source_repo":"example-org/example-model",
+            "revision":"0123456789abcdef0123456789abcdef01234567",
+            "upstream_license":"Apache-2.0",
+            "source_url":"https://huggingface.co/example-org/example-model",
+            "modifications":[],
+        }
+        self.write()
+        loaded=ModelRegistry(self.root).load("yuki-core.json")
+        self.assertTrue(loaded["verified"])
+        self.assertEqual(loaded["origin"],"third_party_checkpoint")
+        self.assertEqual(loaded["lineage"]["revision"],"0123456789abcdef0123456789abcdef01234567")
+
+    def test_rejects_third_party_lineage_with_http_url(self):
+        self.data["origin"]="third_party_checkpoint"
+        self.data["lineage"]={
+            "source_repo":"example-org/example-model",
+            "revision":"0123456789abcdef0123456789abcdef01234567",
+            "upstream_license":"Apache-2.0",
+            "source_url":"http://example.com/model",
+            "modifications":[],
+        }
+        self.write()
+        with self.assertRaisesRegex(ModelRegistryError, "HTTPS"):
+            ModelRegistry(self.root).load("yuki-core.json")
+
+    def test_rejects_lineage_on_random_init_model(self):
+        self.data["lineage"]={"source_repo":"x"}
+        self.write()
+        with self.assertRaisesRegex(ModelRegistryError, "cannot declare"):
+            ModelRegistry(self.root).load("yuki-core.json")
     def test_rejects_tampered_artifact(self):
         (self.root/"artifacts/weights.bin").write_bytes(b"tampered")
         with self.assertRaisesRegex(ModelRegistryError,"integrity"): ModelRegistry(self.root).load("yuki-core.json")
