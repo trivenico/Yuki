@@ -269,8 +269,6 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
             self.assertEqual(observed["owner:bob"]["credential"], "bob-secret")
             self.assertNotIn("alice-secret", results["owner:alice"]["answer"])
             self.assertNotIn("bob-secret", results["owner:bob"]["answer"])
-        finally:
-            conversations.close()
 
 if __name__ == "__main__":
     unittest.main()
