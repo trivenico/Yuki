@@ -81,6 +81,7 @@ class ConversationService:
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
         stop_heartbeat = threading.Event()
         lease_lost = threading.Event()
+        user_cancelled = threading.Event()
 
         def renew_lease():
             while not stop_heartbeat.wait(60):
@@ -103,7 +104,10 @@ class ConversationService:
         def should_cancel():
             if lease_lost.is_set():
                 return True
-            return bool(cancellation_requested and cancellation_requested())
+            requested = bool(cancellation_requested and cancellation_requested())
+            if requested:
+                user_cancelled.set()
+            return requested
 
         try:
             return self._reply_unleased(
@@ -112,6 +116,7 @@ class ConversationService:
                 expected_version=expected_version, tools=tools,
                 system_text=system_text, on_text_delta=on_text_delta,
                 cancellation_requested=should_cancel, lease_token=token,
+                user_cancelled=user_cancelled,
             )
         finally:
             stop_heartbeat.set()
@@ -125,6 +130,7 @@ class ConversationService:
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
         on_text_delta=None, cancellation_requested=None, lease_token: str | None = None,
+        user_cancelled: threading.Event | None = None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
@@ -281,7 +287,11 @@ class ConversationService:
                 if result.status == "completed":
                     answer = result.text
                 elif result.status == "cancelled":
-                    answer = "Generation was stopped before completion."
+                    answer = (
+                        "Generation was stopped at your request."
+                        if user_cancelled is not None and user_cancelled.is_set()
+                        else "Generation was stopped before completion."
+                    )
                 else:
                     answer = (
                         "I couldn't complete that request within the current execution limits. "
