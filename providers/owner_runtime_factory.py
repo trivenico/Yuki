@@ -126,7 +126,7 @@ class OwnerAgentLoopFactory:
                     if approval_identity is not None else None
                 )
             except TypeError as exc:
-                raise TypeError("owner runtimes, policies, handlers and audit sinks must support weak identity tracking") from exc
+                raise TypeError("owner runtimes, policies, handlers, audit sinks and approval adapters must support weak identity tracking") from exc
             if previous_owner is not None and previous_owner != owner_id:
                 raise PermissionError("a guarded tool runtime cannot be shared across owners")
             if previous_policy_owner is not None and previous_policy_owner != owner_id:
