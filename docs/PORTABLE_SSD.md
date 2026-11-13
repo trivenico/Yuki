@@ -104,6 +104,17 @@ integrity only; production startup must use the signed verification path.
 Signing keys must never be distributed with the bundle. The public key is a
 trust anchor and must be delivered through a separately authenticated channel.
 
-This verification protects files after the manifest is created. It does not
-yet provide a signed installer, trusted-key rotation, revocation, secure
-anti-rollback version policy, or a self-contained Python distribution.
+**Bootstrap trust boundary:** this in-bundle preflight assumes the launcher and
+preflight verifier themselves are trusted. Because the verifier currently
+runs from the removable bundle, it cannot authenticate itself against a
+malicious replacement of its own code. The trusted public key being outside
+the USB does not solve that bootstrap problem. Until a host-installed trusted
+verifier or an OS-authenticated signed launcher is implemented, treat this as
+a defense against accidental or post-build payload modification—not as a
+complete defense against a maliciously modified USB. Do not use it as the sole
+security control for sensitive environments.
+
+This verification also does not yet provide a signed installer, trusted-key
+rotation, revocation, secure anti-rollback version policy, or a self-contained
+Python distribution. The release builder must eventually sign the bootstrap
+separately and verify it before executing any code from removable media.
