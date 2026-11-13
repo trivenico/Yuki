@@ -54,6 +54,24 @@ class ApprovalRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(stored.action["tool_name"], "notes.write")
         self.assertEqual(stored.action["arguments"]["text"], "owner-approved content")
 
+    def test_request_retry_reuses_pending_id_without_duplicate_audit(self):
+        first = self.adapter("notes.write", self.action, self.context)
+        second = self.adapter("notes.write", self.action, self.context)
+        self.assertEqual(first, second)
+        self.assertEqual(
+            [event["event_type"] for event in self.audit.events],
+            ["requested"],
+        )
+
+    def test_request_id_cannot_be_reused_for_a_different_action(self):
+        self.adapter("notes.write", self.action, self.context)
+        changed = {
+            "skill_id": "notes.write",
+            "arguments": {"text": "different payload"},
+        }
+        with self.assertRaisesRegex(ValueError, "different action"):
+            self.adapter("notes.write", changed, self.context)
+
     def test_persists_tool_name_separately_from_skill_id(self):
         action = {"skill_id": "notes.create", "arguments": {"text": "safe"}}
         pending_id = self.adapter("notes.write", action, self.context)
