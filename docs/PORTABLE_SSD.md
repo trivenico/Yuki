@@ -118,3 +118,46 @@ This verification also does not yet provide a signed installer, trusted-key
 rotation, revocation, secure anti-rollback version policy, or a self-contained
 Python distribution. The release builder must eventually sign the bootstrap
 separately and verify it before executing any code from removable media.
+
+
+## Host-installed trusted bootstrap (new security foundation)
+
+The repository now contains `yuki_trust.portable_bootstrap`, a host-side
+verifier intended to be installed from an independently authenticated Yuki
+release on the computer—not imported from the removable SSD. It does not
+import or execute bundle Python modules during verification. It:
+
+1. Reads a bounded manifest and detached Ed25519 signature.
+2. Requires the public trust anchor to be a regular host-side file outside
+   the removable bundle.
+3. Verifies the exact manifest bytes, then checks every file hash and the
+   complete bundle inventory (including rejecting symlinks and extra files).
+4. Copies only manifest-listed files to a host-controlled temporary directory.
+5. Verifies the staged copy again and executes only an entrypoint listed in
+   the signed inventory; the temporary staging directory is removed on exit.
+
+The bootstrap can be exercised from an independently installed host package:
+
+```sh
+python -m yuki_trust.portable_bootstrap \\
+  --bundle /media/Yuki/YukiRuntime \\
+  --public-key /etc/yuki/release-ed25519-public.pem \\
+  --entrypoint runtime/bin/python -- -m main
+```
+
+On Windows, use the host-installed Python module and a signed Windows runtime
+entrypoint, for example `runtime/python.exe`, with `-- -m main`. The paths
+and entrypoint must match the actual signed bundle layout. Install the
+`portable-bootstrap` optional dependency on the host from a trusted,
+authenticated Yuki distribution.
+
+**This is a verifier foundation, not yet a complete portable release.** The
+normal SSD launchers have not yet been changed to invoke this host-installed
+module, no signed host installer/package or OS-authenticated launcher has
+been published, and the production release key has not been provisioned.
+The host bootstrap itself must be installed and updated through a trusted
+channel independent of the removable drive. A malicious or compromised host
+can still replace the bootstrap or its trust anchor. Anti-rollback, key
+rotation/revocation, per-platform runtime artifacts, and clean-machine
+end-to-end release tests remain release blockers. Do not treat this PR as
+certifying the current SSD launcher as secure against a malicious USB.
