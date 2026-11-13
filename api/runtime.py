@@ -10,6 +10,7 @@ from api.evaluations import AuthenticatedEvaluationAPI
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
+from api.provider_profiles import AuthenticatedProviderProfileAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
@@ -24,16 +25,19 @@ from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from providers.profile_store import ProviderProfileStore
 
 
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(self, app: Any, application: ConversationApplicationRuntime,
+                 provider_profile_store: ProviderProfileStore | None = None):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
         self.store = application.store
+        self.provider_profile_store = provider_profile_store
         self._closed = False
 
     async def __call__(self, scope, receive, send):
@@ -56,6 +60,8 @@ class ConversationRuntime:
         if self._closed:
             return
         self.application.close()
+        if self.provider_profile_store is not None:
+            self.provider_profile_store.close()
         self._closed = True
 
 
@@ -77,6 +83,7 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    provider_profile_store: ProviderProfileStore | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -112,6 +119,8 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    if provider_profile_store is not None and not isinstance(provider_profile_store, ProviderProfileStore):
+        raise TypeError("provider_profile_store must be a ProviderProfileStore")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -133,6 +142,8 @@ def build_conversation_runtime(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
         )
+        if provider_profile_store is not None:
+            app = AuthenticatedProviderProfileAPI(app, auth_service, provider_profile_store)
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
         if device_pairing is not None:
@@ -154,7 +165,9 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, application)
+        return ConversationRuntime(app, application, provider_profile_store)
     except Exception:
         application.close()
+        if provider_profile_store is not None:
+            provider_profile_store.close()
         raise

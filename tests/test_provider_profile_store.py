@@ -64,6 +64,7 @@ class ProviderProfileStoreTests(unittest.TestCase):
         reopened = ProviderProfileStore(self.root / "profiles.sqlite", self.vault)
         self.addCleanup(reopened.close)
         self.assertEqual(reopened.list_profiles("owner:alice")[0].name, "gateway")
+        self.assertTrue(reopened.list_profiles("owner:alice")[0].credential_configured)
         self.assertNotIn("secret-value", repr(profile))
         with closing(sqlite3.connect(self.root / "profiles.sqlite")) as db:
             self.assertNotIn("secret-value", repr(db.execute(
