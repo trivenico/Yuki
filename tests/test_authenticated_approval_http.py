@@ -132,7 +132,8 @@ class AuthenticatedApprovalHTTPTests(unittest.TestCase):
                 self.assertEqual(approved, (200, {
                     "ok": True, "status": "completed", "pending_id": pending.pending_id,
                 }))
-                self.assertEqual(replay[0], 404)
+                self.assertEqual(replay[0], 409)
+                self.assertEqual(replay[1]["status"], "recovery_required")
                 self.assertEqual(len(executor.executed), 1)
             finally:
                 runtime.close()
