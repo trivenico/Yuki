@@ -487,7 +487,7 @@ class SpecialistAgentCoordinator:
                 if parent is None:
                     raise KeyError("parent agent plan not found.")
                 parent_dispatched = db.execute(
-                    "SELECT 1 FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=? AND task_id IS NOT NULL",
+                    "SELECT 1 FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=? AND task_id IS NOT NULL AND status NOT IN ('failed', 'cancelled', 'blocked')",
                     (parent_plan_id, parent_subtask_id),
                 ).fetchone()
                 if parent_dispatched is None:

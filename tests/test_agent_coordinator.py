@@ -339,6 +339,33 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 subtasks=[SubtaskSpec("work", "Depth overflow", ("research",))],
             )
 
+    def test_delegation_tree_enforces_100_subtask_ceiling(self):
+        root = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hundred-task-root",
+            subtasks=[
+                SubtaskSpec(f"lead-{index}", f"Coordinate branch {index}", ("research",))
+                for index in range(20)
+            ],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=root.plan_id)
+
+        for child_index in range(4):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key=f"hundred-task-child-{child_index}",
+                parent_plan_id=root.plan_id, parent_subtask_id="lead-0",
+                subtasks=[
+                    SubtaskSpec(f"work-{index}", f"Child {child_index} task {index}", ("research",))
+                    for index in range(20)
+                ],
+            )
+
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="hundred-task-overflow",
+                parent_plan_id=root.plan_id, parent_subtask_id="lead-0",
+                subtasks=[SubtaskSpec("overflow", "One task beyond the tree limit", ("research",))],
+            )
+
     def test_child_plan_requires_dispatched_parent(self):
         parent = self.coordinator.submit(
             actor_id="alice", idempotency_key="undispatched-parent",
