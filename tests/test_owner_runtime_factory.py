@@ -58,7 +58,7 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
     def test_factory_resolves_distinct_owner_profiles_and_vault_credentials(self):
         factory = OwnerAgentLoopFactory(
             self.store,
-            tool_runtime_for_owner=lambda owner: GuardedToolRuntime({}, AllowNothing()),
+            tool_runtime_for_owner=lambda owner: GuardedToolRuntime({}, AllowNothing(), audit=lambda name, outcome: None, require_audit=True),
         )
         alice = factory("owner:alice")
         bob = factory("owner:bob")
@@ -125,8 +125,19 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no available selected provider"):
             factory("owner:alice")
 
-    def test_factory_rejects_shared_guarded_runtime_between_owners(self):
-        shared = GuardedToolRuntime({}, AllowNothing())
+
+    def test_factory_rejects_owner_runtime_with_best_effort_audit(self):
+        factory = OwnerAgentLoopFactory(
+            self.store,
+            tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
+                {"owner.read": lambda argument: argument},
+                AllowNothing(), audit=lambda name, outcome: None,
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "must require successful.*audit"):
+            factory("owner:alice")
+\n    def test_factory_rejects_shared_guarded_runtime_between_owners(self):
+        shared = GuardedToolRuntime({}, AllowNothing(), audit=lambda name, outcome: None, require_audit=True)
         factory = OwnerAgentLoopFactory(
             self.store, tool_runtime_for_owner=lambda owner: shared,
         )
@@ -139,7 +150,7 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         factory = OwnerAgentLoopFactory(
             self.store,
             tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
-                {"owner.read": shared_handler}, AllowNothing(),
+                {"owner.read": shared_handler}, AllowNothing(), audit=lambda name, outcome: None, require_audit=True,
             ),
         )
         factory("owner:alice")
@@ -150,7 +161,7 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         factory = OwnerAgentLoopFactory(
             self.store,
             tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
-                {"owner.read": lambda argument: owner + ":" + argument}, AllowNothing(),
+                {"owner.read": lambda argument: owner + ":" + argument}, AllowNothing(), audit=lambda name, outcome: None, require_audit=True,
             ),
         )
         alice = factory("owner:alice")
@@ -176,7 +187,7 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
             return GuardedToolRuntime(
                 {"owner.read": lambda argument: owner + ":" + argument},
                 OwnerPolicy(owner),
-                audit=lambda name, outcome: audits.append((owner, name, outcome)),
+                audit=lambda name, outcome: audits.append((owner, name, outcome)), require_audit=True,
             )
 
         factory = OwnerAgentLoopFactory(self.store, tool_runtime_for_owner=runtime_for_owner)
@@ -215,7 +226,7 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         shared_policy = AllowNothing()
         factory = OwnerAgentLoopFactory(
             self.store,
-            tool_runtime_for_owner=lambda owner: GuardedToolRuntime({}, shared_policy),
+            tool_runtime_for_owner=lambda owner: GuardedToolRuntime({}, shared_policy, audit=lambda name, outcome: None, require_audit=True),
         )
         factory("owner:alice")
         with self.assertRaisesRegex(PermissionError, "authorization policy cannot be shared"):
@@ -227,7 +238,7 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         factory = OwnerAgentLoopFactory(
             self.store,
             tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
-                {}, AllowNothing(), audit=shared_audit,
+                {}, AllowNothing(), audit=shared_audit, require_audit=True,
             ),
         )
         factory("owner:alice")
@@ -244,7 +255,7 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         factory = OwnerAgentLoopFactory(
             self.store,
             tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
-                {}, AllowNothing(), audit=shared_sink.record,
+                {}, AllowNothing(), audit=shared_sink.record, require_audit=True,
             ),
         )
         factory("owner:alice")
