@@ -125,6 +125,13 @@ def build_conversation_runtime(
         raise TypeError("evaluation_service must be an EvaluationService")
     if provider_profile_store is not None and not isinstance(provider_profile_store, ProviderProfileStore):
         raise TypeError("provider_profile_store must be a ProviderProfileStore")
+    if provider_profile_store is not None and not isinstance(
+        agent_loop_for_owner, OwnerAgentLoopFactory
+    ):
+        raise ValueError(
+            "provider profile management requires the OwnerAgentLoopFactory "
+            "that activates those profiles for authenticated execution"
+        )
     if isinstance(agent_loop_for_owner, OwnerAgentLoopFactory):
         factory_store = agent_loop_for_owner.profile_store
         if provider_profile_store is not None and provider_profile_store is not factory_store:
