@@ -54,6 +54,11 @@ class GuardedToolRuntime:
         return self._audit
 
     @property
+    def audit_required(self) -> bool:
+        """Whether every executable invocation is gated on durable audit writes."""
+        return self._require_audit
+
+    @property
     def registered_tool_names(self) -> frozenset[str]:
         """Return the immutable set of handlers executable by this runtime."""
         return frozenset(self._tools)
