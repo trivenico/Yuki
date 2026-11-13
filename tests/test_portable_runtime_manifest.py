@@ -72,6 +72,26 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeManifestError, "symbolic-link"):
             verify_manifest(self.root)
 
+    def test_create_cli_rejects_symlink_manifest_destination(self):
+        import sys
+        from unittest.mock import patch
+        from scripts.portable_runtime_manifest import main
+
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory) / "outside.json"
+            outside.write_text("keep", encoding="utf-8")
+            link = self.root / MANIFEST_NAME
+            try:
+                link.symlink_to(outside)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+            with patch.object(sys, "argv", [
+                "portable_runtime_manifest.py", "create", str(self.root),
+                "--platform", "linux-x86_64", "--runtime-version", "3.12.7",
+            ]):
+                self.assertEqual(main(), 2)
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
     def test_unsigned_manifest_does_not_claim_authenticity(self):
         manifest = self._write_manifest()
         self.assertEqual(manifest["artifact_kind"], "unsigned-portable-runtime")
