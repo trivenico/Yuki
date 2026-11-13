@@ -86,7 +86,7 @@ class OwnerAgentLoopFactory:
         if not isinstance(tool_runtime, GuardedToolRuntime):
             raise TypeError("owner tool runtime factory must return GuardedToolRuntime")
 
-        policy = getattr(tool_runtime, "_policy", None)
+        policy = tool_runtime.authorization_policy
         audit = getattr(tool_runtime, "audit_callback", None)
         # Bound-method objects are recreated on attribute access; key them by
         # their owning sink instance so two owners cannot share one sink object.
