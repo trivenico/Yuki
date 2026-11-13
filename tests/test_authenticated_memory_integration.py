@@ -13,6 +13,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.user_memory_service import UserMemoryService
 from core.memory_context import MemoryContextBuilder
+from core.cognitive_context import CognitiveContextEngine
 
 
 class NoApprovals:
@@ -41,6 +42,9 @@ class AuthenticatedMemoryIntegrationTests(unittest.TestCase):
         self.conversations = ConversationService(
             self.store, loop,
             memory_context_builder=MemoryContextBuilder(self.memory),
+            cognitive_context_engine=CognitiveContextEngine(
+                memory_context_builder=MemoryContextBuilder(self.memory)
+            ),
         )
         self.app = YukiConversationAPI(self.auth, self.conversations, memory_service=self.memory)
 
@@ -107,6 +111,7 @@ class AuthenticatedMemoryIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(reply["answer"], "memory-aware answer")
         system_message = self.seen_messages[-1][0]["content"]
+        self.assertIn("YUKI COGNITIVE BRIEF", system_message)
         self.assertIn("UNTRUSTED REFERENCE DATA ONLY", system_message)
         self.assertIn("prefer local inference", system_message)
 
