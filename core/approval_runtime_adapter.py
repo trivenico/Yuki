@@ -60,6 +60,7 @@ class ApprovalRuntimeAdapter:
             {"action": bound_action},
             actor=execution_context["actor"],
             session_id=execution_context["session_id"],
+            idempotency_key=execution_context["request_id"],
         )
         if outcome.status != "pending_approval" or not isinstance(outcome.pending_id, str):
             raise RuntimeError("approval coordinator did not issue a pending request")
