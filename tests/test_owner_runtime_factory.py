@@ -254,21 +254,20 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
             threading.Thread(target=reply, args=("owner:alice", alice_conversation, "alice-request")),
             threading.Thread(target=reply, args=("owner:bob", bob_conversation, "bob-request")),
         ]
-        try:
-            for worker in workers:
-                worker.start()
-            for worker in workers:
-                worker.join(timeout=10)
-            self.assertFalse(any(worker.is_alive() for worker in workers))
-            self.assertEqual(errors, [])
-            self.assertEqual(results["owner:alice"]["answer"], "response:model/alice")
-            self.assertEqual(results["owner:bob"]["answer"], "response:model/bob")
-            self.assertEqual(observed["owner:alice"]["base_url"], "https://alice.example.test/v1")
-            self.assertEqual(observed["owner:bob"]["base_url"], "https://bob.example.test/v1")
-            self.assertEqual(observed["owner:alice"]["credential"], "alice-secret")
-            self.assertEqual(observed["owner:bob"]["credential"], "bob-secret")
-            self.assertNotIn("alice-secret", results["owner:alice"]["answer"])
-            self.assertNotIn("bob-secret", results["owner:bob"]["answer"])
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(errors, [])
+        self.assertEqual(results["owner:alice"]["answer"], "response:model/alice")
+        self.assertEqual(results["owner:bob"]["answer"], "response:model/bob")
+        self.assertEqual(observed["owner:alice"]["base_url"], "https://alice.example.test/v1")
+        self.assertEqual(observed["owner:bob"]["base_url"], "https://bob.example.test/v1")
+        self.assertEqual(observed["owner:alice"]["credential"], "alice-secret")
+        self.assertEqual(observed["owner:bob"]["credential"], "bob-secret")
+        self.assertNotIn("alice-secret", results["owner:alice"]["answer"])
+        self.assertNotIn("bob-secret", results["owner:bob"]["answer"])
 
 if __name__ == "__main__":
     unittest.main()
