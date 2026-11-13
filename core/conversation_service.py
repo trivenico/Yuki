@@ -147,6 +147,16 @@ class ConversationService:
                     "the previous turn has no persisted assistant response; reconcile it before sending another."
                 )
 
+            # Resolve and validate the owner-bound execution context before
+            # persisting the new user turn. A broken tenant factory must fail
+            # closed without leaving a synthetic failed conversation message.
+            execution_loop = (
+                self.agent_loop_for_owner(owner_id)
+                if self.agent_loop_for_owner is not None else self.agent_loop
+            )
+            if not isinstance(execution_loop, AgentExecutionLoop):
+                raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop")
+
             user_result = self.store.append_message(
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="user", content=user_text, idempotency_key=request_id,
@@ -171,12 +181,6 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                execution_loop = (
-                    self.agent_loop_for_owner(owner_id)
-                    if self.agent_loop_for_owner is not None else self.agent_loop
-                )
-                if not isinstance(execution_loop, AgentExecutionLoop):
-                    raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop")
                 result = execution_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
                 status = result.status
                 model_turns = result.model_turns
