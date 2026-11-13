@@ -90,7 +90,7 @@ class StructuredToolProtocol:
     @property
     def registered_tool_names(self) -> frozenset[str]:
         """Names actually executable by this owner-bound guarded runtime."""
-        return frozenset(self._runtime._tools)
+        return self._runtime.registered_tool_names
 
     def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
