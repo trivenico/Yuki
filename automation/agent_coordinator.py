@@ -474,6 +474,12 @@ class SpecialistAgentCoordinator:
                 """, (parent_plan_id, actor_id, actor_id)).fetchone()
                 if parent is None:
                     raise KeyError("parent agent plan not found.")
+                parent_dispatched = db.execute(
+                    "SELECT 1 FROM agent_plan_subtasks WHERE plan_id=? AND task_id IS NOT NULL LIMIT 1",
+                    (parent_plan_id,),
+                ).fetchone()
+                if parent_dispatched is None:
+                    raise AgentPlanError("parent plan must be dispatched before it can delegate child work.")
                 depth = int(parent["depth"]) + 1
                 if depth > 3:
                     raise AgentPlanError("maximum delegation depth of 3 was reached.")
