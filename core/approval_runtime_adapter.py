@@ -59,6 +59,9 @@ class ApprovalRuntimeAdapter:
         # approval snapshot. Skill identifiers and tool names are distinct
         # namespaces and must not be assumed to be equal.
         bound_action["tool_name"] = tool_name
+        # Preserve the original authenticated request scope for the later
+        # approved-execution policy check; the model never supplies this data.
+        bound_action["execution_context"] = dict(execution_context)
         import json
         request_key = json.dumps(
             [execution_context["conversation_id"], execution_context["request_id"]],
