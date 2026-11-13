@@ -95,6 +95,19 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "authorization policy cannot be shared"):
             factory("owner:bob")
 
+
+    def test_factory_rejects_shared_audit_sink_between_owners(self):
+        shared_audit = lambda name, outcome: None
+        factory = OwnerAgentLoopFactory(
+            self.store,
+            tool_runtime_for_owner=lambda owner: GuardedToolRuntime(
+                {}, AllowNothing(), audit=shared_audit,
+            ),
+        )
+        factory("owner:alice")
+        with self.assertRaisesRegex(PermissionError, "audit sink cannot be shared"):
+            factory("owner:bob")
+
     def test_factory_observes_owner_profile_selection_changes_on_next_turn(self):
         self.store.save(
             owner_id="owner:alice", name="second_gateway",
