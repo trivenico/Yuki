@@ -165,6 +165,59 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeManifestError, "signature verification failed"):
             verify_signed_manifest(self.root, wrong_public_path)
 
+    def test_signed_release_rejects_tampered_signature(self):
+        import importlib.util
+        if not importlib.util.find_spec("cryptography"):
+            self.skipTest("cryptography optional dependency is not installed")
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from scripts.portable_runtime_manifest import sign_manifest, verify_signed_manifest
+
+        self._write_manifest()
+        private_key = Ed25519PrivateKey.generate()
+        private_path = Path(self.temp.name) / "release-private.pem"
+        public_path = Path(self.temp.name) / "release-public.pem"
+        private_path.write_bytes(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+        public_path.write_bytes(private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ))
+        sign_manifest(self.root, private_path)
+        signature_path = self.root / "runtime-manifest.sig"
+        signature_path.write_text("A" * 88, encoding="ascii")
+        with self.assertRaisesRegex(RuntimeManifestError, "signature verification failed"):
+            verify_signed_manifest(self.root, public_path)
+
+    def test_signed_release_rejects_payload_tampering_after_signing(self):
+        import importlib.util
+        if not importlib.util.find_spec("cryptography"):
+            self.skipTest("cryptography optional dependency is not installed")
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from scripts.portable_runtime_manifest import sign_manifest, verify_signed_manifest
+
+        self._write_manifest()
+        private_key = Ed25519PrivateKey.generate()
+        private_path = Path(self.temp.name) / "release-private.pem"
+        public_path = Path(self.temp.name) / "release-public.pem"
+        private_path.write_bytes(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+        public_path.write_bytes(private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ))
+        sign_manifest(self.root, private_path)
+        (self.root / "python" / "bin" / "python").write_bytes(b"tampered")
+        with self.assertRaisesRegex(RuntimeManifestError, "inventory or file hashes"):
+            verify_signed_manifest(self.root, public_path)
+
     def test_signing_key_must_be_outside_portable_bundle(self):
         import importlib.util
         if not importlib.util.find_spec("cryptography"):
