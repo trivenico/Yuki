@@ -361,3 +361,12 @@ The complete target is **not yet delivered**. The current repository contains us
 
 See the blueprint for the detailed capability map, proposed specialist-agent domains, architecture, security model, phased delivery gates, and acceptance checklist.
 
+
+
+### Hybrid deployment and governed model improvement
+
+The target operating model is **Oracle Cloud Linux for production**, **Kaggle for isolated GPU training and evaluation**, **Hugging Face for pretrained model/dataset discovery and approved artifact distribution**, and **GitHub for source control, CI, review, and release automation**. This is a planned integration architecture, not a claim that these services are already provisioned or connected.
+
+Yuki's improvement loop will be governed: collect only permitted/minimized signals -> propose a code or model improvement -> version it in GitHub -> run tests and evaluations -> require authorized review -> stage and monitor on OCI -> promote or roll back. Kaggle workspaces must not receive production secrets or private user data. Model and dataset revisions, licences, provenance, training configurations, evaluation reports, and artifact hashes must be recorded. Private conversations, memory, files, and credentials are excluded from training by default; no silent online training, self-permission changes, or autonomous production deployment.
+
+See [the hybrid deployment and self-improvement blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md#11-hybrid-cloud-training-and-governed-self-improvement-architecture) for responsibilities, artifact lifecycle, routing, security boundaries, and acceptance gates.

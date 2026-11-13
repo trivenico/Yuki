@@ -423,3 +423,41 @@ Every implementation PR should state:
 - Known limitations and next acceptance gate.
 
 Keep this document and the README aligned. If product scope changes, update the blueprint explicitly rather than letting requirements disappear from chat history.
+
+
+## 11. Hybrid cloud, training, and governed self-improvement architecture
+
+The intended deployment and model-development ecosystem uses Oracle Cloud Infrastructure (OCI), Kaggle, Hugging Face, and GitHub as complementary systems. These are integration targets; their use does not imply that credentials, infrastructure, datasets, model artifacts, or deployments are already configured.
+
+### 11.1 Responsibility boundaries
+
+- **Oracle Cloud Linux — production control plane and serving:** host the authenticated Yuki API, web/agent runtime, durable workflow and approval services, policy enforcement, observability, backup jobs, and model-serving endpoints. Keep production secrets in an appropriate secret manager; use least-privilege workload identities, private networking where practical, encrypted storage, patching, firewall/egress controls, and tested restore procedures.
+- **Kaggle — isolated training and evaluation workspace:** use notebook sessions and available accelerators for reproducible experiments, dataset preparation, supervised fine-tuning, LoRA/QLoRA, and benchmark runs. Treat sessions as ephemeral. Never place OCI production credentials, user memory, private conversations, customer files, or production database exports in notebooks or Kaggle datasets. Store only scoped, revocable training credentials as Kaggle secrets when needed.
+- **Hugging Face — model and dataset discovery/distribution:** use the Hub and Datasets ecosystem to discover pretrained open-weight models and candidate datasets, record immutable revisions, verify the exact model/dataset licence and provenance, and publish approved Yuki artifacts to private or public repositories as appropriate. A Hub listing is not proof of commercial rights, data consent, or suitability; review each upstream licence and terms independently.
+- **GitHub — source of truth and release automation:** version application code, agent contracts, training/evaluation configuration, dataset/model manifests, infrastructure definitions, migration scripts, and workflows. Use pull requests, protected branches, code review, CI, dependency/security scanning, signed or attested release artifacts where supported, and environment protection for production promotion.
+
+### 11.2 Artifact lifecycle
+
+1. Pin upstream model and dataset revisions; record source, owner, licence, usage restrictions, provenance, collection date, transformations, and exclusions in versioned manifests.
+2. Prepare a lawful, quality-reviewed dataset. Deduplicate, remove secrets and personal data unless a separately approved lawful basis and explicit programme permit its use, document filtering, and create train/validation/test splits that prevent leakage.
+3. Run training from a versioned Kaggle notebook/configuration. Record base model revision, dataset manifest hash, code commit, hyperparameters, random seeds, accelerator/runtime details, and output artifact hashes.
+4. Evaluate against fixed capability, safety, privacy, robustness, multilingual, latency, and regression suites. Compare with the current production model and enforce release thresholds.
+5. Publish candidate artifacts to a controlled Hugging Face repository or OCI object storage. Attach a model card, licence/provenance manifest, evaluation report, artifact digest, and release metadata.
+6. GitHub CI validates manifests, checksums, compatibility and required evaluations. A human-approved protected-environment deployment promotes an immutable model version to OCI staging, runs smoke/load/security checks, and then explicitly promotes to production.
+7. Keep the previous known-good model available. Monitor quality, latency, cost, safety and failure rates; roll back on regression. Do not hot-swap an unverified model into active sessions.
+
+### 11.3 Governed self-improvement loop
+
+Yuki may continuously identify improvement opportunities from explicitly permitted, privacy-minimized operational signals: failed tasks, user feedback, evaluation regressions, latency/cost measurements, tool errors, and documented capability gaps. The loop is: observe -> classify -> propose -> create a versioned issue/branch -> implement -> test -> evaluate -> review/approve -> stage -> deploy -> monitor -> rollback when needed.
+
+This is **controlled iterative improvement**, not unrestricted self-modification. Production agents cannot grant themselves permissions, alter policy, rewrite protected code, change their own release gates, or deploy directly. Code changes require review and CI; model changes require provenance and evaluation gates; infrastructure and data-policy changes require authorized approval. External side effects remain subject to the existing approval and audit system.
+
+Private conversations, personal memory, uploaded files, credentials, and customer data are excluded from model training by default. Operational telemetry should be minimized, redacted, access-controlled, retained only as configured, and used for training only under a separate explicit opt-in and documented governance process. User corrections can improve the current interaction or enter a consented, reviewed feedback queue; they do not silently become training data.
+
+### 11.4 Hybrid routing and resilience
+
+The runtime should support local/on-OCI inference, approved remote model endpoints, and task-specific routing. Routing policy must consider model capability, data sensitivity, user preference, residency, latency, cost, availability, and provider terms. Sensitive workloads default to approved local/private execution unless the owner explicitly authorizes another route. Define health checks, timeouts, bounded retries for idempotent operations, circuit breakers, queue backpressure, and graceful degradation. Never route secrets or private context to an endpoint solely because it is cheaper or faster.
+
+### 11.5 Acceptance gates and honest status
+
+The target architecture is **Planned** until the infrastructure and workflows are actually provisioned and tested. Acceptance requires documented OCI deployment/restore evidence; isolated Kaggle training runs; pinned Hugging Face model/dataset manifests with licence review; reproducible training/evaluation artifacts; GitHub protected CI/release workflows; staged model promotion and rollback; privacy/security review; and end-to-end operational monitoring. Do not claim Yuki learns or upgrades itself in production until this complete governed loop is implemented and evidenced.
