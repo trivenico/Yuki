@@ -86,6 +86,7 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     provider_profile_store: ProviderProfileStore | None = None,
+    approval_runtime_factory: Any | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -123,6 +124,10 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    if approval_runtime_factory is not None and not callable(
+        getattr(approval_runtime_factory, "coordinator_for_owner", None)
+    ):
+        raise TypeError("approval_runtime_factory must provide coordinator_for_owner")
     if provider_profile_store is not None and not isinstance(provider_profile_store, ProviderProfileStore):
         raise TypeError("provider_profile_store must be a ProviderProfileStore")
     if provider_profile_store is not None and not isinstance(
@@ -159,6 +164,7 @@ def build_conversation_runtime(
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            approval_runtime_factory=approval_runtime_factory,
         )
         if provider_profile_store is not None:
             app = AuthenticatedProviderProfileAPI(app, auth_service, provider_profile_store)
