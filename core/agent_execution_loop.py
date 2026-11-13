@@ -107,6 +107,7 @@ class AgentExecutionLoop:
         history: Sequence[Mapping[str, str]] = (),
         on_text_delta: Callable[[str], None] | None = None,
         cancellation_requested: Callable[[], bool] | None = None,
+        execution_context: Mapping[str, str] | None = None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
