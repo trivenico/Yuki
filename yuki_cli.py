@@ -71,35 +71,27 @@ def _local_profile_owner(config: dict) -> str:
     return load_or_create_local_owner_id(config.get("workspace"))
 
 
-def _profile_context(config, store_factory, owner_factory):
-    store = store_factory(config, create=True)
-    if store is None:
-        raise RuntimeError("provider profile storage is unavailable")
-    owner_id = owner_factory(config)
-    manager = ProviderManager(config)
-    manager.load_persisted_profiles(store, owner_id)
-    return store, owner_id, manager
-
-
 def _resolve_cli_provider(config, provider_factory, store_factory, owner_factory):
     store = store_factory(config, create=False)
     if store is None:
         return provider_factory(config), None, None, None
-    owner_id = owner_factory(config)
-    manager = ProviderManager(config)
-    manager.load_persisted_profiles(store, owner_id)
-    selected = store.selected_profile(owner_id)
-    if selected is None:
-        return provider_factory(config), store, owner_id, manager
-    result = manager.select(selected)
-    if not result.startswith("Selected provider:"):
+    try:
+        owner_id = owner_factory(config)
+        manager = ProviderManager(config)
+        manager.load_persisted_profiles(store, owner_id)
+        selected = store.selected_profile(owner_id)
+        if selected is None:
+            return provider_factory(config), store, owner_id, manager
+        result = manager.select(selected)
+        if not result.startswith("Selected provider:"):
+            raise RuntimeError("saved provider profile could not be selected")
+        adapter = manager.create_selected_adapter()
+        if adapter is None or adapter.is_available() is not True:
+            raise RuntimeError("saved provider profile credential is unavailable")
+        return adapter, store, owner_id, manager
+    except Exception:
         store.close()
-        raise RuntimeError("saved provider profile could not be selected")
-    adapter = manager.create_selected_adapter()
-    if adapter is None or adapter.is_available() is not True:
-        store.close()
-        raise RuntimeError("saved provider profile credential is unavailable")
-    return adapter, store, owner_id, manager
+        raise
 
 
 def _write_json(value, output_fn: Callable[[str], object] = print) -> None:
@@ -228,9 +220,20 @@ def _run_provider_profile_command(args, *, config, store_factory, owner_factory,
             manager.load_persisted_profiles(store, owner_id)
             selection = manager.select(profile.name)
             adapter = manager.create_selected_adapter() if selection.startswith("Selected provider:") else None
-            if (store.credential_available(owner_id, profile.name) is not True
-                    or adapter is None or adapter.is_available() is not True):
-                store.delete(owner_id, profile.name)
+            try:
+                ready = (
+                    store.credential_available(owner_id, profile.name) is True
+                    and adapter is not None and adapter.is_available() is True
+                )
+            except Exception:
+                ready = False
+            if not ready:
+                # If the vault is locked, deletion intentionally fails closed and
+                # preserves metadata so a transient OS-vault outage is recoverable.
+                try:
+                    store.delete(owner_id, profile.name)
+                except Exception:
+                    pass
                 output_fn("Yuki: The credential could not be verified by the OS vault and adapter.")
                 return 3
             _write_json({"profile": {
@@ -351,7 +354,10 @@ def run_cli(
                 except Exception:
                     output_fn("Yuki: Chat storage could not close cleanly.")
             if profile_store is not None:
-                profile_store.close()
+                try:
+                    profile_store.close()
+                except Exception:
+                    output_fn("Yuki: Provider profile storage could not close cleanly.")
 
     try:
         config = config_loader()
