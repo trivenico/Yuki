@@ -290,3 +290,44 @@ yuki chat
 ```
 
 The installed CLI creates a user-owned configuration from packaged safe defaults on first use. See [installation and provider setup](docs/INSTALLATION.md). This packaging milestone provides the stable CLI entry point; it does not make the broader agent runtime, desktop application, or product production-ready.
+
+## Yuki: complete product blueprint and delivery checklist
+
+**Product direction:** build Yuki as a complete, owner-controlled personal AI operating environment—not merely a chat wrapper, a collection of skill stubs, or a demo. The full target architecture, capability catalogue, acceptance criteria, safety rules, and implementation-status definitions are maintained in [Yuki Product Blueprint](docs/YUKI_PRODUCT_BLUEPRINT.md). This blueprint is the source of truth for product scope; update it whenever a capability is added, changed, deferred, or removed.
+
+### What the complete Yuki is intended to do
+
+- **Understand and converse:** natural multilingual conversations, context-aware reasoning, planning, clarification, summaries, structured outputs, and multimodal understanding where configured.
+- **Think and orchestrate:** route work across configured local/cloud models, plan and critique work, use specialist agents, coordinate parallel tasks, maintain durable state, recover safely, and explain decisions.
+- **Operate as a 100-specialist-agent system:** a governed catalogue of focused agents across engineering, research, security, operations, productivity, learning, content, business, personal assistance, and integrations. Agents are bounded specialists—not 100 uncontrolled autonomous processes—and share one identity, policy, memory, audit, and approval framework.
+- **Remember with user control:** searchable long-term and working memory, project knowledge, preferences, retrieval, explicit correction/deletion, retention controls, and transparent provenance.
+- **Get work done:** durable workflows, schedules, reminders, event triggers, resumable jobs, browser/API integrations, document handling, workspace operations, and user-approved external actions.
+- **Be a software-engineering partner:** inspect repositories, understand architecture, plan changes, edit code, run permitted tests, debug failures, review security/performance, prepare pull requests, and report exact evidence. Destructive or externally consequential actions remain approval-gated.
+- **Research and create:** web/document research, source-grounded reports, knowledge extraction, writing, presentations, image/media workflows, and content production through configured backends.
+- **Support everyday life and work:** personal organization, study/coaching, accessibility, health-information organization (not diagnosis), manual finance organization (not unauthorized banking/trading), and compliant business/income-support workflows.
+- **Speak and listen when enabled:** explicit voice sessions, speech-to-text, text-to-speech, interruption, language/voice preferences, and optional wake-word operation with visible controls. Voice assistant functionality is in scope; **phone calling/telephony is not**.
+- **Connect to the owner's environment:** reviewed LAN, local-device, smart-home, vehicle, and external-service adapters with pairing, least privilege, allow-lists, explicit permissions, and audit trails. No silent microphone/camera activation or unrestricted device control.
+- **Offer optional companion experiences:** user-selected roles and an opt-in adult companion mode with transparent AI identity and healthy boundaries. No manipulation, coercion, possessiveness, dependency engineering, or exclusivity claims.
+- **Run reliably:** secure identity/session isolation, encrypted secret handling, backups, observability, policy enforcement, deployment tooling, migrations, disaster recovery, performance testing, and documented operations.
+
+### Implementation truth
+
+The complete target is **not yet delivered**. The current repository contains useful foundations and partial workflows, but some features remain scaffolds, require external adapters, or are not wired end to end. In particular, do not infer a finished capability from a registry entry, module, roadmap phase, or passing isolated test.
+
+- Current README-documented foundations include provider adapters/routing, a bounded agent/task loop, local memory and knowledge foundations, approval-gated skills, a durable local task queue, optional voice primitives, a small authenticated web-chat runtime, and defensive/security-lab components with explicit limitations.
+- Owner-isolated provider profiles and durable approval/recovery/reconciliation work is being developed in [PR #787](https://github.com/trivenico/Yuki/pull/787). It is **open, draft, and unmerged**; it is not yet a released mainline capability.
+- The complete 100-agent catalogue, robust autonomous orchestration, production-grade long-term memory, end-to-end voice conversation, desktop-grade product UX, broad verified integrations, compliant income workflows, and production deployment/operations are target capabilities—not claims of completion.
+- The README and blueprint must use the status labels **Implemented**, **Partial**, **Scaffold**, **Planned**, **Blocked**, and **Out of scope**. Only call a capability Implemented when its real runtime path, security controls, tests, and documented setup are present.
+
+### Product-wide non-negotiable requirements
+
+1. **No artificial Yuki usage quotas:** do not impose arbitrary daily/monthly/lifetime message, token, task, or agent-invocation caps. Clearly disclose actual provider billing/rate limits, hardware capacity, configured concurrency, and safety backpressure; never claim third-party limits can be removed.
+2. **One security model:** every agent, skill, tool, provider, connector, and interface uses the same authenticated owner/session context, policy checks, approvals, audit, and isolation boundaries.
+3. **No unsafe autonomy:** no arbitrary shell/code execution, hidden persistence, credential harvesting, unapproved purchases/messages/publications, unauthorized scraping, or automatic replay of uncertain side effects.
+4. **Privacy by default:** explicit consent for sensitive data and sensors; minimize collection; protect secrets; provide export, retention, and deletion controls.
+5. **Honest status:** distinguish code present, runtime integrated, tested, externally configured, production-ready, and released. No fabricated test, CI, deployment, or capability claims.
+6. **Income and platform compliance:** assist with legitimate research, planning, drafting, analysis, and permitted repetitive work. Respect platform terms, labor rules, intellectual property, and anti-abuse controls; no spam, fake engagement/accounts/reviews, deception, or unauthorized automation.
+7. **No telephony/calling feature:** voice conversation and speech interfaces are allowed; phone calls and calling integrations are deliberately excluded.
+
+See the blueprint for the detailed capability map, proposed specialist-agent domains, architecture, security model, phased delivery gates, and acceptance checklist.
+
