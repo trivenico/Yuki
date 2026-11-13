@@ -2,7 +2,7 @@
 
 ## What portability means
 
-Yuki's source and local data can travel on an external SSD. The current project is Python-based and is **not yet a fully self-contained, zero-install portable application**. The host computer still needs a compatible Python runtime and the selected dependencies. Optional capabilities such as local LLMs, speech models, Playwright/Chromium, Nmap, Docker, and camera access have separate platform and hardware requirements.
+Yuki's source and local data can travel on an external SSD. The current project is Python-based and is **not yet a fully self-contained, zero-install portable application**. The host computer still needs Python 3.10 or newer and the selected dependencies. Optional capabilities such as local LLMs, speech models, Playwright/Chromium, Nmap, Docker, and camera access have separate platform and hardware requirements.
 
 ## Quick start launchers
 
@@ -11,7 +11,7 @@ From the repository on the SSD:
 - Windows: run `scripts/portable-yuki-windows.bat`
 - Linux/macOS: run `sh scripts/portable-yuki-unix.sh`
 
-The launchers check for Python and the core YAML dependency; they do not install software or elevate privileges. Install core dependencies on a trusted machine first:
+The launchers select the repository's virtual environment when present, otherwise use a host Python 3.10+ runtime. They verify the Python version and core YAML dependency; they do not install software or elevate privileges. Both launchers preserve an explicitly supplied `YUKI_HOME`, allowing the private data directory to live on another encrypted volume. Install core dependencies on a trusted machine first:
 
 ```sh
 python -m venv .venv
@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Use the Python interpreter from that virtual environment when starting Yuki. A virtual environment is OS- and Python-version-specific; do not expect a Windows `.venv` to run on Linux or vice versa. For the first practical version, keep source on the SSD and create a separate virtual environment on each trusted host, or prepare one SSD folder per operating system.
+A virtual environment is OS- and Python-version-specific; do not expect a Windows `.venv` to run on Linux or vice versa. For the first practical version, keep source on the SSD and create a separate virtual environment on each trusted host, or prepare one SSD folder per operating system.
 
 ## Portable data location
 
@@ -31,7 +31,7 @@ The runtime now supports:
 - `YUKI_CONFIG`: optional config file path. If not set, the repository's `config.yaml` is used.
 - `workspace` in the YAML config: relative workspace paths resolve under `YUKI_HOME` when configured; absolute paths remain absolute.
 
-The Windows launcher defaults `YUKI_HOME` to `YukiData` beside the repository. The Unix launcher uses `YukiData` beside the repository unless `YUKI_HOME` is already set. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
+Both launchers default `YUKI_HOME` to `YukiData` beside the repository only when the caller has not already set it. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
 
 ## Recommended SSD layout
 
@@ -44,7 +44,7 @@ Yuki-SSD/
   BACKUP/               # encrypted backups, disconnected when not in use
 ```
 
-The launcher scripts are starter launchers, not a portable Python runtime and not a packaged app. They currently call the Python executable available on the host. Do not place the only copy of your data on one SSD.
+The launcher scripts are starter launchers, not a portable Python runtime and not a packaged app. They call a compatible Python executable available on the host or in the repository's OS-specific virtual environment. Do not place the only copy of your data on one SSD.
 
 ## Security checklist
 
@@ -58,4 +58,4 @@ The launcher scripts are starter launchers, not a portable Python runtime and no
 
 ## Portability acceptance checklist
 
-Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. This commit adds path-resolution tests and launch scripts; it does not yet provide that complete cross-platform test matrix.
+Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. These launcher preflight checks improve version and path handling; they do not constitute the complete cross-platform test matrix or a self-contained portable release.
