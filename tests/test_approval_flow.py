@@ -559,5 +559,49 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual(store.get(pending.pending_id).status, "completed")
 
 
+    def test_identity_scoped_read_requires_matching_owner_and_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertIsNone(store.get_for_identity(
+                item.pending_id, actor="intruder", session_id="session-a"
+            ))
+            self.assertIsNone(store.get_for_identity(
+                item.pending_id, actor="owner", session_id="session-b"
+            ))
+            self.assertEqual(
+                store.get_for_identity(
+                    item.pending_id, actor="owner", session_id="session-a"
+                ).pending_id,
+                item.pending_id,
+            )
+
+    def test_identity_scoped_read_retains_claimed_records_past_ttl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET expires_at=? WHERE pending_id=?",
+                    ("2000-01-01T00:00:00+00:00", item.pending_id),
+                )
+            self.assertEqual(
+                store.get_for_identity(
+                    item.pending_id, actor="owner", session_id="session-a"
+                ).status,
+                "claimed",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
