@@ -22,7 +22,7 @@ class ProviderOperationAdapterTests(unittest.TestCase):
             calls.append(kwargs)
             return {"provider_receipt": "receipt-1"}
 
-        adapter = ProviderOperationAdapter("acme_payments", execute_provider)
+        adapter = ProviderOperationAdapter("acme_payments", execute_provider, lambda _context, _provider: None)
         with bind_operation_context(self.context):
             result = adapter({"amount": 125, "currency": "USD"})
 
@@ -35,19 +35,19 @@ class ProviderOperationAdapterTests(unittest.TestCase):
         self.assertEqual(calls[0]["request"], {"amount": 125, "currency": "USD"})
 
     def test_refuses_execution_without_approved_durable_context(self):
-        adapter = ProviderOperationAdapter("acme_payments", lambda **_: self.fail("must not call"))
+        adapter = ProviderOperationAdapter("acme_payments", lambda **_: self.fail("must not call"), lambda _context, _provider: None)
         with self.assertRaises(PermissionError):
             adapter({"amount": 1})
 
     def test_provider_identity_is_host_configured_and_validated(self):
         with self.assertRaises(ValueError):
-            ProviderOperationAdapter("../provider", lambda **_: None)
+            ProviderOperationAdapter("../provider", lambda **_: None, lambda _context, _provider: None)
         with self.assertRaises(TypeError):
-            ProviderOperationAdapter("acme_payments", None)
+            ProviderOperationAdapter("acme_payments", None, lambda _context, _provider: None)
 
     def test_rejects_non_json_and_oversized_requests_before_provider_call(self):
         calls = []
-        adapter = ProviderOperationAdapter("acme_payments", lambda **kwargs: calls.append(kwargs))
+        adapter = ProviderOperationAdapter("acme_payments", lambda **kwargs: calls.append(kwargs), lambda _context, _provider: None)
         with bind_operation_context(self.context):
             with self.assertRaises(ValueError):
                 adapter({"bad": object()})
@@ -55,11 +55,23 @@ class ProviderOperationAdapterTests(unittest.TestCase):
                 adapter({"data": "x" * 21_000})
         self.assertEqual(calls, [])
 
+    def test_durable_provider_binding_occurs_before_provider_side_effect(self):
+        events = []
+        adapter = ProviderOperationAdapter(
+            "acme_payments",
+            lambda **kwargs: events.append(("execute", kwargs["idempotency_key")),
+            lambda context, provider: events.append(("bind", context.operation_id, provider)),
+        )
+        with bind_operation_context(self.context):
+            adapter({"amount": 1})
+        self.assertEqual(events[0], ("bind", self.context.operation_id, "acme_payments"))
+        self.assertEqual(events[1], ("execute", self.context.operation_id))
+
     def test_provider_exception_is_propagated_for_unknown_outcome_recovery(self):
         def fail(**_kwargs):
             raise TimeoutError("provider response lost")
 
-        adapter = ProviderOperationAdapter("acme_payments", fail)
+        adapter = ProviderOperationAdapter("acme_payments", fail, lambda _context, _provider: None)
         with bind_operation_context(self.context):
             with self.assertRaises(TimeoutError):
                 adapter({"amount": 1})

@@ -75,8 +75,14 @@ class SQLitePendingApprovalStore:
                 pending_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE,
                 action_digest TEXT NOT NULL, created_at TEXT NOT NULL,
                 actor_hash TEXT NOT NULL, session_hash TEXT NOT NULL,
+                provider_id TEXT, provider_bound_at TEXT,
                 FOREIGN KEY(pending_id) REFERENCES pending_approvals(pending_id) ON DELETE CASCADE
             )""")
+            intent_columns = {row[1] for row in db.execute("PRAGMA table_info(approval_operation_intents)").fetchall()}
+            if "provider_id" not in intent_columns:
+                db.execute("ALTER TABLE approval_operation_intents ADD COLUMN provider_id TEXT")
+            if "provider_bound_at" not in intent_columns:
+                db.execute("ALTER TABLE approval_operation_intents ADD COLUMN provider_bound_at TEXT")
             db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_approval_idempotency
                 ON pending_approvals(actor_hash, session_hash, idempotency_hash)
                 WHERE idempotency_hash IS NOT NULL""")
@@ -390,17 +396,63 @@ class SQLitePendingApprovalStore:
                     db.execute("COMMIT")
                     return None
                 action_digest = hashlib.sha256(row[0].encode("utf-8")).hexdigest()
-                existing = db.execute("SELECT operation_id,action_digest,created_at FROM approval_operation_intents WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, actor_hash, session_hash)).fetchone()
+                existing = db.execute("SELECT operation_id,action_digest,created_at,provider_id,provider_bound_at FROM approval_operation_intents WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, actor_hash, session_hash)).fetchone()
                 if existing is not None:
                     if existing[1] != action_digest:
                         raise RuntimeError("durable operation intent action digest mismatch")
                     db.execute("COMMIT")
-                    return {"pending_id": pending_id, "operation_id": existing[0], "action_digest": existing[1], "created_at": existing[2]}
+                    return {"pending_id": pending_id, "operation_id": existing[0], "action_digest": existing[1], "created_at": existing[2], "provider_id": existing[3], "provider_bound_at": existing[4]}
                 operation_id = secrets.token_urlsafe(32)
                 created_at = datetime.now(timezone.utc).isoformat()
                 db.execute("INSERT INTO approval_operation_intents (pending_id,operation_id,action_digest,created_at,actor_hash,session_hash) VALUES (?,?,?,?,?,?)", (pending_id, operation_id, action_digest, created_at, actor_hash, session_hash))
                 db.execute("COMMIT")
-                return {"pending_id": pending_id, "operation_id": operation_id, "action_digest": action_digest, "created_at": created_at}
+                return {"pending_id": pending_id, "operation_id": operation_id, "action_digest": action_digest, "created_at": created_at, "provider_id": None, "provider_bound_at": None}
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
+
+
+    def bind_operation_provider(
+        self, pending_id: str, *, actor: str, session_id: str,
+        operation_id: str, action_digest: str, provider_id: str,
+    ):
+        """Durably bind one trusted provider identity before its external call."""
+        import re
+        if (not isinstance(pending_id, str) or not pending_id or
+                not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256 or
+                not isinstance(operation_id, str) or not operation_id.strip() or len(operation_id) > 256 or
+                not isinstance(action_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", action_digest) or
+                not isinstance(provider_id, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", provider_id)):
+            raise ValueError("provider binding identity is invalid")
+        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute(
+                    """SELECT i.operation_id,i.action_digest,i.provider_id,p.status
+                    FROM approval_operation_intents i
+                    JOIN pending_approvals p ON p.pending_id=i.pending_id
+                    WHERE i.pending_id=? AND i.actor_hash=? AND i.session_hash=?""",
+                    (pending_id, actor_hash, session_hash),
+                ).fetchone()
+                if row is None or row[0] != operation_id or row[1] != action_digest or row[3] != "executing":
+                    raise RuntimeError("provider binding does not match an executing durable operation")
+                if row[2] is not None and row[2] != provider_id:
+                    raise RuntimeError("operation is already bound to a different provider")
+                if row[2] is None:
+                    db.execute(
+                        """UPDATE approval_operation_intents
+                        SET provider_id=?,provider_bound_at=?
+                        WHERE pending_id=? AND actor_hash=? AND session_hash=? AND provider_id IS NULL""",
+                        (provider_id, now, pending_id, actor_hash, session_hash),
+                    )
+                db.execute("COMMIT")
+                return {"pending_id": pending_id, "operation_id": operation_id,
+                        "action_digest": action_digest, "provider_id": provider_id,
+                        "provider_bound_at": now if row[2] is None else None}
             except Exception:
                 if db.in_transaction:
                     db.execute("ROLLBACK")
@@ -414,4 +466,4 @@ class SQLitePendingApprovalStore:
             row = db.execute("SELECT operation_id,action_digest,created_at FROM approval_operation_intents WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, self._identity_hash(actor), self._identity_hash(session_id))).fetchone()
         if row is None:
             return None
-        return {"pending_id": pending_id, "operation_id": row[0], "action_digest": row[1], "created_at": row[2]}
+        return {"pending_id": pending_id, "operation_id": row[0], "action_digest": row[1], "created_at": row[2], "provider_id": row[3], "provider_bound_at": row[4]}

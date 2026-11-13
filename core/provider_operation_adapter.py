@@ -39,13 +39,17 @@ class ProviderOperationAdapter:
         self,
         provider_id: str,
         execute_provider: Callable[..., Any],
+        bind_provider: Callable[[OperationExecutionContext, str], Any],
     ) -> None:
         if not isinstance(provider_id, str) or not _PROVIDER_ID.fullmatch(provider_id):
             raise ValueError("provider_id must be a normalized lowercase identifier")
         if not callable(execute_provider):
             raise TypeError("execute_provider must be callable")
+        if not callable(bind_provider):
+            raise TypeError("bind_provider must durably bind provider identity")
         self._provider_id = provider_id
         self._execute_provider = execute_provider
+        self._bind_provider = bind_provider
 
     @property
     def provider_id(self) -> str:
@@ -73,6 +77,9 @@ class ProviderOperationAdapter:
         # The operation ID is persisted before execution and remains stable
         # across process recovery. It is the provider's idempotency key, not a
         # freshly generated request ID. The callback must not silently ignore it.
+        # Provider identity must be committed to the owner-scoped operation
+        # record before the external side effect can begin.
+        self._bind_provider(context, self._provider_id)
         result = self._execute_provider(
             request=normalized,
             idempotency_key=context.operation_id,
