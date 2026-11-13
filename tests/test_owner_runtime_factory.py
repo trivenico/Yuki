@@ -3,6 +3,10 @@ import unittest
 from pathlib import Path
 
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.agent_execution_loop import AgentExecutionLoop
+from core.conversation_service import ConversationService
+from core.conversation_store import ConversationStore
+from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.owner_runtime_factory import OwnerAgentLoopFactory
 from providers.openai_compatible import OpenAICompatibleProvider
@@ -189,6 +193,84 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
             with self.subTest(owner=owner), self.assertRaises(ValueError):
                 factory(owner)
 
+
+    def test_concurrent_owner_conversations_reach_only_their_selected_provider(self):
+        import threading
+
+        conversations = ConversationStore(
+            Path(self.directory.name) / "conversations.sqlite3"
+        )
+        alice_conversation = conversations.create_conversation(owner_id="owner:alice")
+        bob_conversation = conversations.create_conversation(owner_id="owner:bob")
+        factory = OwnerAgentLoopFactory(self.store)
+        barrier = threading.Barrier(2)
+        observed = {}
+        errors = []
+
+        def owner_loop(owner_id):
+            loop = factory(owner_id)
+            provider = loop.model.provider
+
+            def generate_chat(*, messages, tools, tool_choice):
+                observed[owner_id] = {
+                    "base_url": provider.base_url,
+                    "model": provider.model,
+                    "credential": provider._environ["YUKI_VAULT_PROFILE_API_KEY"],
+                }
+                barrier.wait(timeout=5)
+                return {
+                    "text": "response:" + provider.model,
+                    "tool_calls": {"tool_calls": []},
+                }
+
+            # Replace only the network boundary: the real owner factory,
+            # provider adapter, agent loop and conversation service still run.
+            provider.generate_chat = generate_chat
+            return loop
+
+        fallback = AgentExecutionLoop(
+            lambda **kwargs: {"text": "fallback", "tool_calls": {"tool_calls": []}},
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(
+            conversations, fallback, agent_loop_for_owner=owner_loop
+        )
+        results = {}
+
+        def reply(owner_id, conversation, request_id):
+            try:
+                results[owner_id] = service.reply(
+                    owner_id=owner_id,
+                    conversation_id=conversation["conversation_id"],
+                    user_text="hello",
+                    request_id=request_id,
+                    expected_version=0,
+                    tools=[],
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [
+            threading.Thread(target=reply, args=("owner:alice", alice_conversation, "alice-request")),
+            threading.Thread(target=reply, args=("owner:bob", bob_conversation, "bob-request")),
+        ]
+        try:
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=10)
+            self.assertFalse(any(worker.is_alive() for worker in workers))
+            self.assertEqual(errors, [])
+            self.assertEqual(results["owner:alice"]["answer"], "response:model/alice")
+            self.assertEqual(results["owner:bob"]["answer"], "response:model/bob")
+            self.assertEqual(observed["owner:alice"]["base_url"], "https://alice.example.test/v1")
+            self.assertEqual(observed["owner:bob"]["base_url"], "https://bob.example.test/v1")
+            self.assertEqual(observed["owner:alice"]["credential"], "alice-secret")
+            self.assertEqual(observed["owner:bob"]["credential"], "bob-secret")
+            self.assertNotIn("alice-secret", results["owner:alice"]["answer"])
+            self.assertNotIn("bob-secret", results["owner:bob"]["answer"])
+        finally:
+            conversations.close()
 
 if __name__ == "__main__":
     unittest.main()
