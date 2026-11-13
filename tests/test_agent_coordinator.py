@@ -279,8 +279,14 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                     required_permissions=("artifact:write",),
                 )],
             )
+        shared_auth = lambda actor, action, resource: actor in {"alice", "bob"} and action in {
+            "agent:plan", "agent:delegate", "agent:read", "agent:dispatch"
+        }
+        shared = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=shared_auth,
+        )
         with self.assertRaises(KeyError):
-            self.coordinator.submit(
+            shared.submit(
                 actor_id="bob", idempotency_key="cross-owner-child",
                 parent_plan_id=parent.plan_id,
                 subtasks=[SubtaskSpec("collect", "Cross-owner", ("research",))],
