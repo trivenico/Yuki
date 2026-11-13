@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 MANIFEST_NAME = "runtime-manifest.json"
+SIGNATURE_NAME = "runtime-manifest.sig"
 MAX_MANIFEST_BYTES = 1024 * 1024
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 
@@ -45,7 +46,7 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
         for name in names:
             path = current_path / name
             relative = path.relative_to(root).as_posix()
-            if relative == MANIFEST_NAME:
+            if relative in {MANIFEST_NAME, SIGNATURE_NAME}:
                 continue
             if path.is_symlink() or not path.is_file():
                 raise RuntimeManifestError(f"Runtime bundle contains a non-regular file: {relative}")
