@@ -81,6 +81,17 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "needs an audit sink"):
             GuardedToolRuntime({"echo": lambda value: value}, Policy(), require_audit=True)
 
+    def test_required_denial_audit_failure_is_reported_without_execution(self):
+        calls = []
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value) or "written"},
+            Policy(False),
+            audit=lambda *_: (_ for _ in ()).throw(OSError("audit unavailable")),
+            require_audit=True,
+        )
+        self.assertIn("denial audit record could not be written", runtime.invoke("write", "sensitive"))
+        self.assertEqual(calls, [])
+
     def test_required_authorization_audit_failure_prevents_execution(self):
         calls = []
         runtime = GuardedToolRuntime(
