@@ -88,7 +88,7 @@ class ConversationService:
                 try:
                     renewed = self.store.renew_generation_lease(
                         owner_id=owner_id, conversation_id=conversation_id,
-                        lease_token=token, ttl_seconds=3600,
+                        lease_token=token, ttl_seconds=120,
                     )
                 except Exception:
                     renewed = False
@@ -120,7 +120,7 @@ class ConversationService:
             )
         finally:
             stop_heartbeat.set()
-            heartbeat.join(timeout=2)
+            heartbeat.join()
             self.store.release_generation_lease(
                 owner_id=owner_id, conversation_id=conversation_id, lease_token=token,
             )
