@@ -285,7 +285,7 @@ class ApprovalCoordinator:
                     return None
                 item = identity_get(pending_id, actor=actor, session_id=session_id)
                 if (item is None or
-                        item.status not in {"approved", "executing", "claimed", "execution_unavailable"}):
+                        item.status not in {"approved", "executing", "claimed", "execution_unavailable", "completed", "outcome_unknown"}):
                     return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
                     "action": item.action, "actor": actor, "session_id": session_id,
