@@ -63,7 +63,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or set(item) != {"path", "size", "sha256"}:
             raise BootstrapError("Runtime manifest file entry is invalid.")
         relative = item["path"]
-        if not isinstance(relative, str) or not relative or "\\\\" in relative:
+        if not isinstance(relative, str) or not relative or "\\" in relative:
             raise BootstrapError("Runtime manifest path is invalid.")
         parsed = PurePosixPath(relative)
         segments = relative.split("/")
@@ -215,7 +215,7 @@ def run_verified_bundle(
     *,
     staging_parent: str | Path | None = None,
 ) -> int:
-    if not isinstance(entrypoint, str) or not entrypoint or "\\\\" in entrypoint:
+    if not isinstance(entrypoint, str) or not entrypoint or "\\" in entrypoint:
         raise BootstrapError("Entrypoint must be a canonical relative path inside the signed bundle.")
     relative = PurePosixPath(entrypoint)
     if relative.is_absolute() or any(part in {"", ".", ".."} for part in entrypoint.split("/")) or relative.as_posix() != entrypoint:
