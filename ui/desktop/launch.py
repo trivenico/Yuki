@@ -14,8 +14,8 @@ def _build_services():
     from core.config import load_config
     from core.portable_paths import desktop_data_root
     from providers.factory import create_provider
-    from companion.memory_consent import CompanionMemory
     from companion.conversation import ConversationSession
+    from ui.desktop.memory import create_desktop_memory
     from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
     from automation.task_runtime import TaskRuntime
     from automation.workflow_store import WorkflowRunStore
@@ -694,7 +694,7 @@ def run() -> int:
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
-                memory=CompanionMemory(),
+                memory=create_desktop_memory(self.sessions.keyring),
                 session=ConversationSession(self.provider),
                 agent_coordinator=self.coordinator,
                 task_runtime=self.runtime,
