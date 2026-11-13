@@ -373,6 +373,8 @@ class ApprovalCoordinator:
             return self._pending.pop(pending_id)
 
     def _audit(self, event_type, pending_id, actor, skill_id, *, evidence_reference=None):
-        self.audit_log.append(event_type=event_type, pending_id=pending_id,
-                              actor=actor, skill_id=skill_id,
-                              evidence_reference=evidence_reference)
+        fields = {"event_type": event_type, "pending_id": pending_id,
+                  "actor": actor, "skill_id": skill_id}
+        if evidence_reference is not None:
+            fields["evidence_reference"] = evidence_reference
+        self.audit_log.append(**fields)
