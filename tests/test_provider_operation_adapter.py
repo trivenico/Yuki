@@ -59,7 +59,7 @@ class ProviderOperationAdapterTests(unittest.TestCase):
         events = []
         adapter = ProviderOperationAdapter(
             "acme_payments",
-            lambda **kwargs: events.append(("execute", kwargs["idempotency_key")),
+            lambda **kwargs: events.append(("execute", kwargs["idempotency_key"]))
             lambda context, provider: events.append(("bind", context.operation_id, provider)),
         )
         with bind_operation_context(self.context):
