@@ -20,4 +20,5 @@ if ! "$YUKI_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
   echo "See docs/PORTABLE_SSD.md. This launcher does not install packages automatically." >&2
   exit 2
 fi
+"$YUKI_PYTHON" scripts/portable_preflight.py
 exec "$YUKI_PYTHON" main.py
