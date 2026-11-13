@@ -20,7 +20,9 @@ yuki auth bootstrap-admin
 ```
 
 A supported operating-system credential store is required. The desktop does
-not fall back to plaintext session-token storage.
+not fall back to plaintext session-token storage or plaintext saved-memory
+storage. Saved memory is encrypted with AES-256-GCM and its key is held in the
+OS keyring; the encrypted data file is stored under the desktop profile root.
 
 ## Build an unsigned developer bundle
 
