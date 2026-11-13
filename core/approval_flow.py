@@ -54,17 +54,26 @@ class ApprovalCoordinator:
             raise ValueError("Pending action must be JSON-safe and no larger than 16 KiB.") from exc
         return skill_id, args_snapshot, snapshot
 
-    def record(self, planner, result, *, actor: str, session_id: str):
+    def record(self, planner, result, *, actor: str, session_id: str,
+               idempotency_key: str | None = None):
         if not isinstance(actor, str) or not actor.strip() or len(actor) > 256:
             raise ValueError("A bounded actor identity is required.")
         if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
             raise ValueError("A bounded session identity is required.")
+        if idempotency_key is not None and (
+            not isinstance(idempotency_key, str) or not idempotency_key.strip()
+            or len(idempotency_key) > 256
+        ):
+            raise ValueError("A bounded idempotency key is required.")
         skill_id, arguments, action = self._extract_action(planner, result)
+        created = True
         if self.pending_store is not None:
             stored = self.pending_store.put(
-                skill_id, arguments, action, actor=actor, session_id=session_id
+                skill_id, arguments, action, actor=actor, session_id=session_id,
+                idempotency_key=idempotency_key,
             )
             pending_id = stored.pending_id
+            created = stored.created
         else:
             import secrets
             with self._pending_lock:
@@ -75,6 +84,8 @@ class ApprovalCoordinator:
                     "skill_id": skill_id, "arguments": arguments, "action": action,
                     "actor": actor, "session_id": session_id,
                 }
+        if not created:
+            return ApprovalOutcome(False, "pending_approval", pending_id=pending_id, result=action)
         try:
             self._audit("requested", pending_id, actor, skill_id)
         except Exception as exc:
