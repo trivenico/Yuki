@@ -76,20 +76,28 @@ class GuardedToolRuntime:
 
     def invoke(self, name: str, argument: str = "") -> str:
         if not isinstance(name, str) or not name or len(name) > 128:
-            self._record("invalid", "invalid_name")
+            recorded = self._record("invalid", "invalid_name")
+            if self._require_audit and not recorded:
+                return "Tool blocked because its required audit record could not be written."
             return "Invalid tool name."
         if not isinstance(argument, str) or len(argument) > self._max_argument_chars:
-            self._record(name, "invalid_argument")
+            recorded = self._record(name, "invalid_argument")
+            if self._require_audit and not recorded:
+                return "Tool blocked because its required audit record could not be written."
             return "Tool argument is invalid or too long."
         if name not in self._tools:
-            self._record(name, "not_found")
+            recorded = self._record(name, "not_found")
+            if self._require_audit and not recorded:
+                return "Tool blocked because its required audit record could not be written."
             return "Unknown tool."
         try:
             authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
         if not authorized:
-            self._record(name, "denied")
+            recorded = self._record(name, "denied")
+            if self._require_audit and not recorded:
+                return "Tool blocked because its required denial audit record could not be written."
             return "Tool blocked by Yuki's local security policy."
         if self._require_audit and not self._record(name, "authorized"):
             return "Tool blocked because its required audit record could not be written."
