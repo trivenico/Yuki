@@ -9,6 +9,11 @@ from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
 
 
+class MemoryAudit:
+    def append(self, **_event):
+        pass
+
+
 class DummyPlanner:
     def __init__(self):
         self.executed = []
@@ -23,7 +28,7 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         store = SQLitePendingApprovalStore(str(Path(self.tempdir.name) / "pending.sqlite3"))
-        self.coordinator = ApprovalCoordinator(pending_store=store)
+        self.coordinator = ApprovalCoordinator(pending_store=store, audit_log=MemoryAudit())
         self.planner = DummyPlanner()
         self.action = {"skill_id": "notes.write", "arguments": {"text": "safe"}}
         result = SimpleNamespace(action=self.action)
@@ -35,7 +40,7 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         trusted = DummyPlanner()
         attacker = DummyPlanner()
         coordinator = ApprovalCoordinator(
-            pending_store=self.coordinator.pending_store,
+            pending_store=self.coordinator.pending_store, audit_log=MemoryAudit(),
             planner_resolver=lambda *, actor, session_id: trusted
                 if (actor, session_id) == ("owner", "session-1") else None,
         )
