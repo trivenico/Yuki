@@ -107,7 +107,8 @@ class ProviderProfileAPITests(unittest.TestCase):
         status, body, _ = self.request(
             "PUT", "/v1/provider-profiles/active", {"name": "gateway"}, self.session.token
         )
-        self.assertEqual((status, body["active_profile"]), (200, "gateway"))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["active_profile"], "gateway")
         status, body, _ = self.request(
             "GET", "/v1/provider-profiles/active", token=self.session.token
         )
