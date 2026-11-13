@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from providers.factory import create_provider
 from providers.gemini_cli import GeminiCLIProvider
@@ -11,6 +12,19 @@ from providers.ollama import OllamaProvider
 class ProviderFactoryTests(unittest.TestCase):
     def test_default_factory_uses_real_openai_provider(self):
         self.assertIsInstance(create_provider({}), OpenAICompatibleProvider)
+
+    def test_yuki_core_provider_is_explicit_and_uses_configured_release(self):
+        with patch("providers.factory.YukiCoreProvider") as provider:
+            create_provider({
+                "provider": "yuki-core",
+                "yuki_core_model_dir": "/models/yuki-core/0.1.0",
+                "yuki_core_device": "cpu",
+            }, environ={})
+        provider.assert_called_once_with("/models/yuki-core/0.1.0", device="cpu")
+
+    def test_yuki_core_provider_requires_release_directory(self):
+        with self.assertRaisesRegex(ValueError, "model_dir"):
+            create_provider({"provider": "yuki-core"}, environ={})
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
