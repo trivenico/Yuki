@@ -309,7 +309,7 @@ class ApprovalCoordinator:
             return ApprovalOutcome(False, "reconciliation_not_available", pending_id=pending_id)
         event = "reconciled_executed" if resolution == "completed" else "reconciled_not_executed"
         try:
-            self._audit(event, pending_id, actor, current.skill_id)
+            self._audit(event, pending_id, actor, current.skill_id, evidence_reference=evidence_reference)
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
         reconciled = self.pending_store.reconcile(
@@ -372,6 +372,7 @@ class ApprovalCoordinator:
                 return None
             return self._pending.pop(pending_id)
 
-    def _audit(self, event_type, pending_id, actor, skill_id):
+    def _audit(self, event_type, pending_id, actor, skill_id, *, evidence_reference=None):
         self.audit_log.append(event_type=event_type, pending_id=pending_id,
-                              actor=actor, skill_id=skill_id)
+                              actor=actor, skill_id=skill_id,
+                              evidence_reference=evidence_reference)
