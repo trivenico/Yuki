@@ -87,6 +87,7 @@ def build_conversation_runtime(
     evaluation_service: EvaluationService | None = None,
     provider_profile_store: ProviderProfileStore | None = None,
     approval_runtime_factory: Any | None = None,
+    provider_receipt_verifier_for_owner: Callable[[str], Any] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -165,6 +166,7 @@ def build_conversation_runtime(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
             approval_runtime_factory=approval_runtime_factory,
+            provider_receipt_verifier_for_owner=provider_receipt_verifier_for_owner,
         )
         if provider_profile_store is not None:
             app = AuthenticatedProviderProfileAPI(app, auth_service, provider_profile_store)
