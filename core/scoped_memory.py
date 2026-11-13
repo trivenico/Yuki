@@ -49,6 +49,11 @@ class ScopedMemory:
     def remember(self, text: str, *, category: str = "note") -> dict[str, Any]:
         return self._store.add(text, category=category)
 
+    def update(
+        self, memory_id: str, text: str, *, category: str | None = None
+    ) -> dict[str, Any] | None:
+        return self._store.update(memory_id, text, category=category)
+
     def list(self, *, limit: int = 50) -> list[dict[str, Any]]:
         return self._store.list(limit=limit)
 
