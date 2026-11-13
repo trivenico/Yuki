@@ -57,6 +57,32 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertIn("blocked", runtime.invoke("echo"))
         self.assertEqual(self.calls, [])
 
+    def test_contextual_policy_cannot_fall_back_when_context_is_missing(self):
+        calls = []
+        class ContextPolicy:
+            def authorize_tool(self, name):
+                return True
+            def authorize_tool_context(self, name, context):
+                return context.get("actor") == "owner-a"
+        runtime = GuardedToolRuntime(
+            {"write": lambda value: calls.append(value) or "written"},
+            ContextPolicy(),
+        )
+        blocked = runtime.invoke("write", "payload")
+        self.assertIn("authenticated execution context is required", blocked)
+        self.assertEqual(calls, [])
+        context = {
+            "actor": "owner-a",
+            "session_id": "session-a",
+            "conversation_id": "conversation-a",
+            "request_id": "request-a",
+        }
+        self.assertEqual(
+            runtime.invoke("write", "payload", execution_context=context),
+            "written",
+        )
+        self.assertEqual(calls, ["payload"])
+
     def test_rejects_non_dictionary_registry_and_non_callable_handlers(self):
         with self.assertRaises(TypeError):
             GuardedToolRuntime([], Policy())
