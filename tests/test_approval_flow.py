@@ -101,6 +101,49 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome.status, "audit_unavailable")
         self.assertEqual(self.planner.executed, [])
 
+    def test_executor_exception_is_unknown_outcome_and_never_reported_retryable(self):
+        events = []
+
+        class RecordingAudit:
+            def append(self, *, event_type, **_event):
+                events.append(event_type)
+
+        class AmbiguousExecutor:
+            def execute_approved_action(self, action):
+                self.side_effects += 1
+                raise TimeoutError("provider response was lost")
+
+            def __init__(self):
+                self.side_effects = 0
+
+        executor = AmbiguousExecutor()
+        coordinator = ApprovalCoordinator(
+            audit_log=RecordingAudit(),
+            planner_resolver=lambda **_: executor,
+        )
+        pending = coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+
+        self.assertEqual(outcome.status, "recovery_required")
+        self.assertEqual(outcome.result["outcome"], "unknown")
+        self.assertEqual(executor.side_effects, 1)
+        self.assertEqual(events, [
+            "requested", "approved", "execution_started", "outcome_unknown",
+        ])
+        self.assertEqual(
+            coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            ).status,
+            "pending_not_found",
+        )
+        self.assertEqual(executor.side_effects, 1)
+
     def test_execution_audit_failure_returns_recovery_required_not_retryable_failure(self):
         class SelectiveAudit:
             def append(self, *, event_type, **_event):
