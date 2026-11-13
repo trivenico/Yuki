@@ -677,5 +677,88 @@ class ApprovalOperationContextTests(unittest.TestCase):
             self.assertIsNone(current_operation_context())
 
 
+class VerifiedProviderReconciliationTests(unittest.TestCase):
+    def _uncertain(self, store):
+        item = store.put(
+            "payments.create", {"amount": 12},
+            {"skill_id": "payments.create", "arguments": {"amount": 12}},
+            actor="owner-a", session_id="session-a",
+        )
+        store.transition(item.pending_id, expected_status="pending", new_status="claimed",
+                         actor="owner-a", session_id="session-a")
+        store.transition(item.pending_id, expected_status="claimed", new_status="approved",
+                         actor="owner-a", session_id="session-a")
+        intent = store.ensure_operation_intent(item.pending_id, actor="owner-a", session_id="session-a")
+        store.transition(item.pending_id, expected_status="approved", new_status="executing",
+                         actor="owner-a", session_id="session-a")
+        store.bind_operation_provider(
+            item.pending_id, actor="owner-a", session_id="session-a",
+            operation_id=intent["operation_id"], action_digest=intent["action_digest"],
+            provider_id="acme_payments",
+        )
+        store.transition(item.pending_id, expected_status="executing", new_status="outcome_unknown",
+                         actor="owner-a", session_id="session-a")
+        return item, intent
+
+    def test_verified_provider_receipt_resolves_exact_durable_operation(self):
+        from datetime import datetime, timezone
+        from core.provider_receipt_verification import (
+            ProviderReceiptVerifierRegistry, VerifiedProviderReceipt,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item, intent = self._uncertain(store)
+
+            class Verifier:
+                def verify(self, request):
+                    return VerifiedProviderReceipt(
+                        provider_id=request.provider_id, owner_id=request.owner_id,
+                        session_id=request.session_id, pending_id=request.pending_id,
+                        operation_id=request.operation_id, action_digest=request.action_digest,
+                        receipt_id="receipt-verified", resolution="completed",
+                        evidence_digest="b" * 64, verified_at=datetime.now(timezone.utc).isoformat(),
+                        authority="authenticated_provider_api",
+                    )
+
+            registry = ProviderReceiptVerifierRegistry({"acme_payments": Verifier()})
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: self.planner,
+            )
+            result = coordinator.reconcile_verified_provider(
+                item.pending_id, actor="owner-a", session_id="session-a",
+                evidence_reference="provider-operation:stable-id",
+                verifier_registry=registry,
+            )
+            self.assertEqual(result.status, "reconciled_completed")
+            self.assertEqual(store.get_for_identity(
+                item.pending_id, actor="owner-a", session_id="session-a"
+            ).status, "reconciled_completed")
+
+    def test_provider_verification_failure_never_changes_recovery_state(self):
+        from core.provider_receipt_verification import ProviderReceiptVerifierRegistry
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item, _ = self._uncertain(store)
+
+            class BrokenVerifier:
+                def verify(self, _request):
+                    raise TimeoutError("provider unavailable")
+
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=MemoryAudit(),
+                planner_resolver=lambda **_: self.planner,
+            )
+            result = coordinator.reconcile_verified_provider(
+                item.pending_id, actor="owner-a", session_id="session-a",
+                evidence_reference="untrusted-locator",
+                verifier_registry=ProviderReceiptVerifierRegistry({"acme_payments": BrokenVerifier()}),
+            )
+            self.assertEqual(result.status, "provider_receipt_unverified")
+            self.assertEqual(store.get_for_identity(
+                item.pending_id, actor="owner-a", session_id="session-a"
+            ).status, "outcome_unknown")
+
+
 if __name__ == "__main__":
     unittest.main()

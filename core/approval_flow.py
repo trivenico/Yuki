@@ -6,6 +6,7 @@ import threading
 from typing import Any, Callable
 
 from core.operation_context import OperationExecutionContext, bind_operation_context
+from core.provider_receipt_verification import ReceiptVerificationRequest
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,79 @@ class ApprovalCoordinator:
                     result={"execution_result": result, "state_persistence": "unavailable"},
                 )
         return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
+
+
+    def reconcile_verified_provider(
+        self, pending_id: str, *, actor: str, session_id: str,
+        evidence_reference: str, verifier_registry: Any,
+    ) -> ApprovalOutcome:
+        """Reconcile only from a provider receipt verified against durable identity.
+
+        The evidence reference is an untrusted locator supplied by the owner. It
+        is never treated as proof; the registered provider verifier must fetch
+        or cryptographically validate authoritative evidence itself.
+        """
+        if (self.pending_store is None or
+                not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256 or
+                not isinstance(evidence_reference, str) or not evidence_reference.strip() or
+                len(evidence_reference) > 1024 or
+                not callable(getattr(verifier_registry, "verify", None))):
+            return ApprovalOutcome(False, "provider_verification_unavailable", pending_id=pending_id)
+        current = self.pending_store.get_for_identity(
+            pending_id, actor=actor, session_id=session_id,
+        )
+        if current is None or current.status not in {"executing", "outcome_unknown"}:
+            return ApprovalOutcome(False, "reconciliation_not_available", pending_id=pending_id)
+        intent_reader = getattr(self.pending_store, "get_operation_intent", None)
+        if not callable(intent_reader):
+            return ApprovalOutcome(False, "operation_intent_unavailable", pending_id=pending_id)
+        intent = intent_reader(pending_id, actor=actor, session_id=session_id)
+        if (not isinstance(intent, dict) or
+                not isinstance(intent.get("provider_id"), str) or
+                not intent.get("provider_id") or
+                not isinstance(intent.get("operation_id"), str) or
+                not isinstance(intent.get("action_digest"), str)):
+            return ApprovalOutcome(False, "provider_identity_unavailable", pending_id=pending_id)
+        request = ReceiptVerificationRequest(
+            provider_id=intent["provider_id"],
+            owner_id=actor,
+            session_id=session_id,
+            pending_id=pending_id,
+            operation_id=intent["operation_id"],
+            action_digest=intent["action_digest"],
+            evidence_reference=evidence_reference.strip(),
+        )
+        try:
+            receipt = verifier_registry.verify(request)
+        except Exception:
+            return ApprovalOutcome(False, "provider_receipt_unverified", pending_id=pending_id)
+        # Registry implementations enforce all identity/action/age/authority
+        # checks. Re-check exact fields here before allowing any state change.
+        expected = (
+            intent["provider_id"], actor, session_id, pending_id,
+            intent["operation_id"], intent["action_digest"],
+        )
+        actual = (
+            getattr(receipt, "provider_id", None), getattr(receipt, "owner_id", None),
+            getattr(receipt, "session_id", None), getattr(receipt, "pending_id", None),
+            getattr(receipt, "operation_id", None), getattr(receipt, "action_digest", None),
+        )
+        if actual != expected or getattr(receipt, "resolution", None) not in {"completed", "not_executed"}:
+            return ApprovalOutcome(False, "provider_receipt_unverified", pending_id=pending_id)
+        receipt_id = getattr(receipt, "receipt_id", None)
+        evidence_digest = getattr(receipt, "evidence_digest", None)
+        if (not isinstance(receipt_id, str) or not receipt_id.strip() or len(receipt_id) > 256 or
+                not isinstance(evidence_digest, str) or len(evidence_digest) != 64):
+            return ApprovalOutcome(False, "provider_receipt_unverified", pending_id=pending_id)
+        verified_reference = (
+            "verified-provider-receipt:" + intent["provider_id"] + ":" +
+            receipt_id + ":" + evidence_digest
+        )
+        return self.reconcile(
+            pending_id, actor=actor, session_id=session_id,
+            resolution=receipt.resolution, evidence_reference=verified_reference,
+        )
 
     def reconcile(self, pending_id: str, *, actor: str, session_id: str,
                   resolution: str, evidence_reference: str) -> ApprovalOutcome:
