@@ -432,7 +432,7 @@ class SQLitePendingApprovalStore:
             db.execute("BEGIN IMMEDIATE")
             try:
                 row = db.execute(
-                    """SELECT i.operation_id,i.action_digest,i.provider_id,p.status
+                    """SELECT i.operation_id,i.action_digest,i.provider_id,p.status,i.provider_bound_at
                     FROM approval_operation_intents i
                     JOIN pending_approvals p ON p.pending_id=i.pending_id
                     WHERE i.pending_id=? AND i.actor_hash=? AND i.session_hash=?""",
@@ -452,7 +452,7 @@ class SQLitePendingApprovalStore:
                 db.execute("COMMIT")
                 return {"pending_id": pending_id, "operation_id": operation_id,
                         "action_digest": action_digest, "provider_id": provider_id,
-                        "provider_bound_at": now if row[2] is None else None}
+                        "provider_bound_at": now if row[2] is None else row[4]}
             except Exception:
                 if db.in_transaction:
                     db.execute("ROLLBACK")
@@ -463,7 +463,7 @@ class SQLitePendingApprovalStore:
         if not isinstance(pending_id, str) or not pending_id or not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             return None
         with self._connect() as db:
-            row = db.execute("SELECT operation_id,action_digest,created_at FROM approval_operation_intents WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, self._identity_hash(actor), self._identity_hash(session_id))).fetchone()
+            row = db.execute("SELECT operation_id,action_digest,created_at,provider_id,provider_bound_at FROM approval_operation_intents WHERE pending_id=? AND actor_hash=? AND session_hash=?", (pending_id, self._identity_hash(actor), self._identity_hash(session_id))).fetchone()
         if row is None:
             return None
         return {"pending_id": pending_id, "operation_id": row[0], "action_digest": row[1], "created_at": row[2], "provider_id": row[3], "provider_bound_at": row[4]}

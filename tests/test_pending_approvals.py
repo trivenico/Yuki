@@ -206,5 +206,84 @@ class ApprovalOperationIntentTests(unittest.TestCase):
             self.assertIsNone(store.ensure_operation_intent(item.pending_id, actor="owner-a", session_id="session-a"))
 
 
+class ApprovalProviderBindingTests(unittest.TestCase):
+    def _executing(self, store, actor="owner-a", session="session-a"):
+        item = store.put(
+            "payments.create", {"amount": 125},
+            {"skill_id": "payments.create", "arguments": {"amount": 125}},
+            actor=actor, session_id=session,
+        )
+        store.transition(item.pending_id, expected_status="pending", new_status="claimed",
+                         actor=actor, session_id=session)
+        store.transition(item.pending_id, expected_status="claimed", new_status="approved",
+                         actor=actor, session_id=session)
+        intent = store.ensure_operation_intent(item.pending_id, actor=actor, session_id=session)
+        store.transition(item.pending_id, expected_status="approved", new_status="executing",
+                         actor=actor, session_id=session)
+        return item, intent
+
+    def test_provider_binding_is_durable_owner_scoped_and_immutable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item, intent = self._executing(store)
+            first = store.bind_operation_provider(
+                item.pending_id, actor="owner-a", session_id="session-a",
+                operation_id=intent["operation_id"], action_digest=intent["action_digest"],
+                provider_id="acme_payments",
+            )
+            second = store.bind_operation_provider(
+                item.pending_id, actor="owner-a", session_id="session-a",
+                operation_id=intent["operation_id"], action_digest=intent["action_digest"],
+                provider_id="acme_payments",
+            )
+            self.assertEqual(first["provider_id"], "acme_payments")
+            self.assertEqual(first["provider_bound_at"], second["provider_bound_at"])
+            self.assertEqual(
+                store.get_operation_intent(item.pending_id, actor="owner-a", session_id="session-a")["provider_id"],
+                "acme_payments",
+            )
+            with self.assertRaises(RuntimeError):
+                store.bind_operation_provider(
+                    item.pending_id, actor="owner-a", session_id="session-a",
+                    operation_id=intent["operation_id"], action_digest=intent["action_digest"],
+                    provider_id="other_provider",
+                )
+            with self.assertRaises(RuntimeError):
+                store.bind_operation_provider(
+                    item.pending_id, actor="owner-b", session_id="session-a",
+                    operation_id=intent["operation_id"], action_digest=intent["action_digest"],
+                    provider_id="acme_payments",
+                )
+
+    def test_provider_binding_requires_exact_executing_operation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "payments.create", {"amount": 1},
+                {"skill_id": "payments.create", "arguments": {"amount": 1}},
+                actor="owner-a", session_id="session-a",
+            )
+            store.transition(item.pending_id, expected_status="pending", new_status="claimed",
+                             actor="owner-a", session_id="session-a")
+            store.transition(item.pending_id, expected_status="claimed", new_status="approved",
+                             actor="owner-a", session_id="session-a")
+            intent = store.ensure_operation_intent(item.pending_id, actor="owner-a", session_id="session-a")
+            with self.assertRaises(RuntimeError):
+                store.bind_operation_provider(
+                    item.pending_id, actor="owner-a", session_id="session-a",
+                    operation_id=intent["operation_id"], action_digest=intent["action_digest"],
+                    provider_id="acme_payments",
+                )
+            store.transition(item.pending_id, expected_status="approved", new_status="executing",
+                             actor="owner-a", session_id="session-a")
+            with self.assertRaises(RuntimeError):
+                store.bind_operation_provider(
+                    item.pending_id, actor="owner-a", session_id="session-a",
+                    operation_id="wrong-operation", action_digest=intent["action_digest"],
+                    provider_id="acme_payments",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
