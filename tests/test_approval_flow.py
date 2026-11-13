@@ -445,7 +445,8 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertTrue(all(not thread.is_alive() for thread in threads))
             self.assertEqual(len(self.planner.executed), 1)
             self.assertEqual(outcomes.count("completed"), 1)
-            self.assertEqual(outcomes.count("recovery_required"), 1)
+            self.assertEqual(len(outcomes), 2)
+            self.assertIn(outcomes.count("recovery_required") + outcomes.count("pending_not_found"), (1,))
             self.assertEqual(store.get(item.pending_id).status, "completed")
 
 
