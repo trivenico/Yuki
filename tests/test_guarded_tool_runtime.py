@@ -1,5 +1,6 @@
 """Tests for guarded CLI tool dispatch."""
 import unittest
+import json
 
 from core.guarded_tool_runtime import ApprovalRequired, GuardedToolRuntime
 
@@ -41,6 +42,97 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.invoke("missing"), "Unknown tool.")
         self.assertIn("too long", self.runtime.invoke("echo", "x" * 11))
         self.assertEqual(self.calls, [])
+
+    def test_approved_action_requires_registry_skill_mapping_and_context_policy(self):
+        calls = []
+        events = []
+        class ApprovedPolicy:
+            def authorize_tool(self, name):
+                return False
+            def skill_id_for_tool(self, name):
+                return "notes.write" if name == "write" else None
+            def authorize_approved_tool_context(self, name, skill_id, context):
+                return name == "write" and skill_id == "notes.write" and context["actor"] == "owner-a"
+        runtime = GuardedToolRuntime(
+            {"write": lambda raw: calls.append(json.loads(raw)) or "saved"},
+            ApprovedPolicy(), audit=lambda name, outcome: events.append(outcome),
+            require_audit=True,
+        )
+        context = {
+            "actor": "owner-a", "session_id": "session-a",
+            "conversation_id": "conversation-a", "request_id": "request-a",
+        }
+        action = {
+            "tool_name": "write", "skill_id": "notes.write",
+            "arguments": {"text": "approved"},
+            "execution_context": context,
+        }
+        self.assertEqual(runtime.execute_approved_action(action, execution_context=context), "saved")
+        self.assertEqual(calls, [{"text": "approved"}])
+        self.assertEqual(events, ["approved_execution_started", "approved_execution_completed"])
+
+    def test_approved_action_rejects_untrusted_skill_mapping_and_audit_failure(self):
+        calls = []
+        class WrongSkillPolicy:
+            def authorize_tool(self, name):
+                return False
+            def skill_id_for_tool(self, name):
+                return "notes.delete"
+            def authorize_approved_tool_context(self, name, skill_id, context):
+                return True
+        context = {
+            "actor": "owner-a", "session_id": "session-a",
+            "conversation_id": "conversation-a", "request_id": "request-a",
+        }
+        action = {
+            "tool_name": "write", "skill_id": "notes.write",
+            "arguments": {"text": "approved"}, "execution_context": context,
+        }
+        runtime = GuardedToolRuntime(
+            {"write": lambda raw: calls.append(raw)}, WrongSkillPolicy(),
+            audit=lambda *_: None, require_audit=True,
+        )
+        with self.assertRaises(PermissionError):
+            runtime.execute_approved_action(action, execution_context=context)
+        self.assertEqual(calls, [])
+        class ApprovedPolicy(WrongSkillPolicy):
+            def skill_id_for_tool(self, name):
+                return "notes.write"
+        broken_audit = GuardedToolRuntime(
+            {"write": lambda raw: calls.append(raw)}, ApprovedPolicy(),
+            audit=lambda *_: (_ for _ in ()).throw(OSError("audit down")),
+            require_audit=True,
+        )
+        with self.assertRaisesRegex(RuntimeError, "audit failed"):
+            broken_audit.execute_approved_action(action, execution_context=context)
+        self.assertEqual(calls, [])
+
+    def test_approved_action_exception_is_not_retried_by_runtime(self):
+        calls = []
+        class ApprovedPolicy:
+            def authorize_tool(self, name):
+                return False
+            def skill_id_for_tool(self, name):
+                return "notes.write"
+            def authorize_approved_tool_context(self, name, skill_id, context):
+                return True
+        context = {
+            "actor": "owner-a", "session_id": "session-a",
+            "conversation_id": "conversation-a", "request_id": "request-a",
+        }
+        action = {
+            "tool_name": "write", "skill_id": "notes.write",
+            "arguments": {}, "execution_context": context,
+        }
+        def fail(_raw):
+            calls.append("called")
+            raise TimeoutError("uncertain")
+        runtime = GuardedToolRuntime(
+            {"write": fail}, ApprovedPolicy(), audit=lambda *_: None, require_audit=True,
+        )
+        with self.assertRaisesRegex(RuntimeError, "outcome is unknown"):
+            runtime.execute_approved_action(action, execution_context=context)
+        self.assertEqual(calls, ["called"])
 
     def test_result_is_bounded(self):
         self.assertEqual(self.runtime.invoke("echo", "123456789"), "12345… [truncated]")
