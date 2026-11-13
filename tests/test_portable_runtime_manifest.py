@@ -92,6 +92,77 @@ class PortableRuntimeManifestTests(unittest.TestCase):
                 self.assertEqual(main(), 2)
             self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
 
+    def test_signed_release_verifies_with_out_of_bundle_trust_anchor(self):
+        import importlib.util
+        if not importlib.util.find_spec("cryptography"):
+            self.skipTest("cryptography optional dependency is not installed")
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from scripts.portable_runtime_manifest import sign_manifest, verify_signed_manifest
+
+        self._write_manifest()
+        private_key = Ed25519PrivateKey.generate()
+        private_path = Path(self.temp.name) / "release-private.pem"
+        public_path = Path(self.temp.name) / "release-public.pem"
+        private_path.write_bytes(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+        public_path.write_bytes(private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ))
+        sign_manifest(self.root, private_path)
+        verified = verify_signed_manifest(self.root, public_path)
+        self.assertEqual(verified["platform"], "linux-x86_64")
+        self.assertTrue((self.root / "runtime-manifest.sig").is_file())
+
+    def test_signed_release_rejects_wrong_trust_anchor(self):
+        import importlib.util
+        if not importlib.util.find_spec("cryptography"):
+            self.skipTest("cryptography optional dependency is not installed")
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from scripts.portable_runtime_manifest import sign_manifest, verify_signed_manifest
+
+        self._write_manifest()
+        trusted = Ed25519PrivateKey.generate()
+        attacker = Ed25519PrivateKey.generate()
+        private_path = Path(self.temp.name) / "release-private.pem"
+        wrong_public_path = Path(self.temp.name) / "wrong-public.pem"
+        private_path.write_bytes(trusted.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+        wrong_public_path.write_bytes(attacker.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ))
+        sign_manifest(self.root, private_path)
+        with self.assertRaisesRegex(RuntimeManifestError, "signature verification failed"):
+            verify_signed_manifest(self.root, wrong_public_path)
+
+    def test_signing_key_must_be_outside_portable_bundle(self):
+        import importlib.util
+        if not importlib.util.find_spec("cryptography"):
+            self.skipTest("cryptography optional dependency is not installed")
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from scripts.portable_runtime_manifest import sign_manifest
+
+        self._write_manifest()
+        private_key = Ed25519PrivateKey.generate()
+        private_path = self.root / "private.pem"
+        private_path.write_bytes(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+        with self.assertRaisesRegex(RuntimeManifestError, "outside"):
+            sign_manifest(self.root, private_path)
+
     def test_unsigned_manifest_does_not_claim_authenticity(self):
         manifest = self._write_manifest()
         self.assertEqual(manifest["artifact_kind"], "unsigned-portable-runtime")
