@@ -120,6 +120,17 @@ class CompanionApplicationService:
         except Exception as exc:
             raise ConversationError("Yuki could not safely retrieve the agent plan.") from exc
 
+    def get_task(self, *, actor_id: str, task_id: str) -> TaskRecord:
+        """Return an authorized task definition for explicit human review."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.get(actor_id=actor_id, task_id=task_id)
+        except (PermissionError, ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve this task definition.") from exc
+
     def task_progress(
         self, *, actor_id: str, task_id: str, after_sequence: int = 0,
         limit: int = 50,

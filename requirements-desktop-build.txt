@@ -1,0 +1,3 @@
+# Build-only dependency for reproducible native desktop artifacts.
+# Install after requirements-desktop.txt; never required by CLI/core users.
+PyInstaller>=6.10,<7

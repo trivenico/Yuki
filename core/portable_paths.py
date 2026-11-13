@@ -1,12 +1,13 @@
 """Portable Yuki path helpers.
 
 YUKI_HOME optionally points at the Yuki data root (for example, a folder on an
-external SSD). Without it, data stays under the repository root. No secrets or
-credentials are created by this module.
+external SSD). CLI defaults remain repository-local for backward compatibility.
+The desktop uses an OS user-data directory unless YUKI_HOME is explicitly set.
 """
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -19,6 +20,28 @@ def data_root() -> Path:
     if not root.is_absolute():
         root = (REPOSITORY_ROOT / root).resolve()
     return root.resolve()
+
+
+def desktop_data_root() -> Path:
+    """Return the desktop's private per-user data directory.
+
+    An explicit YUKI_HOME keeps portable deployments predictable and isolated
+    from the OS profile. Without it, use the platform's conventional writable
+    application-data location rather than the installation/bundle directory.
+    """
+    configured = os.environ.get("YUKI_HOME", "").strip()
+    if configured:
+        return (data_root() / ".yuki").resolve()
+
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        root = Path(base).expanduser() if base else Path.home() / "AppData" / "Local"
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+    else:
+        base = os.environ.get("XDG_DATA_HOME", "").strip()
+        root = Path(base).expanduser() if base else Path.home() / ".local" / "share"
+    return (root / "Yuki").resolve()
 
 
 def config_path() -> Path:
