@@ -12,6 +12,7 @@ from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.user_memory_service import UserMemoryService
+from core.memory_context import MemoryContextBuilder
 
 
 class NoApprovals:
@@ -39,7 +40,7 @@ class AuthenticatedMemoryIntegrationTests(unittest.TestCase):
         self.store = ConversationStore(root / "conversations.sqlite")
         self.conversations = ConversationService(
             self.store, loop,
-            memory_context_builder=__import__("core.memory_context", fromlist=["MemoryContextBuilder"]).MemoryContextBuilder(self.memory),
+            memory_context_builder=MemoryContextBuilder(self.memory),
         )
         self.app = YukiConversationAPI(self.auth, self.conversations, memory_service=self.memory)
 
