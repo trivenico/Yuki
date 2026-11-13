@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from core.sqlite_file_security import SQLitePathSecurityError
 from providers.profile_store import OSKeyringVault, ProviderProfileStore
 
 
@@ -140,7 +141,7 @@ class ProviderProfileStoreTests(unittest.TestCase):
         target.touch()
         link = self.root / "linked.sqlite"
         link.symlink_to(target)
-        with self.assertRaisesRegex(ValueError, "symlink"):
+        with self.assertRaises(SQLitePathSecurityError):
             ProviderProfileStore(link, self.vault)
 
     @unittest.skipUnless(hasattr(os, "link"), "hard links unavailable")
