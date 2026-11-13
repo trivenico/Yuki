@@ -9,7 +9,7 @@ from providers.ollama import OllamaProvider
 
 class ProviderFactoryTests(unittest.TestCase):
     def test_default_factory_uses_local_ollama_without_cloud_fallback(self):
-        provider = create_provider({}, environ={})
+        provider = create_provider({}, environ={"YUKI_OLLAMA_MODEL": "qwen2.5:7b"})
         self.assertIsInstance(provider, OllamaProvider)
         self.assertEqual(provider.model, "qwen2.5:7b")
         self.assertEqual(provider.base_url, "http://127.0.0.1:11434")
