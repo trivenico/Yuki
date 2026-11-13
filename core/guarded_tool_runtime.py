@@ -124,7 +124,9 @@ class GuardedToolRuntime:
                 authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
-        if not authorized:
+        # Authorization is a closed boolean contract. Truthy values such as
+        # "false", 1, or custom objects must never grant executable authority.
+        if authorized is not True:
             recorded = self._record(name, "denied")
             if self._require_audit and not recorded:
                 return "Tool blocked because its required denial audit record could not be written."
