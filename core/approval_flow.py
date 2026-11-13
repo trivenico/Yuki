@@ -94,6 +94,17 @@ class ApprovalCoordinator:
 
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict], bool]) -> ApprovalOutcome:
+        if (not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
+                not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256):
+            return ApprovalOutcome(
+                False, "pending_not_found",
+                pending_id=pending_id if isinstance(pending_id, str) else None,
+            )
+        if not callable(confirm):
+            return ApprovalOutcome(
+                False, "approval_confirmation_unavailable",
+                pending_id=pending_id if isinstance(pending_id, str) else None,
+            )
         pending = self._claim(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
