@@ -53,7 +53,7 @@ class MemoryStore:
     def add(self, text: str, *, category: str = "note") -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT:
             raise ValueError(f"Memory text must be 1-{self.MAX_TEXT} characters.")
-        if category not in {"note", "preference", "lesson"}:
+        if not isinstance(category, str) or category not in {"note", "preference", "lesson"}:
             raise ValueError("category must be note, preference, or lesson.")
         with self._lock:
             entries = self._load()
@@ -68,6 +68,28 @@ class MemoryStore:
             raise ValueError("limit must be between 1 and 200.")
         with self._lock:
             return [dict(item) for item in self._load()[-limit:]]
+
+    def update(self, memory_id: str, text: str, *, category: str | None = None) -> dict | None:
+        """Update one entry atomically while preserving its ID and creation time."""
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            return None
+        if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT:
+            raise ValueError(f"Memory text must be 1-{self.MAX_TEXT} characters.")
+        if category is not None and (
+            not isinstance(category, str)
+            or category not in {"note", "preference", "lesson"}
+        ):
+            raise ValueError("category must be note, preference, or lesson.")
+        with self._lock:
+            entries = self._load()
+            for item in entries:
+                if item["id"] == memory_id:
+                    item["text"] = text.strip()
+                    if category is not None:
+                        item["category"] = category
+                    self._save(entries)
+                    return dict(item)
+        return None
 
     def delete(self, memory_id: str) -> bool:
         if not isinstance(memory_id, str) or not memory_id.strip():
