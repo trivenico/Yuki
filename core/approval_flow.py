@@ -133,6 +133,14 @@ class ApprovalCoordinator:
                 if approved is None:
                     return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
                 pending["status"] = "approved"
+            elif state == "execution_unavailable":
+                resumed = self.pending_store.transition(
+                    pending_id, expected_status="execution_unavailable",
+                    new_status="approved", actor=actor, session_id=session_id,
+                )
+                if resumed is None:
+                    return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
+                pending["status"] = "approved"
             elif state != "approved":
                 # A process may have stopped while confirmation was in progress
                 # or after execution crossed its boundary. Never replay either.
@@ -179,6 +187,13 @@ class ApprovalCoordinator:
                 self._audit("execution_unavailable", pending_id, actor, pending["skill_id"])
             except Exception:
                 return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+            if persistent:
+                unavailable = self.pending_store.transition(
+                    pending_id, expected_status="approved", new_status="execution_unavailable",
+                    actor=actor, session_id=session_id,
+                )
+                if unavailable is None:
+                    return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
             return ApprovalOutcome(False, "execution_unavailable", pending_id=pending_id)
 
         try:
@@ -264,7 +279,7 @@ class ApprovalCoordinator:
                 item = self.pending_store.get(pending_id)
                 if (item is None or item.actor_hash != self.pending_store._identity_hash(actor) or
                         item.session_hash != self.pending_store._identity_hash(session_id) or
-                        item.status not in {"approved", "executing", "claimed"}):
+                        item.status not in {"approved", "executing", "claimed", "execution_unavailable"}):
                     return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
                     "action": item.action, "actor": actor, "session_id": session_id,
