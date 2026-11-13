@@ -45,3 +45,39 @@ Start with a compact reproducible model. Scale only when measured data quality, 
 Production loads only explicitly installed local Yuki releases. It does not download weights on demand or silently switch to a third-party provider. If a Yuki model is missing, corrupt, or incompatible, model-dependent features report unavailable while deterministic local functions continue.
 
 `core/model_registry.py` verifies manifest schema, first-party provenance policy, root-contained artifact paths, and SHA-256 hashes. It does not yet load tensors, run inference, train weights, sign manifests, or verify model quality. Existing `providers/model_registry.py` is a separate benchmark/evaluation registry, not an artifact loader.
+
+## Open-source reuse and model lineage
+
+Yuki follows an open-source-first reuse strategy to reduce time-to-capability. We may adopt source code, libraries, datasets, tokenizers, architectures and pretrained/open-weight checkpoints when their exact licenses and usage terms permit the intended use. Reuse is preferred over rebuilding mature commodity components, but every imported asset must be traceable.
+
+### Reuse rules
+
+- Review the exact repository revision and license files shipped with that revision. A model-card badge or the phrase open source is not a substitute for reviewing the actual terms.
+- Record upstream repository, immutable commit/revision, source URL, copyright notices, exact license identifier/text, download date, permitted use, attribution terms and artifact hashes.
+- Review code, weights, tokenizer, configuration, training data and evaluation datasets independently. Their licenses may differ within one project.
+- Record dataset provenance, permitted purposes, privacy/PII restrictions, attribution and redistribution obligations. Public availability is not proof of training rights.
+- Preserve upstream notices and required license texts with redistributed artifacts. Never remove attribution or relabel upstream material as Yuki-original.
+- Pin immutable revisions and hashes; do not build releases from moving main/latest references.
+- Scan imported code and dependencies, inspect install scripts and custom model code, and do not execute untrusted repository scripts during import.
+- Prefer safe tensor formats such as Safetensors. Treat pickle-based checkpoints as executable-risk input and do not load them from untrusted sources.
+- If license or provenance is unclear, quarantine the asset until reviewed.
+
+### Provenance labels
+
+- `random_init`: weights initialized by Yuki training; no third-party checkpoint is the base.
+- `yuki_checkpoint`: derived only from a previous Yuki checkpoint.
+- `third_party_checkpoint`: an upstream checkpoint, possibly converted to a safe format. It remains third-party-origin and must not be described as a Yuki-original foundation model.
+- `yuki_finetune`: a Yuki-modified checkpoint derived from an upstream model. Record its exact upstream revision, upstream license, source URL and modifications. Describe it as a Yuki adaptation/fine-tune, not independently created base weights.
+
+The artifact registry accepts third-party and fine-tuned origins only when a complete lineage record is present. Hash verification confirms integrity, not license compliance or safety; legal review, security review and model evaluation remain separate release gates.
+
+### Practical delivery strategy
+
+1. Reuse stable permissively licensed libraries and frameworks where they fit Yuki's existing architecture; avoid replacing working subsystems without measurable benefit.
+2. Select a shortlist of open-weight models for coding, reasoning and general conversation, then benchmark quality, latency, memory, hardware requirements and license obligations.
+3. Integrate selected models behind Yuki's model capability interfaces. A local model must not silently send prompts to cloud services.
+4. Fine-tune or adapt a selected checkpoint only after base-model and dataset rights are reviewed; publish accurate lineage and evaluation reports.
+5. Continue first-party training in parallel for components where independence, cost, latency or specialization justify it.
+6. Keep model weights in immutable artifact storage, with GitHub containing import manifests, hashes, scripts, evaluations, notices and release metadata.
+
+This strategy distinguishes Yuki as the integrated product from the origin of each underlying model. Yuki can deliver a coherent first-party experience while accurately crediting and complying with upstream licenses.
