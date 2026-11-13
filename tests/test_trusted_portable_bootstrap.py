@@ -126,7 +126,6 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.bundle,
             self.public_path,
             "bin/yuki",
-            staging_parent=self.root / "host-temp",
         )
         self.assertEqual(result, 0)
 
@@ -136,7 +135,6 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 self.bundle,
                 self.public_path,
                 "payload.txt",
-                staging_parent=self.root / "host-temp",
             )
 
 
