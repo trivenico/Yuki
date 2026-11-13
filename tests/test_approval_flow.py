@@ -336,5 +336,75 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             ))
 
 
+    def test_persistent_approved_action_resumes_without_repeating_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "notes.write", {"text": "resume"},
+                {"skill_id": "notes.write", "arguments": {"text": "resume"}},
+                actor="owner", session_id="session-a",
+            )
+            claimed = store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(claimed.status, "claimed")
+            approved = store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(approved.status, "approved")
+
+            confirmation_calls = []
+            coordinator = ApprovalCoordinator(
+                pending_store=SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3")),
+                audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner,
+            )
+            outcome = coordinator.approve(
+                self.planner, item.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: confirmation_calls.append(True) or False,
+            )
+            self.assertEqual(outcome.status, "completed")
+            self.assertEqual(confirmation_calls, [])
+            self.assertEqual(len(self.planner.executed), 1)
+            self.assertEqual(store.get(item.pending_id).status, "completed")
+
+    def test_persistent_execution_claim_is_never_replayed_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {"text": "uncertain"},
+                {"skill_id": "notes.write", "arguments": {"text": "uncertain"}},
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="pending", new_status="claimed",
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="claimed", new_status="approved",
+                actor="owner", session_id="session-a",
+            )
+            store.transition(
+                item.pending_id, expected_status="approved", new_status="executing",
+                actor="owner", session_id="session-a",
+            )
+            coordinator = ApprovalCoordinator(
+                pending_store=SQLitePendingApprovalStore(path),
+                audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner,
+            )
+            confirmations = []
+            outcome = coordinator.approve(
+                self.planner, item.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: confirmations.append(True) or True,
+            )
+            self.assertEqual(outcome.status, "recovery_required")
+            self.assertEqual(outcome.result["outcome"], "unknown")
+            self.assertEqual(confirmations, [])
+            self.assertEqual(self.planner.executed, [])
+            self.assertEqual(store.get(item.pending_id).status, "executing")
+
+
 if __name__ == "__main__":
     unittest.main()
