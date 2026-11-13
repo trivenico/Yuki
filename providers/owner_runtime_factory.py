@@ -38,6 +38,7 @@ class OwnerAgentLoopFactory:
         profile_store: ProviderProfileStore,
         *,
         tool_runtime_for_owner: Callable[[str], GuardedToolRuntime] | None = None,
+        approval_adapter_for_owner: Callable[[str], Callable] | None = None,
         loop_options: Mapping[str, Any] | None = None,
     ) -> None:
         required = ("list_profiles", "selected_profile", "resolve_for_runtime")
@@ -45,6 +46,10 @@ class OwnerAgentLoopFactory:
             raise TypeError("profile_store does not implement the owner profile runtime contract")
         if tool_runtime_for_owner is not None and not callable(tool_runtime_for_owner):
             raise TypeError("tool_runtime_for_owner must be callable")
+        if approval_adapter_for_owner is not None and not callable(approval_adapter_for_owner):
+            raise TypeError("approval_adapter_for_owner must be callable")
+        if approval_adapter_for_owner is not None and tool_runtime_for_owner is None:
+            raise ValueError("approval adapters require an owner-specific guarded tool runtime")
         if loop_options is not None and not isinstance(loop_options, Mapping):
             raise TypeError("loop_options must be a mapping")
         options = dict(loop_options or {})
@@ -52,6 +57,7 @@ class OwnerAgentLoopFactory:
             raise ValueError("loop_options cannot override the model or tool protocol")
         self._profile_store = profile_store
         self._tool_runtime_for_owner = tool_runtime_for_owner
+        self._approval_adapter_for_owner = approval_adapter_for_owner
         self._loop_options = options
         self._runtime_owners = weakref.WeakKeyDictionary()
         self._policy_owners = weakref.WeakKeyDictionary()
@@ -87,6 +93,11 @@ class OwnerAgentLoopFactory:
             tool_runtime = self._tool_runtime_for_owner(owner_id)
         if not isinstance(tool_runtime, GuardedToolRuntime):
             raise TypeError("owner tool runtime factory must return GuardedToolRuntime")
+        if self._approval_adapter_for_owner is not None:
+            # The approval adapter is resolved from trusted owner state, never
+            # from the model or request payload, and attached before dispatch.
+            adapter = self._approval_adapter_for_owner(owner_id)
+            tool_runtime = tool_runtime.with_approval_request(adapter)
         if self._tool_runtime_for_owner is not None and not tool_runtime.audit_required:
             raise ValueError(
                 "owner tool runtimes must require successful authorization and completion audit writes"
