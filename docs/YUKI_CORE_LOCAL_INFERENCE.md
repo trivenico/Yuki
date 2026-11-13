@@ -27,3 +27,27 @@ from its authenticated session and supply the corresponding guarded execution
 loop; request payloads must never select a model runtime, provider endpoint, or
 tool authority. Keep this low-level local inference runtime separate from
 tenant authorization and tool execution.
+
+## Select Yuki-Core as an application provider
+
+The optional provider adapter connects a verified release to Yuki's existing
+provider and conversation interfaces. It is selected explicitly; it does not
+replace the default provider or silently activate an experimental checkpoint.
+
+```yaml
+provider: yuki-core
+yuki_core_model_dir: ./artifacts/yuki-core/0.1.0
+yuki_core_device: cpu
+```
+
+Equivalent environment overrides are `YUKI_PROVIDER=yuki-core`,
+`YUKI_CORE_MODEL_DIR=/absolute/path/to/release`, and
+`YUKI_CORE_DEVICE=cpu` (or `cuda`). Install the optional runtime dependencies
+with `pip install -e '.[training]'`. The release directory must already exist
+and pass the runtime's manifest and artifact verification.
+
+The adapter accepts text conversations only. It rejects tool definitions and
+required-tool requests, and it does not implement streaming, vision, audio,
+structured JSON guarantees, or agentic reasoning. This prototype is useful for
+testing Yuki's first-party model lifecycle and provider integration, not as the
+primary everyday assistant model.
