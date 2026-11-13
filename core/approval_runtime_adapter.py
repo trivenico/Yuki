@@ -41,15 +41,23 @@ class ApprovalRuntimeAdapter:
             raise ValueError("approval action must be an object")
         skill_id = action.get("skill_id")
         arguments = action.get("arguments")
+        bound_action = dict(action)
+        declared_tool = bound_action.get("tool_name")
         if (
             not isinstance(skill_id, str)
-            or skill_id != tool_name
+            or not skill_id.strip()
+            or len(skill_id) > 120
             or not isinstance(arguments, dict)
+            or (declared_tool is not None and declared_tool != tool_name)
         ):
-            raise ValueError("approval action must bind its skill_id to the invoked tool")
+            raise ValueError("approval action must contain a valid skill and arguments")
+        # Persist the actual guarded registry name as part of the immutable
+        # approval snapshot. Skill identifiers and tool names are distinct
+        # namespaces and must not be assumed to be equal.
+        bound_action["tool_name"] = tool_name
         outcome = self._coordinator.record(
             None,
-            {"action": action},
+            {"action": bound_action},
             actor=execution_context["actor"],
             session_id=execution_context["session_id"],
         )
