@@ -70,6 +70,50 @@ class OwnerAgentLoopFactoryTests(unittest.TestCase):
         self.assertIsNot(alice_provider, bob_provider)
         self.assertIsNot(alice.tool_protocol, bob.tool_protocol)
 
+
+    def test_concurrent_owner_resolution_keeps_adapters_and_credentials_isolated(self):
+        import threading
+
+        factory = OwnerAgentLoopFactory(self.store)
+        barrier = threading.Barrier(2)
+        results = {}
+        errors = []
+
+        def resolve(owner):
+            try:
+                barrier.wait(timeout=5)
+                results[owner] = factory(owner)
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [
+            threading.Thread(target=resolve, args=("owner:alice",)),
+            threading.Thread(target=resolve, args=("owner:bob",)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(errors, [])
+        alice = results["owner:alice"].model.provider
+        bob = results["owner:bob"].model.provider
+        self.assertIsNot(alice, bob)
+        self.assertEqual(alice._environ["YUKI_VAULT_PROFILE_API_KEY"], "alice-secret")
+        self.assertEqual(bob._environ["YUKI_VAULT_PROFILE_API_KEY"], "bob-secret")
+        self.assertNotEqual(alice.base_url, bob.base_url)
+
+    def test_protocol_reads_immutable_public_registered_tool_catalog(self):
+        runtime = GuardedToolRuntime({"owner.read": lambda argument: argument}, AllowNothing())
+        self.assertEqual(runtime.registered_tool_names, frozenset({"owner.read"}))
+        self.assertEqual(
+            runtime.registered_tool_names,
+            runtime.registered_tool_names,
+        )
+        with self.assertRaises(AttributeError):
+            runtime.registered_tool_names.add("owner.write")
+
     def test_factory_fails_closed_without_owner_selected_profile(self):
         self.store.delete("owner:alice", "alice_gateway")
         factory = OwnerAgentLoopFactory(self.store)
