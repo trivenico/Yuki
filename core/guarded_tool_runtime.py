@@ -13,6 +13,7 @@ class GuardedToolRuntime:
         audit: Callable[[str, str], None] | None = None,
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
+        require_audit: bool = False,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -31,9 +32,14 @@ class GuardedToolRuntime:
             raise TypeError("policy must provide authorize_tool(name)")
         if audit is not None and not callable(audit):
             raise TypeError("audit must be callable when provided")
+        if type(require_audit) is not bool:
+            raise ValueError("require_audit must be a boolean")
+        if require_audit and audit is None:
+            raise ValueError("required audit mode needs an audit sink")
         self._tools = dict(tools)
         self._policy = policy
         self._audit = audit
+        self._require_audit = require_audit
         self._max_argument_chars = max_argument_chars
         self._max_result_chars = max_result_chars
 
@@ -52,13 +58,16 @@ class GuardedToolRuntime:
         """Return the immutable set of handlers executable by this runtime."""
         return frozenset(self._tools)
 
-    def _record(self, name: str, outcome: str) -> None:
-        if self._audit is not None:
-            try:
-                self._audit("tool:" + name[:128], outcome)
-            except Exception:
-                # Telemetry failure must not bypass or broaden authorization.
-                pass
+    def _record(self, name: str, outcome: str) -> bool:
+        if self._audit is None:
+            return not self._require_audit
+        try:
+            self._audit("tool:" + name[:128], outcome)
+            return True
+        except Exception:
+            # Optional telemetry is best-effort. Required audit is an execution
+            # control and must fail closed when the sink cannot persist an event.
+            return False
 
     def invoke(self, name: str, argument: str = "") -> str:
         if not isinstance(name, str) or not name or len(name) > 128:
@@ -77,12 +86,17 @@ class GuardedToolRuntime:
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
+        if self._require_audit and not self._record(name, "authorized"):
+            return "Tool blocked because its required audit record could not be written."
         try:
             result = str(self._tools[name](argument))
         except Exception:
-            self._record(name, "failed")
+            recorded = self._record(name, "failed")
+            if self._require_audit and not recorded:
+                return "Tool failed and its audit record could not be written; inspect activity before retrying."
             return "The tool failed. Check the input and try again."
         if len(result) > self._max_result_chars:
             result = result[: self._max_result_chars] + "… [truncated]"
-        self._record(name, "completed")
+        if not self._record(name, "completed") and self._require_audit:
+            return "Tool execution may have completed, but its audit record failed; inspect activity before retrying."
         return result
