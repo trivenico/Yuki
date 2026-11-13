@@ -78,13 +78,13 @@ class ConversationService:
 
     def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
         token = str(uuid.uuid4())
-        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
+        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=120)
         stop_heartbeat = threading.Event()
         lease_lost = threading.Event()
         user_cancelled = threading.Event()
 
         def renew_lease():
-            while not stop_heartbeat.wait(60):
+            while not stop_heartbeat.wait(30):
                 try:
                     renewed = self.store.renew_generation_lease(
                         owner_id=owner_id, conversation_id=conversation_id,
