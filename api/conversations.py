@@ -178,6 +178,7 @@ class YukiConversationAPI:
                     )
                 else:
                     if (set(payload) != {"resolution", "evidence_reference"}
+                            or not isinstance(payload.get("resolution"), str)
                             or payload.get("resolution") not in {"completed", "not_executed"}
                             or not isinstance(payload.get("evidence_reference"), str)):
                         return await self._respond(send, 400, {"error": "valid_reconciliation_evidence_required"})
