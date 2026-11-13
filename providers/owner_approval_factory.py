@@ -14,7 +14,29 @@ from typing import Any, Callable
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
 from core.approval_runtime_adapter import ApprovalRuntimeAdapter
+from core.guarded_tool_runtime import GuardedToolRuntime
 from core.pending_approvals import SQLitePendingApprovalStore
+
+
+class _OwnerBoundApprovedToolExecutor:
+    """Bind approved execution to the exact owner/session guarded registry."""
+
+    def __init__(self, runtime: GuardedToolRuntime, owner_id: str, session_id: str):
+        if not isinstance(runtime, GuardedToolRuntime):
+            raise TypeError("approved execution requires a GuardedToolRuntime")
+        self._runtime = runtime
+        self._owner_id = owner_id
+        self._session_id = session_id
+
+    def execute_approved_action(self, action):
+        if not isinstance(action, dict):
+            raise ValueError("approved action must be an object")
+        context = action.get("execution_context")
+        if (not isinstance(context, dict)
+                or context.get("actor") != self._owner_id
+                or context.get("session_id") != self._session_id):
+            raise PermissionError("approved action belongs to a different owner or session")
+        return self._runtime.execute_approved_action(action, execution_context=context)
 
 
 class OwnerApprovalRuntimeFactory:
@@ -90,7 +112,13 @@ class OwnerApprovalRuntimeFactory:
                 # boundary; never let a coordinator be used as another owner.
                 if actor != owner_id:
                     return None
-                return self._planner_resolver_for_owner(owner_id, session_id)
+                candidate = self._planner_resolver_for_owner(owner_id, session_id)
+                # An arbitrary object exposing execute_approved_action is not
+                # an authorization boundary. Only the exact guarded registry
+                # may execute an approved action.
+                if not isinstance(candidate, GuardedToolRuntime):
+                    return None
+                return _OwnerBoundApprovedToolExecutor(candidate, owner_id, session_id)
 
             coordinator = ApprovalCoordinator(
                 pending_store=pending_store,
