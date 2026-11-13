@@ -12,7 +12,7 @@ python -m venv .venv
 python -m pip install -e '.[training]'
 ```
 
-PyTorch is an optional training dependency. Normal Yuki installation and runtime do not need it for the existing provider paths. For Kaggle, install the repository and training extra in the notebook environment, then point `--corpus` to a reviewed dataset snapshot mounted in the notebook.
+PyTorch and Safetensors are optional training dependencies. Normal Yuki installation and runtime do not need it for the existing provider paths. For Kaggle, install the repository and training extra in the notebook environment, then point `--corpus` to a reviewed dataset snapshot mounted in the notebook.
 
 ## Prepare data
 
@@ -29,7 +29,7 @@ python scripts/train_yuki_core.py \\
   --steps 1000 --device auto
 ```
 
-Use `--device cpu` for a small smoke run or `--device cuda` on a compatible GPU. Tune batch size, block size, embedding width, heads, layers, learning rate, and training steps to the available hardware. The default configuration is deliberately small. The script prints training loss checkpoints and writes `weights.pt`, `tokenizer.json`, `config.json`, and `yuki-core.json`.
+Use `--device cpu` for a small smoke run or `--device cuda` on a compatible GPU. Tune batch size, block size, embedding width, heads, layers, learning rate, and training steps to the available hardware. The default configuration is deliberately small. The script prints training loss checkpoints and writes `weights.safetensors`, `tokenizer.json`, `config.json`, and `yuki-core.json`. The tensor checkpoint is written with Safetensors rather than Python pickle serialization; its SHA-256 is recorded in the manifest.
 
 The manifest hashes every artifact and records `origin: random_init`. Its `license` and `training_data` values are operator-supplied provenance summaries, not legal validation. Review the dataset manifest independently before training or release.
 
