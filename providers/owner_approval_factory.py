@@ -45,9 +45,10 @@ class OwnerApprovalRuntimeFactory:
     """Create cached, owner-isolated durable approval coordinators and adapters.
 
     `planner_resolver_for_owner(owner_id, session_id)` is a trusted host
-    callback. It must return the owner/session-bound executor, or None when
-    execution is unavailable. The factory refuses to resolve an executor for
-    an actor other than the owner whose coordinator is being used.
+    callback. It must return the exact owner/session-bound GuardedToolRuntime,
+    or None when execution is unavailable. Arbitrary executor objects are
+    rejected so approval cannot bypass the registered handler, policy or audit
+    boundary. The factory refuses to resolve a runtime for another actor.
     """
 
     def __init__(
