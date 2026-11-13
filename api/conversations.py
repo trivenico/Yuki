@@ -296,6 +296,8 @@ class YukiConversationAPI:
                 return await self._respond(send, 200, result)
 
             return await self._respond(send, 404, {"error": "not_found"})
+        except PermissionError:
+            return await self._respond(send, 403, {"error": "memory_consent_required"})
         except ConversationNotFound:
             return await self._respond(send, 404, {"error": "not_found"})
         except ConversationConflict:
