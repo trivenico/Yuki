@@ -98,6 +98,33 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             )
             self.assertNotEqual(first.pending_id, other_session.pending_id)
 
+    def test_pending_list_is_scoped_to_owner_session_and_unexpired_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            first = store.put(
+                "notes.write", {"text": "one"},
+                {"skill_id": "notes.write", "arguments": {"text": "one"}},
+                actor="owner", session_id="session-a",
+            )
+            store.put(
+                "notes.write", {"text": "two"},
+                {"skill_id": "notes.write", "arguments": {"text": "two"}},
+                actor="owner", session_id="session-b",
+            )
+            store.put(
+                "notes.write", {"text": "three"},
+                {"skill_id": "notes.write", "arguments": {"text": "three"}},
+                actor="other", session_id="session-a",
+            )
+            listed = store.list_pending_for_identity(actor="owner", session_id="session-a")
+            self.assertEqual([item.pending_id for item in listed], [first.pending_id])
+            self.assertEqual(store.list_pending_for_identity(
+                actor="owner", session_id="session-b",
+            )[0].arguments["text"], "two")
+            self.assertEqual(store.list_pending_for_identity(
+                actor="other", session_id="session-a",
+            )[0].arguments["text"], "three")
+
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp, max_pending=1)
