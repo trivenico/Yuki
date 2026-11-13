@@ -75,6 +75,11 @@ class GuardedToolRuntime:
         return self._require_audit
 
     @property
+    def approval_request_callback(self):
+        """Return the host approval-request adapter, if one is configured."""
+        return self._approval_request
+
+    @property
     def registered_tool_names(self) -> frozenset[str]:
         """Return the immutable set of handlers executable by this runtime."""
         return frozenset(self._tools)
