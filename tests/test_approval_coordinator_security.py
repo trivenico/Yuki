@@ -176,7 +176,7 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.assertTrue(all(not thread.is_alive() for thread in threads))
         self.assertEqual(len(self.planner.executed), 1)
         self.assertEqual(outcomes.count("completed"), 1)
-        self.assertEqual(outcomes.count("pending_not_found"), 1)
+        self.assertEqual(outcomes.count("recovery_required"), 1)
 
 
 if __name__ == "__main__":
