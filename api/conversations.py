@@ -104,6 +104,30 @@ class YukiConversationAPI:
             # Approval endpoints are bound exclusively to the authenticated
             # owner and hashed bearer session. Request bodies never carry identity,
             # executor, callback, or arbitrary action data.
+            if path == "/v1/approvals/recovery":
+                if self.approval_runtime_factory is None:
+                    return await self._respond(send, 503, {"error": "approval_service_unavailable"})
+                if method != "GET":
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                session_id = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+                coordinator = self.approval_runtime_factory.coordinator_for_owner(user.user_id)
+                store = coordinator.pending_store
+                if store is None or not callable(getattr(store, "list_recovery_for_identity", None)):
+                    return await self._respond(send, 503, {"error": "durable_approval_store_unavailable"})
+                items = await asyncio.to_thread(
+                    store.list_recovery_for_identity,
+                    actor=user.user_id, session_id=session_id, limit=50,
+                )
+                return await self._respond(send, 200, {"recovery": [{
+                    "pending_id": item.pending_id,
+                    "skill_id": item.skill_id,
+                    "arguments": item.arguments,
+                    "action": item.action,
+                    "expires_at": item.expires_at,
+                    "status": item.status,
+                    "requires_reconciliation": item.status in {"executing", "outcome_unknown"},
+                } for item in items]})
+
             if path == "/v1/approvals":
                 if self.approval_runtime_factory is None:
                     return await self._respond(send, 503, {"error": "approval_service_unavailable"})
