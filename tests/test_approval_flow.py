@@ -406,5 +406,48 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual(store.get(item.pending_id).status, "executing")
 
 
+    def test_persistent_concurrent_approvals_across_coordinators_execute_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(path)
+            item = store.put(
+                "notes.write", {"text": "single"},
+                {"skill_id": "notes.write", "arguments": {"text": "single"}},
+                actor="owner", session_id="session-a",
+            )
+            coordinators = [
+                ApprovalCoordinator(
+                    pending_store=SQLitePendingApprovalStore(path),
+                    audit_log=MemoryAudit(), planner_resolver=lambda **_: self.planner,
+                )
+                for _ in range(2)
+            ]
+            barrier = threading.Barrier(3)
+            outcomes = []
+            lock = threading.Lock()
+
+            def attempt(coordinator):
+                barrier.wait()
+                outcome = coordinator.approve(
+                    self.planner, item.pending_id, actor="owner", session_id="session-a",
+                    confirm=lambda _action: True,
+                )
+                with lock:
+                    outcomes.append(outcome.status)
+
+            threads = [threading.Thread(target=attempt, args=(coordinator,))
+                       for coordinator in coordinators]
+            for thread in threads:
+                thread.start()
+            barrier.wait()
+            for thread in threads:
+                thread.join(timeout=5)
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            self.assertEqual(len(self.planner.executed), 1)
+            self.assertEqual(outcomes.count("completed"), 1)
+            self.assertEqual(outcomes.count("recovery_required"), 1)
+            self.assertEqual(store.get(item.pending_id).status, "completed")
+
+
 if __name__ == "__main__":
     unittest.main()
