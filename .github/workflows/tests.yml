@@ -63,6 +63,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_companion_memory_consent.py" -v
       - name: Run encrypted desktop backup tests
         run: python -m unittest discover -s tests -p "test_desktop_backup.py" -v
+      - name: Run encrypted desktop memory tests
+        run: python -m unittest discover -s tests -p "test_desktop_memory.py" -v
       - name: Run desktop backup controller tests
         run: python -m unittest discover -s tests -p "test_desktop_controller.py" -v
 
