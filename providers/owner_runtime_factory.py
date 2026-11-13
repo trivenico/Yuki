@@ -57,6 +57,11 @@ class OwnerAgentLoopFactory:
         self._policy_owners = weakref.WeakKeyDictionary()
         self._lock = threading.RLock()
 
+    @property
+    def profile_store(self) -> ProviderProfileStore:
+        """Expose the exact store used for resolution to compose API lifecycle safely."""
+        return self._profile_store
+
     def __call__(self, owner_id: str) -> AgentExecutionLoop:
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256:
             raise ValueError("an authenticated owner identity is required")
