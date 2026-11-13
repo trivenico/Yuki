@@ -100,7 +100,7 @@ class OwnerAgentLoopFactory:
         # sharing one across owners can bypass otherwise isolated policies.
         handler_identities = [
             getattr(handler, "__self__", None) or handler
-            for handler in tool_runtime._tools.values()
+            for handler in tool_runtime.registered_tool_handlers
         ]
         if policy is None or not callable(getattr(policy, "authorize_tool", None)):
             raise TypeError("owner tool runtime must contain an authorization policy")
