@@ -225,5 +225,73 @@ class ConversationStoreTests(unittest.TestCase):
             ))
         finally:
             pass
+
+    def test_stale_generation_worker_cannot_write_after_lease_replacement(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Run safely", idempotency_key="fenced-request",
+            expected_version=0, generation_request_id="fenced-request",
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-old", ttl_seconds=30,
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        self.assertTrue(self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-new", ttl_seconds=30,
+        ))
+        self.assertFalse(self.store.update_generation_checkpoint(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", checkpoint={"phase": "stale"},
+            lease_token="worker-old",
+        ))
+        self.assertFalse(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", status="completed",
+            lease_token="worker-old",
+        ))
+        with self.assertRaises(ConversationConflict):
+            self.store.append_message(
+                owner_id=self.owner, conversation_id=conversation_id, role="assistant",
+                content="Stale response", idempotency_key="assistant:fenced-request",
+                expected_version=1, generation_lease_token="worker-old",
+            )
+        self.assertTrue(self.store.update_generation_checkpoint(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", checkpoint={"phase": "current"},
+            lease_token="worker-new",
+        ))
+        self.assertTrue(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="fenced-request", status="completed",
+            lease_token="worker-new",
+        ))
+
+    def test_generation_lease_renewal_requires_current_unexpired_token(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="renew-worker", ttl_seconds=30,
+        )
+        self.assertTrue(self.store.renew_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="renew-worker", ttl_seconds=60,
+        ))
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE conversation_generation_leases SET expires_at=0 WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        self.assertFalse(self.store.renew_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="renew-worker", ttl_seconds=60,
+        ))
+
 if __name__ == "__main__":
     unittest.main()
