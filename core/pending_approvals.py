@@ -304,7 +304,7 @@ class SQLitePendingApprovalStore:
         if (not isinstance(pending_id, str) or not pending_id or
                 not isinstance(actor, str) or not actor.strip() or len(actor) > 256 or
                 not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256 or
-                resolution not in {"completed", "not_executed"} or
+                not isinstance(resolution, str) or resolution not in {"completed", "not_executed"} or
                 not isinstance(evidence_reference, str) or not evidence_reference.strip() or
                 len(evidence_reference) > 512):
             return None
