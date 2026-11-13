@@ -8,6 +8,26 @@ Yuki is an owner-controlled personal AI operating environment: a conversational 
 
 Yuki is not simply a chatbot, a prompt collection, a bag of disconnected skills, or an unrestricted autonomous shell. Its capabilities must be composed through a coherent application runtime with consistent identity, policy, memory, observability, approvals, and recovery.
 
+
+### JARVIS-inspired personal AI north star
+
+Yuki's intended experience is a real-world, owner-controlled counterpart to JARVIS: a capable personal AI that works with its owner across projects, devices, information, and digital workflows. This is a product direction and acceptance target—not a claim that fictional abilities or every listed capability already exist.
+
+The experience should converge on these properties:
+
+- **One coherent intelligence:** maintain useful, permissioned context across conversations, projects, tasks, and connected tools; distinguish verified facts, user preferences, assumptions, and stale information.
+- **Contextual and proactive assistance:** when explicitly enabled, notice relevant events from approved sources, connect them to current goals, surface risks and opportunities, and propose useful next steps. Proactivity must be configurable, explainable, quietable, and never depend on covert surveillance.
+- **Natural multimodal interaction:** support text, voice, images, documents, and (with explicit session consent) screen context, with accessible controls and clear indication whenever sensors or capture are active.
+- **A capable digital operator:** plan and execute bounded workflows across approved apps, files, browsers, developer tools, and services. Show what Yuki is doing, keep an audit trail, provide pause/stop controls, and request confirmation for consequential or irreversible actions.
+- **A coordinated specialist workforce:** route work to the appropriate specialist agents under one orchestrator, shared context model, capability contracts, least-privilege permissions, and common quality gates. Agent count is not a quality metric; each deployed agent must have a real handler, tests, observability, and a defined fallback.
+- **A trusted personal knowledge layer:** remember only information allowed by the owner's settings, preserve provenance and freshness, support review/correction/deletion, and keep private conversations and files out of model training unless separately and explicitly opted in.
+- **A continuous companion across environments:** provide consistent experiences on web, desktop, mobile, portable external storage, and optional local devices, backed by authenticated cloud services and local execution where appropriate. Device pairing, account linking, and permissions remain owner-controlled.
+- **An honest and resilient system:** explain which model, tool, data source, and execution environment are being used when material; disclose uncertainty and external-provider limits; recover safely from interruption without replaying uncertain side effects.
+
+The design principle is **high capability with visible control**. JARVIS-like convenience must not mean hidden recording, unrestricted computer access, self-granted permissions, silent purchases/messages/deletions, or opaque changes to the owner's data. The owner remains in control of identity, memory, integrations, autonomy, and consequential actions.
+
+Implementation status: **Product target / Partial foundations**. The repository contains pieces of authentication, orchestration, guarded tools, approvals, memory, provider routing, and CLI workflows. A complete always-available, multimodal, cross-device JARVIS-like experience is not yet established; every capability must be promoted only after end-to-end integration, security review, acceptance tests, and release evidence.
+
 ### Product principles
 
 - Full-featured destination: do not silently redefine the target as a limited beta or demo.
