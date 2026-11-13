@@ -106,7 +106,11 @@ class ApprovalCoordinator:
                 result={"outcome": "unknown", "reason": "execution_was_already_claimed"},
             )
         if persistent:
-            if state == "claimed_new":
+            if state in {"claimed_new", "claimed"}:
+                # A prior process may have stopped while awaiting confirmation.
+                # Re-present the same immutable action for fresh confirmation;
+                # the atomic claimed -> approved transition still permits only
+                # one caller to authorize execution.
                 action = pending["action"]
                 import json
                 display_action = json.loads(json.dumps(action))
@@ -142,8 +146,8 @@ class ApprovalCoordinator:
                     return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
                 pending["status"] = "approved"
             elif state != "approved":
-                # A process may have stopped while confirmation was in progress
-                # or after execution crossed its boundary. Never replay either.
+                # An interrupted execution or terminal state must be reconciled;
+                # never replay it automatically.
                 return ApprovalOutcome(
                     False, "recovery_required", pending_id=pending_id,
                     result={"reason": "approval_requires_reconciliation", "state": state},
