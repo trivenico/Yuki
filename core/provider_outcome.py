@@ -178,8 +178,10 @@ class ProviderOutcomeReconciler:
             target=renew_claim, name="yuki-provider-reconciliation-lease",
             daemon=True,
         )
-        heartbeat.start()
+        heartbeat_started = False
         try:
+            heartbeat.start()
+            heartbeat_started = True
             evidence = self._registry.lookup(
                 execution["tool_name"],
                 {
@@ -200,7 +202,8 @@ class ProviderOutcomeReconciler:
             )
         finally:
             stop_renewal.set()
-            heartbeat.join()
+            if heartbeat_started:
+                heartbeat.join()
             self._store.release_provider_reconciliation_lease(
                 owner_id=owner_id, execution_id=execution["execution_id"],
                 lease_token=lease_token,
