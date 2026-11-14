@@ -56,7 +56,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or set(value) != required:
         raise BootstrapError("Runtime manifest has an invalid schema.")
     if (
-        value["schema_version"] != 1
+        value["schema_version"] != 2
         or value["product"] != "Yuki Portable Runtime"
         or value["artifact_kind"] != "portable-runtime"
         or not isinstance(value["platform"], str) or not value["platform"] or len(value["platform"]) > 100
