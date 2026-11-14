@@ -325,5 +325,20 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path)
             run.assert_called_once()
 
+    def test_rejects_anti_rollback_state_inside_removable_bundle(self):
+        state = self.bundle / 'release-state.json'
+        with self.assertRaisesRegex(BootstrapError, 'outside the removable bundle'):
+            run_verified_bundle(self.bundle, self.public_path, 'runtime/python', 'portable_entry.py', anti_rollback_state_path=state)
+
+    def test_rejects_non_integer_release_sequence(self):
+        manifest = {
+            'schema_version': 1, 'product': 'Yuki Portable Runtime',
+            'artifact_kind': 'portable-runtime', 'platform': 'test-platform',
+            'runtime_version': '3.12.7', 'release_sequence': True,
+            'files': [{'path': 'x', 'size': 1, 'sha256': '0' * 64}],
+        }
+        with self.assertRaisesRegex(BootstrapError, 'metadata is invalid'):
+            _validate_manifest(manifest)
+
 if __name__ == "__main__":
     unittest.main()
