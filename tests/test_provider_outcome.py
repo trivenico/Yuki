@@ -93,6 +93,26 @@ class ProviderOutcomeTests(unittest.TestCase):
                     verify_provider_outcome(Adapter(), execution)
         self.assertEqual(calls, [])
 
+    def test_mismatched_argument_fingerprint_is_rejected(self):
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                return ProviderOutcomeTests().evidence(arguments_sha256="d" * 64)
+
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            verify_provider_outcome(Adapter(), self.execution)
+
+    def test_adapter_failure_does_not_trigger_a_second_lookup(self):
+        calls = []
+
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                calls.append(execution["execution_id"])
+                raise TimeoutError("provider lookup timed out")
+
+        with self.assertRaisesRegex(TimeoutError, "timed out"):
+            verify_provider_outcome(Adapter(), self.execution)
+        self.assertEqual(calls, ["execution-1"])
+
     def test_untyped_adapter_result_is_rejected(self):
         class Adapter:
             def lookup_tool_outcome(self, execution):
