@@ -141,6 +141,7 @@ class PortableReleaseBuildTests(unittest.TestCase):
                         output_root=output_parent / "release",
                         platform_tag="windows-x86_64",
                         runtime_version="3.12.9",
+                        release_sequence=42,
                     )
             self.assertFalse((work / "verified-inputs").exists())
 
