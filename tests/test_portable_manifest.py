@@ -31,7 +31,7 @@ class PortableManifestTests(unittest.TestCase):
         value = create_unsigned_manifest(
             self.root, platform="linux-x86_64", runtime_version="0.1.0"
         )
-        self.assertEqual(value["artifact_kind"], "unsigned-portable-runtime")
+        self.assertEqual(value["artifact_kind"], "portable-runtime")
         self.assertEqual(value["files"], inventory_bundle(self.root))
         self.assertEqual(len(_validate_manifest(value)), 2)
 
@@ -58,8 +58,13 @@ class PortableManifestTests(unittest.TestCase):
             link.symlink_to(self.root / "README.txt")
         except (OSError, NotImplementedError):
             self.skipTest("Symlinks are unavailable on this host.")
-        with self.assertRaisesRegex(InputValidationError, "symbolic-link"):
+        with self.assertRaisesRegex(InputValidationError, "non-regular"):
             inventory_bundle(self.root)
+
+    def test_rejects_backslash_in_manifest_path(self):
+        from scripts.portable_manifest import _validate_relative_path
+        with self.assertRaisesRegex(InputValidationError, "non-canonical"):
+            _validate_relative_path("folder\\\\evil")
 
     def test_rejects_symlinked_bundle_root(self):
         alias = Path(self.temp.name) / "bundle-alias"
