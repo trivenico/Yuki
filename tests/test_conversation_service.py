@@ -1174,6 +1174,7 @@ class ConversationServiceTests(unittest.TestCase):
     def test_heartbeat_renewal_failure_during_recovery_prevents_response_commit(self):
         entered_recovery = threading.Event()
         allow_recovery_to_finish = threading.Event()
+        renewal_attempted = threading.Event()
         original_recover = self.service.recovery_coordinator.recover
 
         def slow_recovery(**kwargs):
@@ -1183,8 +1184,11 @@ class ConversationServiceTests(unittest.TestCase):
             return original_recover(**kwargs)
 
         def fail_renewal(**kwargs):
+            renewal_attempted.set()
             raise OSError("simulated lease store outage")
 
+        self.service.LEASE_TTL_SECONDS = 5
+        self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
         with patch.object(self.service.recovery_coordinator, "recover", side_effect=slow_recovery), \
              patch.object(self.store, "renew_generation_lease", side_effect=fail_renewal):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -1199,16 +1203,10 @@ class ConversationServiceTests(unittest.TestCase):
                 )
                 self.assertTrue(entered_recovery.wait(timeout=2))
                 try:
-                    with self.assertRaises(ConversationConflict):
-                        # Heartbeat interval defaults to 1200s; make failure deterministic
-                        # by forcing the lease-loss signal through the heartbeat callback.
-                        self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
-                        future.result(timeout=0.08)
-                except concurrent.futures.TimeoutError:
-                    pass
+                    self.assertTrue(renewal_attempted.wait(timeout=2))
                 finally:
                     allow_recovery_to_finish.set()
-                with self.assertRaises(ConversationConflict):
+                with self.assertRaisesRegex(ConversationConflict, "renewal failed"):
                     future.result(timeout=5)
 
         self.assertEqual(self.observed, [])
