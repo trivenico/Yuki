@@ -280,6 +280,26 @@ def run_verified_bundle(
 
     python_relative = validate_relative(python_executable, "Python interpreter")
     entry_relative = validate_relative(entrypoint, "Entrypoint")
+    state_path = Path(anti_rollback_state_path).expanduser()
+    if not state_path.is_absolute() or not state_path.parent.is_dir():
+        raise BootstrapError("Anti-rollback state path must be absolute and use an existing host directory.")
+    current_parent = state_path.parent
+    while True:
+        if current_parent.is_symlink() or not current_parent.is_dir():
+            raise BootstrapError("Anti-rollback state parent directories must not contain symlinks.")
+        if current_parent.parent == current_parent:
+            break
+        current_parent = current_parent.parent
+    source_root = Path(bundle).expanduser().resolve(strict=True)
+    resolved_state = state_path.parent.resolve(strict=True) / state_path.name
+    try:
+        resolved_state.relative_to(source_root)
+    except ValueError:
+        pass
+    else:
+        raise BootstrapError("Anti-rollback state must be stored outside the removable bundle.")
+    if resolved_state.is_symlink():
+        raise BootstrapError("Anti-rollback state file must not be a symlink.")
     staged_temp = stage_verified_bundle(
         bundle, public_key_path, expected_platform=expected_platform
     )
@@ -304,7 +324,7 @@ def run_verified_bundle(
         from yuki_trust.anti_rollback import advance_release_state
         manifest_bytes = (staged / MANIFEST_NAME).read_bytes()
         advance_release_state(
-            anti_rollback_state_path,
+            resolved_state,
             manifest["release_sequence"],
             manifest_bytes,
         )
