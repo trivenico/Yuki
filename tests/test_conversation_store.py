@@ -507,5 +507,52 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id=request_id, call_id="call-evidence", evidence=mismatched,
             )
 
+
+    def test_provider_evidence_digest_cannot_be_reused_with_different_reference(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "provider-reference-collision"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Check provider reference", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=80_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="reference-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-reference", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="reference-worker",
+            )
+            self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-reference",
+                lease_token="reference-worker", status="uncertain",
+            )
+        common = dict(
+            provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="c" * 64, observed_at="2026-11-14T10:00:00+00:00",
+        )
+        first = ProviderOutcomeEvidence(**common, provider_reference="message-A")
+        conflicting = ProviderOutcomeEvidence(**common, provider_reference="message-B")
+        saved = self.store.record_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-reference", evidence=first,
+        )
+        with self.assertRaises(ConversationConflict):
+            self.store.record_provider_outcome_evidence(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-reference", evidence=conflicting,
+            )
+        self.assertEqual(len(self.store.list_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-reference",
+        )), 1)
+
 if __name__ == "__main__":
     unittest.main()
