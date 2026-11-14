@@ -60,6 +60,19 @@ class NativeAuditTests(unittest.TestCase):
                 parsed = parse_macho_load_commands(loads, "binary:\n\t@rpath/libYuki.dylib (compatibility version 1.0.0)\n")
                 self.assertTrue(parsed["ok"])
 
+    def test_macho_universal_architecture_headers_are_not_install_names(self):
+        loads = "binary has no custom rpath\\n"
+        links = (
+            "Universal binary with 2 architectures: [x86_64:arm64]\\n"
+            "/bundle/libYuki.dylib (architecture x86_64):\\n"
+            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
+            "/bundle/libYuki.dylib (architecture arm64):\\n"
+            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
+        )
+        parsed = parse_macho_load_commands(loads, links)
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["install_names"], ["@rpath/libvendor.dylib", "@rpath/libvendor.dylib"])
+
     def test_windows_parser_reports_imports_without_claiming_resolution(self):
         parsed = parse_windows_dependents(
             "Image has the following dependencies:\n\n KERNEL32.dll\n VCRUNTIME140.dll\n\n"
