@@ -51,6 +51,29 @@ class PortableRuntimeAssemblerTests(unittest.TestCase):
         self.assertFalse(report["network_downloads"])
         self.assertFalse(report["application_executed"])
 
+    def test_assembler_passes_pinned_pip_bootstrap_to_installer(self):
+        pip_wheel = self.root / "pip-99.0-py3-none-any.whl"
+        with zipfile.ZipFile(pip_wheel, "w") as bundle:
+            bundle.writestr("pip/__init__.py", "__version__ = '99.0'\n")
+            bundle.writestr("pip/_internal/cli/main.py", "def main(args): return 0\n")
+            bundle.writestr("pip-99.0.dist-info/METADATA", "Name: pip\nVersion: 99.0\n")
+        pip_digest = hashlib.sha256(pip_wheel.read_bytes()).hexdigest()
+        captured = {}
+        def runner(command, **kwargs):
+            captured["command"] = command
+            staged = Path(command[command.index("--target") + 1])
+            staged.mkdir(exist_ok=True)
+            return SimpleNamespace(returncode=0, stderr="", stdout="")
+        report = assemble_portable_runtime(
+            self.archive, self.digest, self.runtime, "python/bin/python",
+            self.lock, self.wheelhouse, self.dependencies, runner=runner,
+            pip_bootstrap_wheel=pip_wheel, pip_bootstrap_sha256=pip_digest,
+            pip_bootstrap_version="99.0",
+        )
+        self.assertIn("-c", captured["command"])
+        self.assertIn(str(pip_wheel), captured["command"])
+        self.assertEqual(report["dependencies"]["pip_bootstrap"], "pinned-wheel")
+
     def test_rejects_wrong_archive_digest_without_extracting(self):
         with self.assertRaisesRegex(InputValidationError, "does not match"):
             assemble_portable_runtime(
