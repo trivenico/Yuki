@@ -50,3 +50,45 @@ Linux and macOS are intentionally not modified by this Windows-specific
 loader setup. Their native libraries need reviewed loader metadata (for example,
 relative ELF runpaths or Mach-O `@loader_path` / `@rpath`) and clean-machine
 validation. Codecs, GPU drivers, and OS services may remain external requirements.
+
+
+## Host-installed launch policy
+
+For end-user launches, install the host launcher and its policy independently
+of the removable drive. The policy is a small JSON file managed by the host
+installer; it pins the public trust anchor, exact platform identifier, bundled
+interpreter path, and entrypoint path. The USB bundle cannot override these
+values.
+
+Example host policy (the installer must replace the illustrative paths with
+the reviewed paths for the target runtime):
+
+```json
+{
+  "schema_version": 1,
+  "public_key": "/etc/yuki/trust/release-ed25519.pem",
+  "expected_platform": "linux-x86_64",
+  "python": "runtime/bin/python3",
+  "entrypoint": "portable_entry.py"
+}
+```
+
+Launch using the host-installed command:
+
+```bash
+yuki-portable-launch --bundle /media/YUKI/yuki-portable --policy /etc/yuki/portable-policy.json -- --diagnostic
+```
+
+The host launcher rejects policy files and trust anchors located inside the
+removable bundle, symlinked files, ambiguous JSON, unknown fields, noncanonical
+bundle-relative paths, and (on POSIX) policy/key files not owned by the current
+user or writable by group/other. Windows ACL enforcement is an installer
+responsibility and has not yet been implemented or validated by this library.
+The launcher then delegates signature, inventory, platform, staging, and
+isolated-interpreter checks to the trusted bootstrap.
+
+This is a launch-policy library and CLI foundation, not yet a signed OS
+installer. The production installer must create the policy and trust anchor
+with restrictive ownership/ACLs, pin reviewed runtime paths, and prevent
+unprivileged modification. Anti-rollback state, key rotation/revocation,
+release signing, and clean-machine runtime tests remain separate release gates.
