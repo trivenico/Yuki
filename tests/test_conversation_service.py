@@ -115,6 +115,62 @@ class ConversationServiceTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_long_generation_renews_lease_while_model_is_running(self):
+        started = threading.Event()
+        renewals = []
+        original_renew = self.store.renew_generation_lease
+
+        def recording_renew(**kwargs):
+            result = original_renew(**kwargs)
+            renewals.append(result)
+            return result
+
+        def slow_model(**kwargs):
+            started.set()
+            if not threading.Event().wait(0.08):
+                raise AssertionError("unreachable")
+            return {"text": "renewed response", "tool_calls": {"tool_calls": []}}
+
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        service = ConversationService(self.store, AgentExecutionLoop(slow_model, protocol))
+        service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
+        with patch.object(self.store, "renew_generation_lease", side_effect=recording_renew):
+            result = service.reply(
+                owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+                user_text="long request", request_id="heartbeat-success",
+                expected_version=0, tools=[],
+            )
+        self.assertTrue(started.is_set())
+        self.assertGreaterEqual(len(renewals), 1)
+        self.assertEqual(result["answer"], "renewed response")
+
+    def test_lease_renewal_failure_prevents_assistant_persistence(self):
+        started = threading.Event()
+
+        def failing_renew(**kwargs):
+            raise OSError("simulated lease store outage")
+
+        def slow_model(**kwargs):
+            started.set()
+            threading.Event().wait(0.08)
+            return {"text": "must not be committed", "tool_calls": {"tool_calls": []}}
+
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        service = ConversationService(self.store, AgentExecutionLoop(slow_model, protocol))
+        service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
+        with patch.object(self.store, "renew_generation_lease", side_effect=failing_renew):
+            with self.assertRaisesRegex(ConversationConflict, "lease renewal failed"):
+                service.reply(
+                    owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+                    user_text="request during outage", request_id="heartbeat-failure",
+                    expected_version=0, tools=[],
+                )
+        self.assertTrue(started.is_set())
+        history = self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual([item["role"] for item in history], ["user"])
+
     def test_stale_version_fails_before_model_call(self):
         self.send()
         with self.assertRaises(ConversationConflict):
