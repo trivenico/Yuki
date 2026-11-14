@@ -136,43 +136,53 @@ class PortableHostInstallerTests(unittest.TestCase):
             target = Path(directory)
             installer._apply_windows_acl(target)
 
-            identity = subprocess.run(
-                ["whoami", "/user", "/fo", "csv", "/nh"],
-                check=True, capture_output=True, text=True, timeout=10,
-            ).stdout
-            user_sid = __import__("csv").reader(identity.splitlines())
-            user_sid = list(user_sid)[-1][-1].strip()
-            script = r"""
-$acl = Get-Acl -LiteralPath $env:YUKI_ACL_PATH
-Write-Output ("ACL_PROTECTED=" + $acl.AreAccessRulesProtected)
-Write-Output ("ACL_RULES=" + (($acl.Access | ForEach-Object { $_.IdentityReference.ToString() + ':' + $_.FileSystemRights + ':' + $_.InheritanceFlags + ':' + $_.IsInherited }) -join ';'))
-if (-not $acl.AreAccessRulesProtected) { exit 10 }
-$expected = @($env:YUKI_USER_SID, 'S-1-5-18', 'S-1-5-32-544')
-$required = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit -bor [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
-foreach ($sid in $expected) {
-    $found = $false
-    foreach ($rule in $acl.Access) {
-        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-        try { $actual = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
-        if ($actual -eq $sid -and
-            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl -and
-            ($rule.InheritanceFlags -band $required) -eq $required) {
-            $found = $true
-            break
-        }
-    }
-    if (-not $found) { exit 11 }
-}
-exit 0
-"""
-            environment = dict(os.environ)
-            environment["YUKI_ACL_PATH"] = str(target)
-            environment["YUKI_USER_SID"] = user_sid
-            completed = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                check=False, capture_output=True, text=True, timeout=30, env=environment,
-            )
-            self.assertEqual(completed.returncode, 0, msg=completed.stdout + completed.stderr)
+            # Verify SE_DACL_PROTECTED through Win32 APIs. This avoids relying on
+            # PowerShell modules, which are not consistently available on hosted runners.
+            import ctypes
+            from ctypes import wintypes
+
+            advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            security_descriptor = ctypes.c_void_p()
+            owner = ctypes.c_void_p()
+            group = ctypes.c_void_p()
+            dacl = ctypes.c_void_p()
+            get_named_security_info = advapi32.GetNamedSecurityInfoW
+            get_named_security_info.argtypes = [
+                wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD,
+                ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            get_named_security_info.restype = wintypes.DWORD
+            get_control = advapi32.GetSecurityDescriptorControl
+            get_control.argtypes = [
+                ctypes.c_void_p, ctypes.POINTER(wintypes.WORD),
+                ctypes.POINTER(wintypes.DWORD),
+            ]
+            get_control.restype = wintypes.BOOL
+            local_free = kernel32.LocalFree
+            local_free.argtypes = [ctypes.c_void_p]
+            local_free.restype = ctypes.c_void_p
+            try:
+                status = get_named_security_info(
+                    str(target), 1, 0x4, ctypes.byref(owner), ctypes.byref(group),
+                    ctypes.byref(dacl), None, ctypes.byref(security_descriptor),
+                )
+                self.assertEqual(status, 0, f"GetNamedSecurityInfoW failed: {status}")
+                control = wintypes.WORD()
+                revision = wintypes.DWORD()
+                self.assertTrue(
+                    get_control(security_descriptor, ctypes.byref(control), ctypes.byref(revision)),
+                    f"GetSecurityDescriptorControl failed: {ctypes.get_last_error()}",
+                )
+                self.assertTrue(
+                    control.value & 0x1000,
+                    f"DACL is not protected (control=0x{control.value:04x})",
+                )
+            finally:
+                if security_descriptor:
+                    local_free(security_descriptor)
 
     def test_windows_acl_grants_directory_and_inherited_full_control(self):
         completed = type("Completed", (), {"stdout": "User Name,SID\r\nDOMAIN\\user,S-1-5-21-1-2-3-1001\r\n"})()
