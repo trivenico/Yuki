@@ -800,6 +800,72 @@ class ConversationStoreTests(unittest.TestCase):
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
 
+
+    def test_failed_legacy_review_migration_rolls_back_table_and_history(self):
+        import sqlite3
+        database = Path(self.tempdir.name) / "rollback-review.sqlite3"
+        store = ConversationStore(database)
+        conversation = store.create_conversation(owner_id=self.owner)
+        conversation_id, request_id = conversation["conversation_id"], "rollback-review"
+        store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="rollback", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=130_000.0):
+            store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="rollback-review-worker", ttl_seconds=60,
+            )
+            store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="rollback-call", tool_name="send_email",
+                arguments_sha256="f" * 64, lease_token="rollback-review-worker",
+            )
+            store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="rollback-call",
+                lease_token="rollback-review-worker", status="uncertain",
+            )
+        prior = store.review_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="rollback-call",
+            action="acknowledge_uncertain", reason="Must remain after failed migration.",
+        )
+        with sqlite3.connect(database) as db:
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_new")
+            db.execute("""CREATE TABLE conversation_tool_reviews (
+                review_id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                owner_id TEXT NOT NULL, request_id TEXT NOT NULL, call_id TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain')),
+                reason TEXT NOT NULL, created_at TEXT NOT NULL
+            )""")
+            db.execute("""INSERT INTO conversation_tool_reviews
+                SELECT * FROM conversation_tool_reviews_new""")
+            db.execute("DROP TABLE conversation_tool_reviews_new")
+            db.execute("CREATE TABLE migration_index_collision (value TEXT)")
+            db.execute("CREATE INDEX idx_tool_reviews_owner_execution ON migration_index_collision(value)")
+        with self.assertRaises(sqlite3.OperationalError):
+            ConversationStore(database)
+        with sqlite3.connect(database) as db:
+            schema = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_tool_reviews'"
+            ).fetchone()[0]
+            self.assertIn("'acknowledge_uncertain'", schema)
+            self.assertNotIn("confirm_provider_completed", schema)
+            self.assertEqual(
+                db.execute("SELECT review_id FROM conversation_tool_reviews").fetchone()[0],
+                prior["review_id"],
+            )
+            self.assertIsNone(db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_tool_reviews_legacy'"
+            ).fetchone())
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+
     def test_review_schema_allows_provider_completion_review_action(self):
         with self.store._connect() as db:
             schema = db.execute(
