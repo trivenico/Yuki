@@ -636,6 +636,8 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
+        # An unauthorized cross-owner request must not reach the provider adapter.
+        self.assertEqual(len(calls), 1)
 
 
     def test_provider_reconciliation_returns_service_unavailable_when_unconfigured(self):
