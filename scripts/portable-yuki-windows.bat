@@ -2,7 +2,7 @@
 setlocal
 set "YUKI_ROOT=%~dp0.."
 for %%I in ("%YUKI_ROOT%") do set "YUKI_ROOT=%%~fI"
-set "YUKI_HOME=%YUKI_ROOT%\YukiData"
+if not defined YUKI_HOME set "YUKI_HOME=%YUKI_ROOT%\YukiData"
 cd /d "%YUKI_ROOT%"
 if exist "%YUKI_ROOT%\.venv\Scripts\python.exe" (
   set "YUKI_PYTHON=%YUKI_ROOT%\.venv\Scripts\python.exe"
