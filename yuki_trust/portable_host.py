@@ -713,6 +713,13 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
         wintypes.ULONG, wintypes.LPVOID, wintypes.ULONG,
     ]
     nt_create_file.restype = ctypes.c_long
+    nt_query_directory_file = ntdll.NtQueryDirectoryFile
+    nt_query_directory_file.argtypes = [
+        wintypes.HANDLE, wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.POINTER(_IO_STATUS_BLOCK), wintypes.LPVOID, wintypes.ULONG,
+        ctypes.c_int, wintypes.BOOLEAN, ctypes.c_void_p, wintypes.BOOLEAN,
+    ]
+    nt_query_directory_file.restype = ctypes.c_long
 
     root_text = str(root)
     if root_text.startswith("\\\\?\\UNC\\"):
@@ -806,23 +813,33 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
         )
 
     def visit(directory_handle: Any, prefix: str) -> None:
-        # FileNamesInfo (class 12) records have a 12-byte fixed header:
-        # NextEntryOffset, FileIndex, FileNameLength, followed by UTF-16 name.
-        buffer_size = 16 * 1024 * 1024
-        buffer = ctypes.create_string_buffer(buffer_size)
+        # NtQueryDirectoryFile with FileNamesInformation (12) returns records
+        # containing NextEntryOffset, FileIndex, FileNameLength and UTF-16 name.
+        buffer_size = 1024 * 1024
+        first_query = True
         while True:
-            if not get_info_ex(directory_handle, 12, buffer, buffer_size):
-                error = ctypes.get_last_error()
-                if error == 18:  # ERROR_NO_MORE_FILES
-                    break
-                raise OSError(error, "Directory handle enumeration failed", prefix)
-            raw = buffer.raw
+            buffer = ctypes.create_string_buffer(buffer_size)
+            io_status = _IO_STATUS_BLOCK()
+            status = nt_query_directory_file(
+                directory_handle, None, None, None, ctypes.byref(io_status),
+                buffer, buffer_size, 12, False, None, first_query,
+            )
+            first_query = False
+            if status == ctypes.c_long(0x80000006).value:  # STATUS_NO_MORE_FILES
+                break
+            if status < 0:
+                raise OSError(status & 0xFFFFFFFF, "NtQueryDirectoryFile failed", prefix)
+            returned = int(io_status.Information)
+            if returned < 12 or returned > buffer_size:
+                raise BootstrapError("Windows directory enumeration returned an invalid buffer length.")
+            raw = buffer.raw[:returned]
             offset = 0
             while True:
-                if offset + 12 > buffer_size:
+                if offset + 12 > returned:
                     raise BootstrapError("Windows directory enumeration returned a truncated record.")
                 next_offset, _index, name_length = struct.unpack_from("<III", raw, offset)
-                if name_length % 2 or name_length > buffer_size - offset - 12:
+                record_end = offset + (next_offset if next_offset else returned - offset)
+                if name_length % 2 or name_length > record_end - offset - 12:
                     raise BootstrapError("Windows directory enumeration returned an invalid filename.")
                 name = raw[offset + 12:offset + 12 + name_length].decode("utf-16-le", errors="strict")
                 if name not in {".", ".."}:
@@ -833,11 +850,10 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
                         child = open_child(directory_handle, name)
                         try:
                             _tag_info, standard = handle_info(child)
-                            is_directory = bool(standard.Directory)
-                            if is_directory:
+                            if standard.Directory:
                                 visit(child, relative)
                             else:
-                                if get_type(child) != 1:  # FILE_TYPE_DISK
+                                if get_type(child) != 1:
                                     raise BootstrapError(f"Bundle contains a non-disk file: {relative}")
                                 before = identity(child)
                                 digest = hashlib.sha256()
@@ -860,7 +876,7 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
                             close_handle(child)
                 if next_offset == 0:
                     break
-                if next_offset < 12 or offset + next_offset >= buffer_size:
+                if next_offset < 12 or offset + next_offset > returned:
                     raise BootstrapError("Windows directory enumeration returned an invalid record offset.")
                 offset += next_offset
 
