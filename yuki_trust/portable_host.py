@@ -85,6 +85,19 @@ def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> b
     if not candidate.is_absolute() or max_bytes < 0:
         raise BootstrapError(f"{label} path or size limit is invalid.")
 
+    if os.name != "nt":
+        # macOS exposes these trusted system aliases as symlinks. Normalize
+        # only the documented roots before descriptor-relative traversal.
+        raw = str(candidate)
+        for alias, target in (
+            ("/var/", "/private/var/"),
+            ("/tmp/", "/private/tmp/"),
+            ("/Users/", "/System/Volumes/Data/Users/"),
+        ):
+            if raw.startswith(alias):
+                candidate = Path(target + raw[len(alias):])
+                break
+
     if os.name == "nt":
         try:
             with candidate.open("rb") as stream:
