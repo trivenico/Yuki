@@ -85,7 +85,8 @@ class PortableHostInstallerTests(unittest.TestCase):
                 installer.install_host_trust(self.key, link, self.state, hashlib.sha256(b"validated-ed25519-key").hexdigest())
 
     def test_windows_path_chain_rejects_reparse_point_ancestor(self):
-        target = self.root
+        target = self.root.resolve()
+        checked_path = self.install.resolve()
         original_lstat = Path.lstat
 
         def fake_lstat(path):
@@ -95,10 +96,10 @@ class PortableHostInstallerTests(unittest.TestCase):
 
         with patch.object(Path, "lstat", autospec=True, side_effect=fake_lstat):
             with self.assertRaisesRegex(BootstrapError, "junctions, or reparse points"):
-                installer._validate_windows_path_chain(self.install, "Host install")
+                installer._validate_windows_path_chain(checked_path, "Host install")
 
     def test_windows_path_chain_accepts_normal_existing_ancestors(self):
-        installer._validate_windows_path_chain(self.root / "trusted", "Host install")
+        installer._validate_windows_path_chain((self.root / "trusted").resolve(), "Host install")
 
     def test_rejects_mismatched_out_of_band_key_fingerprint(self):
         with (
