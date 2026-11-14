@@ -23,7 +23,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         (self.root / "yuki" / "app.py").write_text("print('Yuki')\n", encoding="utf-8")
 
     def _write_manifest(self):
-        manifest = create_manifest(self.root, platform="linux-x86_64", runtime_version="3.12.7")
+        manifest = create_manifest(self.root, platform="linux-x86_64", runtime_version="3.12.7", release_sequence=1)
         (self.root / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
         return manifest
 
