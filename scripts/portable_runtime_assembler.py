@@ -67,7 +67,7 @@ def assemble_portable_runtime(
         raise InputValidationError("Runtime and dependency destinations must share the same parent directory.")
 
     archive_report = validate_runtime_archive(archive, expected_sha256)
-    extraction_report = extract_zip_safely(archive, runtime_root)
+    extraction_report = extract_zip_safely(archive, runtime_root, expected_sha256=expected_sha256)
     try:
         interpreter = _runtime_python_path(runtime_root, python_relative_path)
         install_kwargs = {"timeout_seconds": timeout_seconds}
