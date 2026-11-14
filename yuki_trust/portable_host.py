@@ -500,7 +500,8 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
         )
 
     def visit(directory_handle: Any, prefix: str) -> None:
-        buffer_size = 1024 * 1024
+        # Bound memory while supporting large release directories.
+        buffer_size = 16 * 1024 * 1024
         buffer = ctypes.create_string_buffer(buffer_size)
         info_class = 15  # FileFullDirectoryRestartInfo
         while True:
