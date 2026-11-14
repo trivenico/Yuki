@@ -232,7 +232,7 @@ class ConversationStore:
             raise ValueError("lease_token must be non-empty text for fenced assistant messages.")
         if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise ValueError("expected_version must be a non-negative integer.")
-        now, message_id = self._now(), str(uuid.uuid4())
+        now, lease_now, message_id = self._now(), time.time(), str(uuid.uuid4())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -248,7 +248,7 @@ class ConversationStore:
                     active_lease = db.execute(
                         """SELECT 1 FROM conversation_generation_leases
                            WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
-                        (conversation_id, owner, lease_token.strip(), now),
+                        (conversation_id, owner, lease_token.strip(), lease_now),
                     ).fetchone()
                     if active_lease is None:
                         raise ConversationConflict("generation lease expired or is no longer owned by this worker.")
