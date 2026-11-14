@@ -129,8 +129,10 @@ def audit_bundle(root: Path, platform_name: str, runner=subprocess.run) -> dict:
             raise NativeAuditError(f"Unsupported platform: {platform_name}")
         results.append({"path": binary.relative_to(root).as_posix(), **result})
     failures = [item for item in results if item.get("ok") is False]
+    no_native_binaries = not results
     return {"platform": platform_name, "binary_count": len(results), "results": results,
-            "metadata_failures": len(failures),
+            "no_native_binaries": no_native_binaries,
+            "metadata_failures": len(failures) + int(no_native_binaries),
             "resolution_fully_verified": False}
 
 
