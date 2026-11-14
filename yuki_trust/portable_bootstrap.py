@@ -302,19 +302,14 @@ def verify_signed_bundle(
         manifest_bytes = _read_bundle_metadata_posix(root, MANIFEST_NAME, MAX_MANIFEST_BYTES)
         signature_bytes = _read_bundle_metadata_posix(root, SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
     else:
-        manifest_path = root / MANIFEST_NAME
-        signature_path = root / SIGNATURE_NAME
-        for path, label, limit in (
-            (manifest_path, "Runtime manifest", MAX_MANIFEST_BYTES),
-            (signature_path, "Runtime signature", MAX_SIGNATURE_BYTES),
-        ):
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
-                raise BootstrapError(f"{label} is missing, oversized, or not a regular file.")
-        try:
-            manifest_bytes = manifest_path.read_bytes()
-            signature_bytes = signature_path.read_bytes()
-        except OSError as exc:
-            raise BootstrapError("Runtime manifest or signature is unreadable.") from exc
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        manifest_bytes = _read_host_file_secure(
+            root / MANIFEST_NAME, label="Runtime manifest", max_bytes=MAX_MANIFEST_BYTES
+        )
+        signature_bytes = _read_host_file_secure(
+            root / SIGNATURE_NAME, label="Runtime signature", max_bytes=MAX_SIGNATURE_BYTES
+        )
 
     try:
         value = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
