@@ -335,7 +335,7 @@ class ConversationService:
         self.store.finish_generation(
             owner_id=owner_id, conversation_id=conversation_id,
             request_id=request_id,
-            status=status if status in {"completed", "failed", "cancelled"} else "failed",
+            status=status if status in {"completed", "failed", "cancelled", "interrupted"} else "failed",
         )
         return {
             "conversation_id": conversation_id,
