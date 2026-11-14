@@ -220,6 +220,50 @@ class ProviderOutcomeTests(unittest.TestCase):
         self.assertNotIn("record", events)
         self.assertEqual(events[-1], "release")
 
+    def test_reconciler_cannot_persist_after_another_worker_takes_over_claim(self):
+        import time
+        from core.conversation_store import ConversationConflict
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+        events = []
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                time.sleep(1.2)
+                return ProviderOutcomeTests().evidence()
+        class Store:
+            replacement_claimed = False
+            def list_tool_executions(self, **kwargs):
+                return [{
+                    "execution_id": "execution-1", "call_id": "call-1",
+                    "tool_name": "send_email", "idempotency_key": "a" * 64,
+                    "arguments_sha256": "b" * 64, "status": "uncertain",
+                }]
+            def acquire_provider_reconciliation_lease(self, **kwargs):
+                events.append(("claim", kwargs["lease_token"]))
+            def renew_provider_reconciliation_lease(self, **kwargs):
+                self.replacement_claimed = True
+                events.append(("replacement-claim", "worker-new"))
+                raise ConversationConflict("provider reconciliation claim expired or is no longer owned by this worker.")
+            def release_provider_reconciliation_lease(self, **kwargs):
+                events.append(("release", kwargs["lease_token"]))
+                return False
+            def record_provider_outcome_evidence(self, **kwargs):
+                events.append(("record", kwargs["reconciliation_lease_token"]))
+                raise AssertionError("stale worker must not persist evidence")
+        store = Store()
+        reconciler = ProviderOutcomeReconciler(
+            store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+            lease_ttl_seconds=5, lease_renew_interval_seconds=1,
+        )
+        with self.assertRaisesRegex(ConversationConflict, "no longer owned"):
+            reconciler.reconcile(
+                owner_id="owner-1", conversation_id="conversation-1",
+                request_id="request-1", call_id="call-1",
+            )
+        self.assertTrue(store.replacement_claimed)
+        self.assertNotIn("record", [event[0] for event in events])
+        self.assertEqual(events[-1][0], "release")
+        self.assertEqual(events[-1][1], events[0][1])
+
     def test_registry_does_not_guess_missing_provider_adapter(self):
         from core.provider_outcome import ProviderOutcomeRegistry
         registry = ProviderOutcomeRegistry({})
