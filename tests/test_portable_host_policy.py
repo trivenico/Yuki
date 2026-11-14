@@ -45,7 +45,7 @@ class PortableHostPolicyTests(unittest.TestCase):
         self.assertEqual(policy["expected_platform"], "linux-x86_64")
         self.assertEqual(policy["python"], "runtime/bin/python3")
         self.assertEqual(policy["entrypoint"], "portable_entry.py")
-        self.assertEqual(policy["anti_rollback_state"], str(self.state_path))
+        self.assertEqual(policy["anti_rollback_state"], str(self.state_path.parent.resolve() / self.state_path.name))
 
     def test_launch_delegates_only_host_policy_values(self):
         with patch("yuki_trust.portable_host.run_verified_bundle", return_value=17) as launch:
