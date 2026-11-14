@@ -5,7 +5,6 @@ identity from request payloads and never constructs an unguarded tool runtime.
 """
 from __future__ import annotations
 
-import threading
 import uuid
 from typing import Any, Sequence
 
@@ -33,7 +32,6 @@ class ConversationService:
             raise TypeError("agent_loop_for_owner must be callable.")
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
-        self._lock = threading.RLock()
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
@@ -73,152 +71,151 @@ class ConversationService:
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
 
-        with self._lock:
-            starting_version = self.store.get_conversation(
-                owner_id=owner_id, conversation_id=conversation_id
-            )["version"]
-            recovered_request_ids = set()
-            # Reconcile durable running records before accepting retries. Never
-            # re-execute a model/tool sequence after a process crash: side effects
-            # may already have happened before the crash.
-            pending = self.store.list_interrupted_generations(
-                owner_id=owner_id, conversation_id=conversation_id, limit=100
-            )
-            for generation in pending:
-                recovered_request_ids.add(generation["request_id"])
-                conversation_now = self.store.get_conversation(
-                    owner_id=owner_id, conversation_id=conversation_id
-                )
-                messages_now = self.store.list_messages(
-                    owner_id=owner_id, conversation_id=conversation_id, limit=200
-                )
-                user_message = next(
-                    (item for item in messages_now if item["message_id"] == generation["user_message_id"]),
-                    None,
-                )
-                following = self.store.list_messages(
-                    owner_id=owner_id, conversation_id=conversation_id,
-                    after_sequence=user_message["sequence"] if user_message else 0,
-                    limit=1,
-                ) if user_message else []
-                if following and following[0]["role"] == "assistant":
-                    self.store.finish_generation(
-                        owner_id=owner_id, conversation_id=conversation_id,
-                        request_id=generation["request_id"], status="completed",
-                    )
-                elif user_message is not None:
-                    self.store.append_message(
-                        owner_id=owner_id, conversation_id=conversation_id,
-                        role="assistant",
-                        content="This response was interrupted before completion. Please submit a new request; Yuki will not automatically repeat potentially side-effecting actions.",
-                        idempotency_key="assistant:" + generation["request_id"],
-                        expected_version=conversation_now["version"],
-                    )
-                    self.store.finish_generation(
-                        owner_id=owner_id, conversation_id=conversation_id,
-                        request_id=generation["request_id"], status="interrupted",
-                    )
-            # Check ownership and stale versions before invoking a model.
-            conversation = self.store.get_conversation(
+        starting_version = self.store.get_conversation(
+            owner_id=owner_id, conversation_id=conversation_id
+        )["version"]
+        recovered_request_ids = set()
+        # Reconcile durable running records before accepting retries. Never
+        # re-execute a model/tool sequence after a process crash: side effects
+        # may already have happened before the crash.
+        pending = self.store.list_interrupted_generations(
+            owner_id=owner_id, conversation_id=conversation_id, limit=100
+        )
+        for generation in pending:
+            recovered_request_ids.add(generation["request_id"])
+            conversation_now = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
             )
-            if (recovered_request_ids and request_id not in recovered_request_ids
-                    and expected_version == starting_version):
-                # Recovery appended the missing assistant turn. Advance this new
-                # request's optimistic version by exactly those reconciled writes.
-                expected_version = conversation["version"]
-            existing_messages = self.store.list_messages(
+            messages_now = self.store.list_messages(
                 owner_id=owner_id, conversation_id=conversation_id, limit=200
             )
-            if conversation["version"] != expected_version:
-                # A retry with the same request ID is allowed to retrieve its
-                # already persisted answer; all other stale writes fail closed.
-                duplicate = self.store.append_message(
+            user_message = next(
+                (item for item in messages_now if item["message_id"] == generation["user_message_id"]),
+                None,
+            )
+            following = self.store.list_messages(
+                owner_id=owner_id, conversation_id=conversation_id,
+                after_sequence=user_message["sequence"] if user_message else 0,
+                limit=1,
+            ) if user_message else []
+            if following and following[0]["role"] == "assistant":
+                self.store.finish_generation(
                     owner_id=owner_id, conversation_id=conversation_id,
-                    role="user", content=user_text, idempotency_key=request_id,
-                    expected_version=expected_version,
+                    request_id=generation["request_id"], status="completed",
                 )
-                if duplicate["created"]:
-                    raise ConversationConflict("conversation version changed.")
-                return self._replay_or_conflict(
+            elif user_message is not None:
+                self.store.append_message(
                     owner_id=owner_id, conversation_id=conversation_id,
-                    user_message=duplicate["message"],
+                    role="assistant",
+                    content="This response was interrupted before completion. Please submit a new request; Yuki will not automatically repeat potentially side-effecting actions.",
+                    idempotency_key="assistant:" + generation["request_id"],
+                    expected_version=conversation_now["version"],
                 )
-
-            if existing_messages and existing_messages[-1]["role"] == "user":
-                raise ConversationConflict(
-                    "the previous turn has no persisted assistant response; reconcile it before sending another."
+                self.store.finish_generation(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    request_id=generation["request_id"], status="interrupted",
                 )
-
-            # Resolve the execution loop from the authenticated owner identity.
-            # The caller cannot supply an owner ID through the conversation payload.
-            agent_loop = self.agent_loop
-            if self.agent_loop_for_owner is not None:
-                agent_loop = self.agent_loop_for_owner(owner_id)
-                if not isinstance(agent_loop, AgentExecutionLoop):
-                    raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
-
-            user_result = self.store.append_message(
+        # Check ownership and stale versions before invoking a model.
+        conversation = self.store.get_conversation(
+            owner_id=owner_id, conversation_id=conversation_id
+        )
+        if (recovered_request_ids and request_id not in recovered_request_ids
+                and expected_version == starting_version):
+            # Recovery appended the missing assistant turn. Advance this new
+            # request's optimistic version by exactly those reconciled writes.
+            expected_version = conversation["version"]
+        existing_messages = self.store.list_messages(
+            owner_id=owner_id, conversation_id=conversation_id, limit=200
+        )
+        if conversation["version"] != expected_version:
+            # A retry with the same request ID is allowed to retrieve its
+            # already persisted answer; all other stale writes fail closed.
+            duplicate = self.store.append_message(
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="user", content=user_text, idempotency_key=request_id,
-                expected_version=expected_version, generation_request_id=request_id,
+                expected_version=expected_version,
             )
-            if not user_result["created"]:
-                return self._replay_or_conflict(
-                    owner_id=owner_id, conversation_id=conversation_id,
-                    user_message=user_result["message"],
+            if duplicate["created"]:
+                raise ConversationConflict("conversation version changed.")
+            return self._replay_or_conflict(
+                owner_id=owner_id, conversation_id=conversation_id,
+                user_message=duplicate["message"],
+            )
+
+        if existing_messages and existing_messages[-1]["role"] == "user":
+            raise ConversationConflict(
+                "the previous turn has no persisted assistant response; reconcile it before sending another."
+            )
+
+        # Resolve the execution loop from the authenticated owner identity.
+        # The caller cannot supply an owner ID through the conversation payload.
+        agent_loop = self.agent_loop
+        if self.agent_loop_for_owner is not None:
+            agent_loop = self.agent_loop_for_owner(owner_id)
+            if not isinstance(agent_loop, AgentExecutionLoop):
+                raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
+
+        user_result = self.store.append_message(
+            owner_id=owner_id, conversation_id=conversation_id,
+            role="user", content=user_text, idempotency_key=request_id,
+            expected_version=expected_version, generation_request_id=request_id,
+        )
+        if not user_result["created"]:
+            return self._replay_or_conflict(
+                owner_id=owner_id, conversation_id=conversation_id,
+                user_message=user_result["message"],
+            )
+
+        history = [
+            {"role": item["role"], "content": item["content"]}
+            for item in existing_messages[-126:]
+        ]
+        status, answer, model_turns, tool_calls = "completed", "", 0, 0
+        self.store.update_generation_checkpoint(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, checkpoint={"phase": "model_running"},
+        )
+        try:
+            kwargs = {"tools": list(tools), "history": history}
+            if system_text is not None:
+                kwargs["system_text"] = system_text
+            result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+            status = result.status
+            model_turns = result.model_turns
+            tool_calls = result.tool_calls
+            if result.status == "completed":
+                answer = result.text
+            elif result.status == "cancelled":
+                answer = "Generation was stopped at your request."
+            else:
+                answer = (
+                    "I couldn't complete that request within the current execution limits. "
+                    "Please try a smaller or more specific request."
                 )
+        except Exception:
+            status = "failed"
+            answer = "I couldn't complete that request because the AI service or a guarded operation failed."
 
-            history = [
-                {"role": item["role"], "content": item["content"]}
-                for item in existing_messages[-126:]
-            ]
-            status, answer, model_turns, tool_calls = "completed", "", 0, 0
-            self.store.update_generation_checkpoint(
-                owner_id=owner_id, conversation_id=conversation_id,
-                request_id=request_id, checkpoint={"phase": "model_running"},
-            )
-            try:
-                kwargs = {"tools": list(tools), "history": history}
-                if system_text is not None:
-                    kwargs["system_text"] = system_text
-                result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
-                status = result.status
-                model_turns = result.model_turns
-                tool_calls = result.tool_calls
-                if result.status == "completed":
-                    answer = result.text
-                elif result.status == "cancelled":
-                    answer = "Generation was stopped at your request."
-                else:
-                    answer = (
-                        "I couldn't complete that request within the current execution limits. "
-                        "Please try a smaller or more specific request."
-                    )
-            except Exception:
-                status = "failed"
-                answer = "I couldn't complete that request because the AI service or a guarded operation failed."
-
-            assistant_result = self.store.append_message(
-                owner_id=owner_id, conversation_id=conversation_id,
-                role="assistant", content=answer,
-                idempotency_key=f"assistant:{request_id}",
-                expected_version=user_result["version"],
-            )
-            self.store.finish_generation(
-                owner_id=owner_id, conversation_id=conversation_id,
-                request_id=request_id,
-                status=status if status in {"completed", "failed", "cancelled"} else "failed",
-            )
-            return {
-                "conversation_id": conversation_id,
-                "status": status,
-                "answer": assistant_result["message"]["content"],
-                "version": assistant_result["version"],
-                "model_turns": model_turns,
-                "tool_calls": tool_calls,
-                "replayed": False,
-            }
+        assistant_result = self.store.append_message(
+            owner_id=owner_id, conversation_id=conversation_id,
+            role="assistant", content=answer,
+            idempotency_key=f"assistant:{request_id}",
+            expected_version=user_result["version"],
+        )
+        self.store.finish_generation(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id,
+            status=status if status in {"completed", "failed", "cancelled"} else "failed",
+        )
+        return {
+            "conversation_id": conversation_id,
+            "status": status,
+            "answer": assistant_result["message"]["content"],
+            "version": assistant_result["version"],
+            "model_turns": model_turns,
+            "tool_calls": tool_calls,
+            "replayed": False,
+        }
 
     def _replay_or_conflict(self, *, owner_id: str, conversation_id: str, user_message: dict):
         following = self.store.list_messages(
