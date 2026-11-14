@@ -429,9 +429,11 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         import shutil
         from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
 
-        source_root = self.root / "race-source"
-        moved_root = self.root / "race-source-original"
+        source_parent = self.root / "race-parent"
+        moved_parent = self.root / "race-parent-original"
+        source_root = source_parent / "race-source"
         target_root = self.root / "race-target"
+        source_parent.mkdir()
         shutil.copytree(self.bundle, source_root)
         target_root.mkdir()
         manifest = verify_signed_bundle(self.bundle, self.public_path)
@@ -446,9 +448,16 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 # The source root has already been opened and pinned. Rename
                 # it after opening; descendant reads must stay anchored to that
                 # original directory object, not the replacement at this path.
-                source_root.rename(moved_root)
-                source_root.mkdir()
-                (source_root / "payload.txt").write_text("attacker replacement", encoding="utf-8")
+                # Rename the containing directory rather than the open
+                # directory itself: Windows disallows renaming an open directory
+                # even when its handle grants FILE_SHARE_DELETE. The pinned child
+                # handle must still read the original tree after its parent path
+                # is replaced with an attacker-controlled tree.
+                source_parent.rename(moved_parent)
+                source_parent.mkdir()
+                replacement_root = source_parent / "race-source"
+                replacement_root.mkdir()
+                (replacement_root / "payload.txt").write_text("attacker replacement", encoding="utf-8")
             return resolved
 
         with patch.object(Path, "absolute", new=replace_source_after_it_is_pinned):
