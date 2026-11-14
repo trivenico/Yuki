@@ -60,6 +60,32 @@ class ConversationStoreTests(unittest.TestCase):
             ))
         self.assertEqual(second["expires_at"], 1_036.0)
 
+    def test_lease_renewal_extends_only_the_live_matching_fencing_token(self):
+        conversation_id = self.conversation["conversation_id"]
+        with patch("core.conversation_store.time.time", return_value=2_000.0):
+            initial = self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="renewable-worker", ttl_seconds=10,
+            )
+        with patch("core.conversation_store.time.time", return_value=2_005.0):
+            renewed = self.store.renew_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="renewable-worker", ttl_seconds=30,
+            )
+            self.assertEqual(renewed["expires_at"], 2_035.0)
+            with self.assertRaises(ConversationConflict):
+                self.store.renew_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="stale-worker", ttl_seconds=30,
+                )
+        self.assertGreater(renewed["expires_at"], initial["expires_at"])
+        with patch("core.conversation_store.time.time", return_value=2_036.0):
+            with self.assertRaisesRegex(ConversationConflict, "expired or is no longer owned"):
+                self.store.renew_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="renewable-worker", ttl_seconds=30,
+                )
+
     def test_create_append_and_list_preserve_sequence_and_version(self):
         user = self.append("user", "Hello Yuki", "user-1", 0)
         assistant = self.append("assistant", "Hello. How can I help?", "assistant-1", 1)
