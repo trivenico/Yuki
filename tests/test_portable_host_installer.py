@@ -98,6 +98,19 @@ class PortableHostInstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(BootstrapError, "64 hexadecimal"):
                 installer.install_host_trust(self.key, self.install, self.state, "not-a-fingerprint")
 
+    def test_windows_acl_grants_directory_and_inherited_full_control(self):
+        completed = type("Completed", (), {"stdout": 'User Name,SID\\r\\nDOMAIN\\\\user,S-1-5-21-1-2-3-1001\\r\\n'})()
+        with (
+            patch.object(installer.os, "name", "nt"),
+            patch.object(installer.subprocess, "run", return_value=completed) as run,
+        ):
+            installer._apply_windows_acl(self.install)
+        commands = [call.args[0] for call in run.call_args_list]
+        acl_command = commands[1]
+        self.assertIn("*S-1-5-21-1-2-3-1001:(F)(OI)(CI)F", acl_command)
+        self.assertIn("*S-1-5-18:(F)(OI)(CI)F", acl_command)
+        self.assertIn("*S-1-5-32-544:(F)(OI)(CI)F", acl_command)
+
 
 if __name__ == "__main__":
     unittest.main()
