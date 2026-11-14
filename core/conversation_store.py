@@ -785,6 +785,16 @@ class ConversationStore:
                 ).fetchone()
                 if active_claim is None:
                     raise ConversationConflict("provider reconciliation claim expired or is no longer owned by this worker.")
+                existing_provider = db.execute(
+                    """SELECT provider FROM conversation_provider_outcome_evidence
+                       WHERE execution_id=? LIMIT 1""",
+                    (execution["execution_id"],),
+                ).fetchone()
+                if (existing_provider is not None
+                        and existing_provider["provider"] != evidence.provider):
+                    raise ConversationConflict(
+                        "provider identity cannot change during execution reconciliation."
+                    )
                 # SQLite's IMMEDIATE transaction serializes this check across
                 # processes. Repeated delivery of identical provider evidence
                 # returns the original ledger entry instead of duplicating it.
