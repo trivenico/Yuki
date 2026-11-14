@@ -185,11 +185,9 @@ class ConversationService:
             owner_id=owner_id, conversation_id=conversation_id, limit=100
         )
         for generation in pending:
-            # The current request is marked running when its user message is
-            # persisted immediately before entering this method. It is not a
-            # crash-recovery candidate; only older requests may be reconciled.
-            if generation["request_id"] == request_id:
-                continue
+            # A matching request ID here is a prior durable attempt, not the
+            # current call: new generation rows are created only after this
+            # recovery pass. Reconcile it before considering idempotent replay.
             recovered_request_ids.add(generation["request_id"])
             self.store.mark_started_tool_executions_uncertain(
                 owner_id=owner_id, conversation_id=conversation_id,
