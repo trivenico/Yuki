@@ -62,10 +62,12 @@ def _validate_host_parent_directories(path: Path, *, label: str) -> None:
 
 def _host_file(path: str | Path, *, bundle: Path, label: str) -> Path:
     candidate = Path(path).expanduser()
-    _validate_host_parent_directories(candidate, label=label)
     if candidate.is_symlink() or not candidate.is_file():
         raise BootstrapError(f"{label} must be a regular, non-symlink host file.")
     resolved = candidate.resolve(strict=True)
+    # Validate the canonical target path, not lexical aliases such as macOS
+    # /var -> /private/var. The final file itself must still not be a symlink.
+    _validate_host_parent_directories(resolved, label=label)
     try:
         resolved.relative_to(bundle)
     except ValueError:
