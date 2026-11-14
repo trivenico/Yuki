@@ -137,14 +137,15 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         payload = self.bundle / "payload.txt"
         outside = self.root / "replacement.txt"
         outside.write_text("replacement content", encoding="utf-8")
-        original_open = Path.open
+        path_type = type(payload)
+        original_open = path_type.open
 
         def open_replacement(path, *args, **kwargs):
             if path.name == payload.name and path.parent == payload.parent and args[:1] == ("rb",):
                 return original_open(outside, *args, **kwargs)
             return original_open(path, *args, **kwargs)
 
-        with patch.object(Path, "open", new=open_replacement):
+        with patch.object(path_type, "open", new=open_replacement):
             with self.assertRaisesRegex(BootstrapError, "changed while being opened|inventory or file hashes"):
                 verify_signed_bundle(self.bundle, self.public_path)
 
@@ -329,8 +330,13 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         from yuki_trust.portable_host import _read_host_file_secure
         with patch("yuki_trust.portable_host._read_host_file_secure", wraps=_read_host_file_secure) as secure_read:
             verify_signed_bundle(self.bundle, self.public_path)
-        secure_read.assert_any_call(
-            self.public_path, label="Host trust anchor", max_bytes=65536
+        self.assertTrue(
+            any(
+                Path(call.args[0]).name == self.public_path.name
+                and call.kwargs == {"label": "Host trust anchor", "max_bytes": 65536}
+                for call in secure_read.call_args_list
+            ),
+            "verification must read the trust anchor through the bounded secure reader",
         )
 
     def test_rejects_trust_anchor_inside_bundle(self):
