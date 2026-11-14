@@ -2,9 +2,11 @@ import hashlib
 import json
 import os
 import sys
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts import install_portable_host as installer
@@ -82,6 +84,23 @@ class PortableHostInstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(BootstrapError, "real directory, not a symlink"):
                 installer.install_host_trust(self.key, link, self.state, hashlib.sha256(b"validated-ed25519-key").hexdigest())
 
+    def test_windows_path_chain_rejects_reparse_point_ancestor(self):
+        target = self.root.resolve()
+        checked_path = self.install.resolve()
+        original_lstat = Path.lstat
+
+        def fake_lstat(path):
+            if path == target:
+                return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x0400)
+            return original_lstat(path)
+
+        with patch.object(Path, "lstat", autospec=True, side_effect=fake_lstat):
+            with self.assertRaisesRegex(BootstrapError, "junctions, or reparse points"):
+                installer._validate_windows_path_chain(checked_path, "Host install")
+
+    def test_windows_path_chain_accepts_normal_existing_ancestors(self):
+        installer._validate_windows_path_chain((self.root / "trusted").resolve(), "Host install")
+
     def test_rejects_mismatched_out_of_band_key_fingerprint(self):
         with (
             patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")),
@@ -109,6 +128,47 @@ class PortableHostInstallerTests(unittest.TestCase):
         self.assertTrue(source.endswith("\n"))
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertTrue(Path(result["public_key"]).is_file())
+
+    @unittest.skipUnless(os.name == "nt", "requires real Windows filesystem ACLs")
+    def test_windows_acl_is_enforced_on_real_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            installer._apply_windows_acl(target)
+
+            identity = subprocess.run(
+                ["whoami", "/user", "/fo", "csv", "/nh"],
+                check=True, capture_output=True, text=True, timeout=10,
+            ).stdout
+            user_sid = __import__("csv").reader(identity.splitlines())
+            user_sid = list(user_sid)[-1][-1].strip()
+            script = r"""
+$acl = Get-Acl -LiteralPath $env:YUKI_ACL_PATH
+if (-not $acl.AreAccessRulesProtected) { exit 10 }
+$expected = @($env:YUKI_USER_SID, 'S-1-5-18', 'S-1-5-32-544')
+$required = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit -bor [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
+foreach ($sid in $expected) {
+    $found = $false
+    foreach ($rule in $acl.Access) {
+        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+        try { $actual = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+        if ($actual -eq $sid -and
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl -and
+            ($rule.InheritanceFlags -band $required) -eq $required) {
+            $found = $true
+            break
+        }
+    }
+    if (-not $found) { exit 11 }
+}
+exit 0
+"""
+            environment = dict(os.environ)
+            environment["YUKI_ACL_PATH"] = str(target)
+            environment["YUKI_USER_SID"] = user_sid
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                check=True, capture_output=True, text=True, timeout=30, env=environment,
+            )
 
     def test_windows_acl_grants_directory_and_inherited_full_control(self):
         completed = type("Completed", (), {"stdout": "User Name,SID\r\nDOMAIN\\user,S-1-5-21-1-2-3-1001\r\n"})()
