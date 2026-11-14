@@ -184,13 +184,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-sha256", required=True)
     parser.add_argument("--requirements-lock", required=True, type=Path)
     parser.add_argument("--wheelhouse", required=True, type=Path)
+    parser.add_argument("--install-runtime-root", type=Path)
     parser.add_argument("--install-python", type=Path)
     parser.add_argument("--install-target", type=Path)
     parser.add_argument("--install-timeout", type=int, default=1800)
     args = parser.parse_args(argv)
     try:
-        if bool(args.install_python) != bool(args.install_target):
-            raise InputValidationError("--install-python and --install-target must be supplied together.")
+        install_args = (args.install_runtime_root, args.install_python, args.install_target)
+        if any(install_args) and not all(install_args):
+            raise InputValidationError("--install-runtime-root, --install-python and --install-target must be supplied together.")
         report = {
             "runtime": validate_runtime_archive(args.runtime_archive, args.runtime_sha256),
             "dependencies": validate_offline_wheelhouse(args.requirements_lock, args.wheelhouse),
