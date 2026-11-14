@@ -20,6 +20,24 @@ from scripts.portable_runtime_inputs import InputValidationError
 
 MANIFEST_NAME = "runtime-manifest.json"
 SIGNATURE_NAME = "runtime-manifest.sig"
+_WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def _validate_relative_path(relative: str) -> None:
+    parts = relative.split("/")
+    if not relative or "\\\\" in relative or any(part in {"", ".", ".."} for part in parts):
+        raise InputValidationError("Bundle contains a non-canonical relative path.")
+    for part in parts:
+        if (
+            part.endswith((" ", "."))
+            or any(ord(char) < 32 or char in '<>:"|?*' for char in part)
+            or part.split(".", 1)[0].rstrip(" .").upper() in _WINDOWS_RESERVED
+        ):
+            raise InputValidationError(f"Bundle path is not portable across operating systems: {relative}")
 
 
 def inventory_bundle(root: Path) -> list[dict]:
@@ -40,6 +58,7 @@ def inventory_bundle(root: Path) -> list[dict]:
         for name in names:
             path = current_path / name
             relative = path.relative_to(root).as_posix()
+            _validate_relative_path(relative)
             if relative in {MANIFEST_NAME, SIGNATURE_NAME}:
                 raise InputValidationError("Refusing to overwrite an existing manifest or signature.")
             info = path.lstat()
