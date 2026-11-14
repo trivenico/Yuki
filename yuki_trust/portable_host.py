@@ -342,6 +342,277 @@ def _copy_windows_file_handle_secure(
 
 
 
+
+def _stage_windows_bundle_handle_secure(
+    source_root: str | Path,
+    target_root: str | Path,
+    files: list[dict[str, Any]],
+    *,
+    manifest_name: str,
+    signature_name: str,
+    max_manifest_bytes: int,
+    max_signature_bytes: int,
+) -> None:
+    """Copy authenticated bundle entries using only pinned, relative NT handles."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _UNICODE_STRING(ctypes.Structure):
+        _fields_ = [("Length", wintypes.USHORT), ("MaximumLength", wintypes.USHORT), ("Buffer", wintypes.LPWSTR)]
+
+    class _OBJECT_ATTRIBUTES(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.ULONG), ("RootDirectory", wintypes.HANDLE),
+            ("ObjectName", ctypes.POINTER(_UNICODE_STRING)), ("Attributes", wintypes.ULONG),
+            ("SecurityDescriptor", wintypes.LPVOID), ("SecurityQualityOfService", wintypes.LPVOID),
+        ]
+
+    class _IO_STATUS_BLOCK(ctypes.Structure):
+        _fields_ = [("Status", ctypes.c_void_p), ("Information", ctypes.c_size_t)]
+
+    class _TAG_INFO(ctypes.Structure):
+        _fields_ = [("FileAttributes", wintypes.DWORD), ("ReparseTag", wintypes.DWORD)]
+
+    class _STANDARD_INFO(ctypes.Structure):
+        _fields_ = [
+            ("AllocationSize", ctypes.c_longlong), ("EndOfFile", ctypes.c_longlong),
+            ("NumberOfLinks", wintypes.DWORD), ("DeletePending", wintypes.BOOLEAN),
+            ("Directory", wintypes.BOOLEAN),
+        ]
+
+    class _HANDLE_INFO(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime_dwLowDateTime", wintypes.DWORD), ("ftCreationTime_dwHighDateTime", wintypes.DWORD),
+            ("ftLastAccessTime_dwLowDateTime", wintypes.DWORD), ("ftLastAccessTime_dwHighDateTime", wintypes.DWORD),
+            ("ftLastWriteTime_dwLowDateTime", wintypes.DWORD), ("ftLastWriteTime_dwHighDateTime", wintypes.DWORD),
+            ("dwVolumeSerialNumber", wintypes.DWORD), ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD), ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD), ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ntdll = ctypes.WinDLL("ntdll")
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    get_info = kernel32.GetFileInformationByHandle
+    get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(_HANDLE_INFO)]
+    get_info.restype = wintypes.BOOL
+    get_info_ex = kernel32.GetFileInformationByHandleEx
+    get_info_ex.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    get_info_ex.restype = wintypes.BOOL
+    read_file = kernel32.ReadFile
+    read_file.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+    read_file.restype = wintypes.BOOL
+    write_file = kernel32.WriteFile
+    write_file.argtypes = [wintypes.HANDLE, wintypes.LPCVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+    write_file.restype = wintypes.BOOL
+    nt_create_file = ntdll.NtCreateFile
+    nt_create_file.argtypes = [
+        ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, ctypes.POINTER(_OBJECT_ATTRIBUTES),
+        ctypes.POINTER(_IO_STATUS_BLOCK), ctypes.c_void_p, wintypes.ULONG, wintypes.ULONG,
+        wintypes.ULONG, wintypes.ULONG, wintypes.LPVOID, wintypes.ULONG,
+    ]
+    nt_create_file.restype = ctypes.c_long
+
+    def native_path(path: str | Path) -> str:
+        value = str(Path(path).absolute())
+        if value.startswith("\\\\?\\UNC\\"):
+            return "\\??\\UNC\\" + value[8:]
+        if value.startswith("\\\\?\\"):
+            return "\\??\\" + value[4:]
+        if value.startswith("\\\\"):
+            return "\\??\\UNC\\" + value[2:]
+        return "\\??\\" + value
+
+    def nt_open(parent: Any, name: str, *, directory: bool, create: bool = False) -> Any:
+        if (
+            not name or name in {".", ".."} or "\x00" in name or
+            any(ch in name for ch in ("/", "\\", ":")) or
+            name.endswith((".", " "))
+        ):
+            raise BootstrapError("Bundle contains an invalid Windows path component.")
+        device_stem = name.split(".", 1)[0].rstrip(" ").upper()
+        if device_stem in {"CON", "PRN", "AUX", "NUL"} or (
+            len(device_stem) == 4 and device_stem[:3] in {"COM", "LPT"} and device_stem[3] in "123456789"
+        ):
+            raise BootstrapError("Bundle contains a reserved Windows device name.")
+        encoded = name.encode("utf-16-le")
+        name_buffer = ctypes.create_unicode_buffer(name)
+        unicode_name = _UNICODE_STRING(len(encoded), len(encoded), ctypes.cast(name_buffer, wintypes.LPWSTR))
+        attrs = _OBJECT_ATTRIBUTES(
+            ctypes.sizeof(_OBJECT_ATTRIBUTES), parent, ctypes.pointer(unicode_name),
+            0x00000040, None, None,
+        )
+        io_status = _IO_STATUS_BLOCK()
+        handle = wintypes.HANDLE()
+        desired = 0x00100087 if directory else (0x00100081 if not create else 0x00100082)
+        disposition = 2 if create else 1  # FILE_CREATE / FILE_OPEN
+        options = 0x00200000 | 0x00000020 | (0x00000001 if directory else 0x00000040)
+        status = nt_create_file(
+            ctypes.byref(handle), desired, ctypes.byref(attrs), ctypes.byref(io_status),
+            None, 0x00000080, 0x00000001, disposition, options, None, 0,
+        )
+        if status < 0:
+            raise OSError(status & 0xFFFFFFFF, "NtCreateFile relative staging open failed", name)
+        return handle
+
+    def open_root(path: str | Path) -> Any:
+        value = native_path(path)
+        encoded = value.encode("utf-16-le")
+        if not encoded or len(encoded) > 0xFFFC:
+            raise BootstrapError("Portable staging root path is invalid.")
+        buffer = ctypes.create_unicode_buffer(value)
+        unicode_name = _UNICODE_STRING(len(encoded), len(encoded), ctypes.cast(buffer, wintypes.LPWSTR))
+        attrs = _OBJECT_ATTRIBUTES(
+            ctypes.sizeof(_OBJECT_ATTRIBUTES), None, ctypes.pointer(unicode_name),
+            0x00000040, None, None,
+        )
+        io_status = _IO_STATUS_BLOCK()
+        handle = wintypes.HANDLE()
+        status = nt_create_file(
+            ctypes.byref(handle), 0x00100087, ctypes.byref(attrs), ctypes.byref(io_status),
+            None, 0x00000080, 0x00000001, 1,
+            0x00200000 | 0x00000020 | 0x00000001, None, 0,
+        )
+        if status < 0:
+            raise OSError(status & 0xFFFFFFFF, "NtCreateFile staging root open failed", str(path))
+        return handle
+
+    def handle_metadata(handle: Any) -> tuple[_TAG_INFO, _STANDARD_INFO]:
+        tag = _TAG_INFO()
+        standard = _STANDARD_INFO()
+        if not get_info_ex(handle, 9, ctypes.byref(tag), ctypes.sizeof(tag)):
+            raise OSError(ctypes.get_last_error(), "Unable to inspect staged handle attributes")
+        if not get_info_ex(handle, 1, ctypes.byref(standard), ctypes.sizeof(standard)):
+            raise OSError(ctypes.get_last_error(), "Unable to inspect staged handle type")
+        if tag.FileAttributes & 0x00000400:
+            raise BootstrapError("Bundle staging encountered a reparse point.")
+        return tag, standard
+
+    def handle_identity(handle: Any) -> tuple[int, ...]:
+        info = _HANDLE_INFO()
+        if not get_info(handle, ctypes.byref(info)):
+            raise OSError(ctypes.get_last_error(), "Unable to inspect staged file identity")
+        return (
+            info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow,
+            info.nFileSizeHigh, info.nFileSizeLow,
+            info.ftLastWriteTime_dwHighDateTime, info.ftLastWriteTime_dwLowDateTime,
+            info.ftCreationTime_dwHighDateTime, info.ftCreationTime_dwLowDateTime,
+        )
+
+    source_handle = open_root(source_root)
+    target_handle = open_root(target_root)
+    try:
+        for root_handle, label in ((source_handle, "source"), (target_handle, "destination")):
+            _tag, standard = handle_metadata(root_handle)
+            if not standard.Directory:
+                raise BootstrapError(f"Portable staging {label} root is not a real directory.")
+
+        def copy_one(relative: str, *, label: str, expected_size: int | None, expected_sha256: str | None, max_bytes: int | None) -> None:
+            parts = relative.split("/")
+            if not parts or any(not part for part in parts):
+                raise BootstrapError("Bundle manifest contains an invalid relative path.")
+            src_parent = source_handle
+            dst_parent = target_handle
+            opened_source_dirs: list[Any] = []
+            opened_target_dirs: list[Any] = []
+            source_file = None
+            target_file = None
+            try:
+                for component in parts[:-1]:
+                    next_src = nt_open(src_parent, component, directory=True)
+                    opened_source_dirs.append(next_src)
+                    _tag, standard = handle_metadata(next_src)
+                    if not standard.Directory:
+                        raise BootstrapError(f"{label} source parent is not a directory.")
+                    next_dst = nt_open(dst_parent, component, directory=True, create=True)
+                    opened_target_dirs.append(next_dst)
+                    _tag, standard = handle_metadata(next_dst)
+                    if not standard.Directory:
+                        raise BootstrapError(f"{label} destination parent is not a directory.")
+                    src_parent, dst_parent = next_src, next_dst
+
+                source_file = nt_open(src_parent, parts[-1], directory=False)
+                _tag, source_standard = handle_metadata(source_file)
+                if source_standard.Directory:
+                    raise BootstrapError(f"{label} source is not a regular file.")
+                before = handle_identity(source_file)
+                source_size = (before[3] << 32) | before[4]
+                if (expected_size is not None and source_size != expected_size) or (
+                    max_bytes is not None and source_size > max_bytes
+                ):
+                    raise BootstrapError(f"{label} source size does not match its permitted bounds.")
+                target_file = nt_open(dst_parent, parts[-1], directory=False, create=True)
+                _tag, target_standard = handle_metadata(target_file)
+                if target_standard.Directory:
+                    raise BootstrapError(f"{label} destination is not a regular file.")
+
+                digest = hashlib.sha256()
+                total = 0
+                while True:
+                    buffer = ctypes.create_string_buffer(1024 * 1024)
+                    count = wintypes.DWORD()
+                    if not read_file(source_file, buffer, len(buffer), ctypes.byref(count), None):
+                        raise OSError(ctypes.get_last_error(), "ReadFile during staging failed", relative)
+                    if count.value == 0:
+                        break
+                    chunk = buffer.raw[:count.value]
+                    total += len(chunk)
+                    if (expected_size is not None and total > expected_size) or (max_bytes is not None and total > max_bytes):
+                        raise BootstrapError(f"{label} source grew beyond its permitted size.")
+                    digest.update(chunk)
+                    offset = 0
+                    while offset < len(chunk):
+                        payload = ctypes.create_string_buffer(chunk[offset:])
+                        written = wintypes.DWORD()
+                        if not write_file(target_file, payload, len(chunk) - offset, ctypes.byref(written), None) or not written.value:
+                            raise OSError(ctypes.get_last_error(), "WriteFile during staging failed", relative)
+                        offset += written.value
+
+                after = handle_identity(source_file)
+                if before != after or total != source_size:
+                    raise BootstrapError(f"{label} source changed while being staged.")
+                if expected_size is not None and total != expected_size:
+                    raise BootstrapError(f"{label} staged size does not match the signed manifest.")
+                if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
+                    raise BootstrapError(f"{label} staged hash does not match the signed manifest.")
+                _tag, target_after = handle_metadata(target_file)
+                if target_after.EndOfFile != total:
+                    raise BootstrapError(f"{label} destination size does not match copied content.")
+            finally:
+                if target_file is not None:
+                    close_handle(target_file)
+                if source_file is not None:
+                    close_handle(source_file)
+                for handle in reversed(opened_target_dirs):
+                    close_handle(handle)
+                for handle in reversed(opened_source_dirs):
+                    close_handle(handle)
+
+        for item in files:
+            copy_one(
+                item["path"], label=f"Bundle file {item['path']}",
+                expected_size=item["size"], expected_sha256=item["sha256"], max_bytes=None,
+            )
+        copy_one(
+            manifest_name, label="Runtime manifest", expected_size=None,
+            expected_sha256=None, max_bytes=max_manifest_bytes,
+        )
+        copy_one(
+            signature_name, label="Runtime signature", expected_size=None,
+            expected_sha256=None, max_bytes=max_signature_bytes,
+        )
+    except BootstrapError:
+        raise
+    except (OSError, AttributeError, TypeError, ValueError, UnicodeError) as exc:
+        raise BootstrapError("Unable to securely stage portable bundle through pinned directory handles.") from exc
+    finally:
+        close_handle(target_handle)
+        close_handle(source_handle)
+
+
 def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
     """Inventory a Windows bundle using pinned directory handles and relative opens.
 
