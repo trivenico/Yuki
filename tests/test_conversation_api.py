@@ -747,6 +747,8 @@ class ConversationAPITests(unittest.TestCase):
             {},
             {"request_id": 42},
             {"request_id": ""},
+            {"request_id": "   "},
+            {"request_id": "x" * 161},
             {"request_id": "valid", "owner_id": self.user.user_id},
         ]
         for payload in malformed:
