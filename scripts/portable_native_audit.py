@@ -124,9 +124,12 @@ def audit_bundle(root: Path, platform_name: str, runner=subprocess.run) -> dict:
             tool = shutil.which("otool")
             if not tool:
                 raise NativeAuditError("otool is required for macOS native audits.")
+            # Universal binaries can contain different load commands per
+            # architecture. Inspect every slice rather than silently auditing
+            # only the host/default architecture.
             result = parse_macho_load_commands(
-                _run([tool, "-l", str(binary)], runner),
-                _run([tool, "-L", str(binary)], runner),
+                _run([tool, "-arch", "all", "-l", str(binary)], runner),
+                _run([tool, "-arch", "all", "-L", str(binary)], runner),
             )
         elif platform_name == "windows":
             tool = shutil.which("dumpbin")
