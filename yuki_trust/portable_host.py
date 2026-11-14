@@ -450,7 +450,14 @@ def _stage_windows_bundle_handle_secure(
         handle = wintypes.HANDLE()
         desired = 0x00100087 if directory else (0x00100081 if not create else 0x00100082)
         disposition = 2 if create else 1  # FILE_CREATE / FILE_OPEN
-        options = 0x00200000 | 0x00000020 | (0x00000001 if directory else 0x00000040)
+        if directory and create:
+            options = 0x00000020 | 0x00000001  # synchronous directory creation
+        elif directory:
+            options = 0x00200000 | 0x00000020  # open reparse point; validate type by handle
+        elif create:
+            options = 0x00000020 | 0x00000040  # exclusive non-directory file creation
+        else:
+            options = 0x00200000 | 0x00000020  # open reparse point; validate type by handle
         status = nt_create_file(
             ctypes.byref(handle), desired, ctypes.byref(attrs), ctypes.byref(io_status),
             None, 0x00000080, 0x00000001, disposition, options, None, 0,
@@ -475,7 +482,7 @@ def _stage_windows_bundle_handle_secure(
         status = nt_create_file(
             ctypes.byref(handle), 0x00100087, ctypes.byref(attrs), ctypes.byref(io_status),
             None, 0x00000080, 0x00000001, 1,
-            0x00200000 | 0x00000020 | 0x00000001, None, 0,
+            0x00200000 | 0x00000020, None, 0,
         )
         if status < 0:
             raise OSError(status & 0xFFFFFFFF, "NtCreateFile staging root open failed", str(path))
