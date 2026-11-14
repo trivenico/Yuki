@@ -78,7 +78,9 @@ class PortableRuntimeInputTests(unittest.TestCase):
 
     def test_installer_uses_isolated_offline_hash_required_pip(self):
         self._write_lock()
-        python = self.root / "python"
+        runtime_root = self.root / "verified-runtime"
+        runtime_root.mkdir()
+        python = runtime_root / "python"
         python.write_bytes(b"trusted interpreter placeholder")
         target = self.root / "site-packages"
         calls = []
@@ -86,7 +88,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
             calls.append((command, kwargs))
             target.mkdir()
             return SimpleNamespace(returncode=0, stderr="", stdout="")
-        result = install_offline_dependencies(python, self.lock, self.wheelhouse, target, runner=fake_runner)
+        result = install_offline_dependencies(runtime_root, python, self.lock, self.wheelhouse, target, runner=fake_runner)
         command, kwargs = calls[0]
         self.assertIn("--no-index", command)
         self.assertIn("--require-hashes", command)
@@ -98,12 +100,24 @@ class PortableRuntimeInputTests(unittest.TestCase):
 
     def test_installer_rejects_failed_pip_execution(self):
         self._write_lock()
-        python = self.root / "python"
+        runtime_root = self.root / "verified-runtime"
+        runtime_root.mkdir()
+        python = runtime_root / "python"
         python.write_bytes(b"trusted interpreter placeholder")
         def failed_runner(command, **kwargs):
             return SimpleNamespace(returncode=1, stderr="bad wheel", stdout="")
         with self.assertRaisesRegex(InputValidationError, "bad wheel"):
-            install_offline_dependencies(python, self.lock, self.wheelhouse, self.root / "site", runner=failed_runner)
+            install_offline_dependencies(runtime_root, python, self.lock, self.wheelhouse, self.root / "site", runner=failed_runner)
+
+
+    def test_installer_rejects_interpreter_outside_verified_runtime_root(self):
+        self._write_lock()
+        runtime_root = self.root / "verified-runtime"
+        runtime_root.mkdir()
+        external_python = self.root / "host-python"
+        external_python.write_bytes(b"host interpreter placeholder")
+        with self.assertRaisesRegex(InputValidationError, "inside the independently verified runtime root"):
+            install_offline_dependencies(runtime_root, external_python, self.lock, self.wheelhouse, self.root / "site")
 
 
 if __name__ == "__main__":
