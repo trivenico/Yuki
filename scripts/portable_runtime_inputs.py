@@ -158,6 +158,42 @@ def validate_pip_bootstrap_wheel(pip_wheel: Path, expected_sha256: str, expected
     return {"filename": pip_wheel.name, "sha256": expected_sha256.lower(), "version": expected_version}
 
 
+def _snapshot_verified_pip_wheel(pip_wheel: Path, expected_sha256: str, expected_version: str, parent: Path) -> tuple[Path, Path, dict]:
+    """Copy the pip wheel into a private snapshot while hashing the copied bytes."""
+    source = _regular_file(Path(pip_wheel).expanduser(), "Pip bootstrap wheel")
+    if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(expected_sha256):
+        raise InputValidationError("Expected pip wheel SHA-256 must be exactly 64 hexadecimal characters.")
+    if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\\.[0-9]+){1,3}", expected_version):
+        raise InputValidationError("Expected pip version must be an exact numeric version.")
+    expected_name = f"pip-{expected_version}-py3-none-any.whl"
+    if source.name != expected_name:
+        raise InputValidationError("Pip bootstrap wheel must use the pinned universal py3-none-any filename.")
+    snapshot_dir = Path(tempfile.mkdtemp(prefix=".yuki-pip-wheel-", dir=parent))
+    snapshot = snapshot_dir / expected_name
+    digest = hashlib.sha256()
+    try:
+        with source.open("rb") as incoming, snapshot.open("xb") as outgoing:
+            if not __stat_is_regular(incoming):
+                raise InputValidationError("Pip bootstrap wheel must be a regular file.")
+            for chunk in iter(lambda: incoming.read(1024 * 1024), b""):
+                digest.update(chunk)
+                outgoing.write(chunk)
+            outgoing.flush()
+            os.fsync(outgoing.fileno())
+        if digest.hexdigest().lower() != expected_sha256.lower():
+            raise InputValidationError("Pip bootstrap wheel SHA-256 does not match the pinned digest.")
+        report = validate_pip_bootstrap_wheel(snapshot, expected_sha256, expected_version)
+        return snapshot_dir, snapshot, report
+    except Exception:
+        shutil.rmtree(snapshot_dir, ignore_errors=True)
+        raise
+
+
+def __stat_is_regular(stream) -> bool:
+    import stat
+    return stat.S_ISREG(os.fstat(stream.fileno()).st_mode)
+
+
 def install_offline_dependencies(runtime_root: Path, python_executable: Path, lock_file: Path, wheelhouse: Path, target: Path, *, timeout_seconds: int = 1800, runner=subprocess.run, pip_wheel: Path | None = None, pip_sha256: str | None = None, pip_version: str | None = None) -> dict:
     """Install a fully hash-locked dependency closure transactionally, offline."""
     runtime_root = Path(runtime_root).expanduser()
@@ -181,11 +217,13 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
     if target.exists() or target.is_symlink():
         raise InputValidationError("Dependency target must not already exist.")
     parent = target.parent.resolve(strict=True)
+    pip_snapshot_dir = None
     if pip_wheel is not None:
         if pip_sha256 is None or pip_version is None:
             raise InputValidationError("Pip wheel, pinned SHA-256 and exact version must be supplied together.")
-        pip_report = validate_pip_bootstrap_wheel(pip_wheel, pip_sha256, pip_version)
-        pip_wheel_path = Path(pip_wheel).resolve(strict=True)
+        pip_snapshot_dir, pip_wheel_path, pip_report = _snapshot_verified_pip_wheel(
+            pip_wheel, pip_sha256, pip_version, parent
+        )
         bootstrap_code = (
             "import sys; sys.path.insert(0, sys.argv.pop(1)); "
             "from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[1:]))"
@@ -196,12 +234,14 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
             raise InputValidationError("Pip wheel, pinned SHA-256 and exact version must be supplied together.")
         pip_report = None
         pip_prefix = [str(python_executable), "-I", "-m", "pip"]
-    stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
-    command = pip_prefix + [
-        "install", "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
-        "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
-        "--no-input", "--no-warn-script-location", "--target", str(stage), "-r", str(lock_file),
-    ]
+    stage = None
+    try:
+        stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
+        command = pip_prefix + [
+            "install", "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
+            "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
+            "--no-input", "--no-warn-script-location", "--target", str(stage), "-r", str(lock_file),
+        ]
     environment = {
         "PATH": os.environ.get("PATH", ""),
         "PYTHONNOUSERSITE": "1",
@@ -220,9 +260,12 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
             raise InputValidationError("Installer removed or replaced its staging directory.")
         os.replace(stage, target)
     except Exception:
-        if stage.exists():
+        if stage is not None and stage.exists():
             shutil.rmtree(stage, ignore_errors=True)
         raise
+    finally:
+        if pip_snapshot_dir is not None:
+            shutil.rmtree(pip_snapshot_dir, ignore_errors=True)
     result = {"installed_target": str(target), "requirement_count": report["requirement_count"], "wheel_count": report["wheel_count"], "network_index_access": False, "hash_checking": True, "atomic_publish": True, "pip_bootstrap": "pinned-wheel" if pip_report else "runtime-provided"}
     if pip_report:
         result["pip"] = pip_report
