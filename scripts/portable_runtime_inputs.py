@@ -248,6 +248,13 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
             "PYTHONDONTWRITEBYTECODE": "1",
             "PIP_CONFIG_FILE": os.devnull,
         }
+        # Windows Python's system RNG provider and temporary-file APIs require
+        # these OS variables. Keep the allowlist narrow; never inherit Python
+        # or pip configuration variables from the invoking shell.
+        for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
+            value = os.environ.get(key)
+            if value:
+                environment[key] = value
         try:
             completed = runner(command, check=False, capture_output=True, text=True, timeout=timeout_seconds, env=environment, shell=False)
         except subprocess.TimeoutExpired as exc:
