@@ -938,28 +938,33 @@ class ConversationStore:
         if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
             raise ValueError("lease_token must be non-empty bounded text.")
         with self._connect() as db:
-            cursor = db.execute(
-                """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'
-                     AND EXISTS (
-                       SELECT 1 FROM conversation_generation_leases
-                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?
-                     )""",
-                (self._now(), owner, conversation_id, request_id,
-                 conversation_id, owner, lease_token.strip(), time.time()),
-            )
-            db.execute(
-                """SELECT 1 FROM conversation_generation_leases
-                   WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
-                (conversation_id, owner, lease_token.strip(), time.time()),
-            )
-            count = db.execute(
-                """SELECT COUNT(*) FROM conversation_tool_executions
-                   WHERE owner_id=? AND conversation_id=? AND request_id=?
-                     AND status='uncertain'""",
-                (owner, conversation_id, request_id),
-            ).fetchone()[0]
-            return int(count)
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                lease = db.execute(
+                    """SELECT 1 FROM conversation_generation_leases
+                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                    (conversation_id, owner, lease_token.strip(), time.time()),
+                ).fetchone()
+                if lease is None:
+                    raise ConversationConflict(
+                        "tool recovery requires the active generation lease."
+                    )
+                db.execute(
+                    """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'""",
+                    (self._now(), owner, conversation_id, request_id),
+                )
+                count = db.execute(
+                    """SELECT COUNT(*) FROM conversation_tool_executions
+                       WHERE owner_id=? AND conversation_id=? AND request_id=?
+                         AND status='uncertain'""",
+                    (owner, conversation_id, request_id),
+                ).fetchone()[0]
+                db.commit()
+                return int(count)
+            except Exception:
+                db.rollback()
+                raise
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
