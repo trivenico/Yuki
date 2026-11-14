@@ -16,6 +16,7 @@ from pathlib import Path
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 _HASH_TOKEN = re.compile(r"--hash=sha256:([a-fA-F0-9]{64})")
+_PINNED_REQUIREMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\\[[A-Za-z0-9._,-]+\\])?==[^\\s;]+")
 
 
 class InputValidationError(ValueError):
@@ -77,6 +78,8 @@ def validate_offline_wheelhouse(lock_file: Path, wheelhouse: Path) -> dict:
     for line in lines:
         if line.startswith(("-", "--")) or "://" in line or line.startswith((".", "/")):
             raise InputValidationError("Lock may contain only pinned package requirements, not pip options, URLs, or local paths.")
+        if not _PINNED_REQUIREMENT.match(line):
+            raise InputValidationError("Every dependency must use an exact == version pin.")
         hashes = {value.lower() for value in _HASH_TOKEN.findall(line)}
         if not hashes:
             raise InputValidationError("Every locked requirement must include at least one SHA-256 hash.")
