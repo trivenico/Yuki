@@ -672,6 +672,55 @@ class ConversationStoreTests(unittest.TestCase):
             )
 
 
+
+    def test_confirmed_provider_completion_evidence_does_not_auto_finalize_execution(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "confirmed-provider-evidence"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Check provider result", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=80_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="confirmed-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="send-1", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                provider_idempotency=True, lease_token="confirmed-worker",
+            )
+            self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="send-1",
+                lease_token="confirmed-worker", status="uncertain",
+            )
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.CONFIRMED_COMPLETED,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="c" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+            provider_reference="provider-message-42",
+        )
+        saved = self._record_provider_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="send-1", evidence=evidence,
+        )
+        self.assertEqual(saved["outcome"], "confirmed_completed")
+        execution = self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id, request_id=request_id,
+        )[0]
+        self.assertTrue(execution["provider_idempotency"])
+        self.assertEqual(execution["status"], "uncertain")
+        self.assertEqual(len(self.store.list_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="send-1",
+        )), 1)
+
+
     def test_provider_evidence_digest_cannot_be_reused_with_different_reference(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
         conversation_id = self.conversation["conversation_id"]
