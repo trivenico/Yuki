@@ -73,6 +73,29 @@ class PortableHostPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
             _read_host_file_secure(self.policy, label="Test policy", max_bytes=4)
 
+    @unittest.skipUnless(os.name == "nt", "Windows native handle read semantics")
+    def test_windows_secure_reader_reads_regular_file_and_enforces_size_limit(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        self.assertEqual(
+            _read_host_file_secure(self.policy, label="Test policy", max_bytes=64 * 1024),
+            self.policy.read_bytes(),
+        )
+        with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
+            _read_host_file_secure(self.policy, label="Test policy", max_bytes=1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows reparse-point semantics")
+    def test_windows_secure_reader_rejects_file_symlink(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        link = self.trust_dir / "policy-link.json"
+        try:
+            link.symlink_to(self.policy)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows file symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "reparse point"):
+            _read_host_file_secure(link, label="Test policy", max_bytes=64 * 1024)
+
     def test_loads_host_owned_policy_and_pins_launch_parameters(self):
         policy = load_host_policy(self.policy, self.bundle)
         self.assertEqual(policy["public_key"], str(self.public_key.resolve()))
