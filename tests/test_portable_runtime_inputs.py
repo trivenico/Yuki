@@ -170,19 +170,19 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self._write_lock()
         pip_wheel = self.root / "pip-99.0-py3-none-any.whl"
         pip_files = {
-            "pip/__init__.py": b"__version__ = '99.0'\\n",
+            "pip/__init__.py": b"__version__ = '99.0'\n",
             "pip/_internal/__init__.py": b"",
             "pip/_internal/cli/__init__.py": b"",
             "pip/_internal/cli/main.py": (
-                b"import pathlib, sys\\n"
-                b"def main(args):\\n"
-                b"    target = pathlib.Path(args[args.index('--target') + 1])\\n"
-                b"    target.mkdir(parents=True, exist_ok=True)\\n"
-                b"    (target / 'bootstrapped.marker').write_text('ok')\\n"
-                b"    return 0\\n"
+                b"import pathlib, sys\n"
+                b"def main(args):\n"
+                b"    target = pathlib.Path(args[args.index('--target') + 1])\n"
+                b"    target.mkdir(parents=True, exist_ok=True)\n"
+                b"    (target / 'bootstrapped.marker').write_text('ok')\n"
+                b"    return 0\n"
             ),
             "pip-99.0.dist-info/METADATA": (
-                b"Metadata-Version: 2.1\\nName: pip\\nVersion: 99.0\\n\\n"
+                b"Metadata-Version: 2.1\nName: pip\nVersion: 99.0\n\n"
             ),
         }
         with zipfile.ZipFile(pip_wheel, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
@@ -205,7 +205,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
         with zipfile.ZipFile(pip_wheel, "w") as bundle:
             bundle.writestr("pip/__init__.py", "")
             bundle.writestr("pip/_internal/cli/main.py", "")
-            bundle.writestr("pip-99.0.dist-info/METADATA", "Name: pip\\nVersion: 99.0\\n")
+            bundle.writestr("pip-99.0.dist-info/METADATA", "Name: pip\nVersion: 99.0\n")
         from scripts.portable_runtime_inputs import validate_pip_bootstrap_wheel
         with self.assertRaisesRegex(InputValidationError, "SHA-256 does not match"):
             validate_pip_bootstrap_wheel(pip_wheel, "0" * 64, "99.0")
