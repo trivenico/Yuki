@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.portable_release_build import build_release_candidate
+from scripts.portable_native_audit import NativeAuditError
 from scripts.portable_runtime_inputs import InputValidationError
 
 
@@ -99,7 +100,7 @@ class PortableReleaseBuildTests(unittest.TestCase):
                 patch("scripts.portable_release_build.write_unsigned_manifest", return_value={}),
                 patch("scripts.portable_release_build.audit_bundle", return_value={"metadata_failures": 1}),
             ):
-                with self.assertRaisesRegex(Exception, "release-blocking"):
+                with self.assertRaisesRegex(NativeAuditError, "release-blocking"):
                     build_release_candidate(
                         runtime_archive=root / "runtime.zip",
                         runtime_sha256="a" * 64,
