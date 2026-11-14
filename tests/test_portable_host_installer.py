@@ -2,9 +2,11 @@ import hashlib
 import json
 import os
 import sys
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts import install_portable_host as installer
@@ -81,6 +83,22 @@ class PortableHostInstallerTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(BootstrapError, "real directory, not a symlink"):
                 installer.install_host_trust(self.key, link, self.state, hashlib.sha256(b"validated-ed25519-key").hexdigest())
+
+    def test_windows_path_chain_rejects_reparse_point_ancestor(self):
+        target = self.root
+        original_lstat = Path.lstat
+
+        def fake_lstat(path):
+            if path == target:
+                return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x0400)
+            return original_lstat(path)
+
+        with patch.object(Path, "lstat", autospec=True, side_effect=fake_lstat):
+            with self.assertRaisesRegex(BootstrapError, "junctions, or reparse points"):
+                installer._validate_windows_path_chain(self.install, "Host install")
+
+    def test_windows_path_chain_accepts_normal_existing_ancestors(self):
+        installer._validate_windows_path_chain(self.root / "trusted", "Host install")
 
     def test_rejects_mismatched_out_of_band_key_fingerprint(self):
         with (
