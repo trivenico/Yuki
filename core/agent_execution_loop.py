@@ -10,7 +10,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from core.structured_tool_protocol import StructuredToolProtocol, ToolDispatchCancelled
+from core.structured_tool_protocol import (
+    StructuredToolProtocol, ToolDispatchCancelled, ToolExecutionAlreadyClaimed,
+)
 
 
 class AgentExecutionError(RuntimeError):
