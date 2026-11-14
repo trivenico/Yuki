@@ -52,8 +52,9 @@ The authenticated read-only endpoint is:
 `GET /v1/conversations/{conversation_id}/tool-executions/{call_id}/provider-outcomes?request_id={request_id}`
 
 It derives the owner from the authenticated session and returns redacted
-evidence metadata. Idempotency keys and argument fingerprints are not exposed
-by this endpoint. Evidence ingestion remains an internal trusted-adapter
+evidence metadata. Idempotency keys, argument fingerprints, and opaque provider
+references are not exposed by either the read or reconciliation response.
+Evidence ingestion remains an internal trusted-adapter
 operation; clients cannot submit arbitrary provider claims through the API.
 
 ## Explicit adapter registry and reconciliation operation
