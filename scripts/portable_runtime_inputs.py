@@ -14,6 +14,8 @@ import re
 import sys
 import os
 import subprocess
+import shutil
+import tempfile
 from pathlib import Path
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
@@ -122,7 +124,7 @@ def validate_offline_wheelhouse(lock_file: Path, wheelhouse: Path) -> dict:
 
 
 def install_offline_dependencies(runtime_root: Path, python_executable: Path, lock_file: Path, wheelhouse: Path, target: Path, *, timeout_seconds: int = 1800, runner=subprocess.run) -> dict:
-    """Install a fully hash-locked dependency closure using Python inside the verified runtime root."""
+    """Install a fully hash-locked dependency closure transactionally, offline."""
     runtime_root = Path(runtime_root).expanduser()
     if runtime_root.is_symlink() or not runtime_root.is_dir():
         raise InputValidationError("Verified runtime root must be an existing non-symlink directory.")
@@ -143,12 +145,13 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
     target = Path(target).expanduser()
     if target.exists() or target.is_symlink():
         raise InputValidationError("Dependency target must not already exist.")
-    target.parent.resolve(strict=True)
+    parent = target.parent.resolve(strict=True)
+    stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
     command = [
         str(python_executable), "-I", "-m", "pip", "install",
         "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
         "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
-        "--no-input", "--no-warn-script-location", "--target", str(target), "-r", str(lock_file),
+        "--no-input", "--no-warn-script-location", "--target", str(stage), "-r", str(lock_file),
     ]
     environment = {
         "PATH": os.environ.get("PATH", ""),
@@ -157,15 +160,21 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
         "PIP_CONFIG_FILE": os.devnull,
     }
     try:
-        completed = runner(command, check=False, capture_output=True, text=True, timeout=timeout_seconds, env=environment, shell=False)
-    except subprocess.TimeoutExpired as exc:
-        raise InputValidationError("Offline dependency installation exceeded its time limit.") from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "pip failed without diagnostic output")[-4000:]
-        raise InputValidationError(f"Offline dependency installation failed: {detail}")
-    if not target.is_dir() or target.is_symlink():
-        raise InputValidationError("Installer did not create the expected dependency target directory.")
-    return {"installed_target": str(target), "requirement_count": report["requirement_count"], "wheel_count": report["wheel_count"], "network_index_access": False, "hash_checking": True}
+        try:
+            completed = runner(command, check=False, capture_output=True, text=True, timeout=timeout_seconds, env=environment, shell=False)
+        except subprocess.TimeoutExpired as exc:
+            raise InputValidationError("Offline dependency installation exceeded its time limit.") from exc
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "pip failed without diagnostic output")[-4000:]
+            raise InputValidationError(f"Offline dependency installation failed: {detail}")
+        if not stage.is_dir() or stage.is_symlink():
+            raise InputValidationError("Installer removed or replaced its staging directory.")
+        os.replace(stage, target)
+    except Exception:
+        if stage.exists():
+            shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return {"installed_target": str(target), "requirement_count": report["requirement_count"], "wheel_count": report["wheel_count"], "network_index_access": False, "hash_checking": True, "atomic_publish": True}
 
 
 
