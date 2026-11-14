@@ -133,6 +133,16 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         self.assertEqual(manifest["platform"], "test-platform")
 
     @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
+    def test_posix_metadata_reader_rejects_symlinked_manifest(self):
+        manifest = self.bundle / "runtime-manifest.json"
+        outside = self.bundle.parent / "external-manifest"
+        outside.write_bytes(manifest.read_bytes())
+        manifest.unlink()
+        manifest.symlink_to(outside)
+        with self.assertRaisesRegex(BootstrapError, "not regular|securely read"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
     def test_posix_metadata_reader_rejects_symlinked_signature(self):
         signature = self.bundle / "runtime-manifest.sig"
         outside = self.bundle.parent / "external-signature"
