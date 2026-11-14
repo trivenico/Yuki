@@ -335,5 +335,34 @@ class ConversationStoreTests(unittest.TestCase):
             owner_id=self.other_owner, conversation_id=self.conversation["conversation_id"]
         ), [])
 
+
+    def test_tool_execution_persists_provider_idempotency_contract(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="idempotency", idempotency_key="provider-key-request",
+            expected_version=0, generation_request_id="provider-key-request",
+        )
+        with patch("core.conversation_store.time.time", return_value=30_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="provider-key-worker", ttl_seconds=60,
+            )
+            record = self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="provider-key-request", call_id="call-provider",
+                tool_name="send_email", arguments_sha256="e" * 64,
+                idempotency_key="f" * 64, provider_idempotency=True,
+                lease_token="provider-key-worker",
+            )
+            self.assertTrue(record["provider_idempotency"])
+            self.assertEqual(record["idempotency_key"], "f" * 64)
+        listed = self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="provider-key-request",
+        )
+        self.assertTrue(listed[0]["provider_idempotency"])
+        self.assertEqual(listed[0]["idempotency_key"], "f" * 64)
+
 if __name__ == "__main__":
     unittest.main()
