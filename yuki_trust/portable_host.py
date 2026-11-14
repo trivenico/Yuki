@@ -47,6 +47,12 @@ def _validate_host_parent_directories(path: Path, *, label: str) -> None:
             info = current.lstat()
         except OSError as exc:
             raise BootstrapError(f"{label} parent directory is unavailable.") from exc
+        # macOS exposes /var as a system-managed alias to /private/var.
+        # Permit only this exact platform alias; arbitrary symlinked parents
+        # remain rejected.
+        if current == Path("/var") and current.is_symlink() and current.resolve() == Path("/private/var"):
+            current = current.parent
+            continue
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             raise BootstrapError(f"{label} parent directories must be real directories, not symlinks.")
         if info.st_uid not in {0, os.getuid()}:
@@ -65,9 +71,11 @@ def _host_file(path: str | Path, *, bundle: Path, label: str) -> Path:
     candidate = Path(path).expanduser()
     if candidate.is_symlink() or not candidate.is_file():
         raise BootstrapError(f"{label} must be a regular, non-symlink host file.")
+    # Validate the caller-supplied path before resolving it so symlinked
+    # parent directories cannot disappear during canonicalization.
+    _validate_host_parent_directories(candidate, label=label)
     resolved = candidate.resolve(strict=True)
-    # Validate the canonical target path, not lexical aliases such as macOS
-    # /var -> /private/var. The final file itself must still not be a symlink.
+    # Also validate the canonical path after resolution.
     _validate_host_parent_directories(resolved, label=label)
     try:
         resolved.relative_to(bundle)
