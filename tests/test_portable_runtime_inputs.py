@@ -1,9 +1,11 @@
 import base64
 import csv
 import hashlib
+import importlib.util
 import io
 import tempfile
 import sys
+import subprocess
 import zipfile
 import unittest
 from contextlib import redirect_stderr
@@ -112,7 +114,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
 
     def test_real_offline_pip_install_from_synthetic_hashed_wheel(self):
         """Exercise pip itself with a valid local wheel and no package index."""
-        if not __import__("importlib.util").util.find_spec("pip"):
+        if not importlib.util.find_spec("pip"):
             self.skipTest("pip is unavailable in this CI interpreter")
         wheelhouse = self.root / "real-wheelhouse"
         wheelhouse.mkdir()
