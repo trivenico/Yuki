@@ -180,6 +180,40 @@ class ConversationServiceTests(unittest.TestCase):
             owner_id="owner-a", conversation_id=conversation_id,
         )), 1)
 
+    def test_saturated_recovery_blocks_new_model_work_until_backlog_is_drained(self):
+        conversation_id = self.conversation["conversation_id"]
+        version = 0
+        for index in range(ConversationRecoveryCoordinator.BATCH_LIMIT + 1):
+            result = self._seed_interrupted_generation(f"service-backlog-{index}", version)
+            version = result["version"]
+
+        with self.assertRaisesRegex(ConversationConflict, "safety limit"):
+            self.service.reply(
+                owner_id="owner-a", conversation_id=conversation_id,
+                user_text="Do not run until recovery is clear",
+                request_id="blocked-by-recovery-backlog",
+                expected_version=version, tools=[],
+            )
+        self.assertEqual(self.observed, [])
+        self.assertEqual(len(self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )), 1)
+
+        current = self.store.get_conversation(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        result = self.service.reply(
+            owner_id="owner-a", conversation_id=conversation_id,
+            user_text="Proceed after recovery",
+            request_id="after-recovery-backlog",
+            expected_version=current["version"], tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(self.observed), 1)
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=conversation_id,
+        ), [])
+
     def test_recovery_finds_original_user_message_beyond_recent_history_window(self):
         conversation_id = self.conversation["conversation_id"]
         first = self._seed_interrupted_generation("old-recovery-turn", 0)
