@@ -1063,5 +1063,36 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(events[0]["outcome"], "interrupted")
 
 
+
+    def test_live_generation_lease_renewal_preserves_fencing_and_exclusivity(self):
+        conversation_id = self.conversation["conversation_id"]
+        token = "renewable-recovery-worker"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=5,
+        )
+        try:
+            renewed = self.store.renew_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token, ttl_seconds=60,
+            )
+            self.assertGreater(renewed["expires_at"], 0)
+            with self.assertRaises(ConversationConflict):
+                self.store.renew_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="stale-worker-token", ttl_seconds=60,
+                )
+            with self.assertRaises(ConversationConflict):
+                self.store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="competing-worker-token", ttl_seconds=60,
+                )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
