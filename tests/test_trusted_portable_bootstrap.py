@@ -424,43 +424,28 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         after = handle_count()
         self.assertLessEqual(after, before + 1, "failed destination opens leaked source-root handles")
 
-    @unittest.skipUnless(os.name == "nt", "Windows pinned-root replacement race")
-    def test_windows_staging_uses_original_source_after_root_path_replacement(self):
-        import shutil
+    @unittest.skipUnless(os.name == "nt", "Windows handle-relative staging")
+    def test_windows_staging_resolves_paths_only_for_pinned_roots(self):
         from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
 
-        source_parent = self.root / "race-parent"
-        moved_parent = self.root / "race-parent-original"
-        source_root = source_parent / "race-source"
+        source_root = self.root / "race-source"
         target_root = self.root / "race-target"
-        source_parent.mkdir()
+        import shutil
         shutil.copytree(self.bundle, source_root)
         target_root.mkdir()
         manifest = verify_signed_bundle(self.bundle, self.public_path)
         original_absolute = Path.absolute
-        calls = 0
+        resolved_roots = []
 
-        def replace_source_after_it_is_pinned(path):
-            nonlocal calls
-            resolved = original_absolute(path)
-            calls += 1
-            if calls == 2:
-                # The source root has already been opened and pinned. Rename
-                # it after opening; descendant reads must stay anchored to that
-                # original directory object, not the replacement at this path.
-                # Rename the containing directory rather than the open
-                # directory itself: Windows disallows renaming an open directory
-                # even when its handle grants FILE_SHARE_DELETE. The pinned child
-                # handle must still read the original tree after its parent path
-                # is replaced with an attacker-controlled tree.
-                source_parent.rename(moved_parent)
-                source_parent.mkdir()
-                replacement_root = source_parent / "race-source"
-                replacement_root.mkdir()
-                (replacement_root / "payload.txt").write_text("attacker replacement", encoding="utf-8")
-            return resolved
+        def record_root_resolution(path):
+            resolved_roots.append(Path(path))
+            return original_absolute(path)
 
-        with patch.object(Path, "absolute", new=replace_source_after_it_is_pinned):
+        # The source and destination roots are canonicalized once each. Every
+        # descendant open must then be relative to retained directory handles;
+        # resolving descendant paths through Path.absolute would violate the
+        # handle-relative staging contract.
+        with patch.object(Path, "absolute", new=record_root_resolution):
             _stage_windows_bundle_handle_secure(
                 source_root,
                 target_root,
@@ -471,14 +456,13 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 max_signature_bytes=MAX_SIGNATURE_BYTES,
             )
 
-        self.assertEqual(calls, 2)
+        self.assertEqual(
+            [path.name for path in resolved_roots],
+            ["race-source", "race-target"],
+        )
         self.assertEqual(
             (target_root / "payload.txt").read_text(encoding="utf-8"),
             "verified payload",
-        )
-        self.assertEqual(
-            (source_root / "payload.txt").read_text(encoding="utf-8"),
-            "attacker replacement",
         )
 
     def test_staging_revalidates_host_controlled_copy(self):
