@@ -174,11 +174,15 @@ After installing the Yuki trusted-bootstrap Python package from an independently
 authenticated distribution, provision host-owned trust files with the installer:
 
 ```sh
-python scripts/install_portable_host.py --public-key /trusted/release-ed25519-public.pem
+python scripts/install_portable_host.py \\
+  --public-key /trusted/release-ed25519-public.pem \\
+  --expected-key-sha256 <out-of-band-pem-sha256>
 ```
 
-The public key must arrive through a separate authenticated channel; do not
-select it from the removable SSD. The installer refuses to run when the active
+The public key and its exact PEM-byte SHA-256 fingerprint must arrive through
+separate authenticated release metadata; do not select either from the removable
+SSD. The installer verifies the required fingerprint before copying the key.
+The installer refuses to run when the active
 bootstrap import resolves outside the active Python environment. It creates
 separate private host directories for the trust anchor and anti-rollback state,
 writes a strict host launch policy, and creates a host-side launcher. POSIX
