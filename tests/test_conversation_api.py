@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import json
 import tempfile
 import threading
@@ -245,6 +246,48 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertEqual(resolved, [first_user_id, second_user_id])
+
+    def test_distinct_authenticated_users_generate_concurrently_without_loop_leakage(self):
+        self.auth.create_account("parallel-user", "parallel-secure-password")
+        second = self.auth.authenticate("parallel-user", "parallel-secure-password")
+        barrier = threading.Barrier(2)
+        entered = []
+        entered_lock = threading.Lock()
+
+        def owner_factory(owner_id):
+            def model(**kwargs):
+                with entered_lock:
+                    entered.append(owner_id)
+                barrier.wait(timeout=5)
+                return {"text": "parallel-response-" + owner_id, "tool_calls": {"tool_calls": []}}
+            return AgentExecutionLoop(
+                model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            )
+
+        self.app.conversations.agent_loop_for_owner = owner_factory
+        first_conversation = self.app.conversations.create(owner_id=self.issued.user.user_id)
+        second_conversation = self.app.conversations.create(owner_id=second.user.user_id)
+
+        def send(owner_token, conversation, request_id):
+            return self.request(
+                "POST", f"/v1/conversations/{conversation['conversation_id']}/messages",
+                {"content": "run concurrently", "request_id": request_id, "expected_version": 0},
+                owner_token,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(send, self.issued.token, first_conversation, "parallel-first")
+            second_future = pool.submit(send, second.token, second_conversation, "parallel-second")
+            first_status, first_reply, _ = first_future.result(timeout=10)
+            second_status, second_reply, _ = second_future.result(timeout=10)
+
+        self.assertEqual(first_status, 200)
+        self.assertEqual(second_status, 200)
+        self.assertEqual(first_reply["status"], "completed")
+        self.assertEqual(second_reply["status"], "completed")
+        self.assertEqual(set(entered), {self.issued.user.user_id, second.user.user_id})
+        self.assertEqual(first_reply["answer"], "parallel-response-" + self.issued.user.user_id)
+        self.assertEqual(second_reply["answer"], "parallel-response-" + second.user.user_id)
 
     def test_unauthenticated_and_forged_owner_fields_are_rejected(self):
         status, _, _ = self.request("GET", "/v1/conversations")
