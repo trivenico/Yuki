@@ -170,27 +170,31 @@ class ConversationStore:
             ).fetchone()
             if review_schema and "'confirm_provider_completed'" not in (review_schema["sql"] or ""):
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_legacy")
-                db.execute("""CREATE TABLE conversation_tool_reviews (
-                    review_id TEXT PRIMARY KEY,
-                    execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
-                    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
-                    owner_id TEXT NOT NULL,
-                    request_id TEXT NOT NULL,
-                    call_id TEXT NOT NULL,
-                    action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain', 'confirm_provider_completed')),
-                    reason TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )""")
-                db.execute("""INSERT INTO conversation_tool_reviews
-                    (review_id, execution_id, conversation_id, owner_id, request_id,
-                     call_id, action, reason, created_at)
-                    SELECT review_id, execution_id, conversation_id, owner_id, request_id,
-                           call_id, action, reason, created_at
-                    FROM conversation_tool_reviews_legacy""")
-                db.execute("DROP TABLE conversation_tool_reviews_legacy")
-                db.execute("CREATE INDEX idx_tool_reviews_owner_execution ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at)")
-                db.commit()
+                try:
+                    db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_legacy")
+                    db.execute("""CREATE TABLE conversation_tool_reviews (
+                        review_id TEXT PRIMARY KEY,
+                        execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
+                        conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                        owner_id TEXT NOT NULL,
+                        request_id TEXT NOT NULL,
+                        call_id TEXT NOT NULL,
+                        action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain', 'confirm_provider_completed')),
+                        reason TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )""")
+                    db.execute("""INSERT INTO conversation_tool_reviews
+                        (review_id, execution_id, conversation_id, owner_id, request_id,
+                         call_id, action, reason, created_at)
+                        SELECT review_id, execution_id, conversation_id, owner_id, request_id,
+                               call_id, action, reason, created_at
+                        FROM conversation_tool_reviews_legacy""")
+                    db.execute("DROP TABLE conversation_tool_reviews_legacy")
+                    db.execute("CREATE INDEX idx_tool_reviews_owner_execution ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at)")
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
 
     @staticmethod
     def _now() -> str:
