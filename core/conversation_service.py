@@ -99,7 +99,7 @@ class ConversationService:
                 expected_version=expected_version, tools=tools,
                 system_text=system_text, on_text_delta=on_text_delta,
                 cancellation_requested=combined_cancellation_requested,
-                lease_token=token,
+                lease_token=token, lease_lost_event=lease_lost,
             )
             if lease_lost.is_set():
                 raise ConversationConflict(
@@ -119,6 +119,7 @@ class ConversationService:
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
         on_text_delta=None, cancellation_requested=None, lease_token: str | None = None,
+        lease_lost_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
@@ -253,6 +254,11 @@ class ConversationService:
         except Exception:
             status = "failed"
             answer = "I couldn't complete that request because the AI service or a guarded operation failed."
+
+        if lease_lost_event is not None and lease_lost_event.is_set():
+            raise ConversationConflict(
+                "generation lease renewal failed; this worker cannot commit a response."
+            )
 
         assistant_result = self.store.append_message(
             owner_id=owner_id, conversation_id=conversation_id,
