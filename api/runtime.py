@@ -77,6 +77,7 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -87,6 +88,8 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
+        raise TypeError("agent_loop_for_owner must be callable.")
     if (device_pairing is None) != (inference_jobs is None):
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
@@ -126,7 +129,7 @@ def build_conversation_runtime(
         raise ValueError("OAuth provider catalog requires authorization service configuration")
 
     application = build_conversation_application_runtime(
-        config, agent_loop=agent_loop,
+        config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
     )
     try:
         app = YukiConversationAPI(

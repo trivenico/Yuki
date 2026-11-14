@@ -1,0 +1,317 @@
+"""Typed provider outcome verification contracts for guarded tool executions.
+
+Adapters must return evidence tied to the exact durable execution identity.
+This module deliberately performs no retries and never treats a transport error
+or missing provider record as proof that an action was not applied.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import Enum
+import re
+import inspect
+import sys
+import threading
+import uuid
+from types import MappingProxyType
+from typing import Any, Protocol, runtime_checkable
+
+
+class ProviderOutcome(str, Enum):
+    CONFIRMED_COMPLETED = "confirmed_completed"
+    CONFIRMED_NOT_APPLIED = "confirmed_not_applied"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderOutcomeEvidence:
+    provider: str
+    outcome: ProviderOutcome
+    idempotency_key: str
+    arguments_sha256: str
+    evidence_sha256: str
+    observed_at: str
+    provider_reference: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.provider, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", self.provider):
+            raise ValueError("provider must be a bounded provider identifier.")
+        if not isinstance(self.outcome, ProviderOutcome):
+            raise ValueError("outcome must be a ProviderOutcome.")
+        for value, label in (
+            (self.idempotency_key, "idempotency_key"),
+            (self.arguments_sha256, "arguments_sha256"),
+            (self.evidence_sha256, "evidence_sha256"),
+        ):
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ValueError(f"{label} must be a lowercase SHA-256 digest.")
+        if not isinstance(self.observed_at, str) or len(self.observed_at) > 40:
+            raise ValueError("observed_at must be an ISO-8601 UTC timestamp.")
+        try:
+            observed = datetime.fromisoformat(self.observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("observed_at must be an ISO-8601 UTC timestamp.") from None
+        if observed.tzinfo is None or observed.utcoffset() != timezone.utc.utcoffset(observed):
+            raise ValueError("observed_at must include a UTC timezone.")
+        # Permit small provider clock skew, but reject evidence dated materially
+        # in the future; old observations remain valid for delayed reconciliation.
+        from datetime import timedelta
+        if observed > datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ValueError("observed_at cannot be more than five minutes in the future.")
+        if self.provider_reference is not None and (
+            not isinstance(self.provider_reference, str)
+            or not self.provider_reference.strip()
+            or len(self.provider_reference) > 256
+        ):
+            raise ValueError("provider_reference must be bounded non-empty text when supplied.")
+
+
+@runtime_checkable
+class ProviderOutcomeAdapter(Protocol):
+    """Explicit adapter contract; implementations query provider-owned status APIs."""
+
+    def lookup_tool_outcome(self, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
+        """Return evidence for this exact execution, or UNKNOWN when inconclusive."""
+        ...
+
+
+def verify_provider_outcome(
+    adapter: ProviderOutcomeAdapter, execution: dict[str, Any], *,
+    expected_provider: str | None = None,
+) -> ProviderOutcomeEvidence:
+    """Query and bind evidence to the durable execution; never retry or infer success."""
+    if expected_provider is not None and (
+        not isinstance(expected_provider, str)
+        or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", expected_provider)
+    ):
+        raise ValueError("expected_provider must be a bounded provider identifier.")
+    if not isinstance(execution, dict):
+        raise TypeError("execution must be a mapping.")
+    required = {"execution_id", "idempotency_key", "arguments_sha256", "status"}
+    if not required.issubset(execution):
+        raise ValueError("execution is missing durable identity fields.")
+    execution_id = execution["execution_id"]
+    if not isinstance(execution_id, str) or not execution_id.strip() or len(execution_id) > 256:
+        raise ValueError("execution_id must be bounded non-empty text.")
+    for key in ("idempotency_key", "arguments_sha256"):
+        value = execution[key]
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError(f"{key} must be a lowercase SHA-256 digest.")
+    status = execution["status"]
+    if not isinstance(status, str) or status not in {"started", "uncertain"}:
+        raise ValueError("provider lookup is only valid for started or uncertain executions.")
+    lookup = getattr(adapter, "lookup_tool_outcome", None)
+    if not callable(lookup):
+        raise TypeError("provider adapter must explicitly implement lookup_tool_outcome.")
+    if inspect.iscoroutinefunction(lookup):
+        raise TypeError("provider adapter lookup_tool_outcome must be synchronous.")
+    # Adapters receive only the minimum durable identity required for a read-only lookup.
+    adapter_execution = {key: execution[key] for key in required}
+    evidence = lookup(adapter_execution)
+    if inspect.isawaitable(evidence):
+        close = getattr(evidence, "close", None)
+        if callable(close):
+            close()
+        raise TypeError("provider adapter lookup_tool_outcome returned an awaitable; synchronous evidence is required.")
+    if not isinstance(evidence, ProviderOutcomeEvidence):
+        raise TypeError("provider adapter returned untyped outcome evidence.")
+    if (evidence.idempotency_key != execution["idempotency_key"]
+            or evidence.arguments_sha256 != execution["arguments_sha256"]):
+        raise ValueError("provider evidence does not match the durable execution fingerprint.")
+    if expected_provider is not None and evidence.provider != expected_provider:
+        raise ValueError("provider evidence does not match the registered provider identity.")
+    return evidence
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisteredProviderAdapter:
+    """Freeze the trusted lookup callable and provider identity at registration."""
+    provider_id: str
+    lookup: Any
+
+    def lookup_tool_outcome(self, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
+        return self.lookup(execution)
+
+
+class ProviderOutcomeRegistry:
+    """Explicit tool-name-to-adapter registry; no dynamic imports or fallbacks."""
+
+    def __init__(self, adapters: dict[str, ProviderOutcomeAdapter]) -> None:
+        if not isinstance(adapters, dict):
+            raise TypeError("adapters must be an explicit mapping.")
+        validated: dict[str, _RegisteredProviderAdapter] = {}
+        for tool_name, adapter in adapters.items():
+            if (not isinstance(tool_name, str)
+                    or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name)):
+                raise ValueError("adapter tool names must be bounded identifiers.")
+            lookup = getattr(adapter, "lookup_tool_outcome", None)
+            if not callable(lookup):
+                raise TypeError(f"adapter for {tool_name!r} has no lookup_tool_outcome method.")
+            if inspect.iscoroutinefunction(lookup):
+                raise TypeError(f"adapter for {tool_name!r} must use a synchronous lookup method.")
+            provider_id = getattr(adapter, "provider_id", None)
+            if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", provider_id):
+                raise ValueError(f"adapter for {tool_name!r} must declare a bounded provider_id.")
+            validated[tool_name] = _RegisteredProviderAdapter(provider_id, lookup)
+        self._adapters = MappingProxyType(validated)
+
+    def lookup(self, tool_name: str, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
+        if not isinstance(tool_name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name):
+            raise ValueError("tool_name must be a bounded identifier.")
+        registration = self._adapters.get(tool_name)
+        if registration is None:
+            raise LookupError(f"no provider outcome adapter is registered for {tool_name!r}.")
+        return verify_provider_outcome(
+            registration, execution, expected_provider=registration.provider_id,
+        )
+
+
+def _validate_reconciliation_record(execution: Any, call_id: str) -> dict[str, Any]:
+    """Validate the store record before acquiring a lease or contacting a provider."""
+    if not isinstance(execution, dict):
+        raise TypeError("durable tool execution must be a mapping.")
+    required = {
+        "execution_id", "call_id", "tool_name", "idempotency_key",
+        "arguments_sha256", "status",
+    }
+    if not required.issubset(execution):
+        raise ValueError("durable tool execution is missing required identity fields.")
+    if execution["call_id"] != call_id:
+        raise ValueError("durable tool execution call identity does not match the request.")
+    tool_name = execution["tool_name"]
+    if not isinstance(tool_name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name):
+        raise ValueError("durable tool execution has an invalid tool name.")
+    # Reuse the same strict identity and status checks used by the adapter boundary.
+    for key in ("execution_id", "idempotency_key", "arguments_sha256", "status"):
+        if key not in execution:
+            raise ValueError("durable tool execution is missing required identity fields.")
+    identity = {
+        key: execution[key]
+        for key in ("execution_id", "idempotency_key", "arguments_sha256", "status")
+    }
+    if not isinstance(identity["execution_id"], str) or not identity["execution_id"].strip() or len(identity["execution_id"]) > 256:
+        raise ValueError("durable tool execution has an invalid execution_id.")
+    for key in ("idempotency_key", "arguments_sha256"):
+        if not isinstance(identity[key], str) or not re.fullmatch(r"[0-9a-f]{64}", identity[key]):
+            raise ValueError(f"durable tool execution has an invalid {key}.")
+    if not isinstance(identity["status"], str) or identity["status"] not in {"started", "uncertain"}:
+        raise ValueError("provider reconciliation requires a started or uncertain execution.")
+    return {
+        "execution_id": identity["execution_id"],
+        "call_id": call_id,
+        "tool_name": tool_name,
+        "idempotency_key": identity["idempotency_key"],
+        "arguments_sha256": identity["arguments_sha256"],
+        "status": identity["status"],
+    }
+
+
+class ProviderOutcomeReconciler:
+    """Read-only provider lookup plus append-only evidence recording."""
+
+    def __init__(
+        self, store: Any, registry: ProviderOutcomeRegistry, *,
+        lease_ttl_seconds: int = 120, lease_renew_interval_seconds: int = 30,
+    ) -> None:
+        required_store_methods = (
+            "list_tool_executions", "acquire_provider_reconciliation_lease",
+            "renew_provider_reconciliation_lease", "release_provider_reconciliation_lease",
+            "record_provider_outcome_evidence",
+        )
+        if any(not callable(getattr(store, name, None)) for name in required_store_methods):
+            raise TypeError("store does not implement the fenced provider reconciliation contract.")
+        if not isinstance(registry, ProviderOutcomeRegistry):
+            raise TypeError("registry must be a ProviderOutcomeRegistry.")
+        if type(lease_ttl_seconds) is not int or not 5 <= lease_ttl_seconds <= 300:
+            raise ValueError("lease_ttl_seconds must be an integer from 5 to 300.")
+        if (type(lease_renew_interval_seconds) is not int
+                or not 1 <= lease_renew_interval_seconds < lease_ttl_seconds):
+            raise ValueError("lease_renew_interval_seconds must be positive and shorter than the lease TTL.")
+        self._store = store
+        self._registry = registry
+        self._lease_ttl_seconds = lease_ttl_seconds
+        self._lease_renew_interval_seconds = lease_renew_interval_seconds
+
+    def reconcile(
+        self, *, owner_id: str, conversation_id: str, request_id: str, call_id: str,
+    ) -> dict[str, Any]:
+        executions = self._store.list_tool_executions(
+            owner_id=owner_id, conversation_id=conversation_id, request_id=request_id,
+        )
+        if not isinstance(executions, (list, tuple)):
+            raise TypeError("tool execution store returned an invalid collection.")
+        matches = [
+            item for item in executions
+            if isinstance(item, dict) and item.get("call_id") == call_id
+        ]
+        if not matches:
+            raise LookupError("tool execution not found.")
+        if len(matches) != 1:
+            raise ValueError("tool execution store returned an ambiguous call identity.")
+        execution = _validate_reconciliation_record(matches[0], call_id)
+        lease_token = uuid.uuid4().hex
+        # Allocate all heartbeat primitives before claiming the durable lease so
+        # local resource-construction failures cannot strand a claim.
+        stop_renewal = threading.Event()
+        lease_lost = threading.Event()
+
+        def renew_claim() -> None:
+            while not stop_renewal.wait(self._lease_renew_interval_seconds):
+                try:
+                    self._store.renew_provider_reconciliation_lease(
+                        owner_id=owner_id, execution_id=execution["execution_id"],
+                        lease_token=lease_token, ttl_seconds=self._lease_ttl_seconds,
+                    )
+                except Exception:
+                    lease_lost.set()
+                    return
+
+        heartbeat = threading.Thread(
+            target=renew_claim, name="yuki-provider-reconciliation-lease",
+            daemon=True,
+        )
+        heartbeat_started = False
+        self._store.acquire_provider_reconciliation_lease(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, call_id=call_id, lease_token=lease_token,
+            ttl_seconds=self._lease_ttl_seconds,
+        )
+        try:
+            heartbeat.start()
+            heartbeat_started = True
+            evidence = self._registry.lookup(
+                execution["tool_name"],
+                {
+                    "execution_id": execution["execution_id"],
+                    "idempotency_key": execution["idempotency_key"],
+                    "arguments_sha256": execution["arguments_sha256"],
+                    "status": execution["status"],
+                },
+            )
+            stop_renewal.set()
+            heartbeat.join()
+            if lease_lost.is_set():
+                from core.conversation_store import ConversationConflict
+                raise ConversationConflict("provider reconciliation lease renewal failed.")
+            return self._store.record_provider_outcome_evidence(
+                owner_id=owner_id, conversation_id=conversation_id,
+                request_id=request_id, call_id=call_id, evidence=evidence,
+                reconciliation_lease_token=lease_token,
+            )
+        finally:
+            stop_renewal.set()
+            if heartbeat_started:
+                heartbeat.join()
+            active_error = sys.exc_info()[1]
+            try:
+                self._store.release_provider_reconciliation_lease(
+                    owner_id=owner_id, execution_id=execution["execution_id"],
+                    lease_token=lease_token,
+                )
+            except BaseException as cleanup_error:
+                if active_error is None:
+                    raise
+                add_note = getattr(active_error, "add_note", None)
+                if callable(add_note):
+                    add_note(f"Provider reconciliation lease cleanup also failed: {cleanup_error!r}")

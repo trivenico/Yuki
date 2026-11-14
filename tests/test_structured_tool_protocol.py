@@ -5,6 +5,8 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import (
     StructuredToolProtocol,
     ToolProtocolError,
+    ToolExecutionAlreadyClaimed,
+    ToolDispatchLimitReached,
     parse_tool_calls,
 )
 
@@ -54,6 +56,23 @@ class StructuredToolProtocolTests(unittest.TestCase):
         self.assertEqual([item.call_id for item in results], ["first", "second"])
         self.assertEqual(self.calls, [{"n": 1}, {"n": 2}])
 
+    def test_equivalent_argument_objects_use_identical_canonical_bytes(self):
+        raw_arguments = []
+        runtime = GuardedToolRuntime(
+            {"echo": lambda raw: raw_arguments.append(raw) or "ok"}, self.policy
+        )
+        protocol = StructuredToolProtocol(runtime)
+        protocol.dispatch(self.envelope([self.call("one", arguments={"z": 1, "a": 2})]))
+        protocol.dispatch(self.envelope([self.call("two", arguments={"a": 2, "z": 1})]))
+        self.assertEqual(raw_arguments, ['{"a":2,"z":1}', '{"a":2,"z":1}'])
+
+    def test_call_budget_stops_before_excess_side_effect_and_preserves_results(self):
+        envelope = self.envelope([self.call("first"), self.call("second")])
+        with self.assertRaises(ToolDispatchLimitReached) as raised:
+            self.protocol.dispatch(envelope, max_calls=1)
+        self.assertEqual([item.call_id for item in raised.exception.completed_results], ["first"])
+        self.assertEqual(self.calls, [{"text": "hello"}])
+
     def test_malformed_later_call_prevents_partial_execution(self):
         payload = self.envelope([
             self.call("valid"),
@@ -61,6 +80,45 @@ class StructuredToolProtocolTests(unittest.TestCase):
         ])
         with self.assertRaises(ToolProtocolError):
             self.protocol.dispatch(payload)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
+    def test_duplicate_json_object_keys_are_rejected_before_dispatch(self):
+        malicious = '{"tool_calls":[],"tool_calls":[{"id":"x","name":"echo","arguments":{}}]}'
+        duplicate_argument = '{"tool_calls":[{"id":"x","name":"echo","arguments":{"safe":1,"safe":2}}]}'
+        for response in (malicious, duplicate_argument):
+            with self.subTest(response=response), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
+    def test_non_finite_json_numbers_are_rejected_before_dispatch(self):
+        invalid = (
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":NaN}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":Infinity}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":-Infinity}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":1e999}}]}',
+        )
+        for response in invalid:
+            with self.subTest(response=response), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
+    def test_recursive_argument_serialization_is_rejected_before_dispatch(self):
+        nested = "{}"
+        for _ in range(600):
+            nested = '{"x":' + nested + '}'
+        response = '{"tool_calls":[{"id":"x","name":"echo","arguments":' + nested + '}]}'
+        with self.assertRaises(ToolProtocolError):
+            self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
+    def test_oversized_arguments_are_rejected_before_dispatch(self):
+        response = self.envelope([self.call(arguments={"value": "x" * 8_100})])
+        with self.assertRaises(ToolProtocolError):
+            self.protocol.dispatch(response)
         self.assertEqual(self.calls, [])
         self.assertEqual(self.policy.requests, [])
 
@@ -106,6 +164,20 @@ class StructuredToolProtocolTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             StructuredToolProtocol(object())
 
+    def test_dispatch_reports_uncertain_handler_outcome_and_stops_batch(self):
+        outcomes = []
+        runtime = GuardedToolRuntime(
+            {"echo": lambda raw: (_ for _ in ()).throw(RuntimeError("ack lost"))},
+            self.policy,
+        )
+        protocol = StructuredToolProtocol(runtime)
+        with self.assertRaises(ToolExecutionAlreadyClaimed):
+            protocol.dispatch(
+                self.envelope([self.call("first"), self.call("second")]),
+                before_tool_call=lambda call, argument: "claimed",
+                on_tool_error=lambda call, argument, status: outcomes.append((call.call_id, status)),
+            )
+        self.assertEqual(outcomes, [("first", "uncertain")])
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from core.structured_tool_protocol import StructuredToolProtocol
+from core.structured_tool_protocol import (
+    StructuredToolProtocol, ToolDispatchCancelled, ToolDispatchLimitReached,
+    ToolExecutionAlreadyClaimed,
+)
 
 
 class AgentExecutionError(RuntimeError):
@@ -107,6 +110,7 @@ class AgentExecutionLoop:
         history: Sequence[Mapping[str, str]] = (),
         on_text_delta: Callable[[str], None] | None = None,
         cancellation_requested: Callable[[], bool] | None = None,
+        before_tool_call=None, after_tool_call=None, on_tool_error=None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
@@ -240,21 +244,71 @@ class AgentExecutionLoop:
                 return AgentExecutionResult("completed", text.strip(), turns, calls_total,
                                             max(0.0, self.clock() - started))
 
-            if calls_total + len(parsed) > self.max_tool_calls:
-                self._event("agent.stopped", reason="limit_reached", limit="tool_calls",
-                            model_turns=turns, tool_calls=calls_total)
-                return AgentExecutionResult("limit_reached", "", turns, calls_total,
-                                            max(0.0, self.clock() - started))
             reason = self._stop_reason(started, cancel_check)
             if reason:
                 self._event("agent.stopped", reason=reason, model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult(reason, "", turns, calls_total,
                                             max(0.0, self.clock() - started))
+            # Cancellation takes precedence over a batch-size limit: the user
+            # may cancel after the model response but before the first tool.
+            if cancel_check():
+                self._event("agent.stopped", reason="cancelled", model_turns=turns, tool_calls=calls_total)
+                return AgentExecutionResult("cancelled", "", turns, calls_total,
+                                            max(0.0, self.clock() - started))
+            if calls_total >= self.max_tool_calls:
+                self._event("agent.stopped", reason="limit_reached", limit="tool_calls",
+                            model_turns=turns, tool_calls=calls_total)
+                return AgentExecutionResult("limit_reached", "", turns, calls_total,
+                                            max(0.0, self.clock() - started))
 
             messages.append({"role": "assistant", "content": text or encoded_envelope})
             try:
-                results = self.tool_protocol.dispatch(encoded_envelope)
+                results = self.tool_protocol.dispatch(
+                    encoded_envelope, cancellation_requested=cancel_check,
+                    before_tool_call=before_tool_call,
+                    after_tool_call=after_tool_call, on_tool_error=on_tool_error,
+                    max_calls=self.max_tool_calls - calls_total,
+                )
                 formatted = self.tool_protocol.format_results(results)
+            except ToolExecutionAlreadyClaimed as claimed:
+                self._event(
+                    "agent.tool_replay_blocked", status=claimed.status,
+                    model_turns=turns, tool_calls=calls_total,
+                )
+                return AgentExecutionResult(
+                    "interrupted", "", turns, calls_total,
+                    max(0.0, self.clock() - started),
+                )
+            except ToolDispatchLimitReached as limited:
+                completed_count = len(limited.completed_results)
+                calls_total += completed_count
+                self._event(
+                    "agent.tools_partially_dispatched",
+                    completed=completed_count,
+                    call_ids=[item.call_id for item in limited.completed_results],
+                    total=calls_total,
+                )
+                self._event("agent.stopped", reason="limit_reached", limit="tool_calls",
+                            model_turns=turns, tool_calls=calls_total)
+                return AgentExecutionResult(
+                    "limit_reached", "", turns, calls_total,
+                    max(0.0, self.clock() - started),
+                )
+            except ToolDispatchCancelled as cancelled:
+                completed_count = len(cancelled.completed_results)
+                calls_total += completed_count
+                self._event(
+                    "agent.tools_partially_dispatched",
+                    completed=completed_count,
+                    call_ids=[item.call_id for item in cancelled.completed_results],
+                    total=calls_total,
+                )
+                self._event("agent.stopped", reason="cancelled",
+                            model_turns=turns, tool_calls=calls_total)
+                return AgentExecutionResult(
+                    "cancelled", "", turns, calls_total,
+                    max(0.0, self.clock() - started),
+                )
             except Exception as exc:
                 self._event("agent.tool_dispatch_failed", error_type=type(exc).__name__)
                 raise AgentExecutionError("guarded tool dispatch failed.") from exc

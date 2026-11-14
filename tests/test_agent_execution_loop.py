@@ -26,6 +26,33 @@ class AgentExecutionLoopTests(unittest.TestCase):
                              "value": {"type": "string"}}, "required": ["value"]}},
         }]
 
+    def test_cancellation_between_tool_calls_prevents_later_side_effects(self):
+        cancel = []
+        def on_first_call(raw):
+            cancel.append(True)
+            return raw
+        runtime = GuardedToolRuntime(
+            {"echo": on_first_call}, AllowPolicy()
+        )
+        protocol = StructuredToolProtocol(runtime)
+        envelope = json.dumps({"tool_calls": [
+            {"id": "call_1", "name": "echo", "arguments": {"value": "first"}},
+            {"id": "call_2", "name": "echo", "arguments": {"value": "second"}},
+        ]})
+        from core.structured_tool_protocol import ToolDispatchCancelled
+        with self.assertRaises(ToolDispatchCancelled):
+            protocol.dispatch(envelope, cancellation_requested=lambda: bool(cancel))
+        self.assertEqual(len(cancel), 1)
+
+    def test_cancellation_before_tool_batch_prevents_any_side_effect(self):
+        envelope = json.dumps({"tool_calls": [
+            {"id": "call_1", "name": "echo", "arguments": {"value": "first"}},
+        ]})
+        from core.structured_tool_protocol import ToolDispatchCancelled
+        with self.assertRaises(ToolDispatchCancelled):
+            self.protocol.dispatch(envelope, cancellation_requested=lambda: True)
+        self.assertEqual(self.invocations, [])
+
     def test_tool_result_is_returned_to_model_before_final_answer(self):
         observed = []
         def model(*, messages, tools, tool_choice):
@@ -100,7 +127,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.model_turns, 1)
         self.assertEqual(result.tool_calls, 1)
 
-    def test_tool_call_budget_prevents_dispatch(self):
+    def test_tool_call_budget_stops_excess_calls_after_allowed_side_effect(self):
         def model(**kwargs):
             return {"text": "", "tool_calls": {"tool_calls": [
                 {"id": "call_1", "name": "echo", "arguments": {"value": "x"}},
@@ -109,7 +136,34 @@ class AgentExecutionLoopTests(unittest.TestCase):
         result = AgentExecutionLoop(model, self.protocol, max_tool_calls=1).run(
             "Do two", tools=self.tools)
         self.assertEqual(result.status, "limit_reached")
-        self.assertEqual(self.invocations, [])
+        self.assertEqual(result.tool_calls, 1)
+        self.assertEqual(self.invocations, [{"value": "x"}])
+
+    def test_cancelled_tool_batch_reports_completed_call_count_and_ids(self):
+        cancel = []
+        events = []
+
+        def first_tool(raw):
+            cancel.append(True)
+            return "completed"
+
+        runtime = GuardedToolRuntime({"echo": first_tool}, AllowPolicy())
+        protocol = StructuredToolProtocol(runtime)
+
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "call_1", "name": "echo", "arguments": {"value": "one"}},
+                {"id": "call_2", "name": "echo", "arguments": {"value": "two"}},
+            ]}}
+
+        result = AgentExecutionLoop(
+            model, protocol, on_event=lambda kind, data: events.append((kind, data))
+        ).run("Do two", tools=[], cancellation_requested=lambda: bool(cancel))
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.tool_calls, 1)
+        partial = next(data for kind, data in events if kind == "agent.tools_partially_dispatched")
+        self.assertEqual(partial["completed"], 1)
+        self.assertEqual(partial["call_ids"], ["call_1"])
 
     def test_cancellation_before_first_model_call(self):
         model_calls = []

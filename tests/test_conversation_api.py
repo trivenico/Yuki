@@ -1,8 +1,10 @@
 import asyncio
+import concurrent.futures
 import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from api.conversations import YukiConversationAPI
@@ -64,6 +66,179 @@ class ConversationAPITests(unittest.TestCase):
             response_headers = dict(messages[0]["headers"])
             return status, data, response_headers
         return asyncio.run(run())
+
+
+    def test_owner_can_inspect_sanitized_tool_execution_records(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="inspect", idempotency_key="inspect-request",
+            expected_version=0, generation_request_id="inspect-request",
+        )
+        with patch(
+            "core.conversation_store.time.time", return_value=40_000.0
+        ):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="inspection-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id="inspect-request", call_id="mail-1",
+                tool_name="send_email", arguments_sha256="d" * 64,
+                lease_token="inspection-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id="inspect-request", call_id="mail-1",
+                lease_token="inspection-lease", status="uncertain",
+            )
+        status, data, headers = self.request(
+            "GET", f"/v1/conversations/{cid}/tool-executions",
+            token=self.issued.token, query=b"request_id=inspect-request",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["tool_executions"][0]["status"], "uncertain")
+        self.assertNotIn("arguments", data["tool_executions"][0])
+        self.assertEqual(headers[b"cache-control"], b"no-store")
+
+        self.auth.create_account("journal-other", "journal-other-password")
+        other = self.auth.authenticate("journal-other", "journal-other-password")
+        status, data, _ = self.request(
+            "GET", f"/v1/conversations/{cid}/tool-executions",
+            token=other.token, query=b"request_id=inspect-request",
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
+    def test_authenticated_owner_can_append_and_read_uncertain_tool_review(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        request_id = "review-api-request"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="review", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=60_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="review-api-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-1", tool_name="send_email",
+                arguments_sha256="b" * 64, lease_token="review-api-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-1",
+                lease_token="review-api-lease", status="uncertain",
+            )
+        path = f"/v1/conversations/{cid}/tool-executions/send-1/reviews"
+        status, data, _ = self.request(
+            "POST", path,
+            {"request_id": request_id, "action": "acknowledge_uncertain",
+             "reason": "Verified status with provider; still unknown."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(data["review"]["execution_status"], "uncertain")
+        status, data, _ = self.request(
+            "GET", path, token=self.issued.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["reviews"]), 1)
+        self.assertEqual(data["reviews"][0]["action"], "acknowledge_uncertain")
+        self.auth.create_account("review-other", "review-other-password")
+        other = self.auth.authenticate("review-other", "review-other-password")
+        status, data, _ = self.request(
+            "POST", path,
+            {"request_id": request_id, "action": "acknowledge_uncertain", "reason": "forbidden"},
+            other.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_authenticated_api_requires_provider_evidence_before_completion_review(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid, request_id = conversation["conversation_id"], "review-confirm-api"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="review confirmed action", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=100_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="review-confirm-generation", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-confirm-api",
+                tool_name="send_email", arguments_sha256="b" * 64,
+                idempotency_key="a" * 64, provider_idempotency=True,
+                lease_token="review-confirm-generation",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-confirm-api",
+                lease_token="review-confirm-generation", status="uncertain",
+            )
+        path = f"/v1/conversations/{cid}/tool-executions/send-confirm-api/reviews"
+        payload = {
+            "request_id": request_id, "action": "confirm_provider_completed",
+            "reason": "Verified the provider's completed delivery receipt.",
+        }
+        status, data, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 409, data)
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.CONFIRMED_COMPLETED,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="c" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+            provider_reference="provider-delivery-42",
+        )
+        claim = self.app.conversations.store.acquire_provider_reconciliation_lease(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-confirm-api",
+            lease_token="review-confirm-evidence",
+        )
+        self.app.conversations.store.record_provider_outcome_evidence(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-confirm-api", evidence=evidence,
+            reconciliation_lease_token="review-confirm-evidence",
+        )
+        self.app.conversations.store.release_provider_reconciliation_lease(
+            owner_id=self.user.user_id, execution_id=claim["execution_id"],
+            lease_token="review-confirm-evidence",
+        )
+        status, data, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["review"]["execution_status"], "completed")
+        status, data, _ = self.request(
+            "POST", path, payload, self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        status, data, _ = self.request(
+            "GET", path, token=self.issued.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [item["action"] for item in data["reviews"]],
+            ["confirm_provider_completed"],
+        )
+        self.auth.create_account("review-confirm-other", "review-confirm-other-password")
+        other = self.auth.authenticate("review-confirm-other", "review-confirm-other-password")
+        status, data, _ = self.request("POST", path, payload, other.token)
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
 
     def test_provider_catalog_requires_authentication_and_projects_safe_fields(self):
         self.app.provider_catalog = lambda: [{
@@ -197,6 +372,97 @@ class ConversationAPITests(unittest.TestCase):
         status, _, _ = self.request("GET", "/v1/conversations", token=token)
         self.assertEqual(status, 401)
 
+    def test_authenticated_sessions_select_distinct_owner_execution_loops(self):
+        self.auth.create_account("second-user", "another-secure-password")
+        second_session = self.auth.authenticate("second-user", "another-secure-password")
+        second_user_id = second_session.user.user_id
+        first_user_id = self.issued.user.user_id
+        resolved = []
+
+        def owner_factory(owner_id):
+            resolved.append(owner_id)
+            def model(**kwargs):
+                return {"text": "response-for-" + owner_id, "tool_calls": {"tool_calls": []}}
+            protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            return AgentExecutionLoop(model, protocol)
+
+        self.app.conversations.agent_loop_for_owner = owner_factory
+        status, first_conversation, _ = self.request(
+            "POST", "/v1/conversations", {"title": "First"}, self.issued.token
+        )
+        self.assertEqual(status, 201)
+        status, second_conversation, _ = self.request(
+            "POST", "/v1/conversations", {"title": "Second"}, second_session.token
+        )
+        self.assertEqual(status, 201)
+
+        status, first_reply, _ = self.request(
+            "POST", f"/v1/conversations/{first_conversation['conversation_id']}/messages",
+            {"content": "hello", "request_id": "first-owner-request", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        status, second_reply, _ = self.request(
+            "POST", f"/v1/conversations/{second_conversation['conversation_id']}/messages",
+            {"content": "hello", "request_id": "second-owner-request", "expected_version": 0},
+            second_session.token,
+        )
+        self.assertEqual(status, 200)
+
+        self.assertEqual(resolved, [first_user_id, second_user_id])
+        self.assertEqual(first_reply["answer"], "response-for-" + first_user_id)
+        self.assertEqual(second_reply["answer"], "response-for-" + second_user_id)
+
+        # A valid session cannot override the identity used by the owner factory.
+        status, _, _ = self.request(
+            "POST", "/v1/conversations",
+            {"title": "Forged", "owner_id": second_user_id}, self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resolved, [first_user_id, second_user_id])
+
+    def test_distinct_authenticated_users_generate_concurrently_without_loop_leakage(self):
+        self.auth.create_account("parallel-user", "parallel-secure-password")
+        second = self.auth.authenticate("parallel-user", "parallel-secure-password")
+        barrier = threading.Barrier(2)
+        entered = []
+        entered_lock = threading.Lock()
+
+        def owner_factory(owner_id):
+            def model(**kwargs):
+                with entered_lock:
+                    entered.append(owner_id)
+                barrier.wait(timeout=5)
+                return {"text": "parallel-response-" + owner_id, "tool_calls": {"tool_calls": []}}
+            return AgentExecutionLoop(
+                model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            )
+
+        self.app.conversations.agent_loop_for_owner = owner_factory
+        first_conversation = self.app.conversations.create(owner_id=self.issued.user.user_id)
+        second_conversation = self.app.conversations.create(owner_id=second.user.user_id)
+
+        def send(owner_token, conversation, request_id):
+            return self.request(
+                "POST", f"/v1/conversations/{conversation['conversation_id']}/messages",
+                {"content": "run concurrently", "request_id": request_id, "expected_version": 0},
+                owner_token,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(send, self.issued.token, first_conversation, "parallel-first")
+            second_future = pool.submit(send, second.token, second_conversation, "parallel-second")
+            first_status, first_reply, _ = first_future.result(timeout=10)
+            second_status, second_reply, _ = second_future.result(timeout=10)
+
+        self.assertEqual(first_status, 200)
+        self.assertEqual(second_status, 200)
+        self.assertEqual(first_reply["status"], "completed")
+        self.assertEqual(second_reply["status"], "completed")
+        self.assertEqual(set(entered), {self.issued.user.user_id, second.user.user_id})
+        self.assertEqual(first_reply["answer"], "parallel-response-" + self.issued.user.user_id)
+        self.assertEqual(second_reply["answer"], "parallel-response-" + second.user.user_id)
+
     def test_unauthenticated_and_forged_owner_fields_are_rejected(self):
         status, _, _ = self.request("GET", "/v1/conversations")
         self.assertEqual(status, 401)
@@ -307,6 +573,236 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_authenticated_owner_can_read_provider_outcome_evidence_only(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid, request_id = conversation["conversation_id"], "provider-api-request"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="verify action", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=80_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="provider-api-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-2", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="provider-api-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-2",
+                lease_token="provider-api-lease", status="uncertain",
+            )
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="c" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+            provider_reference="provider-ref",
+        )
+        claim = self.app.conversations.store.acquire_provider_reconciliation_lease(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-2", lease_token="provider-evidence-worker",
+        )
+        self.app.conversations.store.record_provider_outcome_evidence(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-2", evidence=evidence,
+            reconciliation_lease_token="provider-evidence-worker",
+        )
+        self.app.conversations.store.release_provider_reconciliation_lease(
+            owner_id=self.user.user_id, execution_id=claim["execution_id"],
+            lease_token="provider-evidence-worker",
+        )
+        path = f"/v1/conversations/{cid}/tool-executions/send-2/provider-outcomes"
+        status, data, _ = self.request(
+            "GET", path, token=self.issued.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["provider_outcomes"][0]["outcome"], "unknown")
+        self.assertNotIn("idempotency_key", data["provider_outcomes"][0])
+        self.auth.create_account("provider-other", "provider-other-password")
+        other = self.auth.authenticate("provider-other", "provider-other-password")
+        status, data, _ = self.request(
+            "GET", path, token=other.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_authenticated_provider_reconciliation_uses_registered_read_only_adapter(self):
+        from core.provider_outcome import (
+            ProviderOutcome, ProviderOutcomeEvidence,
+            ProviderOutcomeReconciler, ProviderOutcomeRegistry,
+        )
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid, request_id = conversation["conversation_id"], "provider-reconcile-api"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="verify", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=90_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="provider-reconcile-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-3", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="provider-reconcile-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-3",
+                lease_token="provider-reconcile-lease", status="uncertain",
+            )
+        calls = []
+        class Adapter:
+            provider_id = "mail.example"
+
+            def lookup_tool_outcome(self, execution):
+                calls.append(execution)
+                return ProviderOutcomeEvidence(
+                    provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+                    idempotency_key="a" * 64, arguments_sha256="b" * 64,
+                    evidence_sha256="c" * 64,
+                    observed_at="2026-11-14T10:00:00+00:00",
+                    provider_reference="private-provider-reference",
+                )
+        self.app.conversations.provider_outcome_reconciler = ProviderOutcomeReconciler(
+            self.app.conversations.store, ProviderOutcomeRegistry({"send_email": Adapter()})
+        )
+        self.assertEqual(
+            self.app.conversations.store.list_tool_executions(
+                owner_id=self.user.user_id, conversation_id=cid, request_id=request_id,
+            )[0]["call_id"],
+            "send-3",
+        )
+        self.app.conversations.store.get_conversation(
+            owner_id=self.user.user_id, conversation_id=cid,
+        )
+        path = f"/v1/conversations/{cid}/tool-executions/send-3/provider-outcomes"
+        status, data, _ = self.request(
+            "POST", path, {"request_id": request_id}, self.issued.token,
+        )
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["provider_outcome"]["outcome"], "unknown")
+        self.assertNotIn("provider_reference", data["provider_outcome"])
+        status, listed, _ = self.request(
+            "GET", path, None, self.issued.token,
+            query=("request_id=" + request_id).encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("provider_reference", listed["provider_outcomes"][0])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["status"], "uncertain")
+        self.assertEqual(self.app.conversations.store.list_tool_executions(
+            owner_id=self.user.user_id, conversation_id=cid, request_id=request_id,
+        )[0]["status"], "uncertain")
+        self.auth.create_account("provider-reconcile-other", "provider-reconcile-password")
+        other = self.auth.authenticate("provider-reconcile-other", "provider-reconcile-password")
+        status, data, _ = self.request(
+            "POST", path, {"request_id": request_id}, other.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+        # An unauthorized cross-owner request must not reach the provider adapter.
+        self.assertEqual(len(calls), 1)
+
+
+    def test_execution_inspection_and_review_reject_invalid_or_ambiguous_request_ids(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        paths = [
+            f"/v1/conversations/{cid}/tool-executions",
+            f"/v1/conversations/{cid}/tool-executions/call-1/provider-outcomes",
+            f"/v1/conversations/{cid}/tool-executions/call-1/reviews",
+        ]
+        invalid_queries = [
+            b"request_id=",
+            b"request_id=%20%20",
+            ("request_id=" + "x" * 161).encode(),
+            b"request_id=first&request_id=second",
+            b"request_id=%",
+            b"request_id=%GG",
+            b"request_id=%FF",
+            b"request_id=%0Ainjected",
+        ]
+        for path in paths:
+            for query in invalid_queries:
+                with self.subTest(path=path, query=query):
+                    status, data, _ = self.request(
+                        "GET", path, token=self.issued.token, query=query,
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(data, {"error": "invalid_request"})
+
+    def test_review_post_rejects_invalid_request_id(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        path = (
+            f"/v1/conversations/{conversation['conversation_id']}/"
+            "tool-executions/call-1/reviews"
+        )
+        for request_id in ("", "   ", "x" * 161):
+            with self.subTest(request_id=request_id):
+                status, data, _ = self.request(
+                    "POST", path,
+                    {"request_id": request_id, "action": "acknowledge_uncertain",
+                     "reason": "validation test"},
+                    self.issued.token,
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(data, {"error": "invalid_request"})
+
+    def test_provider_reconciliation_returns_service_unavailable_when_unconfigured(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        path = (
+            f"/v1/conversations/{conversation['conversation_id']}/"
+            "tool-executions/call-unconfigured/provider-outcomes"
+        )
+        status, data, _ = self.request(
+            "POST", path, {"request_id": "provider-not-configured"}, self.issued.token,
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(data, {"error": "provider_outcome_unavailable"})
+
+
+    def test_provider_reconciliation_rejects_malformed_payload_before_dispatch(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        path = (
+            f"/v1/conversations/{conversation['conversation_id']}/"
+            "tool-executions/call-malformed/provider-outcomes"
+        )
+        class MustNotRun:
+            def reconcile(self, **kwargs):
+                raise AssertionError("malformed requests must not reach provider adapters")
+        self.app.conversations.provider_outcome_reconciler = MustNotRun()
+        malformed = [
+            {},
+            {"request_id": 42},
+            {"request_id": ""},
+            {"request_id": "   "},
+            {"request_id": "x" * 161},
+            {"request_id": "valid", "owner_id": self.user.user_id},
+        ]
+        for payload in malformed:
+            with self.subTest(payload=payload):
+                status, data, _ = self.request(
+                    "POST", path, payload, self.issued.token,
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(data, {"error": "invalid_request"})
+
 
 if __name__ == "__main__":
     unittest.main()
