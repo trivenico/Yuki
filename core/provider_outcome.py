@@ -75,7 +75,8 @@ class ProviderOutcomeAdapter(Protocol):
 
 
 def verify_provider_outcome(
-    adapter: ProviderOutcomeAdapter, execution: dict[str, Any],
+    adapter: ProviderOutcomeAdapter, execution: dict[str, Any], *,
+    expected_provider: str | None = None,
 ) -> ProviderOutcomeEvidence:
     """Query and bind evidence to the durable execution; never retry or infer success."""
     if not isinstance(execution, dict):
@@ -104,6 +105,8 @@ def verify_provider_outcome(
     if (evidence.idempotency_key != execution["idempotency_key"]
             or evidence.arguments_sha256 != execution["arguments_sha256"]):
         raise ValueError("provider evidence does not match the durable execution fingerprint.")
+    if expected_provider is not None and evidence.provider != expected_provider:
+        raise ValueError("provider evidence does not match the registered provider identity.")
     return evidence
 
 
@@ -120,6 +123,9 @@ class ProviderOutcomeRegistry:
                 raise ValueError("adapter tool names must be bounded identifiers.")
             if not callable(getattr(adapter, "lookup_tool_outcome", None)):
                 raise TypeError(f"adapter for {tool_name!r} has no lookup_tool_outcome method.")
+            provider_id = getattr(adapter, "provider_id", None)
+            if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", provider_id):
+                raise ValueError(f"adapter for {tool_name!r} must declare a bounded provider_id.")
             validated[tool_name] = adapter
         self._adapters = validated
 
@@ -127,7 +133,9 @@ class ProviderOutcomeRegistry:
         adapter = self._adapters.get(tool_name)
         if adapter is None:
             raise LookupError(f"no provider outcome adapter is registered for {tool_name!r}.")
-        return verify_provider_outcome(adapter, execution)
+        return verify_provider_outcome(
+            adapter, execution, expected_provider=adapter.provider_id,
+        )
 
 
 class ProviderOutcomeReconciler:
