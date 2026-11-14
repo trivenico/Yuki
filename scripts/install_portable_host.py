@@ -130,8 +130,9 @@ def _apply_windows_acl(path: Path) -> None:
     subprocess.run(
         [
             "icacls", str(path), "/inheritance:r", "/grant:r",
-            f"*{sid}:(F)(OI)(CI)F", "*S-1-5-18:(F)(OI)(CI)F",
-            "*S-1-5-32-544:(F)(OI)(CI)F", "/T",
+            f"*{sid}:(F)", f"*{sid}:(OI)(CI)F",
+            "*S-1-5-18:(F)", "*S-1-5-18:(OI)(CI)F",
+            "*S-1-5-32-544:(F)", "*S-1-5-32-544:(OI)(CI)F", "/T",
         ],
         check=True, capture_output=True, text=True, timeout=30,
     )
