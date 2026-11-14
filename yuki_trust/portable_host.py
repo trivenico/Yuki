@@ -955,7 +955,9 @@ def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> b
     if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
         raise BootstrapError(f"{label} requires POSIX O_DIRECTORY and O_NOFOLLOW support.")
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    # Avoid blocking if an attacker swaps the final path to a FIFO between
+    # directory traversal and open; fstat below rejects non-regular files.
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
     directory_flags |= getattr(os, "O_CLOEXEC", 0)
     file_flags |= getattr(os, "O_CLOEXEC", 0)
     parts = candidate.parts
