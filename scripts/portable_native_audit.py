@@ -36,7 +36,9 @@ def parse_elf_dynamic(output: str) -> dict:
     needed = re.findall(r"\(NEEDED\).*?Shared library: \[(.*?)\]", output)
     paths = re.findall(r"\((?:RPATH|RUNPATH)\).*?Library (?:rpath|runpath): \[(.*?)\]", output)
     entries = [item for value in paths for item in value.split(":") if item]
-    unsafe = [item for item in entries if not item.startswith(ELF_ORIGIN_TOKENS)]
+    def origin_relative(item: str) -> bool:
+        return any(item == token or item.startswith(token + "/") for token in ELF_ORIGIN_TOKENS)
+    unsafe = [item for item in entries if not origin_relative(item)]
     return {"needed": needed, "loader_paths": entries, "unsafe_loader_paths": unsafe,
             "ok": not unsafe}
 
@@ -74,11 +76,28 @@ def parse_windows_dependents(output: str) -> dict:
 
 
 def audit_bundle(root: Path, platform_name: str, runner=subprocess.run) -> dict:
-    root = Path(root).resolve(strict=True)
-    if not root.is_dir():
-        raise NativeAuditError("Bundle root must be a directory.")
-    binaries = sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink()
-                      and p.suffix.lower() in {".so", ".dylib", ".dll", ".pyd", ".exe"})
+    root_candidate = Path(root)
+    if root_candidate.is_symlink() or not root_candidate.is_dir():
+        raise NativeAuditError("Bundle root must be an existing non-symlink directory.")
+    root = root_candidate.resolve(strict=True)
+
+    def is_native_binary(path: Path) -> bool:
+        if path.is_symlink() or not path.is_file():
+            return False
+        try:
+            with path.open("rb") as stream:
+                magic = stream.read(4)
+        except OSError as exc:
+            raise NativeAuditError(f"Unable to read bundle file: {path.relative_to(root)}") from exc
+        return (
+            magic == bytes((127, 69, 76, 70))
+            or magic in {bytes((254, 237, 250, 206)), bytes((206, 250, 237, 254)),
+                         bytes((254, 237, 250, 207)), bytes((207, 250, 237, 254)),
+                         bytes((202, 254, 186, 190)), bytes((190, 186, 254, 202))}
+            or magic[:2] == b"MZ"
+        )
+
+    binaries = sorted(p for p in root.rglob("*") if is_native_binary(p))
     results = []
     for binary in binaries:
         if platform_name == "linux":
