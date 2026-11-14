@@ -85,9 +85,10 @@ def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> b
     if not candidate.is_absolute() or max_bytes < 0:
         raise BootstrapError(f"{label} path or size limit is invalid.")
 
-    if os.name != "nt":
+    if sys.platform == "darwin":
         # macOS exposes these trusted system aliases as symlinks. Normalize
         # only the documented roots before descriptor-relative traversal.
+        # Never apply these aliases on Linux or other POSIX platforms.
         raw = str(candidate)
         for alias, target in (
             ("/var/", "/private/var/"),
