@@ -140,7 +140,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         original_open = Path.open
 
         def open_replacement(path, *args, **kwargs):
-            if path == payload and args[:1] == ("rb",):
+            if path.name == payload.name and path.parent == payload.parent and args[:1] == ("rb",):
                 return original_open(outside, *args, **kwargs)
             return original_open(path, *args, **kwargs)
 
