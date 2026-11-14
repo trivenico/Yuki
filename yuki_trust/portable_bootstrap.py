@@ -326,7 +326,6 @@ def main() -> int:
             args.bundle,
             args.public_key,
             args.python,
-            args.python,
             args.entrypoint,
             forwarded,
             expected_platform=args.expected_platform,
