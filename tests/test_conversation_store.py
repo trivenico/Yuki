@@ -478,6 +478,11 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="call-evidence", evidence=evidence,
         )
         self.assertEqual(saved["outcome"], "unknown")
+        repeated = self.store.record_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence", evidence=evidence,
+        )
+        self.assertEqual(repeated["evidence_id"], saved["evidence_id"])
         self.assertEqual(len(self.store.list_provider_outcome_evidence(
             owner_id=self.owner, conversation_id=conversation_id,
             request_id=request_id, call_id="call-evidence",
