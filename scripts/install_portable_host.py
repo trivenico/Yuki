@@ -85,12 +85,45 @@ def _atomic_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
                 os.close(directory_fd)
 
 
+def _validate_windows_path_chain(path: Path, label: str) -> None:
+    """Reject Windows symlinks, junctions, and other reparse points in every
+    existing component of a host trust path.
+
+    Windows exposes the reparse-point attribute through lstat(). Checking each
+    component before and after directory creation prevents an attacker-controlled
+    junction in an ancestor from redirecting trust material to another location.
+    """
+    if not path.is_absolute():
+        raise BootstrapError(f"{label} directory must be absolute.")
+    current = Path(path.anchor)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+    for part in path.parts[1:]:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            # No later descendant can exist below a missing component.
+            break
+        except OSError as exc:
+            raise BootstrapError(f"{label} path components could not be inspected safely.") from exc
+        attributes = getattr(info, "st_file_attributes", 0)
+        if stat.S_ISLNK(info.st_mode) or attributes & reparse_flag:
+            raise BootstrapError(f"{label} path must not contain symlinks, junctions, or reparse points.")
+        if current != path and not stat.S_ISDIR(info.st_mode):
+            raise BootstrapError(f"{label} parent path components must be directories.")
+
+
+
 def _prepare_private_directory(path: Path, label: str) -> None:
     if not path.is_absolute():
         raise BootstrapError(f"{label} directory must be absolute.")
-    if os.name != "nt":
+    if os.name == "nt":
+        _validate_windows_path_chain(path, label)
+    else:
         portable_host._validate_host_parent_directories(path, label=label)
     path.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        _validate_windows_path_chain(path, label)
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode):
         raise BootstrapError(f"{label} path must be a real directory, not a symlink.")
