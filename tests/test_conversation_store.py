@@ -879,6 +879,58 @@ class ConversationStoreTests(unittest.TestCase):
                 lease_token="worker-new",
             ))
 
+    def test_concurrent_duplicate_provider_evidence_delivery_is_idempotent(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "provider-evidence-race"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Verify provider outcome", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="evidence-generation-worker", ttl_seconds=60,
+        )
+        self.store.begin_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence-race", tool_name="send_email",
+            arguments_sha256="b" * 64, idempotency_key="a" * 64,
+            lease_token="evidence-generation-worker",
+        )
+        self.store.finish_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence-race",
+            lease_token="evidence-generation-worker", status="uncertain",
+        )
+        claim = self.store.acquire_provider_reconciliation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence-race",
+            lease_token="evidence-race-worker", ttl_seconds=30,
+        )
+        evidence = self._make_claim_test_evidence()
+        barrier = Barrier(2)
+
+        def record():
+            barrier.wait(timeout=5)
+            return self.store.record_provider_outcome_evidence(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-evidence-race",
+                evidence=evidence, reconciliation_lease_token="evidence-race-worker",
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: record(), range(2)))
+
+        self.assertEqual(results[0]["evidence_id"], results[1]["evidence_id"])
+        self.assertEqual(len(self.store.list_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence-race",
+        )), 1)
+        self.store.release_provider_reconciliation_lease(
+            owner_id=self.owner, execution_id=claim["execution_id"],
+            lease_token="evidence-race-worker",
+        )
+
     def _make_claim_test_evidence(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
         return ProviderOutcomeEvidence(
