@@ -726,8 +726,34 @@ class ConversationStoreTests(unittest.TestCase):
 
     def test_legacy_review_table_constraint_is_migrated_without_losing_rows(self):
         import sqlite3
-        database = Path(self.tempdir.name) / "legacy-review.sqlite3"
-        ConversationStore(database)
+        database = Path(self.store.database_path)
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "legacy-review-preservation"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="legacy review", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=120_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="legacy-review-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="legacy-call", tool_name="send_email",
+                arguments_sha256="e" * 64, lease_token="legacy-review-worker",
+            )
+            self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="legacy-call",
+                lease_token="legacy-review-worker", status="uncertain",
+            )
+        original = self.store.review_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="legacy-call",
+            action="acknowledge_uncertain", reason="Historical review must survive migration.",
+        )
         with sqlite3.connect(database) as db:
             db.execute("PRAGMA foreign_keys=OFF")
             db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_new")
@@ -751,6 +777,13 @@ class ConversationStoreTests(unittest.TestCase):
             db.execute("DROP TABLE conversation_tool_reviews_new")
             db.execute("CREATE INDEX idx_tool_reviews_owner_execution ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at)")
         ConversationStore(database)
+        migrated = self.store.list_tool_execution_reviews(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="legacy-call",
+        )
+        self.assertEqual(len(migrated), 1)
+        self.assertEqual(migrated[0]["review_id"], original["review_id"])
+        self.assertEqual(migrated[0]["reason"], "Historical review must survive migration.")
         with sqlite3.connect(database) as db:
             schema = db.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_tool_reviews'"
