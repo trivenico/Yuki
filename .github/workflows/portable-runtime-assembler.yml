@@ -1,0 +1,44 @@
+name: Portable runtime assembler
+
+on:
+  pull_request:
+    paths:
+      - "scripts/portable_runtime_assembler.py"
+      - "scripts/portable_archive.py"
+      - "scripts/portable_runtime_inputs.py"
+      - "tests/test_portable_runtime_assembler.py"
+      - ".github/workflows/portable-runtime-assembler.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/portable_runtime_assembler.py"
+      - "scripts/portable_archive.py"
+      - "scripts/portable_runtime_inputs.py"
+      - "tests/test_portable_runtime_assembler.py"
+      - ".github/workflows/portable-runtime-assembler.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-portable-assembler-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assembler-tests:
+    name: Runtime assembly / Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run assembler orchestration tests
+        run: python -m unittest discover -s tests -p "test_portable_runtime_assembler.py" -v
