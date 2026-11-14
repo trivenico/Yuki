@@ -616,7 +616,7 @@ class ConversationStore:
                     "conversation_id": conversation_id, "request_id": request_id,
                     "call_id": call_id, "provider": evidence.provider,
                     "outcome": evidence.outcome.value, "evidence_sha256": evidence.evidence_sha256,
-                    "observed_at": evidence.observed_at, "provider_reference": evidence.provider_reference,
+                    "observed_at": evidence.observed_at,
                     "recorded_at": recorded_at,
                 }
             except Exception:
@@ -630,8 +630,7 @@ class ConversationStore:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT evidence_id, execution_id, conversation_id, request_id, call_id,
-                          provider, outcome, evidence_sha256, observed_at,
-                          provider_reference, recorded_at
+                          provider, outcome, evidence_sha256, observed_at, recorded_at
                    FROM conversation_provider_outcome_evidence
                    WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?
                    ORDER BY recorded_at, evidence_id""",
