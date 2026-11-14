@@ -264,6 +264,14 @@ class ConversationService:
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=generation["request_id"], status="interrupted",
                 )
+            else:
+                # A missing user-message row is an invariant violation, but
+                # must not leave the durable generation permanently running.
+                # Any started tool records were already marked uncertain above.
+                self.store.finish_generation(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    request_id=generation["request_id"], status="interrupted",
+                )
         # Check ownership and stale versions before invoking a model.
         conversation = self.store.get_conversation(
             owner_id=owner_id, conversation_id=conversation_id
