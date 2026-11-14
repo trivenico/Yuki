@@ -283,15 +283,26 @@ def run_verified_bundle(
     state_path = Path(anti_rollback_state_path).expanduser()
     if not state_path.is_absolute() or not state_path.parent.is_dir():
         raise BootstrapError("Anti-rollback state path must be absolute and use an existing host directory.")
-    current_parent = state_path.parent
+    try:
+        canonical_state_parent = state_path.parent.resolve(strict=True)
+    except OSError as exc:
+        raise BootstrapError("Anti-rollback state parent directory is unavailable.") from exc
+    current_parent = canonical_state_parent
     while True:
-        if current_parent.is_symlink() or not current_parent.is_dir():
-            raise BootstrapError("Anti-rollback state parent directories must not contain symlinks.")
+        info = current_parent.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise BootstrapError("Anti-rollback state parent directories must be real directories.")
+        if os.name != "nt":
+            if info.st_uid not in {0, os.getuid()}:
+                raise BootstrapError("Anti-rollback state parent directory has an untrusted owner.")
+            mode = stat.S_IMODE(info.st_mode)
+            if mode & 0o022 and not (mode & stat.S_ISVTX):
+                raise BootstrapError("Anti-rollback state parent directory is group- or world-writable.")
         if current_parent.parent == current_parent:
             break
         current_parent = current_parent.parent
     source_root = Path(bundle).expanduser().resolve(strict=True)
-    resolved_state = state_path.parent.resolve(strict=True) / state_path.name
+    resolved_state = canonical_state_parent / state_path.name
     try:
         resolved_state.relative_to(source_root)
     except ValueError:
