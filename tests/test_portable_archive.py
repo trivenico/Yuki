@@ -4,6 +4,7 @@ import stat
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts.portable_archive import ArchiveValidationError, extract_zip_safely
@@ -95,6 +96,15 @@ class PortableArchiveTests(unittest.TestCase):
         self._zip([("runtime.bin", b"tampered", stat.S_IFREG | 0o644)])
         with self.assertRaisesRegex(ArchiveValidationError, "SHA-256 does not match"):
             extract_zip_safely(self.archive, self.destination, expected_sha256="0" * 64)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(list(self.root.glob(".yuki-archive-verified-*")), [])
+
+    def test_verified_snapshot_is_cleaned_if_staging_creation_fails(self):
+        self._zip([("runtime.bin", b"verified", stat.S_IFREG | 0o644)])
+        expected = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        with patch("scripts.portable_archive.tempfile.mkdtemp", side_effect=OSError("disk unavailable")):
+            with self.assertRaisesRegex(ArchiveValidationError, "extraction failed"):
+                extract_zip_safely(self.archive, self.destination, expected_sha256=expected)
         self.assertFalse(self.destination.exists())
         self.assertEqual(list(self.root.glob(".yuki-archive-verified-*")), [])
 
