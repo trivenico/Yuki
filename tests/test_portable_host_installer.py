@@ -103,8 +103,10 @@ class PortableHostInstallerTests(unittest.TestCase):
         result = self._install()
         launcher = Path(result["launcher"])
         source = launcher.read_text(encoding="utf-8")
+        self.assertTrue(source.startswith("#!/bin/sh\n"))
         self.assertIn("exec ", source)
         self.assertIn('"$@"', source)
+        self.assertTrue(source.endswith("\n"))
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertTrue(Path(result["public_key"]).is_file())
 
