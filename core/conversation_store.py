@@ -79,6 +79,18 @@ class ConversationStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_generation_leases_expiry ON conversation_generation_leases(expires_at);
 
+                CREATE TABLE IF NOT EXISTS conversation_recovery_events (
+                    recovery_event_id TEXT PRIMARY KEY,
+                    generation_id TEXT NOT NULL UNIQUE REFERENCES conversation_generation_runs(generation_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('completed', 'interrupted', 'orphaned')),
+                    uncertain_tool_calls INTEGER NOT NULL CHECK(uncertain_tool_calls >= 0),
+                    recovered_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_recovery_events_owner_time
+                    ON conversation_recovery_events(owner_id, recovered_at DESC);
                 CREATE TABLE IF NOT EXISTS conversation_generation_runs (
                     generation_id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
@@ -974,6 +986,86 @@ class ConversationStore:
                  conversation_id, owner, lease_token.strip(), time.time()),
             )
             return cursor.rowcount == 1
+
+    def finish_generation_with_recovery_event(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        status: str, lease_token: str, outcome: str, uncertain_tool_calls: int,
+    ) -> bool:
+        """Atomically finalize a crashed generation and append its recovery audit event."""
+        owner = self._owner(owner_id)
+        if status not in {"completed", "interrupted"}:
+            raise ValueError("recovery status must be completed or interrupted.")
+        if outcome not in {"completed", "interrupted", "orphaned"}:
+            raise ValueError("invalid recovery outcome.")
+        if type(uncertain_tool_calls) is not int or uncertain_tool_calls < 0:
+            raise ValueError("uncertain_tool_calls must be a non-negative integer.")
+        if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
+            raise ValueError("lease_token must be non-empty bounded text.")
+        now = self._now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                lease = db.execute(
+                    """SELECT 1 FROM conversation_generation_leases
+                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                    (conversation_id, owner, lease_token.strip(), time.time()),
+                ).fetchone()
+                if lease is None:
+                    raise ConversationConflict("generation lease expired or is no longer owned by this worker.")
+                generation = db.execute(
+                    """SELECT generation_id FROM conversation_generation_runs
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
+                    (owner, conversation_id, request_id),
+                ).fetchone()
+                if generation is None:
+                    db.rollback()
+                    return False
+                db.execute(
+                    """UPDATE conversation_generation_runs
+                       SET status=?, updated_at=?, finished_at=?
+                       WHERE generation_id=? AND status='running'""",
+                    (status, now, now, generation["generation_id"]),
+                )
+                db.execute(
+                    """INSERT INTO conversation_recovery_events
+                       (recovery_event_id, generation_id, owner_id, conversation_id,
+                        request_id, outcome, uncertain_tool_calls, recovered_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (str(uuid.uuid4()), generation["generation_id"], owner,
+                     conversation_id, request_id, outcome, uncertain_tool_calls, now),
+                )
+                db.commit()
+                return True
+            except Exception:
+                db.rollback()
+                raise
+
+    def list_recovery_events(
+        self, *, owner_id: str, conversation_id: str | None = None, limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return sanitized, owner-scoped recovery audit metadata."""
+        owner = self._owner(owner_id)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        with self._connect() as db:
+            if conversation_id is None:
+                rows = db.execute(
+                    """SELECT conversation_id, request_id, outcome,
+                              uncertain_tool_calls, recovered_at
+                       FROM conversation_recovery_events
+                       WHERE owner_id=? ORDER BY recovered_at DESC, recovery_event_id DESC
+                       LIMIT ?""", (owner, limit)
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """SELECT conversation_id, request_id, outcome,
+                              uncertain_tool_calls, recovered_at
+                       FROM conversation_recovery_events
+                       WHERE owner_id=? AND conversation_id=?
+                       ORDER BY recovered_at DESC, recovery_event_id DESC LIMIT ?""",
+                    (owner, conversation_id, limit)
+                ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_interrupted_generations(
         self, *, owner_id: str, conversation_id: str | None = None, limit: int = 100,
