@@ -39,6 +39,27 @@ class ProviderOutcomeTests(unittest.TestCase):
         self.assertEqual(result.outcome, ProviderOutcome.UNKNOWN)
         self.assertEqual(calls, ["execution-1"])
 
+    def test_adapter_receives_only_minimum_execution_identity(self):
+        received = []
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                received.append(execution)
+                return ProviderOutcomeTests().evidence()
+        sensitive_execution = {
+            **self.execution,
+            "owner_id": "private-owner",
+            "conversation_id": "private-conversation",
+            "arguments": {"to": "private@example.test", "body": "sensitive"},
+            "provider_credentials": "must-not-cross-boundary",
+        }
+        verify_provider_outcome(Adapter(), sensitive_execution)
+        self.assertEqual(received, [{
+            "execution_id": "execution-1",
+            "idempotency_key": "a" * 64,
+            "arguments_sha256": "b" * 64,
+            "status": "uncertain",
+        }])
+
     def test_mismatched_idempotency_key_is_rejected(self):
         class Adapter:
             def lookup_tool_outcome(self, execution):
