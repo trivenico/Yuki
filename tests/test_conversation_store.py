@@ -1351,6 +1351,84 @@ class ConversationStoreTests(unittest.TestCase):
             lease_token="worker-recovered",
         )
 
+    def test_generation_crash_recovery_to_provider_review_is_fenced_end_to_end(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "generation-crash-to-review"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Send and recover", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=300_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="generation-crashed", ttl_seconds=5,
+            )
+            claimed = self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-crash", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                provider_idempotency=True, lease_token="generation-crashed",
+            )
+            self.assertTrue(claimed["created"])
+
+        recovered_store = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+        with patch("core.conversation_store.time.time", return_value=300_006.0):
+            recovered_store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="generation-recovered", ttl_seconds=30,
+            )
+            # The recovery worker can classify the abandoned side effect as
+            # uncertain, but the expired worker cannot change its state.
+            self.assertEqual(self.store.mark_started_tool_executions_uncertain(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, lease_token="generation-crashed",
+            ), 0)
+            self.assertEqual(recovered_store.mark_started_tool_executions_uncertain(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, lease_token="generation-recovered",
+            ), 1)
+            self.assertTrue(recovered_store.finish_generation(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, status="interrupted",
+                lease_token="generation-recovered",
+            ))
+
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.CONFIRMED_COMPLETED,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="e" * 64, observed_at="2026-11-14T10:00:00+00:00",
+            provider_reference="message-verified",
+        )
+        saved = self._record_provider_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-crash", evidence=evidence,
+        )
+        self.assertEqual(saved["outcome"], "confirmed_completed")
+
+        review = recovered_store.review_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-crash",
+            action="confirm_provider_completed",
+            reason="Provider evidence confirms completion after recovery.",
+        )
+        self.assertEqual(review["execution_status"], "completed")
+        execution = recovered_store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id,
+        )[0]
+        self.assertEqual(execution["status"], "completed")
+        self.assertEqual(len(recovered_store.list_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-crash",
+        )), 1)
+        self.assertEqual(len(recovered_store.list_tool_execution_reviews(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-crash",
+        )), 1)
+
     def _make_claim_test_evidence(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
         return ProviderOutcomeEvidence(
