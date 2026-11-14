@@ -39,8 +39,9 @@ def parse_elf_dynamic(output: str) -> dict:
     def origin_relative(item: str) -> bool:
         return any(item == token or item.startswith(token + "/") for token in ELF_ORIGIN_TOKENS)
     unsafe = [item for item in entries if not origin_relative(item)]
+    unsafe_needed = [item for item in needed if "/" in item and not origin_relative(item)]
     return {"needed": needed, "loader_paths": entries, "unsafe_loader_paths": unsafe,
-            "ok": not unsafe}
+            "unsafe_needed_paths": unsafe_needed, "ok": not unsafe and not unsafe_needed}
 
 
 def parse_macho_load_commands(load_output: str, linked_output: str) -> dict:
@@ -51,9 +52,15 @@ def parse_macho_load_commands(load_output: str, linked_output: str) -> dict:
         if value.startswith("/") and not value.startswith(SYSTEM_DYLIB_PREFIXES):
             absolute_non_system.append(value)
     unsafe_rpaths = [p for p in rpaths if not p.startswith(("@loader_path", "@executable_path"))]
-    unsafe_links = [p for p in absolute_non_system if not p.startswith(SYSTEM_DYLIB_PREFIXES)]
+    install_names = []
+    for line in linked_output.splitlines()[1:]:
+        value = line.strip().split(" (", 1)[0]
+        if value:
+            install_names.append(value)
+    allowed_relative = ("@rpath/", "@loader_path/", "@executable_path/")
+    unsafe_links = [p for p in install_names if not p.startswith(SYSTEM_DYLIB_PREFIXES) and not p.startswith(allowed_relative)]
     return {"rpaths": rpaths, "absolute_non_system_links": absolute_non_system,
-            "unsafe_rpaths": unsafe_rpaths, "unsafe_links": unsafe_links,
+            "install_names": install_names, "unsafe_rpaths": unsafe_rpaths, "unsafe_links": unsafe_links,
             "ok": not unsafe_rpaths and not unsafe_links}
 
 
