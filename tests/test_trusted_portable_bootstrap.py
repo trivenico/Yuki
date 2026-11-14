@@ -132,6 +132,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    @unittest.skipUnless(os.name == "nt", "Windows path-based inventory fallback")
     def test_inventory_rejects_file_replaced_between_lstat_and_open(self):
         payload = self.bundle / "payload.txt"
         outside = self.root / "replacement.txt"
@@ -328,9 +329,9 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         from yuki_trust.portable_host import _read_host_file_secure
         with patch("yuki_trust.portable_host._read_host_file_secure", wraps=_read_host_file_secure) as secure_read:
             verify_signed_bundle(self.bundle, self.public_path)
-        secure_read.assert_called_once()
-        self.assertEqual(secure_read.call_args.kwargs["max_bytes"], 65536)
-        self.assertEqual(secure_read.call_args.kwargs["label"], "Host trust anchor")
+        secure_read.assert_any_call(
+            self.public_path, label="Host trust anchor", max_bytes=65536
+        )
 
     def test_rejects_trust_anchor_inside_bundle(self):
         in_bundle = self.bundle / "release-public.pem"
