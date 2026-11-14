@@ -113,7 +113,7 @@ def create_unsigned_manifest(
     root = Path(bundle).expanduser()
     files = inventory_bundle(root)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "product": "Yuki Portable Runtime",
         "artifact_kind": "portable-runtime",
         "platform": platform,
@@ -144,7 +144,7 @@ def write_unsigned_manifest(bundle: Path, *, platform: str, runtime_version: str
         except OSError:
             pass
         raise
-    return {"manifest": str(manifest_path), "file_count": len(value["files"]), "signed": False, "schema_version": 1}
+    return {"manifest": str(manifest_path), "file_count": len(value["files"]), "signed": False, "schema_version": 2}
 
 
 def main(argv: list[str] | None = None) -> int:
