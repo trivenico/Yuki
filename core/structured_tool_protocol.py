@@ -105,7 +105,7 @@ class StructuredToolProtocol:
 
     def dispatch(
         self, response: str, *, cancellation_requested=None,
-        before_tool_call=None, after_tool_call=None,
+        before_tool_call=None, after_tool_call=None, on_tool_error=None,
     ) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
@@ -115,6 +115,8 @@ class StructuredToolProtocol:
             raise TypeError("before_tool_call must be callable.")
         if after_tool_call is not None and not callable(after_tool_call):
             raise TypeError("after_tool_call must be callable.")
+        if on_tool_error is not None and not callable(on_tool_error):
+            raise TypeError("on_tool_error must be callable.")
         calls = parse_tool_calls(response)
         results = []
         for call in calls:
@@ -127,7 +129,12 @@ class StructuredToolProtocol:
                     raise ToolExecutionAlreadyClaimed("unknown")
                 if isinstance(claim, str) and claim != "claimed":
                     raise ToolExecutionAlreadyClaimed(claim)
-            output = self._runtime.invoke(call.name, argument)
+            try:
+                output = self._runtime.invoke(call.name, argument)
+            except Exception as exc:
+                if on_tool_error is not None:
+                    on_tool_error(call, argument, exc)
+                raise
             if after_tool_call is not None:
                 after_tool_call(call, argument, output)
             results.append(StructuredToolResult(call.call_id, call.name, output))
