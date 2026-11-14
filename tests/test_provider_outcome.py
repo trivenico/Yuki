@@ -173,6 +173,42 @@ class ProviderOutcomeTests(unittest.TestCase):
 
 
 
+    def test_registry_rejects_malformed_lookup_tool_names(self):
+        from core.provider_outcome import ProviderOutcomeRegistry
+
+        class Adapter:
+            provider_id = "mail.example"
+
+            def lookup_tool_outcome(self, execution):
+                return ProviderOutcomeTests().evidence()
+
+        registry = ProviderOutcomeRegistry({"send_email": Adapter()})
+        for tool_name in ([], {}, "", "x" * 129):
+            with self.subTest(tool_name=tool_name):
+                with self.assertRaises(ValueError):
+                    registry.lookup(tool_name, self.execution)
+
+    def test_registry_mapping_cannot_be_mutated_after_registration(self):
+        from core.provider_outcome import ProviderOutcomeRegistry
+
+        class Adapter:
+            provider_id = "mail.example"
+
+            def lookup_tool_outcome(self, execution):
+                return ProviderOutcomeTests().evidence()
+
+        registry = ProviderOutcomeRegistry({"send_email": Adapter()})
+        with self.assertRaises(TypeError):
+            registry._adapters["send_email"] = (Adapter(), "attacker.example")
+
+    def test_direct_verification_rejects_malformed_expected_provider(self):
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                raise AssertionError("must reject configuration before lookup")
+
+        with self.assertRaisesRegex(ValueError, "expected_provider"):
+            verify_provider_outcome(Adapter(), self.execution, expected_provider=[])
+
     def test_registry_freezes_provider_identity_at_registration(self):
         from core.provider_outcome import ProviderOutcomeRegistry
 
