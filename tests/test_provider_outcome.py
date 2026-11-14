@@ -273,6 +273,29 @@ class ProviderOutcomeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     registry.lookup(tool_name, self.execution)
 
+    def test_registry_freezes_lookup_callable_at_registration(self):
+        from core.provider_outcome import ProviderOutcomeRegistry
+
+        calls = []
+        class Adapter:
+            provider_id = "mail.example"
+
+            def lookup_tool_outcome(self, execution):
+                calls.append("registered")
+                return ProviderOutcomeTests().evidence()
+
+        adapter = Adapter()
+        registry = ProviderOutcomeRegistry({"send_email": adapter})
+
+        def replaced_lookup(execution):
+            calls.append("replaced")
+            raise AssertionError("mutated adapter method must not be used")
+
+        adapter.lookup_tool_outcome = replaced_lookup
+        result = registry.lookup("send_email", self.execution)
+        self.assertEqual(result.provider, "mail.example")
+        self.assertEqual(calls, ["registered"])
+
     def test_registry_mapping_cannot_be_mutated_after_registration(self):
         from core.provider_outcome import ProviderOutcomeRegistry
 
