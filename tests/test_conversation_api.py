@@ -602,6 +602,15 @@ class ConversationAPITests(unittest.TestCase):
         self.app.conversations.provider_outcome_reconciler = ProviderOutcomeReconciler(
             self.app.conversations.store, ProviderOutcomeRegistry({"send_email": Adapter()})
         )
+        self.assertEqual(
+            self.app.conversations.store.list_tool_executions(
+                owner_id=self.user.user_id, conversation_id=cid, request_id=request_id,
+            )[0]["call_id"],
+            "send-3",
+        )
+        self.app.conversations.store.get_conversation(
+            owner_id=self.user.user_id, conversation_id=cid,
+        )
         path = f"/v1/conversations/{cid}/tool-executions/send-3/provider-outcomes"
         status, data, _ = self.request(
             "POST", path, {"request_id": request_id}, self.issued.token,
