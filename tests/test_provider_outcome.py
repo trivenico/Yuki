@@ -813,6 +813,87 @@ class ProviderOutcomeTests(unittest.TestCase):
             )
             self.assertEqual(execution_rows[0]["status"], "uncertain")
 
+    def test_provider_identity_cannot_change_between_reconciliation_attempts(self):
+        import tempfile
+        from pathlib import Path
+        from core.conversation_store import ConversationConflict, ConversationStore
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "provider-identity.sqlite3")
+            conversation = store.create_conversation(owner_id="owner-1")
+            conversation_id = conversation["conversation_id"]
+            request_id = "provider-identity-pinning"
+            store.append_message(
+                owner_id="owner-1", conversation_id=conversation_id,
+                role="user", content="Perform provider action",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            token = "generation-provider-identity"
+            store.acquire_generation_lease(
+                owner_id="owner-1", conversation_id=conversation_id,
+                lease_token=token, ttl_seconds=60,
+            )
+            try:
+                execution = store.begin_tool_execution(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-1",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=token,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    lease_token=token,
+                )
+
+            class FirstAdapter:
+                provider_id = "mail.example"
+
+                def lookup_tool_outcome(self, identity):
+                    return ProviderOutcomeTests().evidence(
+                        idempotency_key=identity["idempotency_key"],
+                        arguments_sha256=identity["arguments_sha256"],
+                    )
+
+            class ReplacementAdapter:
+                provider_id = "mail-replacement.example"
+
+                def lookup_tool_outcome(self, identity):
+                    return ProviderOutcomeTests().evidence(
+                        provider="mail-replacement.example",
+                        idempotency_key=identity["idempotency_key"],
+                        arguments_sha256=identity["arguments_sha256"],
+                        evidence_sha256="e" * 64,
+                    )
+
+            first = ProviderOutcomeReconciler(
+                store, ProviderOutcomeRegistry({"send_email": FirstAdapter()}),
+            )
+            first.reconcile(
+                owner_id="owner-1", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-1",
+            )
+            replacement = ProviderOutcomeReconciler(
+                store, ProviderOutcomeRegistry({"send_email": ReplacementAdapter()}),
+            )
+            with self.assertRaisesRegex(ConversationConflict, "provider identity cannot change"):
+                replacement.reconcile(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-1",
+                )
+            ledger = store.list_provider_outcome_evidence(
+                owner_id="owner-1", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-1",
+            )
+            self.assertEqual(len(ledger), 1)
+            self.assertEqual(ledger[0]["provider"], "mail.example")
+
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
             return ProviderOutcomeTests().evidence()
