@@ -5,12 +5,14 @@ on:
     paths:
       - "yuki_trust/**"
       - "tests/test_trusted_portable_bootstrap.py"
+      - "tests/test_portable_host_policy.py"
       - "pyproject.toml"
       - ".github/workflows/portable-bootstrap.yml"
   push:
     paths:
       - "yuki_trust/**"
       - "tests/test_trusted_portable_bootstrap.py"
+      - "tests/test_portable_host_policy.py"
       - "pyproject.toml"
       - ".github/workflows/portable-bootstrap.yml"
   workflow_dispatch:
@@ -45,6 +47,8 @@ jobs:
         run: python -c "import yuki_trust.portable_bootstrap as bootstrap; assert callable(bootstrap.verify_signed_bundle)"
       - name: Run trusted bootstrap security tests
         run: python -m unittest discover -s tests -p "test_trusted_portable_bootstrap.py" -v
+      - name: Run host launch policy tests
+        run: python -m unittest discover -s tests -p "test_portable_host_policy.py" -v
 
   package-build-smoke:
     name: Build wheel and verify runtime contents / Python ${{ matrix.python-version }}
@@ -81,7 +85,7 @@ jobs:
               "automation/local_worker_runtime.py",
               "api/conversations.py",
               "integrations/huggingface_scout.py",
-              "yuki_trust/portable_bootstrap.py",
+              "yuki_trust/portable_bootstrap.py", "yuki_trust/portable_host.py",
           }
           missing = sorted(required - names)
           assert not missing, f"wheel is missing runtime files: {missing}"
@@ -95,5 +99,10 @@ jobs:
           importlib.import_module("main")
           importlib.import_module("yuki_cli")
           importlib.import_module("yuki_trust.portable_bootstrap")
-          print("Installed wheel imports: main, yuki_cli, trusted portable bootstrap")
+          importlib.import_module("yuki_trust.portable_host")
+          from importlib.metadata import entry_points
+          scripts = {item.name for item in entry_points(group="console_scripts")}
+          assert "yuki-portable-launch" in scripts
+          assert "yuki-portable-bootstrap" in scripts
+          print("Installed wheel imports and exposes both trusted portable launch commands")
           PY

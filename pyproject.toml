@@ -52,6 +52,7 @@ vision = [
 yuki = "yuki_cli:main"
 yuki-assistant = "main:main"
 yuki-portable-bootstrap = "yuki_trust.portable_bootstrap:main"
+yuki-portable-launch = "yuki_trust.portable_host:main"
 
 [tool.setuptools]
 # These root-level modules are still part of the supported runtime while the
