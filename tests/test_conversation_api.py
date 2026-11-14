@@ -637,5 +637,19 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
 
+
+    def test_provider_reconciliation_returns_service_unavailable_when_unconfigured(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        path = (
+            f"/v1/conversations/{conversation['conversation_id']}/"
+            "tool-executions/call-unconfigured/provider-outcomes"
+        )
+        status, data, _ = self.request(
+            "POST", path, {"request_id": "provider-not-configured"}, self.issued.token,
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(data, {"error": "provider_outcome_unavailable"})
+
+
 if __name__ == "__main__":
     unittest.main()
