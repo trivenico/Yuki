@@ -5,7 +5,7 @@ platform-specific offline wheelhouse:
 
 ```bash
 python scripts/portable_runtime_inputs.py \
-  --runtime-archive vendor/python-runtime.tar.gz \
+  --runtime-archive vendor/python-runtime.zip \
   --runtime-sha256 <trusted-64-character-sha256> \
   --requirements-lock locks/core-linux-x86_64-py312.lock \
   --wheelhouse wheelhouses/core-linux-x86_64-py312
@@ -21,15 +21,12 @@ The command is intentionally a validation-only gate. It:
 - rejects wheelhouse files not referenced by the lock;
 - rejects pip index options, URLs, local paths, and source distributions.
 
-It does not download, extract, install, execute, or sign anything. The runtime
+The validation-only invocation does not download, extract, install, execute, or sign anything. When both installation flags are supplied, the separate installation stage below executes the already-verified runtime interpreter and pip. The runtime
 archive digest must come from a trusted release source, not from the same
 untrusted download channel as the archive. Lock files must be generated and
 reviewed per OS, architecture, Python ABI, and feature profile.
 
-This is an input-integrity gate, not yet a complete runtime builder. The next
-stage must safely extract supported runtime archives, install only with
-`pip --no-index --require-hashes`, verify relocation, and run on clean machines
-without a host Python installation. Signed release manifests and the
+This is an input-integrity gate plus an optional offline-install step, not yet a complete runtime builder. The ZIP extractor currently supports ZIP only; it does not accept `.tar.gz` or `.tar.zst`. Separate hardened adapters are still required for runtime distributions published in other formats. The next stage must integrate supported archive adapters, install Yuki itself with its complete dependency closure, verify relocation, and run on clean machines without a host Python installation. Signed release manifests and the
 independently installed host bootstrap remain separate trust requirements.
 
 
