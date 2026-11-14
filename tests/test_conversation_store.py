@@ -416,9 +416,14 @@ class ConversationStoreTests(unittest.TestCase):
             role="user", content="Checkpoint me", idempotency_key="checkpoint-1",
             expected_version=0, generation_request_id="checkpoint-1",
         )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            lease_token="checkpoint-worker", ttl_seconds=30,
+        )
         self.assertTrue(self.store.update_generation_checkpoint(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
             request_id="checkpoint-1", checkpoint={"phase": "model_running", "turn": 1},
+            lease_token="checkpoint-worker",
         ))
         self.assertTrue(self.store.finish_generation(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
