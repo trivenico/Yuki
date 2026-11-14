@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from api.conversations import YukiConversationAPI
@@ -75,7 +76,7 @@ class ConversationAPITests(unittest.TestCase):
             content="inspect", idempotency_key="inspect-request",
             expected_version=0, generation_request_id="inspect-request",
         )
-        with __import__("unittest").mock.patch(
+        with patch(
             "core.conversation_store.time.time", return_value=40_000.0
         ):
             self.app.conversations.store.acquire_generation_lease(
