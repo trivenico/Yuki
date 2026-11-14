@@ -123,6 +123,43 @@ class PortableHostPolicyTests(unittest.TestCase):
                 )
         self.assertTrue(mutated, "test did not mutate the file during the read")
 
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative directory semantics")
+    def test_posix_secure_reader_uses_pinned_parent_after_path_replacement(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        original_bytes = self.policy.read_bytes()
+        moved_parent = self.root / "host-trust-original"
+        original_open = os.open
+        replaced = False
+
+        def replace_parent_before_file_open(path, flags, *args, **kwargs):
+            nonlocal replaced
+            if (
+                not replaced
+                and path == self.policy.name
+                and kwargs.get("dir_fd") is not None
+            ):
+                replaced = True
+                self.trust_dir.rename(moved_parent)
+                self.trust_dir.mkdir()
+                replacement = self.trust_dir / self.policy.name
+                replacement.write_bytes(b'{"schema_version":999}')
+                replacement.chmod(0o600)
+            return original_open(path, flags, *args, **kwargs)
+
+        with patch("os.open", side_effect=replace_parent_before_file_open):
+            result = _read_host_file_secure(
+                self.policy, label="Test policy", max_bytes=64 * 1024
+            )
+
+        self.assertTrue(replaced, "test did not replace the parent directory")
+        self.assertEqual(result, original_bytes)
+        self.assertEqual(
+            (self.trust_dir / self.policy.name).read_bytes(),
+            b'{"schema_version":999}',
+        )
+        self.assertTrue(moved_parent.is_dir())
+
     @unittest.skipUnless(os.name == "nt", "Windows native handle read semantics")
     def test_windows_secure_reader_reads_regular_file_and_enforces_size_limit(self):
         from yuki_trust.portable_host import _read_host_file_secure
