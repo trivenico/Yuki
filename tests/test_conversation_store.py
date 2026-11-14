@@ -768,6 +768,70 @@ class ConversationStoreTests(unittest.TestCase):
         self.assertIn("acknowledge_uncertain", schema)
 
 
+
+    def test_concurrent_provider_completion_reviews_commit_exactly_once(self):
+        from threading import Barrier
+        from concurrent.futures import ThreadPoolExecutor
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "concurrent-provider-review"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Check concurrent review", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=110_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="concurrent-review-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="send-concurrent", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                provider_idempotency=True, lease_token="concurrent-review-worker",
+            )
+            self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="send-concurrent",
+                lease_token="concurrent-review-worker", status="uncertain",
+            )
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.CONFIRMED_COMPLETED,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="d" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+        )
+        self._record_provider_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="send-concurrent", evidence=evidence,
+        )
+        barrier = Barrier(2)
+        def review():
+            barrier.wait()
+            try:
+                return self.store.review_tool_execution(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id=request_id, call_id="send-concurrent",
+                    action="confirm_provider_completed", reason="Concurrent owner review",
+                )["review_id"]
+            except ConversationConflict:
+                return "conflict"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: review(), range(2)))
+        self.assertEqual(sum(value != "conflict" for value in outcomes), 1)
+        self.assertEqual(outcomes.count("conflict"), 1)
+        history = self.store.list_tool_execution_reviews(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="send-concurrent",
+        )
+        self.assertEqual(len(history), 1)
+        execution = self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id, request_id=request_id,
+        )[0]
+        self.assertEqual(execution["status"], "completed")
+
+
     def test_review_can_confirm_completed_only_with_matching_provider_evidence(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
         conversation_id = self.conversation["conversation_id"]
