@@ -184,7 +184,7 @@ class ConversationStore:
     def append_message(
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
-        generation_request_id: str | None = None,
+        generation_request_id: str | None = None, lease_token: str | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -196,6 +196,8 @@ class ConversationStore:
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         if generation_request_id is not None and (role != "user" or not isinstance(generation_request_id, str) or not generation_request_id.strip() or len(generation_request_id) > 160):
             raise ValueError("generation_request_id must be non-empty text for user messages.")
+        if lease_token is not None and (role != "assistant" or not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200):
+            raise ValueError("lease_token must be non-empty text for fenced assistant messages.")
         if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise ValueError("expected_version must be a non-negative integer.")
         now, message_id = self._now(), str(uuid.uuid4())
@@ -210,6 +212,14 @@ class ConversationStore:
                     raise ConversationNotFound("conversation not found.")
                 if conversation["archived"]:
                     raise ConversationConflict("conversation is archived.")
+                if lease_token is not None:
+                    active_lease = db.execute(
+                        """SELECT 1 FROM conversation_generation_leases
+                           WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                        (conversation_id, owner, lease_token.strip(), now),
+                    ).fetchone()
+                    if active_lease is None:
+                        raise ConversationConflict("generation lease expired or is no longer owned by this worker.")
                 previous = db.execute(
                     """SELECT * FROM conversation_messages
                        WHERE conversation_id=? AND idempotency_key=?""",
