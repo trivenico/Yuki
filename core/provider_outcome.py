@@ -83,7 +83,15 @@ def verify_provider_outcome(
     required = {"execution_id", "idempotency_key", "arguments_sha256", "status"}
     if not required.issubset(execution):
         raise ValueError("execution is missing durable identity fields.")
-    if execution["status"] not in {"started", "uncertain"}:
+    execution_id = execution["execution_id"]
+    if not isinstance(execution_id, str) or not execution_id.strip() or len(execution_id) > 256:
+        raise ValueError("execution_id must be bounded non-empty text.")
+    for key in ("idempotency_key", "arguments_sha256"):
+        value = execution[key]
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError(f"{key} must be a lowercase SHA-256 digest.")
+    status = execution["status"]
+    if not isinstance(status, str) or status not in {"started", "uncertain"}:
         raise ValueError("provider lookup is only valid for started or uncertain executions.")
     lookup = getattr(adapter, "lookup_tool_outcome", None)
     if not callable(lookup):
