@@ -55,11 +55,13 @@ class ConversationRecoveryCoordinator:
                 idempotency_key="assistant:" + request_id,
             )
             if assistant_exists:
-                self.store.finish_generation_with_recovery_event(
+                finalized = self.store.finish_generation_with_recovery_event(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, status="completed", lease_token=lease_token,
                     outcome="completed", uncertain_tool_calls=uncertain_count,
                 )
+                if not finalized:
+                    raise ConversationConflict("interrupted generation changed during recovery.")
                 completed += 1
             elif user_message is not None:
                 self.store.append_message(
@@ -68,18 +70,22 @@ class ConversationRecoveryCoordinator:
                     idempotency_key="assistant:" + request_id,
                     expected_version=conversation["version"], lease_token=lease_token,
                 )
-                self.store.finish_generation_with_recovery_event(
+                finalized = self.store.finish_generation_with_recovery_event(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, status="interrupted", lease_token=lease_token,
                     outcome="interrupted", uncertain_tool_calls=uncertain_count,
                 )
+                if not finalized:
+                    raise ConversationConflict("interrupted generation changed during recovery.")
                 interrupted += 1
             else:
-                self.store.finish_generation_with_recovery_event(
+                finalized = self.store.finish_generation_with_recovery_event(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, status="interrupted", lease_token=lease_token,
                     outcome="orphaned", uncertain_tool_calls=uncertain_count,
                 )
+                if not finalized:
+                    raise ConversationConflict("interrupted generation changed during recovery.")
                 orphaned += 1
         return RecoverySummary(
             recovered_request_ids=tuple(recovered),
