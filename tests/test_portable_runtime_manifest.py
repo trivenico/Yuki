@@ -32,6 +32,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         verified = verify_manifest(self.root)
         self.assertEqual(verified, manifest)
         self.assertEqual(manifest["artifact_kind"], "portable-runtime")
+        self.assertEqual(manifest["schema_version"], 2)
         self.assertEqual(len(manifest["files"]), 2)
 
     def test_modified_file_fails_integrity_check(self):
