@@ -242,12 +242,11 @@ class ConversationService:
                 (item for item in messages_now if item["message_id"] == generation["user_message_id"]),
                 None,
             )
-            following = self.store.list_messages(
+            assistant_already_persisted = self.store.has_message(
                 owner_id=owner_id, conversation_id=conversation_id,
-                after_sequence=user_message["sequence"] if user_message else 0,
-                limit=1,
-            ) if user_message else []
-            if following and following[0]["role"] == "assistant":
+                idempotency_key="assistant:" + generation["request_id"],
+            )
+            if assistant_already_persisted:
                 self.store.finish_generation(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=generation["request_id"], status="completed", lease_token=lease_token,
