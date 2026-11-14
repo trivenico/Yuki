@@ -28,7 +28,7 @@ class ConversationService:
 
     def __init__(
         self, store: ConversationStore, agent_loop: AgentExecutionLoop,
-        *, agent_loop_for_owner=None,
+        *, agent_loop_for_owner=None, provider_outcome_reconciler=None,
     ):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
@@ -39,6 +39,11 @@ class ConversationService:
             raise TypeError("agent_loop_for_owner must be callable.")
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
+        if provider_outcome_reconciler is not None and not callable(
+            getattr(provider_outcome_reconciler, "reconcile", None)
+        ):
+            raise TypeError("provider_outcome_reconciler must implement reconcile.")
+        self.provider_outcome_reconciler = provider_outcome_reconciler
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
@@ -52,6 +57,23 @@ class ConversationService:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
         return self.store.list_tool_executions(
             owner_id=owner_id, conversation_id=conversation_id, request_id=request_id.strip()
+        )
+
+    def reconcile_provider_outcome(
+        self, *, owner_id: str, conversation_id: str,
+        request_id: str, call_id: str,
+    ) -> dict[str, Any]:
+        """Perform one explicitly configured read-only provider lookup."""
+        self.store.get_conversation(owner_id=owner_id, conversation_id=conversation_id)
+        if self.provider_outcome_reconciler is None:
+            raise ConversationConflict("provider outcome reconciliation is not configured.")
+        if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
+            raise ValueError("request_id must be non-empty text of at most 160 characters.")
+        if not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 64:
+            raise ValueError("call_id must be non-empty text of at most 64 characters.")
+        return self.provider_outcome_reconciler.reconcile(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id.strip(), call_id=call_id.strip(),
         )
 
     def provider_outcome_evidence(
