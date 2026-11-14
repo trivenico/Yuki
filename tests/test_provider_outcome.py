@@ -173,6 +173,91 @@ class ProviderOutcomeTests(unittest.TestCase):
 
 
 
+    def test_reconciler_rejects_malformed_durable_record_before_claim(self):
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        class Adapter:
+            provider_id = "mail.example"
+
+            def lookup_tool_outcome(self, execution):
+                raise AssertionError("adapter must not be called")
+
+        class Store:
+            claimed = False
+
+            def list_tool_executions(self, **kwargs):
+                return [{
+                    "execution_id": "execution-1", "call_id": "call-1",
+                    "tool_name": "send_email", "idempotency_key": "invalid",
+                    "arguments_sha256": "b" * 64, "status": "uncertain",
+                }]
+
+            def acquire_provider_reconciliation_lease(self, **kwargs):
+                self.claimed = True
+
+            def renew_provider_reconciliation_lease(self, **kwargs):
+                raise AssertionError("no heartbeat expected")
+
+            def release_provider_reconciliation_lease(self, **kwargs):
+                raise AssertionError("no claim to release")
+
+            def record_provider_outcome_evidence(self, **kwargs):
+                raise AssertionError("no evidence to persist")
+
+        store = Store()
+        reconciler = ProviderOutcomeReconciler(
+            store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+        )
+        with self.assertRaisesRegex(ValueError, "idempotency_key"):
+            reconciler.reconcile(
+                owner_id="owner-1", conversation_id="conversation-1",
+                request_id="request-1", call_id="call-1",
+            )
+        self.assertFalse(store.claimed)
+
+    def test_reconciler_rejects_ambiguous_duplicate_call_records_before_claim(self):
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        class Adapter:
+            provider_id = "mail.example"
+
+            def lookup_tool_outcome(self, execution):
+                raise AssertionError("adapter must not be called")
+
+        class Store:
+            claimed = False
+
+            def list_tool_executions(self, **kwargs):
+                record = {
+                    "execution_id": "execution-1", "call_id": "call-1",
+                    "tool_name": "send_email", "idempotency_key": "a" * 64,
+                    "arguments_sha256": "b" * 64, "status": "uncertain",
+                }
+                return [record, dict(record)]
+
+            def acquire_provider_reconciliation_lease(self, **kwargs):
+                self.claimed = True
+
+            def renew_provider_reconciliation_lease(self, **kwargs):
+                raise AssertionError("no heartbeat expected")
+
+            def release_provider_reconciliation_lease(self, **kwargs):
+                raise AssertionError("no claim to release")
+
+            def record_provider_outcome_evidence(self, **kwargs):
+                raise AssertionError("no evidence to persist")
+
+        store = Store()
+        reconciler = ProviderOutcomeReconciler(
+            store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+        )
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            reconciler.reconcile(
+                owner_id="owner-1", conversation_id="conversation-1",
+                request_id="request-1", call_id="call-1",
+            )
+        self.assertFalse(store.claimed)
+
     def test_registry_rejects_malformed_lookup_tool_names(self):
         from core.provider_outcome import ProviderOutcomeRegistry
 
