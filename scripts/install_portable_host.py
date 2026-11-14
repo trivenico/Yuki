@@ -156,8 +156,8 @@ def _write_launcher(root: Path, policy_path: Path) -> tuple[Path, Path | None]:
         launcher.chmod(0o600)
         shell_launcher = root / "yuki-portable-launch"
         shell_source = (
-            "#!/bin/sh\\n"
-            f"exec {shlex.quote(sys.executable)} {shlex.quote(str(launcher))} \"$@\"\\n"
+            "#!/bin/sh\n"
+            f"exec {shlex.quote(sys.executable)} {shlex.quote(str(launcher))} \"$@\"\n"
         ).encode("utf-8")
         _atomic_write(shell_launcher, shell_source, mode=0o700)
         shell_launcher.chmod(0o700)
