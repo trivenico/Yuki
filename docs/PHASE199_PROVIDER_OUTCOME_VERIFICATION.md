@@ -80,3 +80,13 @@ blocked. The current repository has the adapter contract and registry seam,
 not production integrations with any particular email, payment, or cloud
 provider. Such integrations must be separately implemented and tested against
 each provider's documented status semantics.
+
+
+## Evidence timestamp validation
+
+Provider evidence timestamps must be timezone-aware UTC. The contract permits
+delayed observations, but rejects timestamps more than five minutes ahead of
+the Yuki host clock to catch malformed or implausibly future-dated responses.
+This is a sanity bound, not proof of provider clock accuracy; adapters should
+preserve the provider's original observation time and retain transport-level
+timeouts for their own status API calls.
