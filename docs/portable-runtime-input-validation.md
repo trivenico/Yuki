@@ -57,5 +57,8 @@ Installation runs with a timeout in a fresh sibling staging directory. The stagi
 This stage executes the supplied runtime interpreter and pip, so it must only
 be used after the archive digest has been checked against an independently
 trusted value and the runtime has been extracted from that verified archive.
-The test suite mocks the installer process; it does not claim a real packaged
-runtime has been assembled or launched.
+The test suite covers installer failure and transaction behavior with a mocked
+runner, and also performs a real offline pip install of a synthetic, locally
+built wheel with hash checking enabled. This validates the pip invocation and
+wheelhouse path without network access; it does not claim a real packaged
+Python runtime or complete Yuki dependency closure has been assembled or launched.
