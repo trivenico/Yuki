@@ -101,10 +101,6 @@ class ConversationService:
                 cancellation_requested=combined_cancellation_requested,
                 lease_token=token, lease_lost_event=lease_lost,
             )
-            if lease_lost.is_set():
-                raise ConversationConflict(
-                    "generation lease renewal failed; this worker cannot commit a response."
-                )
             return result
         finally:
             stop_heartbeat.set()
