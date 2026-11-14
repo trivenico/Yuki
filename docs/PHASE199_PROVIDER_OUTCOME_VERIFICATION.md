@@ -90,3 +90,13 @@ the Yuki host clock to catch malformed or implausibly future-dated responses.
 This is a sanity bound, not proof of provider clock accuracy; adapters should
 preserve the provider's original observation time and retain transport-level
 timeouts for their own status API calls.
+
+
+## Duplicate evidence delivery
+
+Evidence persistence runs its duplicate check and insert inside a SQLite
+`BEGIN IMMEDIATE` transaction. Re-delivery of the same evidence digest for
+the same execution returns the original ledger entry. Reuse of that digest
+with conflicting provider, outcome, or observation-time metadata is rejected.
+This makes evidence ingestion idempotent across concurrent application workers;
+it does not serialize or suppress distinct provider observations.
