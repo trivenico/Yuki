@@ -106,16 +106,16 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
 
         manifest_path = self.bundle / "runtime-manifest.json"
         manifest_text = manifest_path.read_text(encoding="utf-8")
-        self.assertIn('"schema_version": 1,', manifest_text)
+        self.assertIn('"schema_version": 1', manifest_text)
         ambiguous = manifest_text.replace(
-            '"schema_version": 1,',
-            '"schema_version": 1,\\n  "schema_version": 1,',
+            '"schema_version": 1',
+            '"schema_version": 1,\n  "schema_version": 1',
             1,
         ).encode("utf-8")
         manifest_path.write_bytes(ambiguous)
         signature = self.private_key.sign(ambiguous)
         (self.bundle / "runtime-manifest.sig").write_text(
-            base64.b64encode(signature).decode("ascii") + "\\n",
+            base64.b64encode(signature).decode("ascii") + "\n",
             encoding="ascii",
         )
         with self.assertRaisesRegex(BootstrapError, "duplicate JSON object keys"):
