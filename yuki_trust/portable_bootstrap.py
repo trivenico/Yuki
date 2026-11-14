@@ -136,7 +136,10 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
 
 
 def verify_signed_bundle(bundle: str | Path, public_key_path: str | Path) -> dict[str, Any]:
-    root = Path(bundle).expanduser().resolve(strict=True)
+    root_candidate = Path(bundle).expanduser()
+    if root_candidate.is_symlink():
+        raise BootstrapError("Portable bundle root must not be a symbolic link.")
+    root = root_candidate.resolve(strict=True)
     if not root.is_dir():
         raise BootstrapError("Portable bundle must be a directory.")
     manifest_path = root / MANIFEST_NAME
