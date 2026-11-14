@@ -15,7 +15,7 @@ class NativeAuditTests(unittest.TestCase):
         self.assertEqual(parsed["needed"], ["libpython3.so"])
 
     def test_elf_rejects_absolute_needed_path(self):
-        parsed = parse_elf_dynamic(" 0x0000000000000001 (NEEDED) Shared library: [/opt/vendor/libfoo.so]\\n")
+        parsed = parse_elf_dynamic(" 0x0000000000000001 (NEEDED) Shared library: [/opt/vendor/libfoo.so]\n")
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["unsafe_needed_paths"], ["/opt/vendor/libfoo.so"])
 
@@ -33,7 +33,7 @@ class NativeAuditTests(unittest.TestCase):
         self.assertTrue(parsed["ok"])
 
     def test_macho_rejects_unqualified_non_system_install_name(self):
-        parsed = parse_macho_load_commands("binary has no custom rpath\\n", "binary:\\n\\tlibvendor.dylib (compatibility version 1.0.0)\\n")
+        parsed = parse_macho_load_commands("binary has no custom rpath\n", "binary:\n\\tlibvendor.dylib (compatibility version 1.0.0)\n")
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["unsafe_links"], ["libvendor.dylib"])
 
