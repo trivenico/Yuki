@@ -1280,6 +1280,77 @@ class ConversationStoreTests(unittest.TestCase):
             lease_token="evidence-race-worker",
         )
 
+    def test_reconciliation_claim_survives_store_restart_and_fences_recovered_worker(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "provider-restart-recovery"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Recover provider reconciliation", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="restart-generation", ttl_seconds=60,
+        )
+        self.store.begin_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-restart", tool_name="send_email",
+            arguments_sha256="b" * 64, idempotency_key="a" * 64,
+            lease_token="restart-generation",
+        )
+        self.store.finish_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-restart",
+            lease_token="restart-generation", status="uncertain",
+        )
+
+        database_path = Path(self.tempdir.name) / "conversations.sqlite3"
+        recovered_store = ConversationStore(database_path)
+        with patch("core.conversation_store.time.time", return_value=200_000.0):
+            old_claim = self.store.acquire_provider_reconciliation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-restart",
+                lease_token="worker-before-restart", ttl_seconds=5,
+            )
+        # A separately constructed store represents a fresh process using
+        # the same durable SQLite database and must observe the existing claim.
+        with patch("core.conversation_store.time.time", return_value=200_001.0):
+            with self.assertRaises(ConversationConflict):
+                recovered_store.acquire_provider_reconciliation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-restart",
+                    lease_token="worker-racing-after-restart", ttl_seconds=30,
+                )
+        with patch("core.conversation_store.time.time", return_value=200_006.0):
+            new_claim = recovered_store.acquire_provider_reconciliation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-restart",
+                lease_token="worker-recovered", ttl_seconds=30,
+            )
+            evidence = self._make_claim_test_evidence()
+            with self.assertRaisesRegex(ConversationConflict, "claim expired"):
+                self.store.record_provider_outcome_evidence(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-restart", evidence=evidence,
+                    reconciliation_lease_token="worker-before-restart",
+                )
+            saved = recovered_store.record_provider_outcome_evidence(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-restart", evidence=evidence,
+                reconciliation_lease_token="worker-recovered",
+            )
+        self.assertEqual(saved["execution_id"], old_claim["execution_id"])
+        self.assertEqual(saved["execution_id"], new_claim["execution_id"])
+        self.assertEqual(saved["outcome"], "unknown")
+        self.assertEqual(len(recovered_store.list_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-restart",
+        )), 1)
+        recovered_store.release_provider_reconciliation_lease(
+            owner_id=self.owner, execution_id=saved["execution_id"],
+            lease_token="worker-recovered",
+        )
+
     def _make_claim_test_evidence(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
         return ProviderOutcomeEvidence(
