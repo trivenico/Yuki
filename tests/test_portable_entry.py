@@ -26,15 +26,17 @@ class PortableEntryTests(unittest.TestCase):
     def test_adds_only_bundle_paths_in_deterministic_order(self):
         paths = ["", "/host/site-packages", "/stdlib"]
         result = configure_bundle_paths(self.root, paths)
-        self.assertEqual(result[:2], [str(self.root / "site-packages"), str(self.root)])
+        resolved_root = self.root.resolve()
+        self.assertEqual(result[:2], [str(resolved_root / "site-packages"), str(resolved_root)])
         self.assertEqual(result[2:], ["", "/host/site-packages", "/stdlib"])
 
     def test_is_idempotent(self):
         paths = []
         configure_bundle_paths(self.root, paths)
         configure_bundle_paths(self.root, paths)
-        self.assertEqual(paths.count(str(self.root)), 1)
-        self.assertEqual(paths.count(str(self.root / "site-packages")), 1)
+        resolved_root = self.root.resolve()
+        self.assertEqual(paths.count(str(resolved_root)), 1)
+        self.assertEqual(paths.count(str(resolved_root / "site-packages")), 1)
 
     def test_rejects_missing_site_packages(self):
         (self.root / "site-packages").rmdir()
@@ -58,7 +60,8 @@ class PortableEntryTests(unittest.TestCase):
         def register(path):
             calls.append(path)
             return Handle()
-        expected = [str(self.root / "runtime"), str(self.root / "native-libs")]
+        resolved_root = self.root.resolve()
+        expected = [str(resolved_root / "runtime"), str(resolved_root / "native-libs")]
         first = configure_native_libraries(self.root, platform_name="nt", add_dll_directory=register)
         second = configure_native_libraries(self.root, platform_name="nt", add_dll_directory=register)
         self.assertEqual(first, expected)
@@ -96,6 +99,7 @@ class PortableEntryTests(unittest.TestCase):
         bundled_main.write_text(
             "import os\nfrom pathlib import Path\n"
             "Path(os.environ['YUKI_SMOKE_MARKER']).write_text('bundled', encoding='utf-8')\n"
+            "def main():\n    return 0\n"
         )
         hostile = self.root.parent / "hostile"
         hostile.mkdir()
