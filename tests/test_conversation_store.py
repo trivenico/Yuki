@@ -1,4 +1,5 @@
 import tempfile
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 
@@ -29,6 +30,35 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key=key,
             expected_version=version,
         )
+
+    def test_expired_lease_can_be_reclaimed_and_old_token_cannot_release_new_lease(self):
+        conversation_id = self.conversation["conversation_id"]
+        with patch("core.conversation_store.time.time", return_value=1_000.0):
+            first = self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="first-worker", ttl_seconds=5,
+            )
+        self.assertEqual(first["expires_at"], 1_005.0)
+
+        with patch("core.conversation_store.time.time", return_value=1_006.0):
+            second = self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker", ttl_seconds=30,
+            )
+            self.assertFalse(self.store.release_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="first-worker",
+            ))
+            with self.assertRaisesRegex(ConversationConflict, "another generation is already active"):
+                self.store.acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="third-worker", ttl_seconds=30,
+                )
+            self.assertTrue(self.store.release_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker",
+            ))
+        self.assertEqual(second["expires_at"], 1_036.0)
 
     def test_create_append_and_list_preserve_sequence_and_version(self):
         user = self.append("user", "Hello Yuki", "user-1", 0)
