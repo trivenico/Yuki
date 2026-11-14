@@ -59,11 +59,15 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
+# api/ and integrations/ are namespace packages (no __init__.py yet), but
+# they contain deployable service and provider-integration modules. Explicitly
+# include them so wheel builds do not silently omit those runtime surfaces.
 include = [
-  "automation*", "companion*", "core*", "defense*", "evaluation*",
-  "hackback*", "knowledge*", "providers*", "skills*", "ui*", "voice*", "yuki_trust*",
+  "api*", "automation*", "companion*", "core*", "defense*", "evaluation*",
+  "hackback*", "integrations*", "knowledge*", "providers*", "skills*", "ui*",
+  "voice*", "yuki_trust*",
 ]
-exclude = ["tests*", "benchmarks*", "scripts*"]
+exclude = ["tests*", "benchmarks*", "scripts*", "tools*"]
 
 [tool.setuptools.package-data]
 core = ["default_config.yaml"]

@@ -79,6 +79,8 @@ jobs:
               "main.py", "yuki.py", "yuki_agent.py", "yuki_cli.py",
               "yuki_workflow.py", "core/agent.py",
               "automation/local_worker_runtime.py",
+              "api/conversations.py",
+              "integrations/huggingface_scout.py",
               "yuki_trust/portable_bootstrap.py",
           }
           missing = sorted(required - names)
