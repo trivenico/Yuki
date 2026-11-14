@@ -29,14 +29,21 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.bundle = self.root / "bundle"
         self.bundle.mkdir()
-        self.payload = self.bundle / "bin"
-        self.payload.mkdir()
-        self.entrypoint = self.payload / ("yuki.cmd" if os.name == "nt" else "yuki")
+        self.runtime = self.bundle / "runtime"
+        self.runtime.mkdir()
+        self.python_executable = self.runtime / ("python.exe" if os.name == "nt" else "python")
         if os.name == "nt":
-            self.entrypoint.write_text("@echo off\r\necho YUKI_BOOTSTRAP_OK\r\n", encoding="utf-8")
+            self.python_executable.write_bytes(b"test-only interpreter placeholder")
         else:
-            self.entrypoint.write_text("#!/bin/sh\nprintf 'YUKI_BOOTSTRAP_OK\\n'\n", encoding="utf-8")
-            self.entrypoint.chmod(0o755)
+            self.python_executable.write_text(
+                "#!/bin/sh\\nexec " + __import__("shlex").quote(sys.executable) + ' "$@"\\n',
+                encoding="utf-8",
+            )
+            self.python_executable.chmod(0o755)
+        self.entrypoint = self.bundle / "portable_entry.py"
+        self.entrypoint.write_text(
+            "print('YUKI_BOOTSTRAP_OK')\\n", encoding="utf-8"
+        )
         (self.bundle / "payload.txt").write_text("verified payload", encoding="utf-8")
 
         self.private_key = Ed25519PrivateKey.generate()
@@ -236,7 +243,8 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         result = run_verified_bundle(
             self.bundle,
             self.public_path,
-            "bin/yuki",
+            "runtime/python",
+            "portable_entry.py",
         )
         self.assertEqual(result, 0)
 
@@ -245,6 +253,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             run_verified_bundle(
                 self.bundle,
                 self.public_path,
+                "runtime/python",
                 "bin/not-listed",
             )
 
