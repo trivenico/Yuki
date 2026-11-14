@@ -59,8 +59,8 @@ def _validate_index_url(value: str | None) -> str | None:
     parsed = urlsplit(value)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise InputValidationError("Index URL must be HTTPS and must not embed credentials.")
-    if parsed.fragment:
-        raise InputValidationError("Index URL must not contain a fragment.")
+    if parsed.fragment or parsed.query:
+        raise InputValidationError("Index URL must not contain query parameters or a fragment.")
     return value
 
 
@@ -97,7 +97,7 @@ def build_wheelhouse(
     stage = Path(tempfile.mkdtemp(prefix=".yuki-wheelhouse-stage-", dir=parent))
     command = [
         sys.executable, "-I", "-m", "pip", "download", "--isolated",
-        "--require-hashes", "--only-binary=:all:", "--no-deps",
+        "--require-hashes", "--only-binary=:all:", "--no-deps", "--no-cache-dir",
         "--disable-pip-version-check", "--no-input",
         "--platform", platform, "--python-version", python_version,
         "--implementation", implementation, "--abi", abi,
