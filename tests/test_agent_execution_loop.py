@@ -138,6 +138,32 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "limit_reached")
         self.assertEqual(self.invocations, [])
 
+    def test_cancelled_tool_batch_reports_completed_call_count_and_ids(self):
+        cancel = []
+        events = []
+
+        def first_tool(raw):
+            cancel.append(True)
+            return "completed"
+
+        runtime = GuardedToolRuntime({"echo": first_tool}, AllowPolicy())
+        protocol = StructuredToolProtocol(runtime)
+
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "call_1", "name": "echo", "arguments": {"value": "one"}},
+                {"id": "call_2", "name": "echo", "arguments": {"value": "two"}},
+            ]}}
+
+        result = AgentExecutionLoop(
+            model, protocol, on_event=lambda kind, data: events.append((kind, data))
+        ).run("Do two", tools=[])
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.tool_calls, 1)
+        partial = next(data for kind, data in events if kind == "agent.tools_partially_dispatched")
+        self.assertEqual(partial["completed"], 1)
+        self.assertEqual(partial["call_ids"], ["call_1"])
+
     def test_cancellation_before_first_model_call(self):
         model_calls = []
         result = AgentExecutionLoop(
