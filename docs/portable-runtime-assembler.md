@@ -5,8 +5,9 @@ operation:
 
 1. Verify the runtime ZIP against a SHA-256 digest supplied independently by
    the trusted build/release configuration.
-2. Extract into a new destination using the bounded, traversal-resistant ZIP
-   extractor.
+2. Copy the archive into a private temporary snapshot while hashing that exact
+   byte stream; compare it with the trusted digest, then extract only that
+   immutable snapshot using the bounded, traversal-resistant ZIP extractor.
 3. Resolve a caller-selected relative interpreter path inside the extracted
    runtime; reject traversal, symlinks and paths resolving outside the runtime.
 4. Install the fully pinned dependency closure using that interpreter with
@@ -31,7 +32,9 @@ report = assemble_portable_runtime(
 ```
 
 The archive digest must come from a trusted release manifest or build
-configuration, not from the archive itself. The selected interpreter must
+configuration, not from the archive itself. Extraction re-hashes and snapshots
+the source bytes before parsing, so replacing the archive path after the
+initial validation cannot silently change the bytes that are extracted. The selected interpreter must
 already exist in the verified runtime and provide pip. The lock must contain
 the complete platform/Python-specific dependency closure and hashes for every
 wheel. No downloads occur and the Yuki application is not launched.
