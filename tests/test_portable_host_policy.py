@@ -134,8 +134,8 @@ class PortableHostPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
             _read_host_file_secure(self.policy, label="Test policy", max_bytes=1)
 
-    @unittest.skipUnless(os.name == "nt", "Windows native handle mutation semantics")
-    def test_windows_secure_reader_rejects_in_place_mutation_during_read(self):
+    @unittest.skipUnless(os.name == "nt", "Windows native handle sharing semantics")
+    def test_windows_secure_reader_blocks_concurrent_writer_handles(self):
         import ctypes
         from ctypes import wintypes
 
@@ -148,29 +148,12 @@ class PortableHostPolicyTests(unittest.TestCase):
             wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
         ]
         create_file.restype = wintypes.HANDLE
-        write_file = kernel32.WriteFile
-        write_file.argtypes = [
-            wintypes.HANDLE, wintypes.LPCVOID, wintypes.DWORD,
-            ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID,
-        ]
-        write_file.restype = wintypes.BOOL
-        set_file_pointer = kernel32.SetFilePointerEx
-        set_file_pointer.argtypes = [
-            wintypes.HANDLE, ctypes.c_longlong, ctypes.POINTER(ctypes.c_longlong), wintypes.DWORD,
-        ]
-        set_file_pointer.restype = wintypes.BOOL
         close_handle = kernel32.CloseHandle
         close_handle.argtypes = [wintypes.HANDLE]
         close_handle.restype = wintypes.BOOL
-
         invalid = wintypes.HANDLE(-1).value
-        writer = create_file(
-            str(self.policy), 0x40000000, 0x00000007, None, 3, 0x08000000, None
-        )
-        if writer == invalid:
-            self.skipTest("could not open a compatible writer handle")
         original_win_dll = ctypes.WinDLL
-        mutated = False
+        writer_denied = False
 
         class _KernelProxy:
             def __init__(self, library):
@@ -179,19 +162,23 @@ class PortableHostPolicyTests(unittest.TestCase):
             def __getattr__(self, name):
                 return getattr(self._library, name)
 
-            def ReadFile(self, handle, buffer, count, read_count, overlapped):
-                nonlocal mutated
-                result = self._library.ReadFile(handle, buffer, count, read_count, overlapped)
-                if result and read_count.contents.value and not mutated:
-                    mutated = True
-                    offset = ctypes.c_longlong()
-                    if not set_file_pointer(writer, 0, ctypes.byref(offset), 0):
-                        raise OSError(ctypes.get_last_error(), "SetFilePointerEx failed")
-                    replacement = ctypes.create_string_buffer(b"Y" * self.policy.stat().st_size)
-                    written = wintypes.DWORD()
-                    if not write_file(writer, replacement, len(replacement.raw) - 1, ctypes.byref(written), None):
-                        raise OSError(ctypes.get_last_error(), "WriteFile mutation failed")
-                return result
+            def CreateFileW(self, path, access, share, security, creation, flags, template):
+                nonlocal writer_denied
+                handle = self._library.CreateFileW(
+                    path, access, share, security, creation, flags, template
+                )
+                if handle != invalid and not writer_denied:
+                    writer = create_file(
+                        str(self_policy), 0x40000000, 0x00000007, None, 3,
+                        0x08000000, None,
+                    )
+                    if writer != invalid:
+                        close_handle(writer)
+                        raise AssertionError("writer unexpectedly opened while secure reader held the file")
+                    writer_denied = ctypes.get_last_error() == 32
+                return handle
+
+        self_policy = self.policy
 
         def win_dll(name, *args, **kwargs):
             library = original_win_dll(name, *args, **kwargs)
@@ -199,15 +186,16 @@ class PortableHostPolicyTests(unittest.TestCase):
                 return _KernelProxy(library)
             return library
 
-        try:
-            with patch("ctypes.WinDLL", side_effect=win_dll):
-                with self.assertRaisesRegex(BootstrapError, "changed while being read"):
-                    _read_host_file_secure(
-                        self.policy, label="Test policy", max_bytes=64 * 1024
-                    )
-        finally:
-            close_handle(writer)
-        self.assertTrue(mutated, "test did not mutate the file during the read")
+        expected = self.policy.read_bytes()
+        with patch("ctypes.WinDLL", side_effect=win_dll):
+            actual = _read_host_file_secure(
+                self.policy, label="Test policy", max_bytes=64 * 1024
+            )
+        self.assertEqual(actual, expected)
+        self.assertTrue(
+            writer_denied,
+            "secure reader did not block a concurrent write handle",
+        )
 
     @unittest.skipUnless(os.name == "nt", "Windows native handle semantics")
     def test_windows_secure_reader_rejects_directory_handles(self):
