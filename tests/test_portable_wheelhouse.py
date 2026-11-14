@@ -31,7 +31,11 @@ class PortableWheelhouseTests(unittest.TestCase):
         self.assertIn("--require-hashes", command)
         self.assertIn("--only-binary=:all:", command)
         self.assertIn("--no-deps", command)
+        self.assertIn("--no-cache-dir", command)
         self.assertIn("--platform", command)
+        self.assertNotIn("PIP_INDEX_URL", kwargs["env"])
+        self.assertNotIn("PYTHONPATH", kwargs["env"])
+        self.assertNotIn("PYTHONHOME", kwargs["env"])
         target = Path(command[command.index("--dest") + 1])
         (target / self.wheel.name).write_bytes(self.wheel.read_bytes())
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -75,6 +79,15 @@ class PortableWheelhouseTests(unittest.TestCase):
                 self.lock, self.wheelhouse, platform="manylinux_2_28_x86_64",
                 python_version="3.12", implementation="cp", abi="cp312",
                 index_url="http://packages.example.com/simple",
+                runner=self._runner,
+            )
+
+    def test_rejects_query_parameters_in_index_url(self):
+        with self.assertRaisesRegex(InputValidationError, "query parameters"):
+            build_wheelhouse(
+                self.lock, self.wheelhouse, platform="manylinux_2_28_x86_64",
+                python_version="3.12", implementation="cp", abi="cp312",
+                index_url="https://packages.example.com/simple?token=secret",
                 runner=self._runner,
             )
 
