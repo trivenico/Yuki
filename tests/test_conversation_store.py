@@ -865,6 +865,16 @@ class ConversationStoreTests(unittest.TestCase):
         self.assertEqual(execution["status"], "completed")
 
 
+
+    def test_tool_review_rejects_non_string_action_without_type_error(self):
+        with self.assertRaises(ConversationConflict):
+            self.store.review_tool_execution(
+                owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+                request_id="invalid-action", call_id="call-invalid",
+                action=["confirm_provider_completed"], reason="Malformed input",
+            )
+
+
     def test_review_can_confirm_completed_only_with_matching_provider_evidence(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
         conversation_id = self.conversation["conversation_id"]
