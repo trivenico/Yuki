@@ -62,7 +62,7 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     return files
 
 
-def create_manifest(root: str | Path, *, platform: str, runtime_version: str) -> dict[str, Any]:
+def create_manifest(root: str | Path, *, platform: str, runtime_version: str, release_sequence: int) -> dict[str, Any]:
     bundle = Path(root).expanduser().resolve(strict=True)
     if not bundle.is_dir():
         raise RuntimeManifestError("Runtime bundle path must be a directory.")
@@ -70,12 +70,15 @@ def create_manifest(root: str | Path, *, platform: str, runtime_version: str) ->
         raise ValueError("platform must be non-empty bounded text.")
     if not isinstance(runtime_version, str) or not runtime_version.strip() or len(runtime_version) > 100:
         raise ValueError("runtime_version must be non-empty bounded text.")
+    if type(release_sequence) is not int or release_sequence < 0:
+        raise ValueError("release_sequence must be a non-negative integer.")
     manifest = {
         "schema_version": 1,
         "product": "Yuki Portable Runtime",
         "artifact_kind": "portable-runtime",
         "platform": platform.strip(),
         "runtime_version": runtime_version.strip(),
+        "release_sequence": release_sequence,
         "files": _inventory(bundle),
     }
     _validate_manifest(manifest)
@@ -84,7 +87,7 @@ def create_manifest(root: str | Path, *, platform: str, runtime_version: str) ->
 
 def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or set(value) != {
-        "schema_version", "product", "artifact_kind", "platform", "runtime_version", "files"
+        "schema_version", "product", "artifact_kind", "platform", "runtime_version", "release_sequence", "files"
     }:
         raise RuntimeManifestError("Runtime manifest has an invalid schema.")
     if (
@@ -93,6 +96,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
         or value["artifact_kind"] != "portable-runtime"
         or not isinstance(value["platform"], str) or not value["platform"]
         or not isinstance(value["runtime_version"], str) or not value["runtime_version"]
+        or type(value["release_sequence"]) is not int or value["release_sequence"] < 0
         or not isinstance(value["files"], list) or not value["files"]
     ):
         raise RuntimeManifestError("Runtime manifest metadata is invalid.")
@@ -227,6 +231,7 @@ def main() -> int:
     build.add_argument("bundle", type=Path)
     build.add_argument("--platform", required=True)
     build.add_argument("--runtime-version", required=True)
+    build.add_argument("--release-sequence", required=True, type=int)
     sign = sub.add_parser("sign")
     sign.add_argument("bundle", type=Path)
     sign.add_argument("--private-key", required=True, type=Path)
@@ -239,7 +244,7 @@ def main() -> int:
     try:
         if args.command == "create":
             bundle = args.bundle.expanduser().resolve(strict=True)
-            manifest = create_manifest(bundle, platform=args.platform, runtime_version=args.runtime_version)
+            manifest = create_manifest(bundle, platform=args.platform, runtime_version=args.runtime_version, release_sequence=args.release_sequence)
             output = bundle / MANIFEST_NAME
             if output.is_symlink() or (output.exists() and not output.is_file()):
                 raise RuntimeManifestError("Runtime manifest destination must be a regular non-symlink file.")
