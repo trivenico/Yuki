@@ -105,6 +105,23 @@ class StructuredToolProtocolTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(self.policy.requests, [])
 
+    def test_recursive_argument_serialization_is_rejected_before_dispatch(self):
+        nested = "{}"
+        for _ in range(600):
+            nested = '{"x":' + nested + '}'
+        response = '{"tool_calls":[{"id":"x","name":"echo","arguments":' + nested + '}]}'
+        with self.assertRaises(ToolProtocolError):
+            self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
+    def test_oversized_arguments_are_rejected_before_dispatch(self):
+        response = self.envelope([self.call(arguments={"value": "x" * 8_100})])
+        with self.assertRaises(ToolProtocolError):
+            self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
     def test_duplicate_ids_and_unknown_fields_are_rejected(self):
         with self.assertRaises(ToolProtocolError):
             parse_tool_calls(self.envelope([self.call("same"), self.call("same")]))
@@ -146,8 +163,6 @@ class StructuredToolProtocolTests(unittest.TestCase):
     def test_runtime_type_is_required(self):
         with self.assertRaises(TypeError):
             StructuredToolProtocol(object())
-
-
 
     def test_dispatch_reports_uncertain_handler_outcome_and_stops_batch(self):
         outcomes = []
