@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import json
 import tempfile
 import threading
@@ -196,6 +197,97 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, _, _ = self.request("GET", "/v1/conversations", token=token)
         self.assertEqual(status, 401)
+
+    def test_authenticated_sessions_select_distinct_owner_execution_loops(self):
+        self.auth.create_account("second-user", "another-secure-password")
+        second_session = self.auth.authenticate("second-user", "another-secure-password")
+        second_user_id = second_session.user.user_id
+        first_user_id = self.issued.user.user_id
+        resolved = []
+
+        def owner_factory(owner_id):
+            resolved.append(owner_id)
+            def model(**kwargs):
+                return {"text": "response-for-" + owner_id, "tool_calls": {"tool_calls": []}}
+            protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            return AgentExecutionLoop(model, protocol)
+
+        self.app.conversations.agent_loop_for_owner = owner_factory
+        status, first_conversation, _ = self.request(
+            "POST", "/v1/conversations", {"title": "First"}, self.issued.token
+        )
+        self.assertEqual(status, 201)
+        status, second_conversation, _ = self.request(
+            "POST", "/v1/conversations", {"title": "Second"}, second_session.token
+        )
+        self.assertEqual(status, 201)
+
+        status, first_reply, _ = self.request(
+            "POST", f"/v1/conversations/{first_conversation['conversation_id']}/messages",
+            {"content": "hello", "request_id": "first-owner-request", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        status, second_reply, _ = self.request(
+            "POST", f"/v1/conversations/{second_conversation['conversation_id']}/messages",
+            {"content": "hello", "request_id": "second-owner-request", "expected_version": 0},
+            second_session.token,
+        )
+        self.assertEqual(status, 200)
+
+        self.assertEqual(resolved, [first_user_id, second_user_id])
+        self.assertEqual(first_reply["answer"], "response-for-" + first_user_id)
+        self.assertEqual(second_reply["answer"], "response-for-" + second_user_id)
+
+        # A valid session cannot override the identity used by the owner factory.
+        status, _, _ = self.request(
+            "POST", "/v1/conversations",
+            {"title": "Forged", "owner_id": second_user_id}, self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resolved, [first_user_id, second_user_id])
+
+    def test_distinct_authenticated_users_generate_concurrently_without_loop_leakage(self):
+        self.auth.create_account("parallel-user", "parallel-secure-password")
+        second = self.auth.authenticate("parallel-user", "parallel-secure-password")
+        barrier = threading.Barrier(2)
+        entered = []
+        entered_lock = threading.Lock()
+
+        def owner_factory(owner_id):
+            def model(**kwargs):
+                with entered_lock:
+                    entered.append(owner_id)
+                barrier.wait(timeout=5)
+                return {"text": "parallel-response-" + owner_id, "tool_calls": {"tool_calls": []}}
+            return AgentExecutionLoop(
+                model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            )
+
+        self.app.conversations.agent_loop_for_owner = owner_factory
+        first_conversation = self.app.conversations.create(owner_id=self.issued.user.user_id)
+        second_conversation = self.app.conversations.create(owner_id=second.user.user_id)
+
+        def send(owner_token, conversation, request_id):
+            return self.request(
+                "POST", f"/v1/conversations/{conversation['conversation_id']}/messages",
+                {"content": "run concurrently", "request_id": request_id, "expected_version": 0},
+                owner_token,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(send, self.issued.token, first_conversation, "parallel-first")
+            second_future = pool.submit(send, second.token, second_conversation, "parallel-second")
+            first_status, first_reply, _ = first_future.result(timeout=10)
+            second_status, second_reply, _ = second_future.result(timeout=10)
+
+        self.assertEqual(first_status, 200)
+        self.assertEqual(second_status, 200)
+        self.assertEqual(first_reply["status"], "completed")
+        self.assertEqual(second_reply["status"], "completed")
+        self.assertEqual(set(entered), {self.issued.user.user_id, second.user.user_id})
+        self.assertEqual(first_reply["answer"], "parallel-response-" + self.issued.user.user_id)
+        self.assertEqual(second_reply["answer"], "parallel-response-" + second.user.user_id)
 
     def test_unauthenticated_and_forged_owner_fields_are_rejected(self):
         status, _, _ = self.request("GET", "/v1/conversations")

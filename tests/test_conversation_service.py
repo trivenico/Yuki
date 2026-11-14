@@ -1,4 +1,6 @@
+import concurrent.futures
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -72,6 +74,46 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(replay["answer"], first["answer"])
         self.assertTrue(replay["replayed"])
         self.assertEqual(len(self.observed), 1)
+
+    def test_same_conversation_rejects_overlapping_generation(self):
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def blocking_model(**kwargs):
+            calls.append(kwargs)
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test model release timed out")
+            return {"text": "first generation completed", "tool_calls": {"tool_calls": []}}
+
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        service = ConversationService(self.store, AgentExecutionLoop(blocking_model, protocol))
+        first_args = {
+            "owner_id": "owner-a",
+            "conversation_id": self.conversation["conversation_id"],
+            "user_text": "first request", "request_id": "overlap-first",
+            "expected_version": 0, "tools": [],
+        }
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                first = pool.submit(service.reply, **first_args)
+                self.assertTrue(started.wait(timeout=5), "first model invocation did not start")
+                with self.assertRaisesRegex(ConversationConflict, "another generation is already active"):
+                    service.reply(
+                        owner_id="owner-a",
+                        conversation_id=self.conversation["conversation_id"],
+                        user_text="second request", request_id="overlap-second",
+                        expected_version=0, tools=[],
+                    )
+                self.assertEqual(len(calls), 1)
+                release.set()
+                result = first.result(timeout=5)
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["answer"], "first generation completed")
+            self.assertEqual(len(calls), 1)
+        finally:
+            release.set()
 
     def test_stale_version_fails_before_model_call(self):
         self.send()
