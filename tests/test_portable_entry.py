@@ -26,15 +26,15 @@ class PortableEntryTests(unittest.TestCase):
     def test_adds_only_bundle_paths_in_deterministic_order(self):
         paths = ["", "/host/site-packages", "/stdlib"]
         result = configure_bundle_paths(self.root, paths)
-        self.assertEqual(result[:2], [str(self.root / "site-packages"), str(self.root)])
+        self.assertEqual(result[:2], [str((self.root / "site-packages").resolve()), str(self.root.resolve())])
         self.assertEqual(result[2:], ["", "/host/site-packages", "/stdlib"])
 
     def test_is_idempotent(self):
         paths = []
         configure_bundle_paths(self.root, paths)
         configure_bundle_paths(self.root, paths)
-        self.assertEqual(paths.count(str(self.root)), 1)
-        self.assertEqual(paths.count(str(self.root / "site-packages")), 1)
+        self.assertEqual(paths.count(str(self.root.resolve())), 1)
+        self.assertEqual(paths.count(str((self.root / "site-packages").resolve())), 1)
 
     def test_rejects_missing_site_packages(self):
         (self.root / "site-packages").rmdir()
