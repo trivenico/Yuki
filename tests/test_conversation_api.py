@@ -731,5 +731,30 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data, {"error": "provider_outcome_unavailable"})
 
 
+    def test_provider_reconciliation_rejects_malformed_payload_before_dispatch(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        path = (
+            f"/v1/conversations/{conversation['conversation_id']}/"
+            "tool-executions/call-malformed/provider-outcomes"
+        )
+        class MustNotRun:
+            def reconcile(self, **kwargs):
+                raise AssertionError("malformed requests must not reach provider adapters")
+        self.app.conversations.provider_outcome_reconciler = MustNotRun()
+        malformed = [
+            {},
+            {"request_id": 42},
+            {"request_id": ""},
+            {"request_id": "valid", "owner_id": self.user.user_id},
+        ]
+        for payload in malformed:
+            with self.subTest(payload=payload):
+                status, data, _ = self.request(
+                    "POST", path, payload, self.issued.token,
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(data, {"error": "invalid_request"})
+
+
 if __name__ == "__main__":
     unittest.main()
