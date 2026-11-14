@@ -73,6 +73,101 @@ def _validate_host_parent_directories(path: Path, *, label: str) -> None:
         current = current.parent
 
 
+def _read_windows_file_handle_secure(path: Path, *, label: str, max_bytes: int) -> bytes:
+    """Read one Windows file through a pinned handle without following a final reparse point.
+
+    FILE_SHARE_READ prevents concurrent write/delete opens while the handle is
+    held. Parent path components are still resolved by CreateFileW; this is
+    not a handle-relative traversal guarantee for the complete path.
+    """
+    if max_bytes < 0:
+        raise BootstrapError(f"{label} path or size limit is invalid.")
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("dwFileAttributes", wintypes.DWORD),
+                ("ftCreationTime_dwLowDateTime", wintypes.DWORD),
+                ("ftCreationTime_dwHighDateTime", wintypes.DWORD),
+                ("ftLastAccessTime_dwLowDateTime", wintypes.DWORD),
+                ("ftLastAccessTime_dwHighDateTime", wintypes.DWORD),
+                ("ftLastWriteTime_dwLowDateTime", wintypes.DWORD),
+                ("ftLastWriteTime_dwHighDateTime", wintypes.DWORD),
+                ("dwVolumeSerialNumber", wintypes.DWORD),
+                ("nFileSizeHigh", wintypes.DWORD),
+                ("nFileSizeLow", wintypes.DWORD),
+                ("nNumberOfLinks", wintypes.DWORD),
+                ("nFileIndexHigh", wintypes.DWORD),
+                ("nFileIndexLow", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+            wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+        ]
+        create_file.restype = wintypes.HANDLE
+        get_info = kernel32.GetFileInformationByHandle
+        get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION)]
+        get_info.restype = wintypes.BOOL
+        read_file = kernel32.ReadFile
+        read_file.argtypes = [
+            wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID,
+        ]
+        read_file.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        invalid_handle = wintypes.HANDLE(-1).value
+        handle = create_file(
+            str(path), 0x80000000, 0x00000001, None, 3,
+            0x00200000 | 0x08000000, None,
+        )
+        if handle == invalid_handle:
+            raise OSError(ctypes.get_last_error(), "CreateFileW failed", str(path))
+        try:
+            info = _BY_HANDLE_FILE_INFORMATION()
+            if not get_info(handle, ctypes.byref(info)):
+                raise OSError(ctypes.get_last_error(), "GetFileInformationByHandle failed", str(path))
+            attributes = info.dwFileAttributes
+            if attributes & 0x00000400:
+                raise BootstrapError(f"{label} must not be a reparse point.")
+            if attributes & 0x00000010:
+                raise BootstrapError(f"{label} must be a regular file, not a directory.")
+            size = (info.nFileSizeHigh << 32) | info.nFileSizeLow
+            if size > max_bytes:
+                raise BootstrapError(f"{label} exceeds its size limit.")
+
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                request = min(1024 * 1024, max_bytes + 1 - total)
+                if request <= 0:
+                    raise BootstrapError(f"{label} exceeds its size limit.")
+                buffer = ctypes.create_string_buffer(request)
+                read = wintypes.DWORD()
+                if not read_file(handle, buffer, request, ctypes.byref(read), None):
+                    raise OSError(ctypes.get_last_error(), "ReadFile failed", str(path))
+                if read.value == 0:
+                    break
+                total += read.value
+                if total > max_bytes:
+                    raise BootstrapError(f"{label} exceeds its size limit.")
+                chunks.append(buffer.raw[:read.value])
+            return b"".join(chunks)
+        finally:
+            close_handle(handle)
+    except BootstrapError:
+        raise
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        raise BootstrapError(f"{label} could not be securely read.") from exc
+
+
 def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> bytes:
     """Read a host file without following POSIX symlinks during path traversal.
 
@@ -100,14 +195,9 @@ def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> b
                 break
 
     if os.name == "nt":
-        try:
-            with candidate.open("rb") as stream:
-                data = stream.read(max_bytes + 1)
-        except OSError as exc:
-            raise BootstrapError(f"{label} could not be securely read.") from exc
-        if len(data) > max_bytes:
-            raise BootstrapError(f"{label} exceeds its size limit.")
-        return data
+        return _read_windows_file_handle_secure(
+            candidate, label=label, max_bytes=max_bytes
+        )
 
     if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
         raise BootstrapError(f"{label} requires POSIX O_DIRECTORY and O_NOFOLLOW support.")
