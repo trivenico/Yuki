@@ -341,6 +341,247 @@ def _copy_windows_file_handle_secure(
         raise BootstrapError(f"{label} could not be securely staged.") from exc
 
 
+
+def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
+    """Inventory a Windows bundle using pinned directory handles and relative opens.
+
+    The root directory itself is opened by path; every descendant is enumerated
+    from a pinned directory handle and opened as a single child name relative
+    to that handle. FILE_OPEN_REPARSE_POINT is used without FILE_DIRECTORY_FILE:
+    the opened object's type is checked through its handle instead.
+    """
+    import ctypes
+    import hashlib
+    import struct
+    from ctypes import wintypes
+
+    class _UNICODE_STRING(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.USHORT),
+            ("MaximumLength", wintypes.USHORT),
+            ("Buffer", wintypes.LPWSTR),
+        ]
+
+    class _OBJECT_ATTRIBUTES(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.ULONG),
+            ("RootDirectory", wintypes.HANDLE),
+            ("ObjectName", ctypes.POINTER(_UNICODE_STRING)),
+            ("Attributes", wintypes.ULONG),
+            ("SecurityDescriptor", wintypes.LPVOID),
+            ("SecurityQualityOfService", wintypes.LPVOID),
+        ]
+
+    class _IO_STATUS_BLOCK(ctypes.Structure):
+        _fields_ = [("Status", ctypes.c_void_p), ("Information", ctypes.c_size_t)]
+
+    class _FILE_ATTRIBUTE_TAG_INFO(ctypes.Structure):
+        _fields_ = [("FileAttributes", wintypes.DWORD), ("ReparseTag", wintypes.DWORD)]
+
+    class _FILE_STANDARD_INFO(ctypes.Structure):
+        _fields_ = [
+            ("AllocationSize", ctypes.c_longlong),
+            ("EndOfFile", ctypes.c_longlong),
+            ("NumberOfLinks", wintypes.DWORD),
+            ("DeletePending", wintypes.BOOLEAN),
+            ("Directory", wintypes.BOOLEAN),
+        ]
+
+    class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime_dwLowDateTime", wintypes.DWORD),
+            ("ftCreationTime_dwHighDateTime", wintypes.DWORD),
+            ("ftLastAccessTime_dwLowDateTime", wintypes.DWORD),
+            ("ftLastAccessTime_dwHighDateTime", wintypes.DWORD),
+            ("ftLastWriteTime_dwLowDateTime", wintypes.DWORD),
+            ("ftLastWriteTime_dwHighDateTime", wintypes.DWORD),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ntdll = ctypes.WinDLL("ntdll")
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    get_type = kernel32.GetFileType
+    get_type.argtypes = [wintypes.HANDLE]
+    get_type.restype = wintypes.DWORD
+    get_info = kernel32.GetFileInformationByHandle
+    get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION)]
+    get_info.restype = wintypes.BOOL
+    get_info_ex = kernel32.GetFileInformationByHandleEx
+    get_info_ex.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    get_info_ex.restype = wintypes.BOOL
+    read_file = kernel32.ReadFile
+    read_file.argtypes = [
+        wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID,
+    ]
+    read_file.restype = wintypes.BOOL
+    nt_create_file = ntdll.NtCreateFile
+    nt_create_file.argtypes = [
+        ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD,
+        ctypes.POINTER(_OBJECT_ATTRIBUTES), ctypes.POINTER(_IO_STATUS_BLOCK),
+        ctypes.c_void_p, wintypes.ULONG, wintypes.ULONG, wintypes.ULONG,
+        wintypes.ULONG, wintypes.LPVOID, wintypes.ULONG,
+    ]
+    nt_create_file.restype = ctypes.c_long
+
+    invalid_handle = wintypes.HANDLE(-1).value
+    root_handle = create_file(
+        str(root), 0x0001 | 0x0080, 0x0001, None, 3,
+        0x00200000 | 0x02000000, None,
+    )
+    if root_handle == invalid_handle:
+        raise BootstrapError("Unable to securely open portable bundle root.")
+    files: list[dict[str, Any]] = []
+
+    def handle_info(handle: Any) -> tuple[_FILE_ATTRIBUTE_TAG_INFO, _FILE_STANDARD_INFO]:
+        attributes = _FILE_ATTRIBUTE_TAG_INFO()
+        standard = _FILE_STANDARD_INFO()
+        if not get_info_ex(handle, 9, ctypes.byref(attributes), ctypes.sizeof(attributes)):
+            raise OSError(ctypes.get_last_error(), "GetFileInformationByHandleEx(FileAttributeTagInfo) failed")
+        if not get_info_ex(handle, 1, ctypes.byref(standard), ctypes.sizeof(standard)):
+            raise OSError(ctypes.get_last_error(), "GetFileInformationByHandleEx(FileStandardInfo) failed")
+        if attributes.FileAttributes & 0x00000400:
+            raise BootstrapError("Bundle contains a reparse point.")
+        return attributes, standard
+
+    def open_child(parent: Any, name: str) -> Any:
+        encoded = name.encode("utf-16-le")
+        if not encoded or len(encoded) > 0xFFFC or "\x00" in name or "/" in name or "\\" in name:
+            raise BootstrapError("Bundle contains an invalid Windows path component.")
+        name_buffer = ctypes.create_unicode_buffer(name)
+        unicode_name = _UNICODE_STRING(len(encoded), len(encoded), ctypes.cast(name_buffer, wintypes.LPWSTR))
+        object_attributes = _OBJECT_ATTRIBUTES(
+            ctypes.sizeof(_OBJECT_ATTRIBUTES), parent, ctypes.pointer(unicode_name),
+            0x00000040, None, None,
+        )
+        io_status = _IO_STATUS_BLOCK()
+        child = wintypes.HANDLE()
+        status = nt_create_file(
+            ctypes.byref(child),
+            0x00100081,  # SYNCHRONIZE | FILE_READ_ATTRIBUTES | FILE_READ_DATA/LIST_DIRECTORY
+            ctypes.byref(object_attributes),
+            ctypes.byref(io_status),
+            None,
+            0x00000080,  # FILE_ATTRIBUTE_NORMAL
+            0x00000001,  # FILE_SHARE_READ only
+            0x00000001,  # FILE_OPEN
+            0x00200000 | 0x00000020,  # FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT
+            None,
+            0,
+        )
+        if status < 0:
+            raise OSError(status & 0xFFFFFFFF, "NtCreateFile relative child open failed", name)
+        return child
+
+    def identity(handle: Any) -> tuple[int, ...]:
+        info = _BY_HANDLE_FILE_INFORMATION()
+        if not get_info(handle, ctypes.byref(info)):
+            raise OSError(ctypes.get_last_error(), "GetFileInformationByHandle failed")
+        return (
+            info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow,
+            info.nFileSizeHigh, info.nFileSizeLow,
+            info.ftLastWriteTime_dwHighDateTime, info.ftLastWriteTime_dwLowDateTime,
+            info.ftCreationTime_dwHighDateTime, info.ftCreationTime_dwLowDateTime,
+        )
+
+    def visit(directory_handle: Any, prefix: str) -> None:
+        buffer_size = 1024 * 1024
+        buffer = ctypes.create_string_buffer(buffer_size)
+        info_class = 15  # FileFullDirectoryRestartInfo
+        while True:
+            if not get_info_ex(directory_handle, info_class, buffer, buffer_size):
+                error = ctypes.get_last_error()
+                if error == 18:  # ERROR_NO_MORE_FILES
+                    break
+                raise OSError(error, "Directory handle enumeration failed", prefix)
+            info_class = 14  # FileFullDirectoryInfo resumes enumeration
+            raw = buffer.raw
+            offset = 0
+            while True:
+                if offset + 68 > buffer_size:
+                    raise BootstrapError("Windows directory enumeration returned a truncated record.")
+                next_offset, _index, _created, _accessed, _written, _changed, end_of_file, _allocation, attrs, name_length, _ea = struct.unpack_from(
+                    "<IIqqqqqqIII", raw, offset
+                )
+                if name_length % 2 or name_length > buffer_size - offset - 68:
+                    raise BootstrapError("Windows directory enumeration returned an invalid filename.")
+                name = raw[offset + 68:offset + 68 + name_length].decode("utf-16-le", errors="strict")
+                if name not in {".", ".."}:
+                    relative = f"{prefix}/{name}" if prefix else name
+                    if not prefix and name in {"runtime-manifest.json", "runtime-manifest.sig"}:
+                        pass
+                    else:
+                        child = open_child(directory_handle, name)
+                        try:
+                            tag_info, standard = handle_info(child)
+                            if attrs & 0x00000400 or tag_info.FileAttributes & 0x00000400:
+                                raise BootstrapError(f"Bundle contains a reparse point: {relative}")
+                            is_directory = bool(standard.Directory)
+                            if bool(attrs & 0x00000010) != is_directory:
+                                raise BootstrapError(f"Bundle entry type changed during inventory: {relative}")
+                            if is_directory:
+                                visit(child, relative)
+                            else:
+                                if get_type(child) != 1:  # FILE_TYPE_DISK
+                                    raise BootstrapError(f"Bundle contains a non-disk file: {relative}")
+                                before = identity(child)
+                                digest = hashlib.sha256()
+                                size = 0
+                                while True:
+                                    chunk_buffer = ctypes.create_string_buffer(1024 * 1024)
+                                    count = wintypes.DWORD()
+                                    if not read_file(child, chunk_buffer, len(chunk_buffer), ctypes.byref(count), None):
+                                        raise OSError(ctypes.get_last_error(), "ReadFile during inventory failed", relative)
+                                    if count.value == 0:
+                                        break
+                                    chunk = chunk_buffer.raw[:count.value]
+                                    size += len(chunk)
+                                    digest.update(chunk)
+                                after = identity(child)
+                                if before != after or size != standard.EndOfFile:
+                                    raise BootstrapError(f"Bundle file changed while being hashed: {relative}")
+                                files.append({"path": relative, "size": size, "sha256": digest.hexdigest()})
+                        finally:
+                            close_handle(child)
+                if next_offset == 0:
+                    break
+                if next_offset < 68 or offset + next_offset >= buffer_size:
+                    raise BootstrapError("Windows directory enumeration returned an invalid record offset.")
+                offset += next_offset
+
+    try:
+        root_attributes, root_standard = handle_info(root_handle)
+        if not root_standard.Directory or root_attributes.FileAttributes & 0x00000400:
+            raise BootstrapError("Portable bundle root must be a real directory.")
+        visit(root_handle, "")
+    except BootstrapError:
+        raise
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise BootstrapError("Unable to securely inventory portable bundle through directory handles.") from exc
+    finally:
+        close_handle(root_handle)
+
+    files.sort(key=lambda item: item["path"])
+    if not files:
+        raise BootstrapError("Runtime bundle contains no regular files.")
+    return files
+
+
 def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> bytes:
     """Read a host file without following POSIX symlinks during path traversal.
 
