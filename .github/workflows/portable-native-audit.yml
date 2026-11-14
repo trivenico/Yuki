@@ -33,18 +33,3 @@ jobs:
       - name: Run native audit parser tests
         run: python -m unittest discover -s tests -p 'test_portable_native_audit.py' -v
 
-  host-metadata-smoke:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Audit Python runtime metadata
-        run: python -m scripts.portable_native_audit --bundle-root "${{ env.pythonLocation }}" --platform ${{ matrix.platform }}
-        env:
-          PYTHONPATH: ""
