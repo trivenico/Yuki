@@ -41,8 +41,12 @@ already exist in the verified runtime. It may provide pip, or the caller may
 supply `pip_bootstrap_wheel`, `pip_bootstrap_sha256`, and
 `pip_bootstrap_version` to load a separately trusted pip wheel through
 zipimport. The lock must contain
-the complete platform/Python-specific dependency closure and hashes for every
-wheel. No downloads occur and the Yuki application is not launched.
+the complete platform/Python-specific dependency closure, including an exact
+`yuki-ai-assistant==...` pin for the application wheel, and hashes for every
+wheel. The wheelhouse must contain that Yuki wheel as well as all transitive
+dependencies. This prevents a successful runtime assembly that contains only
+third-party dependencies but omits Yuki itself. No downloads occur and the
+Yuki application is not launched.
 
 This is an assembly primitive, not a signed end-user installer or a clean
 machine portability guarantee. Runtime formats other than ZIP need separate
