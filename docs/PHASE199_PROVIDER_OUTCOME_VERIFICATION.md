@@ -97,6 +97,8 @@ timeouts for their own status API calls.
 Evidence persistence runs its duplicate check and insert inside a SQLite
 `BEGIN IMMEDIATE` transaction. Re-delivery of the same evidence digest for
 the same execution returns the original ledger entry. Reuse of that digest
-with conflicting provider, outcome, or observation-time metadata is rejected.
-This makes evidence ingestion idempotent across concurrent application workers;
+with conflicting provider, outcome, observation-time, or provider-reference
+metadata is rejected. This prevents a digest collision from silently hiding a
+different provider-side object reference. This makes evidence ingestion
+idempotent across concurrent application workers;
 it does not serialize or suppress distinct provider observations.
