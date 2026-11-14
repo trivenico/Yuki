@@ -131,6 +131,22 @@ class PortableHostInstallerTests(unittest.TestCase):
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertTrue(Path(result["public_key"]).is_file())
 
+    @unittest.skipIf(os.name == "nt", "POSIX no-follow symlink open")
+    def test_public_key_reader_rejects_symlink_source(self):
+        target = self.root / "target.pem"
+        target.write_bytes(b"not-a-key")
+        link = self.root / "linked.pem"
+        link.symlink_to(target)
+        with self.assertRaises(BootstrapError):
+            installer._validate_public_key(link)
+
+    @unittest.skipIf(os.name == "nt", "POSIX FIFO semantics")
+    def test_public_key_reader_rejects_non_regular_source_without_blocking(self):
+        fifo = self.root / "key.fifo"
+        os.mkfifo(fifo)
+        with self.assertRaisesRegex(BootstrapError, "regular PEM file"):
+            installer._validate_public_key(fifo)
+
     @unittest.skipUnless(os.name == "nt", "requires real Windows filesystem ACLs")
     def test_windows_acl_is_enforced_on_real_directory(self):
         with tempfile.TemporaryDirectory() as directory:
