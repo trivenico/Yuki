@@ -31,7 +31,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         manifest = self._write_manifest()
         verified = verify_manifest(self.root)
         self.assertEqual(verified, manifest)
-        self.assertEqual(manifest["artifact_kind"], "unsigned-portable-runtime")
+        self.assertEqual(manifest["artifact_kind"], "portable-runtime")
         self.assertEqual(len(manifest["files"]), 2)
 
     def test_modified_file_fails_integrity_check(self):
@@ -239,7 +239,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
 
     def test_unsigned_manifest_does_not_claim_authenticity(self):
         manifest = self._write_manifest()
-        self.assertEqual(manifest["artifact_kind"], "unsigned-portable-runtime")
+        self.assertEqual(manifest["artifact_kind"], "portable-runtime")
         self.assertNotIn("signature", manifest)
 
 
