@@ -116,7 +116,7 @@ class ProviderOutcomeRegistry:
     def __init__(self, adapters: dict[str, ProviderOutcomeAdapter]) -> None:
         if not isinstance(adapters, dict):
             raise TypeError("adapters must be an explicit mapping.")
-        validated: dict[str, ProviderOutcomeAdapter] = {}
+        validated: dict[str, tuple[ProviderOutcomeAdapter, str]] = {}
         for tool_name, adapter in adapters.items():
             if (not isinstance(tool_name, str)
                     or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name)):
@@ -126,15 +126,16 @@ class ProviderOutcomeRegistry:
             provider_id = getattr(adapter, "provider_id", None)
             if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", provider_id):
                 raise ValueError(f"adapter for {tool_name!r} must declare a bounded provider_id.")
-            validated[tool_name] = adapter
+            validated[tool_name] = (adapter, provider_id)
         self._adapters = validated
 
     def lookup(self, tool_name: str, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
-        adapter = self._adapters.get(tool_name)
-        if adapter is None:
+        registration = self._adapters.get(tool_name)
+        if registration is None:
             raise LookupError(f"no provider outcome adapter is registered for {tool_name!r}.")
+        adapter, expected_provider = registration
         return verify_provider_outcome(
-            adapter, execution, expected_provider=adapter.provider_id,
+            adapter, execution, expected_provider=expected_provider,
         )
 
 
