@@ -87,6 +87,7 @@ class StructuredToolProtocolTests(unittest.TestCase):
             '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":NaN}}]}',
             '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":Infinity}}]}',
             '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":-Infinity}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":1e999}}]}',
         )
         for response in invalid:
             with self.subTest(response=response), self.assertRaises(ToolProtocolError):
