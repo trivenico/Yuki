@@ -78,7 +78,11 @@ class PortableRuntimeAssemblerTests(unittest.TestCase):
             pip_bootstrap_version="99.0",
         )
         self.assertIn("-c", captured["command"])
-        self.assertIn(str(pip_wheel), captured["command"])
+        snapshot_arg = captured["command"][captured["command"].index("-c") + 2]
+        self.assertTrue(Path(snapshot_arg).name == pip_wheel.name)
+        self.assertIn(".yuki-pip-wheel-", str(Path(snapshot_arg).parent))
+        self.assertNotEqual(Path(snapshot_arg), pip_wheel)
+        self.assertFalse(Path(snapshot_arg).exists())
         self.assertEqual(report["dependencies"]["pip_bootstrap"], "pinned-wheel")
 
     def test_requires_yuki_application_wheel_pin(self):
