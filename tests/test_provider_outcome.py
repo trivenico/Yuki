@@ -6,6 +6,24 @@ from core.provider_outcome import (
 )
 
 
+def _multiprocess_claim_provider_reconciliation_lease(database_path, conversation_id, request_id, token, barrier, results):
+    from core.conversation_store import ConversationConflict, ConversationStore
+    store = ConversationStore(database_path)
+    try:
+        barrier.wait(timeout=10)
+        store.acquire_provider_reconciliation_lease(
+            owner_id="owner-process", conversation_id=conversation_id,
+            request_id=request_id, call_id="call-process",
+            lease_token=token, ttl_seconds=30,
+        )
+    except ConversationConflict:
+        results.put(("lost", token))
+    except Exception as exc:
+        results.put(("error", repr(exc)))
+    else:
+        results.put(("won", token))
+
+
 class ProviderOutcomeTests(unittest.TestCase):
     def setUp(self):
         self.execution = {
@@ -981,6 +999,67 @@ class ProviderOutcomeTests(unittest.TestCase):
                 results = list(pool.map(claim, range(2)))
             self.assertEqual(results.count("won"), 1)
             self.assertEqual(results.count("lost"), 1)
+
+    def test_multiprocess_reconciliation_claim_is_exclusive(self):
+        import multiprocessing
+        import tempfile
+        from pathlib import Path
+        from core.conversation_store import ConversationStore
+
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "multiprocess-reconciliation.sqlite3"
+            store = ConversationStore(database)
+            conversation = store.create_conversation(owner_id="owner-process")
+            conversation_id = conversation["conversation_id"]
+            request_id = "multiprocess-provider-claim"
+            store.append_message(
+                owner_id="owner-process", conversation_id=conversation_id,
+                role="user", content="Check provider execution",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            generation_token = "generation-process"
+            store.acquire_generation_lease(
+                owner_id="owner-process", conversation_id=conversation_id,
+                lease_token=generation_token, ttl_seconds=60,
+            )
+            try:
+                store.begin_tool_execution(
+                    owner_id="owner-process", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-process",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=generation_token,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-process", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=generation_token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-process", conversation_id=conversation_id,
+                    lease_token=generation_token,
+                )
+
+            barrier = context.Barrier(2)
+            results = context.Queue()
+            workers = [
+                context.Process(
+                    target=_multiprocess_claim_provider_reconciliation_lease,
+                    args=(str(database), conversation_id, request_id,
+                          f"process-worker-{index}", barrier, results),
+                )
+                for index in range(2)
+            ]
+            for worker in workers:
+                worker.start()
+            outcomes = [results.get(timeout=15) for _ in workers]
+            for worker in workers:
+                worker.join(timeout=15)
+                self.assertEqual(worker.exitcode, 0)
+            self.assertEqual([item[0] for item in outcomes].count("won"), 1)
+            self.assertEqual([item[0] for item in outcomes].count("lost"), 1)
+            self.assertFalse(any(item[0] == "error" for item in outcomes))
 
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
