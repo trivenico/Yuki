@@ -195,6 +195,7 @@ class ProviderOutcomeReconciler:
             stop_renewal.set()
             heartbeat.join()
             if lease_lost.is_set():
+                from core.conversation_store import ConversationConflict
                 raise ConversationConflict("provider reconciliation lease renewal failed.")
             return self._store.record_provider_outcome_evidence(
                 owner_id=owner_id, conversation_id=conversation_id,
