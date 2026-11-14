@@ -1126,5 +1126,49 @@ class ConversationServiceTests(unittest.TestCase):
             ))
 
 
+
+    def test_service_heartbeat_renews_lease_during_slow_recovery(self):
+        entered_recovery = threading.Event()
+        allow_recovery_to_finish = threading.Event()
+        lease_renewed = threading.Event()
+        original_recover = self.service.recovery_coordinator.recover
+        original_renew = self.store.renew_generation_lease
+
+        def slow_recovery(**kwargs):
+            entered_recovery.set()
+            if not allow_recovery_to_finish.wait(timeout=5):
+                raise TimeoutError("test did not release recovery")
+            return original_recover(**kwargs)
+
+        def observe_renewal(**kwargs):
+            result = original_renew(**kwargs)
+            lease_renewed.set()
+            return result
+
+        self.service.LEASE_TTL_SECONDS = 5
+        self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.05
+        with patch.object(self.service.recovery_coordinator, "recover", side_effect=slow_recovery), \
+             patch.object(self.store, "renew_generation_lease", side_effect=observe_renewal):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    self.service.reply,
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="Continue after recovery",
+                    request_id="heartbeat-during-recovery",
+                    expected_version=0,
+                    tools=[],
+                )
+                self.assertTrue(entered_recovery.wait(timeout=2))
+                try:
+                    self.assertTrue(lease_renewed.wait(timeout=2))
+                finally:
+                    allow_recovery_to_finish.set()
+                result = future.result(timeout=5)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(lease_renewed.is_set())
+
+
 if __name__ == "__main__":
     unittest.main()
