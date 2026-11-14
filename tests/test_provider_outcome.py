@@ -542,5 +542,25 @@ class ProviderOutcomeTests(unittest.TestCase):
         with self.assertRaisesRegex(LookupError, "no provider outcome adapter"):
             registry.lookup("send_email", self.execution)
 
+    def test_registry_rejects_async_lookup_before_reconciliation(self):
+        from core.provider_outcome import ProviderOutcomeRegistry
+
+        class AsyncAdapter:
+            provider_id = "mail.example"
+
+            async def lookup_tool_outcome(self, execution):
+                raise AssertionError("async lookup must never be invoked")
+
+        with self.assertRaisesRegex(TypeError, "synchronous lookup"):
+            ProviderOutcomeRegistry({"send_email": AsyncAdapter()})
+
+    def test_direct_verification_rejects_async_lookup_before_invocation(self):
+        class AsyncAdapter:
+            async def lookup_tool_outcome(self, execution):
+                raise AssertionError("async lookup must never be invoked")
+
+        with self.assertRaisesRegex(TypeError, "must be synchronous"):
+            verify_provider_outcome(AsyncAdapter(), self.execution)
+
 if __name__ == "__main__":
     unittest.main()
