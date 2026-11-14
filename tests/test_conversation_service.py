@@ -1217,5 +1217,55 @@ class ConversationServiceTests(unittest.TestCase):
         ))
 
 
+
+    def test_replaced_lease_during_recovery_blocks_stale_worker_commit(self):
+        entered_recovery = threading.Event()
+        allow_recovery_to_finish = threading.Event()
+        original_recover = self.service.recovery_coordinator.recover
+
+        def blocked_recovery(**kwargs):
+            entered_recovery.set()
+            if not allow_recovery_to_finish.wait(timeout=5):
+                raise TimeoutError("test did not release recovery")
+            return original_recover(**kwargs)
+
+        self.service.LEASE_TTL_SECONDS = 60
+        self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
+        with patch.object(
+            self.service.recovery_coordinator, "recover",
+            side_effect=blocked_recovery,
+        ):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    self.service.reply,
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="Must not commit after losing the lease",
+                    request_id="stale-worker-recovery",
+                    expected_version=0,
+                    tools=[],
+                )
+                self.assertTrue(entered_recovery.wait(timeout=2))
+                try:
+                    with self.store._connect() as db:
+                        db.execute(
+                            """UPDATE conversation_generation_leases
+                               SET lease_token=?, expires_at=?
+                               WHERE owner_id=? AND conversation_id=?""",
+                            ("replacement-during-recovery", 9999999999,
+                             "owner-a", self.conversation["conversation_id"]),
+                        )
+                finally:
+                    allow_recovery_to_finish.set()
+                with self.assertRaises(ConversationConflict):
+                    future.result(timeout=5)
+
+        self.assertEqual(self.observed, [])
+        self.assertFalse(self.store.has_message(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            idempotency_key="assistant:stale-worker-recovery",
+        ))
+
 if __name__ == "__main__":
     unittest.main()
