@@ -90,7 +90,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             platform="test-platform",
             runtime_version="3.12.7",
         )
-        manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\\n").encode("utf-8")
+        manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
         (self.bundle / MANIFEST_NAME).write_bytes(manifest_bytes)
         sign_manifest(self.bundle, self.private_path)
 
