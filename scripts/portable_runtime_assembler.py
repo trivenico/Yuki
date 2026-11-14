@@ -14,6 +14,8 @@ from scripts.portable_runtime_inputs import (
     InputValidationError,
     install_offline_dependencies,
     validate_runtime_archive,
+    _logical_requirement_lines,
+    _regular_file,
 )
 
 
@@ -47,6 +49,9 @@ def assemble_portable_runtime(
     *,
     timeout_seconds: int = 1800,
     runner=None,
+    pip_bootstrap_wheel: Path | None = None,
+    pip_bootstrap_sha256: str | None = None,
+    pip_bootstrap_version: str | None = None,
 ) -> dict:
     """Verify and assemble one runtime from pinned, offline inputs.
 
@@ -54,6 +59,10 @@ def assemble_portable_runtime(
     are installed only by the selected interpreter inside that extracted tree.
     If dependency installation fails, the newly extracted runtime is removed.
     """
+    requirements_lock = _regular_file(Path(requirements_lock).expanduser(), "Requirements lock")
+    lock_lines = _logical_requirement_lines(requirements_lock)
+    if not any(line.split() and line.split()[0].lower().replace("_", "-").startswith("yuki-ai-assistant==") for line in lock_lines):
+        raise InputValidationError("Portable dependency lock must include an exact yuki-ai-assistant== application wheel pin.")
     archive = Path(archive).expanduser()
     runtime_root = Path(runtime_root).expanduser()
     dependency_target = Path(dependency_target).expanduser()
@@ -67,10 +76,15 @@ def assemble_portable_runtime(
         raise InputValidationError("Runtime and dependency destinations must share the same parent directory.")
 
     archive_report = validate_runtime_archive(archive, expected_sha256)
-    extraction_report = extract_zip_safely(archive, runtime_root)
+    extraction_report = extract_zip_safely(archive, runtime_root, expected_sha256=expected_sha256)
     try:
         interpreter = _runtime_python_path(runtime_root, python_relative_path)
-        install_kwargs = {"timeout_seconds": timeout_seconds}
+        install_kwargs = {
+            "timeout_seconds": timeout_seconds,
+            "pip_wheel": pip_bootstrap_wheel,
+            "pip_sha256": pip_bootstrap_sha256,
+            "pip_version": pip_bootstrap_version,
+        }
         if runner is not None:
             install_kwargs["runner"] = runner
         install_report = install_offline_dependencies(

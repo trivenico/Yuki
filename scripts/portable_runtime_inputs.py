@@ -123,7 +123,78 @@ def validate_offline_wheelhouse(lock_file: Path, wheelhouse: Path) -> dict:
     }
 
 
-def install_offline_dependencies(runtime_root: Path, python_executable: Path, lock_file: Path, wheelhouse: Path, target: Path, *, timeout_seconds: int = 1800, runner=subprocess.run) -> dict:
+def validate_pip_bootstrap_wheel(pip_wheel: Path, expected_sha256: str, expected_version: str) -> dict:
+    """Validate a pinned universal pip wheel for temporary zipimport bootstrap."""
+    pip_wheel = _regular_file(Path(pip_wheel).expanduser(), "Pip bootstrap wheel")
+    if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(expected_sha256):
+        raise InputValidationError("Expected pip wheel SHA-256 must be exactly 64 hexadecimal characters.")
+    if sha256_file(pip_wheel).lower() != expected_sha256.lower():
+        raise InputValidationError("Pip bootstrap wheel SHA-256 does not match the pinned digest.")
+    if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", expected_version):
+        raise InputValidationError("Expected pip version must be an exact numeric version.")
+    if pip_wheel.name != f"pip-{expected_version}-py3-none-any.whl":
+        raise InputValidationError("Pip bootstrap wheel must use the pinned universal py3-none-any filename.")
+    try:
+        import zipfile
+        with zipfile.ZipFile(pip_wheel) as archive:
+            names = set(archive.namelist())
+            if "pip/__init__.py" not in names or "pip/_internal/cli/main.py" not in names:
+                raise InputValidationError("Pip bootstrap wheel is missing required pip modules.")
+            metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
+            if len(metadata_names) != 1:
+                raise InputValidationError("Pip bootstrap wheel must contain exactly one distribution metadata file.")
+            metadata = archive.read(metadata_names[0]).decode("utf-8")
+    except (OSError, zipfile.BadZipFile, UnicodeError) as exc:
+        raise InputValidationError(f"Pip bootstrap wheel is not a valid wheel archive: {exc}") from exc
+    fields = {}
+    for line in metadata.splitlines():
+        if not line:
+            break
+        if ":" in line:
+            key, value = line.split(":", 1)
+            fields.setdefault(key.strip().lower(), value.strip())
+    if fields.get("name", "").lower().replace("_", "-") != "pip" or fields.get("version") != expected_version:
+        raise InputValidationError("Pip bootstrap wheel metadata does not match the pinned pip name and version.")
+    return {"filename": pip_wheel.name, "sha256": expected_sha256.lower(), "version": expected_version}
+
+
+def _snapshot_verified_pip_wheel(pip_wheel: Path, expected_sha256: str, expected_version: str, parent: Path) -> tuple[Path, Path, dict]:
+    """Copy the pip wheel into a private snapshot while hashing the copied bytes."""
+    source = _regular_file(Path(pip_wheel).expanduser(), "Pip bootstrap wheel")
+    if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(expected_sha256):
+        raise InputValidationError("Expected pip wheel SHA-256 must be exactly 64 hexadecimal characters.")
+    if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", expected_version):
+        raise InputValidationError("Expected pip version must be an exact numeric version.")
+    expected_name = f"pip-{expected_version}-py3-none-any.whl"
+    if source.name != expected_name:
+        raise InputValidationError("Pip bootstrap wheel must use the pinned universal py3-none-any filename.")
+    snapshot_dir = Path(tempfile.mkdtemp(prefix=".yuki-pip-wheel-", dir=parent))
+    snapshot = snapshot_dir / expected_name
+    digest = hashlib.sha256()
+    try:
+        with source.open("rb") as incoming, snapshot.open("xb") as outgoing:
+            if not __stat_is_regular(incoming):
+                raise InputValidationError("Pip bootstrap wheel must be a regular file.")
+            for chunk in iter(lambda: incoming.read(1024 * 1024), b""):
+                digest.update(chunk)
+                outgoing.write(chunk)
+            outgoing.flush()
+            os.fsync(outgoing.fileno())
+        if digest.hexdigest().lower() != expected_sha256.lower():
+            raise InputValidationError("Pip bootstrap wheel SHA-256 does not match the pinned digest.")
+        report = validate_pip_bootstrap_wheel(snapshot, expected_sha256, expected_version)
+        return snapshot_dir, snapshot, report
+    except Exception:
+        shutil.rmtree(snapshot_dir, ignore_errors=True)
+        raise
+
+
+def __stat_is_regular(stream) -> bool:
+    import stat
+    return stat.S_ISREG(os.fstat(stream.fileno()).st_mode)
+
+
+def install_offline_dependencies(runtime_root: Path, python_executable: Path, lock_file: Path, wheelhouse: Path, target: Path, *, timeout_seconds: int = 1800, runner=subprocess.run, pip_wheel: Path | None = None, pip_sha256: str | None = None, pip_version: str | None = None) -> dict:
     """Install a fully hash-locked dependency closure transactionally, offline."""
     runtime_root = Path(runtime_root).expanduser()
     if runtime_root.is_symlink() or not runtime_root.is_dir():
@@ -146,20 +217,44 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
     if target.exists() or target.is_symlink():
         raise InputValidationError("Dependency target must not already exist.")
     parent = target.parent.resolve(strict=True)
-    stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
-    command = [
-        str(python_executable), "-I", "-m", "pip", "install",
-        "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
-        "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
-        "--no-input", "--no-warn-script-location", "--target", str(stage), "-r", str(lock_file),
-    ]
-    environment = {
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONNOUSERSITE": "1",
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PIP_CONFIG_FILE": os.devnull,
-    }
+    pip_snapshot_dir = None
+    if pip_wheel is not None:
+        if pip_sha256 is None or pip_version is None:
+            raise InputValidationError("Pip wheel, pinned SHA-256 and exact version must be supplied together.")
+        pip_snapshot_dir, pip_wheel_path, pip_report = _snapshot_verified_pip_wheel(
+            pip_wheel, pip_sha256, pip_version, parent
+        )
+        bootstrap_code = (
+            "import sys; sys.path.insert(0, sys.argv.pop(1)); "
+            "from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[1:]))"
+        )
+        pip_prefix = [str(python_executable), "-I", "-c", bootstrap_code, str(pip_wheel_path)]
+    else:
+        if pip_sha256 is not None or pip_version is not None:
+            raise InputValidationError("Pip wheel, pinned SHA-256 and exact version must be supplied together.")
+        pip_report = None
+        pip_prefix = [str(python_executable), "-I", "-m", "pip"]
+    stage = None
     try:
+        stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
+        command = pip_prefix + [
+            "install", "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
+            "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
+            "--no-input", "--no-warn-script-location", "--target", str(stage), "-r", str(lock_file),
+        ]
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PIP_CONFIG_FILE": os.devnull,
+        }
+        # Windows Python's system RNG provider and temporary-file APIs require
+        # these OS variables. Keep the allowlist narrow; never inherit Python
+        # or pip configuration variables from the invoking shell.
+        for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
+            value = os.environ.get(key)
+            if value:
+                environment[key] = value
         try:
             completed = runner(command, check=False, capture_output=True, text=True, timeout=timeout_seconds, env=environment, shell=False)
         except subprocess.TimeoutExpired as exc:
@@ -171,10 +266,16 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
             raise InputValidationError("Installer removed or replaced its staging directory.")
         os.replace(stage, target)
     except Exception:
-        if stage.exists():
+        if stage is not None and stage.exists():
             shutil.rmtree(stage, ignore_errors=True)
         raise
-    return {"installed_target": str(target), "requirement_count": report["requirement_count"], "wheel_count": report["wheel_count"], "network_index_access": False, "hash_checking": True, "atomic_publish": True}
+    finally:
+        if pip_snapshot_dir is not None:
+            shutil.rmtree(pip_snapshot_dir, ignore_errors=True)
+    result = {"installed_target": str(target), "requirement_count": report["requirement_count"], "wheel_count": report["wheel_count"], "network_index_access": False, "hash_checking": True, "atomic_publish": True, "pip_bootstrap": "pinned-wheel" if pip_report else "runtime-provided"}
+    if pip_report:
+        result["pip"] = pip_report
+    return result
 
 
 
@@ -188,6 +289,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--install-python", type=Path)
     parser.add_argument("--install-target", type=Path)
     parser.add_argument("--install-timeout", type=int, default=1800)
+    parser.add_argument("--pip-bootstrap-wheel", type=Path)
+    parser.add_argument("--pip-bootstrap-sha256")
+    parser.add_argument("--pip-bootstrap-version")
     args = parser.parse_args(argv)
     try:
         install_args = (args.install_runtime_root, args.install_python, args.install_target)
@@ -200,7 +304,10 @@ def main(argv: list[str] | None = None) -> int:
             "execution_performed": False,
         }
         if args.install_python and args.install_target:
-            report["installation"] = install_offline_dependencies(args.install_runtime_root, args.install_python, args.requirements_lock, args.wheelhouse, args.install_target, timeout_seconds=args.install_timeout)
+            pip_args = (args.pip_bootstrap_wheel, args.pip_bootstrap_sha256, args.pip_bootstrap_version)
+            if any(pip_args) and not all(pip_args):
+                raise InputValidationError("--pip-bootstrap-wheel, --pip-bootstrap-sha256 and --pip-bootstrap-version must be supplied together.")
+            report["installation"] = install_offline_dependencies(args.install_runtime_root, args.install_python, args.requirements_lock, args.wheelhouse, args.install_target, timeout_seconds=args.install_timeout, pip_wheel=args.pip_bootstrap_wheel, pip_sha256=args.pip_bootstrap_sha256, pip_version=args.pip_bootstrap_version)
             report["execution_performed"] = True
     except (OSError, UnicodeError, InputValidationError) as exc:
         print(f"Portable runtime input validation failed: {exc}", file=sys.stderr)

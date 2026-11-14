@@ -1,8 +1,10 @@
+import hashlib
 import os
 import stat
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts.portable_archive import ArchiveValidationError, extract_zip_safely
@@ -66,6 +68,21 @@ class PortableArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ArchiveValidationError, "parent directory"):
             extract_zip_safely(self.archive, self.destination)
 
+    def test_rejects_casefolded_file_parent_collision(self):
+        self._zip([("A", b"file", stat.S_IFREG | 0o644), ("a/child", b"child", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(ArchiveValidationError, "parent directory"):
+            extract_zip_safely(self.archive, self.destination)
+
+    def test_rejects_casefolded_parent_spelling_collision(self):
+        self._zip([("a/child", b"child", stat.S_IFREG | 0o644), ("A", b"file", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(ArchiveValidationError, "both a file and directory"):
+            extract_zip_safely(self.archive, self.destination)
+
+    def test_rejects_casefolded_directory_spelling_collision(self):
+        self._zip([("A/first", b"one", stat.S_IFREG | 0o644), ("a/second", b"two", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(ArchiveValidationError, "colliding directory"):
+            extract_zip_safely(self.archive, self.destination)
+
     def test_rejects_expanded_size_limit(self):
         self._zip([("large.bin", b"x" * 128, stat.S_IFREG | 0o644)])
         with self.assertRaisesRegex(ArchiveValidationError, "per-file size"):
@@ -81,6 +98,30 @@ class PortableArchiveTests(unittest.TestCase):
         self.destination.mkdir()
         with self.assertRaisesRegex(ArchiveValidationError, "must not already exist"):
             extract_zip_safely(self.archive, self.destination)
+
+    def test_verified_extraction_checks_digest_and_cleans_snapshot(self):
+        self._zip([("runtime.bin", b"verified", stat.S_IFREG | 0o644)])
+        expected = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        report = extract_zip_safely(self.archive, self.destination, expected_sha256=expected)
+        self.assertEqual(report["files"], 1)
+        self.assertEqual((self.destination / "runtime.bin").read_bytes(), b"verified")
+        self.assertEqual(list(self.root.glob(".yuki-archive-verified-*")), [])
+
+    def test_verified_extraction_rejects_wrong_digest_before_publish(self):
+        self._zip([("runtime.bin", b"tampered", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(ArchiveValidationError, "SHA-256 does not match"):
+            extract_zip_safely(self.archive, self.destination, expected_sha256="0" * 64)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(list(self.root.glob(".yuki-archive-verified-*")), [])
+
+    def test_verified_snapshot_is_cleaned_if_staging_creation_fails(self):
+        self._zip([("runtime.bin", b"verified", stat.S_IFREG | 0o644)])
+        expected = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        with patch("scripts.portable_archive.tempfile.mkdtemp", side_effect=OSError("disk unavailable")):
+            with self.assertRaisesRegex(ArchiveValidationError, "extraction failed"):
+                extract_zip_safely(self.archive, self.destination, expected_sha256=expected)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(list(self.root.glob(".yuki-archive-verified-*")), [])
 
     def test_rejects_symlink_archive(self):
         self._zip([("runtime.bin", b"ok", stat.S_IFREG | 0o644)])

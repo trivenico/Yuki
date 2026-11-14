@@ -47,9 +47,25 @@ python scripts/portable_runtime_inputs.py \
   --install-target build/runtime/site-packages
 ```
 
-The installer requires the interpreter to resolve inside the supplied verified runtime root, preventing an accidental fallback to the build host Python. It invokes that interpreter with isolated pip, `--no-index`,
-`--find-links`, `--require-hashes`, and `--only-binary=:all:`; it does not
-use package indexes or source distributions. The lock must contain the complete
+The installer requires the interpreter to resolve inside the supplied verified runtime root, preventing an accidental fallback to the build host Python. By default it invokes that interpreter's pip with `-I`, `--isolated`, `--no-index`, `--find-links`, `--require-hashes`, and `--only-binary=:all:`; it does not use package indexes or source distributions.
+
+For Python runtimes that do not include pip, supply a universal pip wheel whose digest and exact version are pinned independently by trusted build metadata:
+
+```bash
+python scripts/portable_runtime_inputs.py \
+  --runtime-archive vendor/python-runtime.zip \
+  --runtime-sha256 <trusted-runtime-sha256> \
+  --requirements-lock locks/core-linux-x86_64-py312.lock \
+  --wheelhouse wheelhouses/core-linux-x86_64-py312 \
+  --install-runtime-root build/runtime/python \
+  --install-python build/runtime/python/bin/python \
+  --install-target build/runtime/site-packages \
+  --pip-bootstrap-wheel vendor/pip-<version>-py3-none-any.whl \
+  --pip-bootstrap-sha256 <trusted-pip-wheel-sha256> \
+  --pip-bootstrap-version <exact-pip-version>
+```
+
+The pinned pip wheel is verified by SHA-256 and distribution metadata, then loaded directly through Python's zip importer for this installation process; it is not extracted or installed into the runtime. This avoids relying on `ensurepip`, network access, or a preinstalled pip. The pip wheel and its expected digest/version must be delivered through the trusted build inputs, not discovered from the untrusted wheelhouse. The lock must contain the complete
 dependency closure, exact versions, and hashes for the selected platform and
 Python ABI. Pip itself validates wheel metadata, compatibility and hashes.
 Installation runs with a timeout in a fresh sibling staging directory. The staging directory is atomically published as the final target only after pip succeeds; failed or timed-out installs are cleaned up and never appear as completed targets.
@@ -57,5 +73,9 @@ Installation runs with a timeout in a fresh sibling staging directory. The stagi
 This stage executes the supplied runtime interpreter and pip, so it must only
 be used after the archive digest has been checked against an independently
 trusted value and the runtime has been extracted from that verified archive.
-The test suite mocks the installer process; it does not claim a real packaged
-runtime has been assembled or launched.
+The test suite covers installer failure and transaction behavior with a mocked
+runner, performs a real offline pip install of a synthetic, locally built wheel
+with hash checking enabled, and exercises the no-pip bootstrap path using a
+synthetic pip-compatible wheel loaded directly by zipimport. This validates the pip invocation and
+wheelhouse path without network access; it does not claim a real packaged
+Python runtime or complete Yuki dependency closure has been assembled or launched.
