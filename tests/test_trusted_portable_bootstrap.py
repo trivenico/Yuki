@@ -132,6 +132,31 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
+    def test_windows_inventory_rejects_file_symlink(self):
+        outside = self.root / "outside-payload.txt"
+        outside.write_text("outside", encoding="utf-8")
+        link = self.bundle / "linked-payload.txt"
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows file symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "non-regular file"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
+    def test_windows_inventory_rejects_directory_symlink(self):
+        outside = self.root / "outside-directory"
+        outside.mkdir()
+        (outside / "payload.txt").write_text("outside", encoding="utf-8")
+        link = self.bundle / "linked-directory"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows directory symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "symbolic-link or invalid directory"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
     @unittest.skipUnless(os.name == "nt", "Windows native metadata handle reads")
     def test_windows_metadata_reader_rejects_symlinked_manifest(self):
         manifest = self.bundle / "runtime-manifest.json"
