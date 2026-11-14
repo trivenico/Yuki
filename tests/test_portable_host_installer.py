@@ -71,7 +71,7 @@ class PortableHostInstallerTests(unittest.TestCase):
         link = self.root / "linked"
         link.symlink_to(real, target_is_directory=True)
         with patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")):
-            with self.assertRaisesRegex(BootstrapError, "real directories"):
+            with self.assertRaisesRegex(BootstrapError, "real directory, not a symlink"):
                 installer.install_host_trust(self.key, link, self.state)
 
 
