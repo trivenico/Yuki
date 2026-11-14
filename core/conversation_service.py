@@ -224,7 +224,7 @@ class ConversationService:
         recovered_request_ids = set(recovery.recovered_request_ids)
         if recovery.batch_limit_reached:
             raise ConversationConflict(
-                "conversation recovery backlog remains; retry after the current batch is reconciled."
+                "conversation recovery batch reached its safety limit; retry to verify the backlog is clear."
             )
         # Check ownership and stale versions before invoking a model.
         conversation = self.store.get_conversation(
