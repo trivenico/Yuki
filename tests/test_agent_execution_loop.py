@@ -158,7 +158,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
 
         result = AgentExecutionLoop(
             model, protocol, on_event=lambda kind, data: events.append((kind, data))
-        ).run("Do two", tools=[])
+        ).run("Do two", tools=[], cancellation_requested=lambda: bool(cancel))
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(result.tool_calls, 1)
         partial = next(data for kind, data in events if kind == "agent.tools_partially_dispatched")
