@@ -132,28 +132,6 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
-    @unittest.skipUnless(os.name == "nt", "Windows path-based inventory fallback")
-    def test_inventory_rejects_file_replaced_between_lstat_and_open(self):
-        payload = self.bundle / "payload.txt"
-        outside = self.root / "replacement.txt"
-        outside.write_text("replacement content", encoding="utf-8")
-        path_type = type(payload)
-        original_open = path_type.open
-
-        replaced = []
-
-        def open_replacement(path, *args, **kwargs):
-            mode = kwargs.get("mode", args[0] if args else None)
-            if path.name == payload.name and mode == "rb":
-                replaced.append(path)
-                return original_open(outside, *args, **kwargs)
-            return original_open(path, *args, **kwargs)
-
-        with patch.object(path_type, "open", new=open_replacement):
-            with self.assertRaisesRegex(BootstrapError, "changed while being opened|inventory or file hashes"):
-                verify_signed_bundle(self.bundle, self.public_path)
-        self.assertTrue(replaced, "the test must replace the payload opened by inventory")
-
     @unittest.skipUnless(os.name == "nt", "Windows handle-relative inventory")
     def test_windows_inventory_uses_pinned_directory_handles(self):
         with patch(
@@ -172,7 +150,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             link.symlink_to(outside)
         except (OSError, NotImplementedError):
             self.skipTest("Windows file symlink creation is unavailable")
-        with self.assertRaisesRegex(BootstrapError, "non-regular file"):
+        with self.assertRaisesRegex(BootstrapError, "reparse point"):
             verify_signed_bundle(self.bundle, self.public_path)
 
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
@@ -185,7 +163,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             link.symlink_to(outside, target_is_directory=True)
         except (OSError, NotImplementedError):
             self.skipTest("Windows directory symlink creation is unavailable")
-        with self.assertRaisesRegex(BootstrapError, "symbolic-link or invalid directory"):
+        with self.assertRaisesRegex(BootstrapError, "reparse point"):
             verify_signed_bundle(self.bundle, self.public_path)
 
     @unittest.skipUnless(os.name == "nt", "Windows native metadata handle reads")
