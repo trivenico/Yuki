@@ -107,5 +107,21 @@ class StructuredToolProtocolTests(unittest.TestCase):
             StructuredToolProtocol(object())
 
 
+
+    def test_dispatch_reports_uncertain_handler_outcome_and_stops_batch(self):
+        outcomes = []
+        runtime = GuardedToolRuntime(
+            {"echo": lambda raw: (_ for _ in ()).throw(RuntimeError("ack lost"))},
+            self.policy,
+        )
+        protocol = StructuredToolProtocol(runtime)
+        with self.assertRaises(Exception):
+            protocol.dispatch(
+                self.envelope([self.call("first"), self.call("second")]),
+                before_tool_call=lambda call, argument: "claimed",
+                on_tool_error=lambda call, argument, status: outcomes.append((call.call_id, status)),
+            )
+        self.assertEqual(outcomes, [("first", "uncertain")])
+
 if __name__ == "__main__":
     unittest.main()
