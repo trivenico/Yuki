@@ -476,18 +476,31 @@ class YukiConversationAPI:
 
     @staticmethod
     def _validated_request_id(value):
-        if (not isinstance(value, str) or not value.strip() or len(value) > 160):
+        if not isinstance(value, str):
             return None
-        return value.strip()
+        normalized = value.strip()
+        if (not normalized or len(normalized) > 160
+                or any(ord(char) < 0x20 or ord(char) == 0x7f for char in normalized)):
+            return None
+        return normalized
 
     @staticmethod
     def _query(scope):
-        from urllib.parse import parse_qs
+        import re
+        from urllib.parse import parse_qsl
         raw = scope.get("query_string", b"").decode("ascii", "strict")
-        parsed = parse_qs(raw, keep_blank_values=True, max_num_fields=8, strict_parsing=True)
-        if any(len(values) != 1 for values in parsed.values()):
-            raise ValueError("duplicate query parameter")
-        return {key: values[0] for key, values in parsed.items()}
+        if re.search(r"%(?![0-9A-Fa-f]{2})", raw):
+            raise ValueError("malformed percent escape")
+        pairs = parse_qsl(
+            raw, keep_blank_values=True, strict_parsing=True,
+            encoding="utf-8", errors="strict", max_num_fields=8,
+        )
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate query parameter")
+            result[key] = value
+        return result
 
     @staticmethod
     async def _respond(send, status, payload):
