@@ -143,3 +143,6 @@ argument fingerprint, and unresolved status. Missing, malformed, or ambiguous
 records fail closed without claiming a lease or contacting the provider. This
 preflight is defense in depth; the store's owner-scoped query and transactional
 lease/evidence fencing remain authoritative.
+
+
+The registry also captures the adapter's bound lookup callable at registration. Reassigning the adapter object's lookup method later cannot silently replace the trusted implementation associated with the registered provider identity.
