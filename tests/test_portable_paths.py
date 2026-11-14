@@ -63,6 +63,22 @@ class PortablePathTests(unittest.TestCase):
             self.assertEqual(list(root.iterdir()), [])
 
 
+    def test_probe_file_is_removed_even_if_descriptor_close_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real_close = os.close
+
+            def close_then_fail(descriptor):
+                real_close(descriptor)
+                raise OSError("simulated close failure")
+
+            with patch.dict(os.environ, {"YUKI_HOME": directory}, clear=True):
+                with patch("core.portable_paths.os.close", side_effect=close_then_fail):
+                    with self.assertRaisesRegex(RuntimeError, "Could not clean up"):
+                        validate_configured_data_root()
+            self.assertEqual(list(root.iterdir()), [])
+
+
     def test_runtime_config_fails_before_using_unavailable_explicit_home(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "disconnected" / "YukiData"

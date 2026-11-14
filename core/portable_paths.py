@@ -78,15 +78,21 @@ def validate_configured_data_root() -> Path | None:
             "Check that the drive is mounted and has write access."
         ) from exc
     finally:
+        cleanup_error = None
         if descriptor is not None:
-            os.close(descriptor)
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                cleanup_error = exc
         if probe_path is not None:
             try:
                 os.unlink(probe_path)
             except OSError as exc:
-                raise RuntimeError(
-                    f"Could not clean up YUKI_HOME write check in {root}; inspect the directory before retrying."
-                ) from exc
+                cleanup_error = cleanup_error or exc
+        if cleanup_error is not None:
+            raise RuntimeError(
+                f"Could not clean up YUKI_HOME write check in {root}; inspect the directory before retrying."
+            ) from cleanup_error
     return root
 
 
