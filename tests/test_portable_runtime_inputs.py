@@ -107,6 +107,11 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertIn("--only-binary=:all:", command)
         self.assertFalse(kwargs["shell"])
         self.assertNotIn("PIP_INDEX_URL", kwargs["env"])
+        self.assertNotIn("PYTHONPATH", kwargs["env"])
+        self.assertNotIn("PYTHONHOME", kwargs["env"])
+        if os.name == "nt":
+            self.assertIn("SYSTEMROOT", kwargs["env"])
+            self.assertIn("WINDIR", kwargs["env"])
         self.assertTrue(result["hash_checking"])
         self.assertTrue(result["atomic_publish"])
         self.assertTrue((target / "installed.marker").is_file())
