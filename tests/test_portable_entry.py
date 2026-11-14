@@ -34,7 +34,7 @@ class PortableEntryTests(unittest.TestCase):
         configure_bundle_paths(self.root, paths)
         configure_bundle_paths(self.root, paths)
         self.assertEqual(paths.count(str(self.root.resolve())), 1)
-        self.assertEqual(paths.count(str((self.root / "site-packages").resolve()), 1)
+        self.assertEqual(paths.count(str((self.root / "site-packages").resolve())), 1)
 
     def test_rejects_missing_site_packages(self):
         (self.root / "site-packages").rmdir()
