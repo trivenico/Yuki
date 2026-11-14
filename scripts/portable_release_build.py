@@ -44,6 +44,7 @@ def build_release_candidate(
     output_root: Path,
     platform_tag: str,
     runtime_version: str,
+    release_sequence: int,
 ) -> dict:
     """Assemble, activate, inventory, and audit one host-native candidate."""
     work_root = Path(work_root).expanduser()
@@ -64,6 +65,8 @@ def build_release_candidate(
         raise InputValidationError(
             f"Build host ({host_os}) must match target platform OS ({requested_os}); cross-platform native audits are not supported."
         )
+    if type(release_sequence) is not int or release_sequence < 0:
+        raise InputValidationError("Release sequence must be a non-negative integer.")
     if not runtime_version.strip() or len(runtime_version) > 100:
         raise InputValidationError("Runtime version must be non-empty text of at most 100 characters.")
 
@@ -98,7 +101,7 @@ def build_release_candidate(
         entry_target.chmod(0o755)
 
         manifest_report = write_unsigned_manifest(
-            bundle, platform=platform_tag, runtime_version=runtime_version
+            bundle, platform=platform_tag, runtime_version=runtime_version, release_sequence=release_sequence
         )
         audit_platform = _host_audit_platform()
         audit_report = audit_bundle(bundle, audit_platform)
@@ -114,6 +117,7 @@ def build_release_candidate(
         "candidate": str(bundle),
         "platform": platform_tag,
         "runtime_version": runtime_version,
+        "release_sequence": release_sequence,
         "runtime_assembly": assembly,
         "bundle_assembly": bundle_report,
         "entrypoint": "portable_entry.py",
@@ -144,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--platform-tag", required=True)
     parser.add_argument("--runtime-version", required=True)
+    parser.add_argument("--release-sequence", required=True, type=int)
     args = parser.parse_args(argv)
     try:
         report = build_release_candidate(
@@ -159,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.output_root,
             platform_tag=args.platform_tag,
             runtime_version=args.runtime_version,
+            release_sequence=args.release_sequence,
         )
     except (OSError, UnicodeError, ValueError, InputValidationError, NativeAuditError) as exc:
         print(f"Portable release candidate build failed: {exc}", file=sys.stderr)
