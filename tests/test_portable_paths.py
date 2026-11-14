@@ -37,12 +37,17 @@ class PortablePathTests(unittest.TestCase):
         import subprocess
 
         repository_root = Path(__file__).resolve().parents[1]
-        launcher = repository_root / "scripts" / "portable-yuki-windows.bat"
+        source_launcher = repository_root / "scripts" / "portable-yuki-windows.bat"
         if (repository_root / ".venv" / "Scripts" / "python.exe").exists():
             self.skipTest("repository virtual environment takes precedence over PATH shim")
 
         with tempfile.TemporaryDirectory() as directory:
             temp_root = Path(directory)
+            portable_root = temp_root / "Yuki Portable"
+            (portable_root / "scripts").mkdir(parents=True)
+            launcher = portable_root / "scripts" / "portable-yuki-windows.bat"
+            import shutil
+            shutil.copyfile(source_launcher, launcher)
             shim = temp_root / "python.bat"
             capture = temp_root / "captured-home.txt"
             shim.write_text(
@@ -54,7 +59,7 @@ class PortablePathTests(unittest.TestCase):
 
             for configured, expected in (
                 (str(temp_root / "custom-data"), str(temp_root / "custom-data")),
-                ("", str(repository_root / "YukiData")),
+                ("", str(portable_root / "YukiData")),
             ):
                 capture.unlink(missing_ok=True)
                 env = os.environ.copy()
@@ -66,7 +71,7 @@ class PortablePathTests(unittest.TestCase):
                     env.pop("YUKI_HOME", None)
                 completed = subprocess.run(
                     ["cmd.exe", "/d", "/c", "call", str(launcher)],
-                    cwd=str(repository_root),
+                    cwd=str(portable_root),
                     env=env,
                     capture_output=True,
                     text=True,
