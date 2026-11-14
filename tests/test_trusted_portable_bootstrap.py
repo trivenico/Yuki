@@ -11,6 +11,7 @@ from yuki_trust.portable_bootstrap import (
     run_verified_bundle,
     stage_verified_bundle,
     verify_signed_bundle,
+    _validate_manifest,
 )
 
 
@@ -119,6 +120,21 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(BootstrapError, "duplicate JSON object keys"):
             verify_signed_bundle(self.bundle, self.public_path)
+
+    def test_rejects_case_colliding_directory_components_on_all_platforms(self):
+        manifest = {
+            "schema_version": 1,
+            "product": "Yuki Portable Runtime",
+            "artifact_kind": "unsigned-portable-runtime",
+            "platform": "test-platform",
+            "runtime_version": "3.12.7",
+            "files": [
+                {"path": "Alpha/first.bin", "size": 1, "sha256": "0" * 64},
+                {"path": "alpha/second.bin", "size": 1, "sha256": "0" * 64},
+            ],
+        }
+        with self.assertRaisesRegex(BootstrapError, "colliding case-insensitive"):
+            _validate_manifest(manifest)
 
     @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "case-insensitive filesystems cannot represent this collision")
     def test_rejects_case_colliding_directory_components(self):
