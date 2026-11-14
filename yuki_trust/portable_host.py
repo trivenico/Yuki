@@ -406,12 +406,6 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     ntdll = ctypes.WinDLL("ntdll")
-    create_file = kernel32.CreateFileW
-    create_file.argtypes = [
-        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
-        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
-    ]
-    create_file.restype = wintypes.HANDLE
     close_handle = kernel32.CloseHandle
     close_handle.argtypes = [wintypes.HANDLE]
     close_handle.restype = wintypes.BOOL
@@ -439,12 +433,43 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
     ]
     nt_create_file.restype = ctypes.c_long
 
-    invalid_handle = wintypes.HANDLE(-1).value
-    root_handle = create_file(
-        str(root), 0x0001 | 0x0080, 0x0001, None, 3,
-        0x00200000 | 0x02000000, None,
+    root_text = str(root)
+    if root_text.startswith("\\\\?\\UNC\\"):
+        native_root = "\\\\??\\UNC\\" + root_text[8:]
+    elif root_text.startswith("\\\\?\\"):
+        native_root = "\\\\??\\" + root_text[4:]
+    elif root_text.startswith("\\\\"):
+        native_root = "\\\\??\\UNC\\" + root_text[2:]
+    else:
+        native_root = "\\\\??\\" + root_text
+    root_name_buffer = ctypes.create_unicode_buffer(native_root)
+    root_name_bytes = native_root.encode("utf-16-le")
+    if not root_name_bytes or len(root_name_bytes) > 0xFFFC:
+        raise BootstrapError("Portable bundle root path is invalid.")
+    root_unicode_name = _UNICODE_STRING(
+        len(root_name_bytes), len(root_name_bytes),
+        ctypes.cast(root_name_buffer, wintypes.LPWSTR),
     )
-    if root_handle == invalid_handle:
+    root_object_attributes = _OBJECT_ATTRIBUTES(
+        ctypes.sizeof(_OBJECT_ATTRIBUTES), None,
+        ctypes.pointer(root_unicode_name), 0x00000040, None, None,
+    )
+    root_io_status = _IO_STATUS_BLOCK()
+    root_handle = wintypes.HANDLE()
+    root_status = nt_create_file(
+        ctypes.byref(root_handle),
+        0x00100081,
+        ctypes.byref(root_object_attributes),
+        ctypes.byref(root_io_status),
+        None,
+        0x00000080,
+        0x00000001,
+        0x00000001,
+        0x00200000 | 0x00000020,
+        None,
+        0,
+    )
+    if root_status < 0:
         raise BootstrapError("Unable to securely open portable bundle root.")
     files: list[dict[str, Any]] = []
 
