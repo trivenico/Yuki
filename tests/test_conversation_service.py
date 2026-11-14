@@ -146,6 +146,74 @@ class ConversationServiceTests(unittest.TestCase):
             owner_id="owner-a", conversation_id=conversation_id,
         )), 1)
 
+    def test_lease_replacement_after_recovery_message_fails_closed_and_retries(self):
+        conversation_id = self.conversation["conversation_id"]
+        self._seed_interrupted_generation("lease-race-recovery", 0)
+        coordinator = ConversationRecoveryCoordinator(self.store)
+        original_finalize = self.store.finish_generation_with_recovery_event
+
+        def lose_lease_then_finalize(**kwargs):
+            with self.store._connect() as db:
+                db.execute(
+                    """UPDATE conversation_generation_leases
+                       SET lease_token=?, expires_at=?
+                       WHERE owner_id=? AND conversation_id=?""",
+                    ("replacement-worker-token", 9999999999,
+                     "owner-a", conversation_id),
+                )
+            return original_finalize(**kwargs)
+
+        token = "recovery-race-original-token"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=60,
+        )
+        try:
+            with patch.object(
+                self.store, "finish_generation_with_recovery_event",
+                side_effect=lose_lease_then_finalize,
+            ):
+                with self.assertRaisesRegex(ConversationConflict, "lease expired"):
+                    coordinator.recover(
+                        owner_id="owner-a", conversation_id=conversation_id,
+                        lease_token=token,
+                    )
+            self.assertTrue(self.store.has_message(
+                owner_id="owner-a", conversation_id=conversation_id,
+                idempotency_key="assistant:lease-race-recovery",
+            ))
+            self.assertEqual(self.store.list_recovery_events(
+                owner_id="owner-a", conversation_id=conversation_id,
+            ), [])
+            self.assertEqual(len(self.store.list_interrupted_generations(
+                owner_id="owner-a", conversation_id=conversation_id,
+            )), 1)
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="replacement-worker-token",
+            )
+
+        retry_token = "recovery-race-retry-token"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=retry_token, ttl_seconds=60,
+        )
+        try:
+            summary = coordinator.recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=retry_token,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=retry_token,
+            )
+        self.assertEqual(summary.completed_generations, 1)
+        self.assertEqual(self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )[0]["outcome"], "completed")
+
     def test_recovery_audit_insert_failure_rolls_back_generation_finalization(self):
         conversation_id = self.conversation["conversation_id"]
         self._seed_interrupted_generation("audit-rollback", 0)
