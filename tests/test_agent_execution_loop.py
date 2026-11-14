@@ -127,7 +127,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.model_turns, 1)
         self.assertEqual(result.tool_calls, 1)
 
-    def test_tool_call_budget_prevents_dispatch(self):
+    def test_tool_call_budget_stops_excess_calls_after_allowed_side_effect(self):
         def model(**kwargs):
             return {"text": "", "tool_calls": {"tool_calls": [
                 {"id": "call_1", "name": "echo", "arguments": {"value": "x"}},
@@ -136,7 +136,8 @@ class AgentExecutionLoopTests(unittest.TestCase):
         result = AgentExecutionLoop(model, self.protocol, max_tool_calls=1).run(
             "Do two", tools=self.tools)
         self.assertEqual(result.status, "limit_reached")
-        self.assertEqual(self.invocations, [])
+        self.assertEqual(result.tool_calls, 1)
+        self.assertEqual(self.invocations, [{"value": "x"}])
 
     def test_cancelled_tool_batch_reports_completed_call_count_and_ids(self):
         cancel = []
