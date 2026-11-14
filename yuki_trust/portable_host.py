@@ -22,6 +22,7 @@ _REQUIRED_FIELDS = {
     "expected_platform",
     "python",
     "entrypoint",
+    "anti_rollback_state",
 }
 
 
@@ -110,7 +111,7 @@ def load_host_policy(policy_path: str | Path, bundle: str | Path) -> dict[str, s
     if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise BootstrapError("Unsupported host launch policy schema version.")
 
-    for field in ("public_key", "expected_platform", "python", "entrypoint"):
+    for field in ("public_key", "expected_platform", "python", "entrypoint", "anti_rollback_state"):
         if not isinstance(value[field], str) or not value[field].strip() or len(value[field]) > 4096:
             raise BootstrapError(f"Host launch policy field {field!r} must be non-empty text.")
 
@@ -118,6 +119,22 @@ def load_host_policy(policy_path: str | Path, bundle: str | Path) -> dict[str, s
     if not public_key.is_absolute():
         raise BootstrapError("Host trust anchor path must be absolute.")
     _host_file(public_key, bundle=bundle_root, label="Host trust anchor")
+
+    state_path = Path(value["anti_rollback_state"]).expanduser()
+    if not state_path.is_absolute():
+        raise BootstrapError("Anti-rollback state path must be absolute.")
+    _validate_host_parent_directories(state_path, label="Anti-rollback state")
+    state_resolved = state_path.parent.resolve(strict=True) / state_path.name
+    try:
+        state_resolved.relative_to(bundle_root)
+    except ValueError:
+        pass
+    else:
+        raise BootstrapError("Anti-rollback state must be stored outside the removable bundle.")
+    if state_resolved.is_symlink():
+        raise BootstrapError("Anti-rollback state file must not be a symlink.")
+    if state_resolved.exists():
+        _host_file(state_resolved, bundle=bundle_root, label="Anti-rollback state")
 
     for field in ("python", "entrypoint"):
         relative = value[field]
@@ -132,6 +149,7 @@ def load_host_policy(policy_path: str | Path, bundle: str | Path) -> dict[str, s
         "expected_platform": value["expected_platform"],
         "python": value["python"],
         "entrypoint": value["entrypoint"],
+        "anti_rollback_state": str(state_resolved),
     }
 
 
@@ -148,6 +166,7 @@ def launch_with_host_policy(
         policy["entrypoint"],
         arguments or [],
         expected_platform=policy["expected_platform"],
+        anti_rollback_state_path=policy["anti_rollback_state"],
     )
 
 
