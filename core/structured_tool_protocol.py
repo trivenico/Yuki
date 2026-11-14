@@ -8,6 +8,7 @@ implement an autonomous model/tool loop or provider-specific API transport.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -80,11 +81,18 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
     def reject_non_finite_number(value):
         raise ValueError(f"non-finite JSON number is not permitted: {value}")
 
+    def parse_finite_float(value):
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError("JSON number is outside the finite floating-point range")
+        return parsed
+
     try:
         payload = json.loads(
             response,
             object_pairs_hook=reject_duplicate_keys,
             parse_constant=reject_non_finite_number,
+            parse_float=parse_finite_float,
         )
     except (json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise ToolProtocolError(
