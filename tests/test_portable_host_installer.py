@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import stat
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
