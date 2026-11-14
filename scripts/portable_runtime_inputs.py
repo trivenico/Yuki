@@ -130,7 +130,7 @@ def validate_pip_bootstrap_wheel(pip_wheel: Path, expected_sha256: str, expected
         raise InputValidationError("Expected pip wheel SHA-256 must be exactly 64 hexadecimal characters.")
     if sha256_file(pip_wheel).lower() != expected_sha256.lower():
         raise InputValidationError("Pip bootstrap wheel SHA-256 does not match the pinned digest.")
-    if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\\.[0-9]+){1,3}", expected_version):
+    if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", expected_version):
         raise InputValidationError("Expected pip version must be an exact numeric version.")
     try:
         import zipfile
