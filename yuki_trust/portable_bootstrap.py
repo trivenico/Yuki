@@ -496,35 +496,16 @@ def stage_verified_bundle(
         if os.name != "nt":
             _copy_bundle_posix(source, staged, manifest)
         else:
-            from yuki_trust.portable_host import _copy_windows_file_handle_secure
+            from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
 
-            # Pin and validate each final source component through a native
-            # handle; create every destination leaf exclusively. Parent
-            # directory traversal remains pathname-based and is a separate
-            # hardening task.
-            for item in manifest["files"]:
-                relative = PurePosixPath(item["path"])
-                source_file = source.joinpath(*relative.parts)
-                target_file = staged.joinpath(*relative.parts)
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-                _copy_windows_file_handle_secure(
-                    source_file,
-                    target_file,
-                    label=f"Bundle file {item['path']}",
-                    expected_size=item["size"],
-                    expected_sha256=item["sha256"],
-                )
-            _copy_windows_file_handle_secure(
-                source / MANIFEST_NAME,
-                staged / MANIFEST_NAME,
-                label="Runtime manifest",
-                max_bytes=MAX_MANIFEST_BYTES,
-            )
-            _copy_windows_file_handle_secure(
-                source / SIGNATURE_NAME,
-                staged / SIGNATURE_NAME,
-                label="Runtime signature",
-                max_bytes=MAX_SIGNATURE_BYTES,
+            _stage_windows_bundle_handle_secure(
+                source,
+                staged,
+                manifest["files"],
+                manifest_name=MANIFEST_NAME,
+                signature_name=SIGNATURE_NAME,
+                max_manifest_bytes=MAX_MANIFEST_BYTES,
+                max_signature_bytes=MAX_SIGNATURE_BYTES,
             )
         verify_signed_bundle(staged, public_key_path, expected_platform=expected_platform)
         return staged_temp
