@@ -73,7 +73,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 "sha256": __import__("hashlib").sha256(data).hexdigest(),
             })
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "product": "Yuki Portable Runtime",
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
@@ -130,10 +130,10 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
 
         manifest_path = self.bundle / "runtime-manifest.json"
         manifest_text = manifest_path.read_text(encoding="utf-8")
-        self.assertIn('"schema_version": 1', manifest_text)
+        self.assertIn('"schema_version": 2', manifest_text)
         ambiguous = manifest_text.replace(
-            '"schema_version": 1',
-            '"schema_version": 1,\n  "schema_version": 1',
+            '"schema_version": 2',
+            '"schema_version": 2,\n  "schema_version": 2',
             1,
         ).encode("utf-8")
         manifest_path.write_bytes(ambiguous)
@@ -147,7 +147,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
 
     def test_rejects_case_colliding_directory_components_on_all_platforms(self):
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "product": "Yuki Portable Runtime",
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
@@ -163,7 +163,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
 
     def test_rejects_file_directory_prefix_collision(self):
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "product": "Yuki Portable Runtime",
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
