@@ -101,6 +101,18 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    def test_rejects_bundle_for_different_host_platform(self):
+        with self.assertRaisesRegex(BootstrapError, "Runtime platform mismatch"):
+            verify_signed_bundle(
+                self.bundle, self.public_path, expected_platform="windows-x86_64"
+            )
+
+    def test_accepts_bundle_for_exact_host_platform(self):
+        manifest = verify_signed_bundle(
+            self.bundle, self.public_path, expected_platform="test-platform"
+        )
+        self.assertEqual(manifest["platform"], "test-platform")
+
     def test_rejects_duplicate_json_manifest_keys_even_with_valid_signature(self):
         import base64
 
