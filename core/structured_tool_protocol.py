@@ -69,10 +69,18 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
         raise ToolProtocolError("tool response must be non-empty JSON text.")
     if len(response) > _MAX_RESPONSE_CHARS or "\x00" in response:
         raise ToolProtocolError("tool response exceeds the protocol size limit.")
+    def reject_duplicate_keys(pairs):
+        decoded = {}
+        for key, value in pairs:
+            if key in decoded:
+                raise ValueError("duplicate JSON object key")
+            decoded[key] = value
+        return decoded
+
     try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as exc:
-        raise ToolProtocolError("tool response must be valid JSON.") from exc
+        payload = json.loads(response, object_pairs_hook=reject_duplicate_keys)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ToolProtocolError("tool response must be valid JSON without duplicate object keys.") from exc
     if not isinstance(payload, dict) or set(payload) != {"tool_calls"}:
         raise ToolProtocolError("response must contain only the tool_calls field.")
     raw_calls = payload["tool_calls"]
