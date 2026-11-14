@@ -132,6 +132,64 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    @unittest.skipUnless(os.name == "nt", "Windows handle-relative inventory")
+    def test_windows_inventory_uses_pinned_directory_handles(self):
+        with patch(
+            "yuki_trust.portable_bootstrap.os.walk",
+            side_effect=AssertionError("Windows inventory must not use path-based os.walk"),
+        ):
+            manifest = verify_signed_bundle(self.bundle, self.public_path)
+        self.assertEqual(manifest["platform"], "test-platform")
+        self.assertEqual(
+            {item["path"] for item in manifest["files"]},
+            {"runtime/python.exe", "portable_entry.py", "payload.txt"},
+        )
+
+    @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
+    def test_windows_inventory_rejects_file_symlink(self):
+        outside = self.root / "outside-payload.txt"
+        outside.write_text("outside", encoding="utf-8")
+        link = self.bundle / "linked-payload.txt"
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows file symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "reparse point"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
+    def test_windows_inventory_rejects_directory_symlink(self):
+        outside = self.root / "outside-directory"
+        outside.mkdir()
+        (outside / "payload.txt").write_text("outside", encoding="utf-8")
+        link = self.bundle / "linked-directory"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows directory symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "reparse point"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows native metadata handle reads")
+    def test_windows_metadata_reader_rejects_symlinked_manifest(self):
+        manifest = self.bundle / "runtime-manifest.json"
+        outside = self.bundle.parent / "external-manifest"
+        outside.write_bytes(manifest.read_bytes())
+        manifest.unlink()
+        try:
+            manifest.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows file symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "reparse point|securely read"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows native metadata handle reads")
+    def test_windows_metadata_reader_rejects_oversized_signature(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        signature.write_bytes(b"x" * (MAX_SIGNATURE_BYTES + 1))
+        with self.assertRaisesRegex(BootstrapError, "size limit|oversized"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
     @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
     def test_posix_metadata_reader_rejects_symlinked_signature(self):
         signature = self.bundle / "runtime-manifest.sig"
@@ -268,9 +326,14 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         from yuki_trust.portable_host import _read_host_file_secure
         with patch("yuki_trust.portable_host._read_host_file_secure", wraps=_read_host_file_secure) as secure_read:
             verify_signed_bundle(self.bundle, self.public_path)
-        secure_read.assert_called_once()
-        self.assertEqual(secure_read.call_args.kwargs["max_bytes"], 65536)
-        self.assertEqual(secure_read.call_args.kwargs["label"], "Host trust anchor")
+        self.assertTrue(
+            any(
+                Path(call.args[0]).name == self.public_path.name
+                and call.kwargs == {"label": "Host trust anchor", "max_bytes": 65536}
+                for call in secure_read.call_args_list
+            ),
+            "verification must read the trust anchor through the bounded secure reader",
+        )
 
     def test_rejects_trust_anchor_inside_bundle(self):
         in_bundle = self.bundle / "release-public.pem"
@@ -305,6 +368,61 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         (self.bundle / "extra.bin").write_bytes(b"unapproved")
         with self.assertRaisesRegex(BootstrapError, "inventory or file hashes"):
             verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows handle-relative staging")
+    def test_windows_staging_uses_pinned_directory_handles(self):
+        from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
+
+        with patch(
+            "yuki_trust.portable_host._stage_windows_bundle_handle_secure",
+            wraps=_stage_windows_bundle_handle_secure,
+        ) as secure_stage:
+            with patch.object(Path, "mkdir", side_effect=AssertionError("path-based staging mkdir forbidden")):
+                with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
+                    staged = Path(temp_dir)
+                    self.assertEqual(
+                        (staged / "payload.txt").read_text(encoding="utf-8"),
+                        "verified payload",
+                    )
+        self.assertEqual(secure_stage.call_count, 1)
+        self.assertEqual(
+            {item["path"] for item in secure_stage.call_args.args[2]},
+            {"runtime/python.exe", "portable_entry.py", "payload.txt"},
+        )
+
+    @unittest.skipUnless(os.name == "nt", "Windows native handle cleanup")
+    def test_windows_staging_closes_source_root_when_destination_open_fails(self):
+        import ctypes
+        from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_handle_count = kernel32.GetProcessHandleCount
+        get_handle_count.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        get_handle_count.restype = ctypes.c_int
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.argtypes = []
+        get_current_process.restype = ctypes.c_void_p
+
+        def handle_count():
+            count = ctypes.c_ulong()
+            self.assertTrue(get_handle_count(get_current_process(), ctypes.byref(count)))
+            return count.value
+
+        missing_destination = self.root / "destination-does-not-exist"
+        before = handle_count()
+        for _ in range(10):
+            with self.assertRaises(BootstrapError):
+                _stage_windows_bundle_handle_secure(
+                    self.bundle,
+                    missing_destination,
+                    [],
+                    manifest_name="runtime-manifest.json",
+                    signature_name="runtime-manifest.sig",
+                    max_manifest_bytes=1024 * 1024,
+                    max_signature_bytes=MAX_SIGNATURE_BYTES,
+                )
+        after = handle_count()
+        self.assertLessEqual(after, before + 1, "failed destination opens leaked source-root handles")
 
     def test_staging_revalidates_host_controlled_copy(self):
         with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:

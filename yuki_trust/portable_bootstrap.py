@@ -206,40 +206,11 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     if os.name != "nt":
         return _inventory_posix(root)
 
-    # Windows currently uses the path-based fallback. A handle-based
-    # FILE_FLAG_OPEN_REPARSE_POINT implementation is a separate hardening task.
-    files: list[dict[str, Any]] = []
-    for current, dirs, names in os.walk(root, followlinks=False):
-        current_path = Path(current)
-        for directory in list(dirs):
-            candidate = current_path / directory
-            if candidate.is_symlink() or not candidate.is_dir():
-                raise BootstrapError(f"Bundle contains a symbolic-link or invalid directory: {candidate.relative_to(root)}")
-        for name in names:
-            candidate = current_path / name
-            relative = candidate.relative_to(root).as_posix()
-            if relative in {MANIFEST_NAME, SIGNATURE_NAME}:
-                continue
-            try:
-                info = candidate.lstat()
-            except OSError as exc:
-                raise BootstrapError("Bundle inventory changed while being inspected.") from exc
-            if not stat.S_ISREG(info.st_mode):
-                raise BootstrapError(f"Bundle contains a non-regular file: {relative}")
-            digest = hashlib.sha256()
-            size = 0
-            try:
-                with candidate.open("rb") as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        size += len(chunk)
-                        digest.update(chunk)
-            except OSError as exc:
-                raise BootstrapError(f"Unable to read bundle file: {relative}") from exc
-            files.append({"path": relative, "size": size, "sha256": digest.hexdigest()})
-    files.sort(key=lambda item: item["path"])
-    if not files:
-        raise BootstrapError("Runtime bundle contains no regular files.")
-    return files
+    # Resolve every descendant relative to a pinned directory handle. The
+    # helper opens each child as a single component with FILE_OPEN_REPARSE_POINT.
+    from yuki_trust.portable_host import _inventory_windows_handle_secure
+
+    return _inventory_windows_handle_secure(root)
 
 
 def _read_bundle_metadata_posix(root: Path, name: str, limit: int) -> bytes:
@@ -302,19 +273,14 @@ def verify_signed_bundle(
         manifest_bytes = _read_bundle_metadata_posix(root, MANIFEST_NAME, MAX_MANIFEST_BYTES)
         signature_bytes = _read_bundle_metadata_posix(root, SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
     else:
-        manifest_path = root / MANIFEST_NAME
-        signature_path = root / SIGNATURE_NAME
-        for path, label, limit in (
-            (manifest_path, "Runtime manifest", MAX_MANIFEST_BYTES),
-            (signature_path, "Runtime signature", MAX_SIGNATURE_BYTES),
-        ):
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
-                raise BootstrapError(f"{label} is missing, oversized, or not a regular file.")
-        try:
-            manifest_bytes = manifest_path.read_bytes()
-            signature_bytes = signature_path.read_bytes()
-        except OSError as exc:
-            raise BootstrapError("Runtime manifest or signature is unreadable.") from exc
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        manifest_bytes = _read_host_file_secure(
+            root / MANIFEST_NAME, label="Runtime manifest", max_bytes=MAX_MANIFEST_BYTES
+        )
+        signature_bytes = _read_host_file_secure(
+            root / SIGNATURE_NAME, label="Runtime signature", max_bytes=MAX_SIGNATURE_BYTES
+        )
 
     try:
         value = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
@@ -530,21 +496,17 @@ def stage_verified_bundle(
         if os.name != "nt":
             _copy_bundle_posix(source, staged, manifest)
         else:
-            # Windows still needs a native handle-based no-reparse copy path.
-            for item in manifest["files"]:
-                relative = PurePosixPath(item["path"])
-                source_file = source.joinpath(*relative.parts)
-                target_file = staged.joinpath(*relative.parts)
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-                if source_file.is_symlink() or not source_file.is_file():
-                    raise BootstrapError(f"Bundle changed during staging: {item['path']}")
-                shutil.copyfile(source_file, target_file)
-                try:
-                    target_file.chmod(stat.S_IMODE(source_file.stat().st_mode))
-                except OSError:
-                    pass
-            shutil.copyfile(source / MANIFEST_NAME, staged / MANIFEST_NAME)
-            shutil.copyfile(source / SIGNATURE_NAME, staged / SIGNATURE_NAME)
+            from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
+
+            _stage_windows_bundle_handle_secure(
+                source,
+                staged,
+                manifest["files"],
+                manifest_name=MANIFEST_NAME,
+                signature_name=SIGNATURE_NAME,
+                max_manifest_bytes=MAX_MANIFEST_BYTES,
+                max_signature_bytes=MAX_SIGNATURE_BYTES,
+            )
         verify_signed_bundle(staged, public_key_path, expected_platform=expected_platform)
         return staged_temp
     except Exception:
