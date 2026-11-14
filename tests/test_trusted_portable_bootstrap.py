@@ -309,7 +309,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         self._sign_bundle(release_sequence=12)
         with patch("yuki_trust.portable_bootstrap.subprocess.run") as run:
             run.return_value.returncode = 0
-            self.assertEqual(run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path), 0)
+            self.assertEqual(run_verified_bundle(self.bundle, self.public_path, self.python_executable.relative_to(self.bundle).as_posix(), "portable_entry.py", anti_rollback_state_path=self.state_path), 0)
             self._sign_bundle(release_sequence=11)
             with self.assertRaisesRegex(BootstrapError, "rollback rejected"):
                 run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path)
