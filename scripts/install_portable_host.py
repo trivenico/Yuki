@@ -108,7 +108,12 @@ def _validate_public_key(source: Path) -> bytes:
     # Open without following a final-component symlink where the platform
     # supports O_NOFOLLOW, then validate the opened descriptor rather than
     # trusting a separate path stat before read_bytes().
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         fd = os.open(source, flags)
     except OSError as exc:
