@@ -34,11 +34,54 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _validate_host_parent_directories(path: Path, *, label: str) -> None:
+    """Reject replaceable or symlinked parent directories on POSIX hosts."""
+    if not path.is_absolute():
+        raise BootstrapError(f"{label} path must be absolute.")
+    if os.name == "nt":
+        return
+    current = path.parent
+    while True:
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            raise BootstrapError(f"{label} parent directory is unavailable.") from exc
+        if stat.S_ISLNK(info.st_mode):
+            # Permit only system-managed aliases (for example macOS /var)
+            # whose link and containing directory are both root-owned and
+            # whose containing directory cannot be replaced by unprivileged users.
+            parent_info = current.parent.lstat()
+            parent_mode = stat.S_IMODE(parent_info.st_mode)
+            if (
+                info.st_uid != 0
+                or not stat.S_ISDIR(parent_info.st_mode)
+                or parent_info.st_uid != 0
+                or parent_mode & 0o022
+            ):
+                raise BootstrapError(f"{label} parent directories must not contain replaceable symlinks.")
+            current = current.resolve(strict=True)
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise BootstrapError(f"{label} parent directories must be real directories.")
+        if info.st_uid not in {0, os.getuid()}:
+            raise BootstrapError(f"{label} parent directories must be owned by root or the current user.")
+        mode = stat.S_IMODE(info.st_mode)
+        # A sticky world-writable directory (for example /tmp) protects
+        # entries from deletion by other users; ordinary writable parents do not.
+        if mode & 0o022 and not (mode & stat.S_ISVTX):
+            raise BootstrapError(f"{label} parent directories must not be group- or world-writable.")
+        if current.parent == current:
+            break
+        current = current.parent
+
+
 def _host_file(path: str | Path, *, bundle: Path, label: str) -> Path:
     candidate = Path(path).expanduser()
+    _validate_host_parent_directories(candidate, label=label)
     if candidate.is_symlink() or not candidate.is_file():
         raise BootstrapError(f"{label} must be a regular, non-symlink host file.")
     resolved = candidate.resolve(strict=True)
+    _validate_host_parent_directories(resolved, label=label)
     try:
         resolved.relative_to(bundle)
     except ValueError:

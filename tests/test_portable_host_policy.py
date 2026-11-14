@@ -114,6 +114,30 @@ class PortableHostPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "non-symlink"):
             load_host_policy(link, self.bundle)
 
+    @unittest.skipIf(os.name == "nt", "POSIX directory mode validation is platform-specific")
+    def test_rejects_group_or_world_writable_parent_directory(self):
+        unsafe = self.root / "unsafe-host-dir"
+        unsafe.mkdir()
+        unsafe.chmod(0o777)
+        policy = unsafe / "policy.json"
+        policy.write_text(self.policy.read_text(encoding="utf-8"), encoding="utf-8")
+        with self.assertRaisesRegex(BootstrapError, "parent directories must not be group- or world-writable"):
+            load_host_policy(policy, self.bundle)
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
+    def test_rejects_symlinked_parent_directory(self):
+        real = self.root / "real-host-dir"
+        real.mkdir()
+        policy = real / "policy.json"
+        policy.write_text(self.policy.read_text(encoding="utf-8"), encoding="utf-8")
+        link = self.root / "linked-host-dir"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("directory symlinks unavailable")
+        with self.assertRaisesRegex(BootstrapError, "must not contain replaceable symlinks"):
+            load_host_policy(link / "policy.json", self.bundle)
+
     @unittest.skipIf(os.name == "nt", "POSIX permission bits are not Windows ACL validation")
     def test_rejects_group_or_world_writable_policy(self):
         self.policy.chmod(0o620)
