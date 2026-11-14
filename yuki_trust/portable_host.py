@@ -511,10 +511,14 @@ def _stage_windows_bundle_handle_secure(
         )
 
     source_handle = open_root(source_root)
-    target_handle = open_root(target_root)
+    target_handle = None
     source_directories: dict[str, Any] = {"": source_handle}
-    target_directories: dict[str, Any] = {"": target_handle}
+    target_directories: dict[str, Any] = {}
     try:
+        # Open the destination only after entering the cleanup scope: if this
+        # second root open fails, the already-pinned source handle is still closed.
+        target_handle = open_root(target_root)
+        target_directories[""] = target_handle
         for root_handle, label in ((source_handle, "source"), (target_handle, "destination")):
             _tag, standard = handle_metadata(root_handle)
             if not standard.Directory:
@@ -632,7 +636,8 @@ def _stage_windows_bundle_handle_secure(
         for key, handle in reversed(list(source_directories.items())):
             if key:
                 close_handle(handle)
-        close_handle(target_handle)
+        if target_handle is not None:
+            close_handle(target_handle)
         close_handle(source_handle)
 
 
