@@ -144,17 +144,9 @@ def _write_launcher(root: Path, policy_path: Path) -> tuple[Path, Path | None]:
     _atomic_write(launcher, source)
     if os.name != "nt":
         launcher.chmod(0o700)
-        return launcher, None
-    if "%" in sys.executable or '"' in sys.executable or "%" in str(launcher):
-        raise BootstrapError("Windows launcher paths containing percent signs or quotes are not supported.")
-    command = root / "yuki-portable-launch.cmd"
-    command_text = (
-        "@echo off\r\n"
-        f'"{sys.executable}" "{launcher}" %*\r\n'
-        "exit /b %ERRORLEVEL%\r\n"
-    )
-    _atomic_write(command, command_text.encode("utf-8"))
-    return launcher, command
+    # Do not generate a batch wrapper: forwarding arbitrary arguments through
+    # cmd.exe's %* expansion creates avoidable command-injection ambiguity.
+    return launcher, None
 
 
 def install_host_trust(public_key_source: Path, install_root: Path, state_root: Path) -> dict[str, str]:
@@ -180,8 +172,8 @@ def install_host_trust(public_key_source: Path, install_root: Path, state_root: 
     policy_path = install_root / _POLICY_NAME
     state_path = state_root / "release-state.json"
     launcher = install_root / _LAUNCHER_NAME
-    command = install_root / "yuki-portable-launch.cmd" if os.name == "nt" else None
-    for target in (key_path, policy_path, launcher, command):
+    command = None
+    for target in (key_path, policy_path, launcher):
         if target is not None and (target.exists() or target.is_symlink()):
             raise BootstrapError(f"Refusing to overwrite existing host trust file: {target}")
 
