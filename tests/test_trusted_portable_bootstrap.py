@@ -312,7 +312,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.assertEqual(run_verified_bundle(self.bundle, self.public_path, self.python_executable.relative_to(self.bundle).as_posix(), "portable_entry.py", anti_rollback_state_path=self.state_path), 0)
             self._sign_bundle(release_sequence=11)
             with self.assertRaisesRegex(BootstrapError, "rollback rejected"):
-                run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path)
+                run_verified_bundle(self.bundle, self.public_path, self.python_executable.relative_to(self.bundle).as_posix(), "portable_entry.py", anti_rollback_state_path=self.state_path)
             run.assert_called_once()
 
     def test_launcher_rejects_same_sequence_with_different_signed_manifest(self):
