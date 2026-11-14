@@ -132,6 +132,26 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    @unittest.skipUnless(os.name == "nt", "Windows native metadata handle reads")
+    def test_windows_metadata_reader_rejects_symlinked_manifest(self):
+        manifest = self.bundle / "runtime-manifest.json"
+        outside = self.bundle.parent / "external-manifest"
+        outside.write_bytes(manifest.read_bytes())
+        manifest.unlink()
+        try:
+            manifest.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows file symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "reparse point|securely read"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows native metadata handle reads")
+    def test_windows_metadata_reader_rejects_oversized_signature(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        signature.write_bytes(b"x" * (MAX_SIGNATURE_BYTES + 1))
+        with self.assertRaisesRegex(BootstrapError, "size limit|oversized"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
     @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
     def test_posix_metadata_reader_rejects_symlinked_signature(self):
         signature = self.bundle / "runtime-manifest.sig"
