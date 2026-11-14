@@ -114,6 +114,44 @@ class ProviderOutcomeTests(unittest.TestCase):
         self.assertEqual(sum(1 for item in calls if isinstance(item, dict)), 1)
         self.assertEqual(next(item for item in calls if isinstance(item, dict))["execution_id"], "execution-1")
 
+    def test_reconciler_renews_claim_during_slow_provider_lookup(self):
+        import time
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+        events = []
+        evidence = self.evidence()
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                time.sleep(1.2)
+                return evidence
+        class Store:
+            def list_tool_executions(self, **kwargs):
+                return [{
+                    "execution_id": "execution-1", "call_id": "call-1",
+                    "tool_name": "send_email", "idempotency_key": "a" * 64,
+                    "arguments_sha256": "b" * 64, "status": "uncertain",
+                }]
+            def acquire_provider_reconciliation_lease(self, **kwargs):
+                events.append("claim")
+            def renew_provider_reconciliation_lease(self, **kwargs):
+                events.append("renew")
+            def release_provider_reconciliation_lease(self, **kwargs):
+                events.append("release")
+            def record_provider_outcome_evidence(self, **kwargs):
+                events.append("record")
+                return {"outcome": "unknown"}
+        reconciler = ProviderOutcomeReconciler(
+            Store(), ProviderOutcomeRegistry({"send_email": Adapter()}),
+            lease_ttl_seconds=5, lease_renew_interval_seconds=1,
+        )
+        result = reconciler.reconcile(
+            owner_id="owner-1", conversation_id="conversation-1",
+            request_id="request-1", call_id="call-1",
+        )
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertIn("renew", events)
+        self.assertLess(events.index("renew"), events.index("record"))
+        self.assertEqual(events[-1], "release")
+
     def test_registry_does_not_guess_missing_provider_adapter(self):
         from core.provider_outcome import ProviderOutcomeRegistry
         registry = ProviderOutcomeRegistry({})
