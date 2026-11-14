@@ -357,6 +357,61 @@ class ConversationStoreTests(unittest.TestCase):
         ), [])
 
 
+    def test_uncertain_tool_review_is_owner_scoped_append_only_and_does_not_resolve_outcome(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "review-uncertain-request"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Review uncertain action", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=50_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="review-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-review", tool_name="send_email",
+                arguments_sha256="a" * 64, lease_token="review-worker",
+            )
+            self.assertTrue(self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-review",
+                lease_token="review-worker", status="uncertain",
+            ))
+        with self.assertRaises(ConversationNotFound):
+            self.store.review_tool_execution(
+                owner_id=self.other_owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-review",
+                action="acknowledge_uncertain", reason="Not my execution",
+            )
+        with self.assertRaises(ConversationConflict):
+            self.store.review_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-review",
+                action="retry", reason="Do it again",
+            )
+        first = self.store.review_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-review",
+            action="acknowledge_uncertain", reason="Checked provider dashboard; outcome remains unknown.",
+        )
+        second = self.store.review_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-review",
+            action="acknowledge_uncertain", reason="Escalated to operations.",
+        )
+        self.assertNotEqual(first["review_id"], second["review_id"])
+        self.assertEqual(len(self.store.list_tool_execution_reviews(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-review",
+        )), 2)
+        record = self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id, request_id=request_id,
+        )[0]
+        self.assertEqual(record["status"], "uncertain")
+
     def test_tool_execution_persists_provider_idempotency_contract(self):
         conversation_id = self.conversation["conversation_id"]
         self.store.append_message(
