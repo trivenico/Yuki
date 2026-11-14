@@ -87,3 +87,63 @@ def verify_provider_outcome(
             or evidence.arguments_sha256 != execution["arguments_sha256"]):
         raise ValueError("provider evidence does not match the durable execution fingerprint.")
     return evidence
+
+
+class ProviderOutcomeRegistry:
+    """Explicit tool-name-to-adapter registry; no dynamic imports or fallbacks."""
+
+    def __init__(self, adapters: dict[str, ProviderOutcomeAdapter]) -> None:
+        if not isinstance(adapters, dict):
+            raise TypeError("adapters must be an explicit mapping.")
+        validated: dict[str, ProviderOutcomeAdapter] = {}
+        for tool_name, adapter in adapters.items():
+            if (not isinstance(tool_name, str)
+                    or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name)):
+                raise ValueError("adapter tool names must be bounded identifiers.")
+            if not callable(getattr(adapter, "lookup_tool_outcome", None)):
+                raise TypeError(f"adapter for {tool_name!r} has no lookup_tool_outcome method.")
+            validated[tool_name] = adapter
+        self._adapters = validated
+
+    def lookup(self, tool_name: str, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
+        adapter = self._adapters.get(tool_name)
+        if adapter is None:
+            raise LookupError(f"no provider outcome adapter is registered for {tool_name!r}.")
+        return verify_provider_outcome(adapter, execution)
+
+
+class ProviderOutcomeReconciler:
+    """Read-only provider lookup plus append-only evidence recording."""
+
+    def __init__(self, store: Any, registry: ProviderOutcomeRegistry) -> None:
+        if not callable(getattr(store, "list_tool_executions", None)) or not callable(
+            getattr(store, "record_provider_outcome_evidence", None)
+        ):
+            raise TypeError("store does not implement the provider evidence persistence contract.")
+        if not isinstance(registry, ProviderOutcomeRegistry):
+            raise TypeError("registry must be a ProviderOutcomeRegistry.")
+        self._store = store
+        self._registry = registry
+
+    def reconcile(
+        self, *, owner_id: str, conversation_id: str, request_id: str, call_id: str,
+    ) -> dict[str, Any]:
+        executions = self._store.list_tool_executions(
+            owner_id=owner_id, conversation_id=conversation_id, request_id=request_id,
+        )
+        execution = next((item for item in executions if item["call_id"] == call_id), None)
+        if execution is None:
+            raise LookupError("tool execution not found.")
+        evidence = self._registry.lookup(
+            execution["tool_name"],
+            {
+                "execution_id": execution["execution_id"],
+                "idempotency_key": execution["idempotency_key"],
+                "arguments_sha256": execution["arguments_sha256"],
+                "status": execution["status"],
+            },
+        )
+        return self._store.record_provider_outcome_evidence(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, call_id=call_id, evidence=evidence,
+        )
