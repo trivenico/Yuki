@@ -89,7 +89,7 @@ class PortableHostPolicyTests(unittest.TestCase):
     def test_windows_secure_reader_rejects_directory_handles(self):
         from yuki_trust.portable_host import _read_host_file_secure
 
-        with self.assertRaisesRegex(BootstrapError, "directory"):
+        with self.assertRaisesRegex(BootstrapError, "directory|could not be securely read"):
             _read_host_file_secure(
                 self.trust_dir, label="Test policy", max_bytes=64 * 1024
             )
