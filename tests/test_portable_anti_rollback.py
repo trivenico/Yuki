@@ -43,13 +43,18 @@ class AntiRollbackStateTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "equivocation"):
             advance_release_state(self.state, 11, b"manifest B")
 
+    def _write_existing_state(self, payload):
+        self.state.write_text(payload, encoding="utf-8")
+        if os.name != "nt":
+            self.state.chmod(0o600)
+
     def test_corrupt_state_fails_closed(self):
-        self.state.write_text("{broken", encoding="utf-8")
+        self._write_existing_state("{broken")
         with self.assertRaisesRegex(BootstrapError, "corrupt"):
             advance_release_state(self.state, 12, b"manifest 12")
 
     def test_unknown_state_schema_fails_closed(self):
-        self.state.write_text(json.dumps({"schema_version": 99}), encoding="utf-8")
+        self._write_existing_state(json.dumps({"schema_version": 99}))
         with self.assertRaisesRegex(BootstrapError, "invalid schema"):
             advance_release_state(self.state, 12, b"manifest 12")
 
