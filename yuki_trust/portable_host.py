@@ -95,8 +95,10 @@ def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> b
             raise BootstrapError(f"{label} exceeds its size limit.")
         return data
 
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+        raise BootstrapError(f"{label} requires POSIX O_DIRECTORY and O_NOFOLLOW support.")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
     directory_flags |= getattr(os, "O_CLOEXEC", 0)
     file_flags |= getattr(os, "O_CLOEXEC", 0)
     parts = candidate.parts
