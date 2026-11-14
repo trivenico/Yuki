@@ -120,7 +120,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
 
 def _inventory_posix(root: Path) -> list[dict[str, Any]]:
     """Inventory through pinned directory descriptors and no-follow opens."""
-    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW") or not os.supports_dir_fd:
+    if (\n        not hasattr(os, "O_DIRECTORY")\n        or not hasattr(os, "O_NOFOLLOW")\n        or os.open not in os.supports_dir_fd\n        or os.stat not in os.supports_dir_fd\n    ):
         raise BootstrapError("POSIX bundle inventory requires dir_fd, O_DIRECTORY and O_NOFOLLOW support.")
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
