@@ -82,6 +82,30 @@ class ConversationRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
 
+    def test_invalid_owner_execution_result_does_not_persist_user_turn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner_id: object(),
+            )
+            try:
+                conversation = runtime.app.conversations.create(owner_id="authenticated-user-43")
+                with self.assertRaisesRegex(TypeError, "must return an AgentExecutionLoop"):
+                    runtime.app.conversations.reply(
+                        owner_id="authenticated-user-43",
+                        conversation_id=conversation["conversation_id"],
+                        user_text="hello", request_id="invalid-owner-loop-1",
+                        expected_version=conversation["version"], tools=[],
+                    )
+                self.assertEqual(runtime.app.conversations.history(
+                    owner_id="authenticated-user-43",
+                    conversation_id=conversation["conversation_id"],
+                ), [])
+            finally:
+                runtime.close()
+
     def test_runtime_rejects_invalid_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
