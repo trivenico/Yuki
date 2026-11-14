@@ -112,6 +112,56 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
 
+    def test_authenticated_owner_can_append_and_read_uncertain_tool_review(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        request_id = "review-api-request"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="review", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=60_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="review-api-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-1", tool_name="send_email",
+                arguments_sha256="b" * 64, lease_token="review-api-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-1",
+                lease_token="review-api-lease", status="uncertain",
+            )
+        path = f"/v1/conversations/{cid}/tool-executions/send-1/reviews"
+        status, data, _ = self.request(
+            "POST", path,
+            {"request_id": request_id, "action": "acknowledge_uncertain",
+             "reason": "Verified status with provider; still unknown."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(data["review"]["execution_status"], "uncertain")
+        status, data, _ = self.request(
+            "GET", path, token=self.issued.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["reviews"]), 1)
+        self.assertEqual(data["reviews"][0]["action"], "acknowledge_uncertain")
+        self.auth.create_account("review-other", "review-other-password")
+        other = self.auth.authenticate("review-other", "review-other-password")
+        status, data, _ = self.request(
+            "POST", path,
+            {"request_id": request_id, "action": "acknowledge_uncertain", "reason": "forbidden"},
+            other.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
     def test_provider_catalog_requires_authentication_and_projects_safe_fields(self):
         self.app.provider_catalog = lambda: [{
             "name": "openai", "label": "OpenAI", "implemented": True,
