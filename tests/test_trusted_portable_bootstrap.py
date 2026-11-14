@@ -113,6 +113,15 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative inventory")
+    def test_posix_inventory_does_not_use_path_walk(self):
+        with patch("yuki_trust.portable_bootstrap.os.walk", side_effect=AssertionError("path walk must not be used")):
+            manifest = verify_signed_bundle(self.bundle, self.public_path)
+        self.assertEqual(
+            {item["path"] for item in manifest["files"]},
+            {"runtime/python", "portable_entry.py", "payload.txt"},
+        )
+
     def test_rejects_bundle_for_different_host_platform(self):
         with self.assertRaisesRegex(BootstrapError, "Runtime platform mismatch"):
             verify_signed_bundle(
