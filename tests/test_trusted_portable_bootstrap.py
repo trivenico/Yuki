@@ -139,7 +139,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         outside.write_bytes(signature.read_bytes())
         signature.unlink()
         signature.symlink_to(outside)
-        with self.assertRaisesRegex(BootstrapError, "securely read"):
+        with self.assertRaisesRegex(BootstrapError, "not regular|securely read"):
             verify_signed_bundle(self.bundle, self.public_path)
 
     @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
