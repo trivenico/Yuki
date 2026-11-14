@@ -116,13 +116,23 @@ def verify_provider_outcome(
     return evidence
 
 
+@dataclass(frozen=True, slots=True)
+class _RegisteredProviderAdapter:
+    """Freeze the trusted lookup callable and provider identity at registration."""
+    provider_id: str
+    lookup: Any
+
+    def lookup_tool_outcome(self, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
+        return self.lookup(execution)
+
+
 class ProviderOutcomeRegistry:
     """Explicit tool-name-to-adapter registry; no dynamic imports or fallbacks."""
 
     def __init__(self, adapters: dict[str, ProviderOutcomeAdapter]) -> None:
         if not isinstance(adapters, dict):
             raise TypeError("adapters must be an explicit mapping.")
-        validated: dict[str, tuple[ProviderOutcomeAdapter, str]] = {}
+        validated: dict[str, _RegisteredProviderAdapter] = {}
         for tool_name, adapter in adapters.items():
             if (not isinstance(tool_name, str)
                     or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name)):
@@ -132,7 +142,7 @@ class ProviderOutcomeRegistry:
             provider_id = getattr(adapter, "provider_id", None)
             if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", provider_id):
                 raise ValueError(f"adapter for {tool_name!r} must declare a bounded provider_id.")
-            validated[tool_name] = (adapter, provider_id)
+            validated[tool_name] = _RegisteredProviderAdapter(provider_id, adapter.lookup_tool_outcome)
         self._adapters = MappingProxyType(validated)
 
     def lookup(self, tool_name: str, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
@@ -141,9 +151,8 @@ class ProviderOutcomeRegistry:
         registration = self._adapters.get(tool_name)
         if registration is None:
             raise LookupError(f"no provider outcome adapter is registered for {tool_name!r}.")
-        adapter, expected_provider = registration
         return verify_provider_outcome(
-            adapter, execution, expected_provider=expected_provider,
+            registration, execution, expected_provider=registration.provider_id,
         )
 
 
