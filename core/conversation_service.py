@@ -5,6 +5,7 @@ identity from request payloads and never constructs an unguarded tool runtime.
 """
 from __future__ import annotations
 
+import threading
 import uuid
 from typing import Any, Sequence
 
@@ -13,6 +14,9 @@ from core.conversation_store import ConversationConflict, ConversationStore
 
 
 class ConversationService:
+    LEASE_TTL_SECONDS = 3600
+    LEASE_RENEW_INTERVAL_SECONDS = 1200
+
     """Synchronous conversation orchestration for a single application worker.
 
     A process-local lock avoids duplicate work inside one instance; a database
@@ -50,11 +54,65 @@ class ConversationService:
 
     def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
         token = str(uuid.uuid4())
-        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
+        ttl = self.LEASE_TTL_SECONDS
+        interval = self.LEASE_RENEW_INTERVAL_SECONDS
+        if type(ttl) is not int or not 5 <= ttl <= 3600:
+            raise RuntimeError("conversation lease TTL configuration is invalid.")
+        if type(interval) not in (int, float) or not 0 < interval < ttl:
+            raise RuntimeError("conversation lease renewal interval must be positive and shorter than its TTL.")
+        self.store.acquire_generation_lease(
+            owner_id=owner_id, conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=ttl,
+        )
+        stop_heartbeat = threading.Event()
+        lease_lost = threading.Event()
+
+        def renew_while_running():
+            while not stop_heartbeat.wait(interval):
+                try:
+                    self.store.renew_generation_lease(
+                        owner_id=owner_id, conversation_id=conversation_id,
+                        lease_token=token, ttl_seconds=ttl,
+                    )
+                except Exception:
+                    # Fail closed: never allow execution to commit after the
+                    # heartbeat cannot prove that this worker still owns lease.
+                    lease_lost.set()
+                    return
+
+        heartbeat = threading.Thread(
+            target=renew_while_running,
+            name="yuki-conversation-lease",
+            daemon=True,
+        )
+        heartbeat.start()
+
+        def combined_cancellation_requested():
+            if lease_lost.is_set():
+                return True
+            return bool(cancellation_requested and cancellation_requested())
+
         try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, lease_token=token)
+            result = self._reply_unleased(
+                owner_id=owner_id, conversation_id=conversation_id,
+                user_text=user_text, request_id=request_id,
+                expected_version=expected_version, tools=tools,
+                system_text=system_text, on_text_delta=on_text_delta,
+                cancellation_requested=combined_cancellation_requested,
+                lease_token=token,
+            )
+            if lease_lost.is_set():
+                raise ConversationConflict(
+                    "generation lease renewal failed; this worker cannot commit a response."
+                )
+            return result
         finally:
-            self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
+            stop_heartbeat.set()
+            heartbeat.join(timeout=max(1.0, min(float(interval), 5.0)))
+            self.store.release_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id,
+                lease_token=token,
+            )
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
