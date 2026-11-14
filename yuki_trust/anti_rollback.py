@@ -138,9 +138,9 @@ def _atomic_write(path: Path, sequence: int, digest: str) -> None:
     fd, temporary = tempfile.mkstemp(prefix=".yuki-rollback-", dir=path.parent)
     temp_path = Path(temporary)
     try:
-        if os.name != "nt":
-            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as stream:
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
