@@ -212,59 +212,6 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
 
     return _inventory_windows_handle_secure(root)
 
-    files: list[dict[str, Any]] = []
-    for current, dirs, names in os.walk(root, followlinks=False):
-        current_path = Path(current)
-        for directory in list(dirs):
-            candidate = current_path / directory
-            if candidate.is_symlink() or not candidate.is_dir():
-                raise BootstrapError(f"Bundle contains a symbolic-link or invalid directory: {candidate.relative_to(root)}")
-        for name in names:
-            candidate = current_path / name
-            relative = candidate.relative_to(root).as_posix()
-            if relative in {MANIFEST_NAME, SIGNATURE_NAME}:
-                continue
-            try:
-                info = candidate.lstat()
-            except OSError as exc:
-                raise BootstrapError("Bundle inventory changed while being inspected.") from exc
-            if not stat.S_ISREG(info.st_mode):
-                raise BootstrapError(f"Bundle contains a non-regular file: {relative}")
-            digest = hashlib.sha256()
-            size = 0
-            try:
-                # Keep the opened file identity tied to the no-follow lstat
-                # observation. This detects a final-component replacement
-                # between lstat and open, and mutation while hashing. Windows
-                # parent components are still path-resolved; this is not a
-                # substitute for full handle-relative traversal.
-                with candidate.open("rb") as stream:
-                    before = os.fstat(stream.fileno())
-                    if (
-                        not stat.S_ISREG(before.st_mode)
-                        or (before.st_dev, before.st_ino) != (info.st_dev, info.st_ino)
-                    ):
-                        raise BootstrapError(f"Bundle file changed while being opened: {relative}")
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        size += len(chunk)
-                        digest.update(chunk)
-                    after = os.fstat(stream.fileno())
-                    if (
-                        size != before.st_size
-                        or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
-                        != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
-                    ):
-                        raise BootstrapError(f"Bundle file changed while being hashed: {relative}")
-            except BootstrapError:
-                raise
-            except OSError as exc:
-                raise BootstrapError(f"Unable to read bundle file: {relative}") from exc
-            files.append({"path": relative, "size": size, "sha256": digest.hexdigest()})
-    files.sort(key=lambda item: item["path"])
-    if not files:
-        raise BootstrapError("Runtime bundle contains no regular files.")
-    return files
-
 
 def _read_bundle_metadata_posix(root: Path, name: str, limit: int) -> bytes:
     """Read a root-level metadata file through pinned descriptors and O_NOFOLLOW."""
