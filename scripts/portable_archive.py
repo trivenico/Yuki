@@ -7,6 +7,8 @@ This is a build-time utility; it does not execute extracted content.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 import os
 import shutil
 import stat
@@ -20,6 +22,7 @@ DEFAULT_MAX_FILES = 100_000
 DEFAULT_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
 DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_COMPRESSION_RATIO = 1_000
+_SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 
 
 class ArchiveValidationError(ValueError):
@@ -70,6 +73,7 @@ def extract_zip_safely(
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
     max_compression_ratio: int = DEFAULT_MAX_COMPRESSION_RATIO,
+    expected_sha256: str | None = None,
 ) -> dict:
     archive_path = Path(archive).expanduser()
     target = Path(destination).expanduser()
@@ -84,9 +88,38 @@ def extract_zip_safely(
     if not parent.is_dir() or target.name in {"", ".", ".."}:
         raise ArchiveValidationError("Extraction destination parent is invalid.")
 
+    verified_archive = archive_path
+    snapshot_path: Path | None = None
+    if expected_sha256 is not None:
+        if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(expected_sha256):
+            raise ArchiveValidationError("Expected archive SHA-256 must be exactly 64 hexadecimal characters.")
+        descriptor, snapshot_name = tempfile.mkstemp(prefix=".yuki-archive-verified-", dir=parent)
+        snapshot_path = Path(snapshot_name)
+        digest = hashlib.sha256()
+        try:
+            with os.fdopen(descriptor, "wb") as snapshot, archive_path.open("rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    raise ArchiveValidationError("Runtime archive must resolve to a regular file.")
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    snapshot.write(chunk)
+                snapshot.flush()
+                os.fsync(snapshot.fileno())
+            if digest.hexdigest().lower() != expected_sha256.lower():
+                raise ArchiveValidationError("Runtime archive SHA-256 does not match the pinned digest.")
+        except Exception:
+            snapshot_path.unlink(missing_ok=True)
+            raise
+        verified_archive = snapshot_path
+
     try:
-        zf = zipfile.ZipFile(archive_path, "r")
+        zf = zipfile.ZipFile(verified_archive, "r")
     except (OSError, zipfile.BadZipFile) as exc:
+        if snapshot_path is not None:
+            snapshot_path.unlink(missing_ok=True)
         raise ArchiveValidationError("Runtime archive is not a readable ZIP file.") from exc
 
     stage = Path(tempfile.mkdtemp(prefix=".yuki-runtime-stage-", dir=parent))
@@ -160,6 +193,8 @@ def extract_zip_safely(
     finally:
         if stage.exists():
             shutil.rmtree(stage, ignore_errors=True)
+        if snapshot_path is not None:
+            snapshot_path.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:
