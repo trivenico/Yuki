@@ -355,6 +355,7 @@ def _stage_windows_bundle_handle_secure(
 ) -> None:
     """Copy authenticated bundle entries using only pinned, relative NT handles."""
     import ctypes
+    import hashlib
     from ctypes import wintypes
 
     class _UNICODE_STRING(ctypes.Structure):
@@ -504,6 +505,8 @@ def _stage_windows_bundle_handle_secure(
 
     source_handle = open_root(source_root)
     target_handle = open_root(target_root)
+    source_directories: dict[str, Any] = {"": source_handle}
+    target_directories: dict[str, Any] = {"": target_handle}
     try:
         for root_handle, label in ((source_handle, "source"), (target_handle, "destination")):
             _tag, standard = handle_metadata(root_handle)
@@ -514,25 +517,29 @@ def _stage_windows_bundle_handle_secure(
             parts = relative.split("/")
             if not parts or any(not part for part in parts):
                 raise BootstrapError("Bundle manifest contains an invalid relative path.")
-            src_parent = source_handle
-            dst_parent = target_handle
-            opened_source_dirs: list[Any] = []
-            opened_target_dirs: list[Any] = []
             source_file = None
             target_file = None
             try:
+                prefix = ""
                 for component in parts[:-1]:
-                    next_src = nt_open(src_parent, component, directory=True)
-                    opened_source_dirs.append(next_src)
-                    _tag, standard = handle_metadata(next_src)
-                    if not standard.Directory:
-                        raise BootstrapError(f"{label} source parent is not a directory.")
-                    next_dst = nt_open(dst_parent, component, directory=True, create=True)
-                    opened_target_dirs.append(next_dst)
-                    _tag, standard = handle_metadata(next_dst)
-                    if not standard.Directory:
-                        raise BootstrapError(f"{label} destination parent is not a directory.")
-                    src_parent, dst_parent = next_src, next_dst
+                    next_prefix = f"{prefix}/{component}" if prefix else component
+                    if next_prefix not in source_directories:
+                        next_src = nt_open(source_directories[prefix], component, directory=True)
+                        _tag, standard = handle_metadata(next_src)
+                        if not standard.Directory:
+                            close_handle(next_src)
+                            raise BootstrapError(f"{label} source parent is not a directory.")
+                        source_directories[next_prefix] = next_src
+                    if next_prefix not in target_directories:
+                        next_dst = nt_open(target_directories[prefix], component, directory=True, create=True)
+                        _tag, standard = handle_metadata(next_dst)
+                        if not standard.Directory:
+                            close_handle(next_dst)
+                            raise BootstrapError(f"{label} destination parent is not a directory.")
+                        target_directories[next_prefix] = next_dst
+                    prefix = next_prefix
+                src_parent = source_directories[prefix]
+                dst_parent = target_directories[prefix]
 
                 source_file = nt_open(src_parent, parts[-1], directory=False)
                 _tag, source_standard = handle_metadata(source_file)
@@ -586,10 +593,7 @@ def _stage_windows_bundle_handle_secure(
                     close_handle(target_file)
                 if source_file is not None:
                     close_handle(source_file)
-                for handle in reversed(opened_target_dirs):
-                    close_handle(handle)
-                for handle in reversed(opened_source_dirs):
-                    close_handle(handle)
+
 
         for item in files:
             copy_one(
@@ -609,6 +613,12 @@ def _stage_windows_bundle_handle_secure(
     except (OSError, AttributeError, TypeError, ValueError, UnicodeError) as exc:
         raise BootstrapError("Unable to securely stage portable bundle through pinned directory handles.") from exc
     finally:
+        for key, handle in reversed(list(target_directories.items())):
+            if key:
+                close_handle(handle)
+        for key, handle in reversed(list(source_directories.items())):
+            if key:
+                close_handle(handle)
         close_handle(target_handle)
         close_handle(source_handle)
 
