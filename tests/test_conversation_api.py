@@ -720,6 +720,46 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+    def test_execution_inspection_and_review_reject_invalid_or_ambiguous_request_ids(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        paths = [
+            f"/v1/conversations/{cid}/tool-executions",
+            f"/v1/conversations/{cid}/tool-executions/call-1/provider-outcomes",
+            f"/v1/conversations/{cid}/tool-executions/call-1/reviews",
+        ]
+        invalid_queries = [
+            b"request_id=",
+            b"request_id=%20%20",
+            ("request_id=" + "x" * 161).encode(),
+            b"request_id=first&request_id=second",
+        ]
+        for path in paths:
+            for query in invalid_queries:
+                with self.subTest(path=path, query=query):
+                    status, data, _ = self.request(
+                        "GET", path, token=self.issued.token, query=query,
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(data, {"error": "invalid_request"})
+
+    def test_review_post_rejects_invalid_request_id(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        path = (
+            f"/v1/conversations/{conversation['conversation_id']}/"
+            "tool-executions/call-1/reviews"
+        )
+        for request_id in ("", "   ", "x" * 161):
+            with self.subTest(request_id=request_id):
+                status, data, _ = self.request(
+                    "POST", path,
+                    {"request_id": request_id, "action": "acknowledge_uncertain",
+                     "reason": "validation test"},
+                    self.issued.token,
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(data, {"error": "invalid_request"})
+
     def test_provider_reconciliation_returns_service_unavailable_when_unconfigured(self):
         conversation = self.app.conversations.create(owner_id=self.user.user_id)
         path = (
