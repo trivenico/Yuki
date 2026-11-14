@@ -188,6 +188,37 @@ class YukiConversationAPI:
                 )
                 return await self._respond(send, 200, {"tool_executions": records})
 
+            tool_review_match = re.fullmatch(
+                r"/v1/conversations/([^/]+)/tool-executions/([^/]+)/reviews", path
+            )
+            if tool_review_match:
+                conversation_id, call_id = tool_review_match.groups()
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                if method == "POST":
+                    payload = await self._body(receive)
+                    if (set(payload) != {"request_id", "action", "reason"}
+                            or not all(isinstance(payload.get(key), str)
+                                       for key in ("request_id", "action", "reason"))):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    review = await asyncio.to_thread(
+                        self.conversations.review_tool_execution,
+                        owner_id=user.user_id, conversation_id=conversation_id,
+                        request_id=payload["request_id"], call_id=call_id,
+                        action=payload["action"], reason=payload["reason"],
+                    )
+                    return await self._respond(send, 201, {"review": review})
+                if method == "GET":
+                    query = self._query(scope)
+                    if set(query) != {"request_id"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    reviews = await asyncio.to_thread(
+                        self.conversations.tool_execution_reviews,
+                        owner_id=user.user_id, conversation_id=conversation_id,
+                        request_id=query["request_id"], call_id=call_id,
+                    )
+                    return await self._respond(send, 200, {"reviews": reviews})
+
             cancel_match = re.fullmatch(r"/v1/conversations/([^/]+)/messages/cancel", path)
             if cancel_match and method == "POST":
                 conversation_id = cancel_match.group(1)
