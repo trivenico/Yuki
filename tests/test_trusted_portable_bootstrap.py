@@ -467,6 +467,41 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             "failed nested destination creation leaked retained directory handles",
         )
 
+    @unittest.skipUnless(os.name == "nt", "Windows inventory handle cleanup")
+    def test_windows_inventory_closes_nested_handles_when_reparse_point_is_rejected(self):
+        import ctypes
+
+        outside = self.root / "outside-inventory-payload.txt"
+        outside.write_text("outside", encoding="utf-8")
+        link = self.runtime / "linked-payload.txt"
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows file symlink creation is unavailable")
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_handle_count = kernel32.GetProcessHandleCount
+        get_handle_count.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        get_handle_count.restype = ctypes.c_int
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.argtypes = []
+        get_current_process.restype = ctypes.c_void_p
+
+        def handle_count():
+            count = ctypes.c_ulong()
+            self.assertTrue(get_handle_count(get_current_process(), ctypes.byref(count)))
+            return count.value
+
+        before = handle_count()
+        for _ in range(10):
+            with self.assertRaisesRegex(BootstrapError, "reparse point"):
+                verify_signed_bundle(self.bundle, self.public_path)
+        after = handle_count()
+        self.assertLessEqual(
+            after, before + 1,
+            "rejected nested reparse points leaked inventory directory handles",
+        )
+
     @unittest.skipUnless(os.name == "nt", "Windows handle-relative staging")
     def test_windows_staging_resolves_paths_only_for_pinned_roots(self):
         from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
