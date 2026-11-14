@@ -502,8 +502,8 @@ class ConversationStore:
                     raise ConversationConflict("tool execution generation is not active.")
                 previous = db.execute(
                     """SELECT * FROM conversation_tool_executions
-                       WHERE conversation_id=? AND request_id=? AND call_id=?""",
-                    (conversation_id, request_id.strip(), call_id.strip()),
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?""",
+                    (owner, conversation_id, request_id.strip(), call_id.strip()),
                 ).fetchone()
                 if previous is not None:
                     if (previous["tool_name"] != tool_name
