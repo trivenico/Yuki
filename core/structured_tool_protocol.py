@@ -41,6 +41,14 @@ class ToolDispatchCancelled(RuntimeError):
         self.completed_results = tuple(completed_results)
 
 
+class ToolDispatchLimitReached(RuntimeError):
+    """Raised when the per-run call budget is exhausted before the next side effect."""
+
+    def __init__(self, completed_results):
+        super().__init__("tool dispatch call budget exhausted before the next invocation.")
+        self.completed_results = tuple(completed_results)
+
+
 @dataclass(frozen=True)
 class StructuredToolCall:
     call_id: str
@@ -106,9 +114,12 @@ class StructuredToolProtocol:
     def dispatch(
         self, response: str, *, cancellation_requested=None,
         before_tool_call=None, after_tool_call=None, on_tool_error=None,
+        max_calls: int = _MAX_CALLS,
     ) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
+        if type(max_calls) is not int or not 1 <= max_calls <= _MAX_CALLS:
+            raise ValueError("max_calls must be an integer from 1 to the protocol maximum.")
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
         if before_tool_call is not None and not callable(before_tool_call):
@@ -122,6 +133,8 @@ class StructuredToolProtocol:
         for call in calls:
             if cancellation_requested is not None and cancellation_requested():
                 raise ToolDispatchCancelled(results)
+            if len(results) >= max_calls:
+                raise ToolDispatchLimitReached(results)
             argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
             claim = None
             if before_tool_call is not None:
