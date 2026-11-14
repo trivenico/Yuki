@@ -47,9 +47,10 @@ class ConversationRecoveryCoordinator:
             conversation = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
             )
-            user_message = next((item for item in self.store.list_messages(
-                owner_id=owner_id, conversation_id=conversation_id, limit=200
-            ) if item["message_id"] == generation["user_message_id"]), None)
+            user_message_exists = self.store.has_message_id(
+                owner_id=owner_id, conversation_id=conversation_id,
+                message_id=generation["user_message_id"],
+            )
             assistant_exists = self.store.has_message(
                 owner_id=owner_id, conversation_id=conversation_id,
                 idempotency_key="assistant:" + request_id,
@@ -63,7 +64,7 @@ class ConversationRecoveryCoordinator:
                 if not finalized:
                     raise ConversationConflict("interrupted generation changed during recovery.")
                 completed += 1
-            elif user_message is not None:
+            elif user_message_exists:
                 self.store.append_message(
                     owner_id=owner_id, conversation_id=conversation_id,
                     role="assistant", content=self.INTERRUPTION_MESSAGE,
