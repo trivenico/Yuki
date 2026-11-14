@@ -73,6 +73,105 @@ def _validate_host_parent_directories(path: Path, *, label: str) -> None:
         current = current.parent
 
 
+def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> bytes:
+    """Read a host file without following POSIX symlinks during path traversal.
+
+    Directory descriptors pin each traversed directory, so replacing a parent
+    pathname after validation cannot redirect the final open to an attacker-
+    controlled tree. Windows retains the path-based checks performed by
+    _host_file because dir_fd/O_NOFOLLOW semantics are not portable there.
+    """
+    candidate = Path(path)
+    if not candidate.is_absolute() or max_bytes < 0:
+        raise BootstrapError(f"{label} path or size limit is invalid.")
+
+    if os.name != "nt":
+        # macOS exposes these trusted system aliases as symlinks. Normalize
+        # only the documented roots before descriptor-relative traversal.
+        raw = str(candidate)
+        for alias, target in (
+            ("/var/", "/private/var/"),
+            ("/tmp/", "/private/tmp/"),
+            ("/Users/", "/System/Volumes/Data/Users/"),
+        ):
+            if raw.startswith(alias):
+                candidate = Path(target + raw[len(alias):])
+                break
+
+    if os.name == "nt":
+        try:
+            with candidate.open("rb") as stream:
+                data = stream.read(max_bytes + 1)
+        except OSError as exc:
+            raise BootstrapError(f"{label} could not be securely read.") from exc
+        if len(data) > max_bytes:
+            raise BootstrapError(f"{label} exceeds its size limit.")
+        return data
+
+    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+        raise BootstrapError(f"{label} requires POSIX O_DIRECTORY and O_NOFOLLOW support.")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    file_flags |= getattr(os, "O_CLOEXEC", 0)
+    parts = candidate.parts
+    if len(parts) < 2 or parts[0] != "/" or any(part in {"", ".", ".."} for part in parts[1:]):
+        raise BootstrapError(f"{label} path must be canonical and absolute.")
+
+    directory_fd = None
+    file_fd = None
+    try:
+        directory_fd = os.open("/", directory_flags)
+        for component in parts[1:-1]:
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            info = os.fstat(next_fd)
+            if not stat.S_ISDIR(info.st_mode):
+                os.close(next_fd)
+                raise BootstrapError(f"{label} parent is not a real directory.")
+            if info.st_uid not in {0, os.getuid()}:
+                os.close(next_fd)
+                raise BootstrapError(f"{label} parent must be owned by root or the current user.")
+            mode = stat.S_IMODE(info.st_mode)
+            if mode & 0o022 and not (mode & stat.S_ISVTX):
+                os.close(next_fd)
+                raise BootstrapError(f"{label} parent must not be group- or world-writable.")
+            os.close(directory_fd)
+            directory_fd = next_fd
+
+        file_fd = os.open(parts[-1], file_flags, dir_fd=directory_fd)
+        info = os.fstat(file_fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise BootstrapError(f"{label} must be a regular file.")
+        if info.st_uid not in {0, os.getuid()}:
+            raise BootstrapError(f"{label} must be owned by root or the current user.")
+        if stat.S_IMODE(info.st_mode) & 0o022:
+            raise BootstrapError(f"{label} must not be group- or world-writable.")
+        if info.st_size > max_bytes:
+            raise BootstrapError(f"{label} exceeds its size limit.")
+
+        chunks = []
+        remaining = max_bytes + 1
+        while remaining:
+            chunk = os.read(file_fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > max_bytes:
+            raise BootstrapError(f"{label} exceeds its size limit.")
+        return data
+    except BootstrapError:
+        raise
+    except OSError as exc:
+        raise BootstrapError(f"{label} could not be securely read.") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
 def _host_file(path: str | Path, *, bundle: Path, label: str) -> Path:
     candidate = Path(path).expanduser()
     if candidate.is_symlink() or not candidate.is_file():
@@ -108,11 +207,12 @@ def load_host_policy(policy_path: str | Path, bundle: str | Path) -> dict[str, s
         raise BootstrapError("Portable bundle must be a directory.")
 
     policy_file = _host_file(policy_path, bundle=bundle_root, label="Host launch policy")
-    if policy_file.stat().st_size > MAX_POLICY_BYTES:
-        raise BootstrapError("Host launch policy exceeds the 64 KiB limit.")
     try:
+        policy_bytes = _read_host_file_secure(
+            policy_file, label="Host launch policy", max_bytes=MAX_POLICY_BYTES
+        )
         value = json.loads(
-            policy_file.read_text(encoding="utf-8"),
+            policy_bytes.decode("utf-8"),
             object_pairs_hook=_unique_object,
         )
     except BootstrapError:
