@@ -5,6 +5,7 @@ identity from request payloads and never constructs an unguarded tool runtime.
 """
 from __future__ import annotations
 
+import sys
 import threading
 import uuid
 from typing import Any, Sequence
@@ -108,10 +109,21 @@ class ConversationService:
             stop_heartbeat.set()
             if heartbeat_started:
                 heartbeat.join(timeout=max(1.0, min(float(interval), 5.0)))
-            self.store.release_generation_lease(
-                owner_id=owner_id, conversation_id=conversation_id,
-                lease_token=token,
-            )
+            active_error = sys.exc_info()[1]
+            try:
+                self.store.release_generation_lease(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    lease_token=token,
+                )
+            except Exception as cleanup_error:
+                if active_error is None:
+                    raise
+                # Preserve the execution/lease-loss exception while retaining
+                # cleanup diagnostics for logs and debuggers.
+                active_error.add_note(
+                    "conversation lease cleanup also failed: "
+                    + type(cleanup_error).__name__
+                )
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
