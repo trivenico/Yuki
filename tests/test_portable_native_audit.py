@@ -14,6 +14,11 @@ class NativeAuditTests(unittest.TestCase):
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["needed"], ["libpython3.so"])
 
+    def test_elf_rejects_absolute_needed_path(self):
+        parsed = parse_elf_dynamic(" 0x0000000000000001 (NEEDED) Shared library: [/opt/vendor/libfoo.so]\\n")
+        self.assertFalse(parsed["ok"])
+        self.assertEqual(parsed["unsafe_needed_paths"], ["/opt/vendor/libfoo.so"])
+
     def test_elf_rejects_absolute_or_non_origin_runpath(self):
         parsed = parse_elf_dynamic(
             " 0x000000000000001d (RPATH) Library rpath: [/usr/local/lib:$ORIGIN/lib]\n"
@@ -26,6 +31,11 @@ class NativeAuditTests(unittest.TestCase):
         links = "binary:\n\t@rpath/libYuki.dylib (compatibility version 1.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n"
         parsed = parse_macho_load_commands(loads, links)
         self.assertTrue(parsed["ok"])
+
+    def test_macho_rejects_unqualified_non_system_install_name(self):
+        parsed = parse_macho_load_commands("binary has no custom rpath\\n", "binary:\\n\\tlibvendor.dylib (compatibility version 1.0.0)\\n")
+        self.assertFalse(parsed["ok"])
+        self.assertEqual(parsed["unsafe_links"], ["libvendor.dylib"])
 
     def test_macho_rejects_absolute_non_system_dependency(self):
         parsed = parse_macho_load_commands(
