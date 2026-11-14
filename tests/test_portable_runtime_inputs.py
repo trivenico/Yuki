@@ -68,7 +68,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
 
     def test_pip_options_are_rejected(self):
         self._write_lock("--extra-index-url https://example.invalid/simple\n")
-        with self.assertRaisesRegex(InputValidationError, "exact == version pin"):
+        with self.assertRaisesRegex(InputValidationError, "Standalone pip options"):
             validate_offline_wheelhouse(self.lock, self.wheelhouse)
 
     def test_lock_rejects_unrecognized_requirement_options(self):
