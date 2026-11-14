@@ -28,12 +28,15 @@ path, commonly `runtime/python.exe`; the exact path must match the reviewed
 runtime archive and host installer policy.
 
 The entrypoint adds only the bundle's `site-packages/` and root to
-`sys.path`. It does not add host site-packages, read `PYTHONPATH`, fetch
-dependencies, or execute unsigned code. The bootstrap must remain the trust
-boundary and must authenticate the interpreter, this script, the application,
-and every dependency before launch.
+`sys.path`. On Windows it registers exactly two documented DLL search
+directories when present: `runtime/` (required) and `native-libs/` (optional).
+Registration handles are retained for process lifetime. It does not scan
+arbitrary directories, register the working directory, add host site-packages,
+read `PYTHONPATH`, fetch dependencies, or execute unsigned code. The bootstrap
+must authenticate the interpreter, this script, the application, and every
+dependency before launch.
 
-This is a path activation layer, not proof of full portability. Native
-extensions may still depend on platform system libraries, runtime-specific
-loader paths, audio/video codecs, GPU drivers, or OS services. Those require
-separate platform smoke tests on clean machines.
+Linux and macOS are intentionally not modified by this Windows-specific
+loader setup. Their native libraries need reviewed loader metadata (for example,
+relative ELF runpaths or Mach-O `@loader_path` / `@rpath`) and clean-machine
+validation. Codecs, GPU drivers, and OS services may remain external requirements.
