@@ -210,12 +210,14 @@ class YukiConversationAPI:
                 if not _CONVERSATION_ID.fullmatch(conversation_id):
                     return await self._respond(send, 404, {"error": "not_found"})
                 payload = await self._body(receive)
-                if set(payload) != {"request_id"} or not isinstance(payload["request_id"], str):
+                request_id = payload.get("request_id")
+                if (set(payload) != {"request_id"} or not isinstance(request_id, str)
+                        or not request_id.strip() or len(request_id) > 160):
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 evidence = await asyncio.to_thread(
                     self.conversations.reconcile_provider_outcome,
                     owner_id=user.user_id, conversation_id=conversation_id,
-                    request_id=payload["request_id"], call_id=call_id,
+                    request_id=request_id.strip(), call_id=call_id,
                 )
                 return await self._respond(send, 201, {"provider_outcome": evidence})
 
