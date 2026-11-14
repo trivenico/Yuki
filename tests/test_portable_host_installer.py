@@ -58,7 +58,10 @@ class PortableHostInstallerTests(unittest.TestCase):
         self.assertEqual((self.install / installer._KEY_NAME).read_text(encoding="ascii"), "preexisting")
 
     def test_refuses_same_or_nested_trust_and_state_roots(self):
-        with patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")):
+        with (
+            patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")),
+            patch.object(installer, "_validate_public_key", return_value=b"validated-ed25519-key"),
+        ):
             with self.assertRaisesRegex(BootstrapError, "must be separate"):
                 installer.install_host_trust(self.key, self.install, self.install)
             with self.assertRaisesRegex(BootstrapError, "must be separate"):
@@ -70,7 +73,10 @@ class PortableHostInstallerTests(unittest.TestCase):
         real.mkdir()
         link = self.root / "linked"
         link.symlink_to(real, target_is_directory=True)
-        with patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")):
+        with (
+            patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")),
+            patch.object(installer, "_validate_public_key", return_value=b"validated-ed25519-key"),
+        ):
             with self.assertRaisesRegex(BootstrapError, "real directory, not a symlink"):
                 installer.install_host_trust(self.key, link, self.state)
 
