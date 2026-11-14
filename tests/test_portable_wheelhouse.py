@@ -78,6 +78,21 @@ class PortableWheelhouseTests(unittest.TestCase):
                 runner=self._runner,
             )
 
+    def test_rejects_environment_markers_in_target_lock(self):
+        self.lock.write_text(
+            "yuki-ai-assistant==1.0; python_version >= '3.12' --hash=sha256:"
+            + hashlib.sha256(self.wheel.read_bytes()).hexdigest() + "\\n",
+            encoding="utf-8",
+        )
+        called = []
+        with self.assertRaisesRegex(InputValidationError, "without environment markers"):
+            build_wheelhouse(
+                self.lock, self.wheelhouse, platform="manylinux_2_28_x86_64",
+                python_version="3.12", implementation="cp", abi="cp312",
+                runner=lambda *a, **k: called.append(True),
+            )
+        self.assertEqual(called, [])
+
     def test_rejects_existing_destination(self):
         self.wheelhouse.mkdir()
         with self.assertRaisesRegex(InputValidationError, "must not already exist"):
