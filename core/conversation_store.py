@@ -884,12 +884,19 @@ class ConversationStore:
                     if not execution["provider_idempotency"]:
                         raise ConversationConflict("provider completion requires an idempotency-capable execution.")
                     evidence = db.execute(
-                        "SELECT outcome FROM conversation_provider_outcome_evidence "
-                        "WHERE execution_id=? ORDER BY recorded_at DESC, evidence_id DESC LIMIT 1",
+                        """SELECT COUNT(*) AS total,
+                                  SUM(CASE WHEN outcome='confirmed_completed' THEN 1 ELSE 0 END) AS completed,
+                                  SUM(CASE WHEN outcome!='confirmed_completed' THEN 1 ELSE 0 END) AS conflicting
+                           FROM conversation_provider_outcome_evidence
+                           WHERE execution_id=?""",
                         (execution["execution_id"],),
                     ).fetchone()
-                    if evidence is None or evidence["outcome"] != "confirmed_completed":
-                        raise ConversationConflict("provider completion evidence is not confirmed.")
+                    if (evidence is None or evidence["total"] < 1
+                            or evidence["completed"] != evidence["total"]
+                            or evidence["conflicting"] != 0):
+                        raise ConversationConflict(
+                            "provider completion requires unanimous confirmed evidence."
+                        )
                     cursor = db.execute(
                         "UPDATE conversation_tool_executions SET status='completed', updated_at=? "
                         "WHERE execution_id=? AND owner_id=? AND status='uncertain'",
