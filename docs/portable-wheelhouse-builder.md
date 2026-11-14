@@ -12,9 +12,11 @@ python scripts/portable_wheelhouse.py \
   --lock locks/core-linux-x86_64-py312.lock \
   --destination build/wheelhouses/core-linux-x86_64-py312 \
   --platform manylinux_2_28_x86_64 \
+  --platform manylinux2014_x86_64 \
   --python-version 3.12 \
   --implementation cp \
-  --abi cp312
+  --abi cp312 \
+  --abi abi3
 ```
 
 For an internal package index, provide an HTTPS URL without embedded
