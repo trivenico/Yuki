@@ -1300,5 +1300,69 @@ class ConversationServiceTests(unittest.TestCase):
             idempotency_key="assistant:stale-worker-recovery",
         ))
 
+
+    def test_independent_store_instances_share_lease_and_recovery_state(self):
+        database_path = Path(self.tempdir.name) / "chat.sqlite3"
+        second_store = ConversationStore(database_path)
+        conversation_id = self.conversation["conversation_id"]
+        barrier = threading.Barrier(2)
+
+        def claim(store, token):
+            barrier.wait(timeout=5)
+            try:
+                store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token=token, ttl_seconds=60,
+                )
+                return token
+            except ConversationConflict:
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = (
+                pool.submit(claim, self.store, "independent-store-a"),
+                pool.submit(claim, second_store, "independent-store-b"),
+            )
+            winners = [future.result(timeout=10) for future in futures]
+
+        winning_tokens = [token for token in winners if token is not None]
+        self.assertEqual(len(winning_tokens), 1)
+        winning_token = winning_tokens[0]
+        winning_store = (
+            self.store if winning_token == "independent-store-a" else second_store
+        )
+        winning_store.release_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=winning_token,
+        )
+
+        self._seed_interrupted_generation("cross-instance-recovery", 0)
+        recovery_token = "cross-instance-recovery-worker"
+        second_store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=recovery_token, ttl_seconds=60,
+        )
+        try:
+            summary = ConversationRecoveryCoordinator(second_store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=recovery_token,
+            )
+        finally:
+            second_store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=recovery_token,
+            )
+
+        self.assertEqual(summary.interrupted_generations, 1)
+        events_seen_by_first_store = self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        self.assertEqual(len(events_seen_by_first_store), 1)
+        self.assertEqual(
+            events_seen_by_first_store[0]["request_id"],
+            "cross-instance-recovery",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
