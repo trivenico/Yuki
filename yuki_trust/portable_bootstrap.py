@@ -30,6 +30,15 @@ class BootstrapError(RuntimeError):
     """Raised when a portable bundle cannot be safely authenticated."""
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise BootstrapError("Runtime manifest contains duplicate JSON object keys.")
+        result[key] = value
+    return result
+
+
 def _trusted_key_path(path: str | Path, bundle: Path) -> Path:
     candidate = Path(path).expanduser()
     if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size > 65536:
@@ -141,7 +150,7 @@ def verify_signed_bundle(bundle: str | Path, public_key_path: str | Path) -> dic
 
     try:
         manifest_bytes = manifest_path.read_bytes()
-        value = json.loads(manifest_bytes.decode("utf-8"))
+        value = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise BootstrapError("Runtime manifest is unreadable or invalid JSON.") from exc
     expected = _validate_manifest(value)
