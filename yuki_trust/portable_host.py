@@ -481,7 +481,9 @@ def _stage_windows_bundle_handle_secure(
         handle = wintypes.HANDLE()
         status = nt_create_file(
             ctypes.byref(handle), 0x00100087, ctypes.byref(attrs), ctypes.byref(io_status),
-            None, 0x00000080, 0x00000001, 1,
+            # Permit rename/delete sharing: the retained handle remains bound to
+            # this directory object while its original pathname can be replaced.
+            None, 0x00000080, 0x00000007, 1,
             0x00200000 | 0x00000020, None, 0,
         )
         if status < 0:
