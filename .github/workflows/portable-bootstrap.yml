@@ -45,3 +45,53 @@ jobs:
         run: python -c "import yuki_trust.portable_bootstrap as bootstrap; assert callable(bootstrap.verify_signed_bundle)"
       - name: Run trusted bootstrap security tests
         run: python -m unittest discover -s tests -p "test_trusted_portable_bootstrap.py" -v
+
+  package-build-smoke:
+    name: Build wheel and verify runtime contents / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build --wheel
+      - name: Verify wheel contains the complete declared runtime surface
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, f"expected one wheel, found {wheels}"
+          with ZipFile(wheels[0]) as wheel:
+              names = set(wheel.namelist())
+          required = {
+              "main.py", "yuki.py", "yuki_agent.py", "yuki_cli.py",
+              "yuki_workflow.py", "core/agent.py",
+              "automation/local_worker_runtime.py",
+              "yuki_trust/portable_bootstrap.py",
+          }
+          missing = sorted(required - names)
+          assert not missing, f"wheel is missing runtime files: {missing}"
+          print(f"Verified {len(required)} required runtime files in {wheels[0].name}")
+          PY
+      - name: Install built wheel and smoke-test runtime imports
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python - <<'PY'
+          import importlib
+          importlib.import_module("main")
+          importlib.import_module("yuki_cli")
+          importlib.import_module("yuki_trust.portable_bootstrap")
+          print("Installed wheel imports: main, yuki_cli, trusted portable bootstrap")
+          PY

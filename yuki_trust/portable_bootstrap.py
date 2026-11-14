@@ -152,7 +152,12 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     return files
 
 
-def verify_signed_bundle(bundle: str | Path, public_key_path: str | Path) -> dict[str, Any]:
+def verify_signed_bundle(
+    bundle: str | Path,
+    public_key_path: str | Path,
+    *,
+    expected_platform: str | None = None,
+) -> dict[str, Any]:
     root_candidate = Path(bundle).expanduser()
     if root_candidate.is_symlink():
         raise BootstrapError("Portable bundle root must not be a symbolic link.")
@@ -174,6 +179,13 @@ def verify_signed_bundle(bundle: str | Path, public_key_path: str | Path) -> dic
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise BootstrapError("Runtime manifest is unreadable or invalid JSON.") from exc
     expected = _validate_manifest(value)
+    if expected_platform is not None:
+        if not isinstance(expected_platform, str) or not expected_platform.strip():
+            raise BootstrapError("Expected runtime platform must be non-empty text.")
+        if value["platform"] != expected_platform:
+            raise BootstrapError(
+                f"Runtime platform mismatch: expected {expected_platform}, found {value['platform']}."
+            )
     key_path = _trusted_key_path(public_key_path, root)
     try:
         from cryptography.hazmat.primitives import serialization
@@ -200,13 +212,17 @@ def verify_signed_bundle(bundle: str | Path, public_key_path: str | Path) -> dic
 def stage_verified_bundle(
     bundle: str | Path,
     public_key_path: str | Path,
+    *,
+    expected_platform: str | None = None,
 ) -> tempfile.TemporaryDirectory:
     """Copy only authenticated files to host temp storage, then verify the copy."""
     source_candidate = Path(bundle).expanduser()
     if source_candidate.is_symlink():
         raise BootstrapError("Portable bundle root must not be a symbolic link.")
     source = source_candidate.resolve(strict=True)
-    manifest = verify_signed_bundle(source, public_key_path)
+    manifest = verify_signed_bundle(
+        source, public_key_path, expected_platform=expected_platform
+    )
     staged_temp = tempfile.TemporaryDirectory(prefix="yuki-verified-")
     staged_root = Path(staged_temp.name).resolve(strict=True)
     try:
@@ -236,7 +252,7 @@ def stage_verified_bundle(
                 pass
         shutil.copyfile(source / MANIFEST_NAME, staged / MANIFEST_NAME)
         shutil.copyfile(source / SIGNATURE_NAME, staged / SIGNATURE_NAME)
-        verify_signed_bundle(staged, public_key_path)
+        verify_signed_bundle(staged, public_key_path, expected_platform=expected_platform)
         return staged_temp
     except Exception:
         staged_temp.cleanup()
@@ -248,6 +264,8 @@ def run_verified_bundle(
     public_key_path: str | Path,
     entrypoint: str,
     arguments: list[str] | None = None,
+    *,
+    expected_platform: str | None = None,
 ) -> int:
     if not isinstance(entrypoint, str) or not entrypoint or "\\" in entrypoint:
         raise BootstrapError("Entrypoint must be a canonical relative path inside the signed bundle.")
@@ -255,7 +273,9 @@ def run_verified_bundle(
     if relative.is_absolute() or any(part in {"", ".", ".."} for part in entrypoint.split("/")) or relative.as_posix() != entrypoint:
         raise BootstrapError("Entrypoint must be a canonical relative path inside the signed bundle.")
 
-    staged_temp = stage_verified_bundle(bundle, public_key_path)
+    staged_temp = stage_verified_bundle(
+        bundle, public_key_path, expected_platform=expected_platform
+    )
     try:
         staged = Path(staged_temp.name)
         executable = staged.joinpath(*relative.parts)
@@ -277,11 +297,22 @@ def main() -> int:
     parser.add_argument("--bundle", required=True, type=Path, help="Path to the removable runtime bundle")
     parser.add_argument("--public-key", required=True, type=Path, help="Independently provisioned host trust anchor")
     parser.add_argument("--entrypoint", required=True, help="Executable path relative to the signed bundle")
+    parser.add_argument(
+        "--expected-platform",
+        required=True,
+        help="Exact platform identifier expected by this host installer (for example linux-x86_64)",
+    )
     parser.add_argument("arguments", nargs=argparse.REMAINDER, help="Arguments passed to the signed entrypoint")
     args = parser.parse_args()
     forwarded = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
     try:
-        return run_verified_bundle(args.bundle, args.public_key, args.entrypoint, forwarded)
+        return run_verified_bundle(
+            args.bundle,
+            args.public_key,
+            args.entrypoint,
+            forwarded,
+            expected_platform=args.expected_platform,
+        )
     except (OSError, ValueError, BootstrapError) as exc:
         print(f"Yuki portable bootstrap refused to launch: {exc}", file=sys.stderr)
         return 2
