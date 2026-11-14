@@ -281,7 +281,7 @@ def _read_bundle_metadata_posix(root: Path, name: str, limit: int) -> bytes:
         finally:
             os.close(fd)
     except OSError as exc:
-        raise BootstrapError(f"Unable to securely read runtime metadata: {name}") from exc
+        raise BootstrapError(f"Runtime metadata is missing or unable to be securely read: {name}") from exc
     finally:
         os.close(root_fd)
 
