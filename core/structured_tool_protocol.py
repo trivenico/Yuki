@@ -155,6 +155,9 @@ class StructuredToolProtocol:
             results.append(StructuredToolResult(call.call_id, call.name, output))
         return tuple(results)
 
+    def supports_idempotency(self, name: str) -> bool:
+        return self._runtime.supports_idempotency(name)
+
     @staticmethod
     def format_results(results: tuple[StructuredToolResult, ...]) -> str:
         """Serialize bounded tool outputs as untrusted evidence for the next model turn."""
