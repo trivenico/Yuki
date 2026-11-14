@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from yuki_trust.portable_bootstrap import (
@@ -247,6 +248,29 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             "portable_entry.py",
         )
         self.assertEqual(result, 0)
+
+    @unittest.skipUnless(os.name == "nt", "Windows interpreter invocation contract")
+    def test_windows_launches_signed_interpreter_with_isolated_entrypoint(self):
+        with patch("yuki_trust.portable_bootstrap.subprocess.run") as run:
+            run.return_value.returncode = 0
+            result = run_verified_bundle(
+                self.bundle,
+                self.public_path,
+                "runtime/python.exe",
+                "portable_entry.py",
+                ["--diagnostic"],
+            )
+
+        self.assertEqual(result, 0)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        options = run.call_args.kwargs
+        self.assertEqual(Path(command[0]).name, "python.exe")
+        self.assertEqual(command[1], "-I")
+        self.assertEqual(Path(command[2]).name, "portable_entry.py")
+        self.assertEqual(command[3:], ["--diagnostic"])
+        self.assertEqual(Path(options["cwd"]), Path(command[0]).parents[1])
+        self.assertFalse(Path(command[0]).is_relative_to(self.bundle))
 
     def test_rejects_unsigned_or_unlisted_entrypoint(self):
         with self.assertRaisesRegex(BootstrapError, "not part of the signed"):
