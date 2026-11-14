@@ -67,6 +67,17 @@ class ProviderOutcomeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             self.evidence(evidence_sha256="not-a-digest")
 
+    def test_future_dated_provider_evidence_is_rejected(self):
+        from datetime import timedelta
+        future = (datetime.now(timezone.utc) + timedelta(minutes=6)).isoformat()
+        with self.assertRaisesRegex(ValueError, "five minutes"):
+            self.evidence(observed_at=future)
+
+    def test_delayed_provider_evidence_remains_valid(self):
+        from datetime import timedelta
+        old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        self.assertEqual(self.evidence(observed_at=old).observed_at, old)
+
 
 
     def test_registry_requires_explicit_adapter_and_reconciler_persists_evidence(self):
