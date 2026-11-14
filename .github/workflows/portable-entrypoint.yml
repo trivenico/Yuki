@@ -1,0 +1,32 @@
+name: Portable Python entrypoint
+
+on:
+  pull_request:
+    paths:
+      - "portable_entry.py"
+      - "tests/test_portable_entry.py"
+      - ".github/workflows/portable-entrypoint.yml"
+  push:
+    paths:
+      - "portable_entry.py"
+      - "tests/test_portable_entry.py"
+      - ".github/workflows/portable-entrypoint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  entrypoint-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run portable entrypoint tests
+        run: python -m unittest discover -s tests -p 'test_portable_entry.py' -v
