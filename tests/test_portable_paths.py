@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.portable_paths import config_path, data_root, workspace_path
+from core.config import load_config
+from core.portable_paths import config_path, data_root, validate_configured_data_root, workspace_path
 
 
 class PortablePathTests(unittest.TestCase):
@@ -30,6 +31,44 @@ class PortablePathTests(unittest.TestCase):
             config.write_text("name: Yuki\n", encoding="utf-8")
             with patch.dict(os.environ, {"YUKI_CONFIG": str(config)}, clear=True):
                 self.assertEqual(config_path(), config.resolve())
+
+
+    def test_explicit_data_root_must_exist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "disconnected-drive" / "YukiData"
+            with patch.dict(os.environ, {"YUKI_HOME": str(missing)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "unavailable.*will not use another data directory"):
+                    validate_configured_data_root()
+
+    def test_explicit_data_root_must_be_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            not_a_directory = Path(directory) / "YukiData"
+            not_a_directory.write_text("not a directory", encoding="utf-8")
+            with patch.dict(os.environ, {"YUKI_HOME": str(not_a_directory)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "not a directory"):
+                    validate_configured_data_root()
+
+    def test_explicit_data_root_must_be_writable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"YUKI_HOME": directory}, clear=True):
+                with patch("core.portable_paths.tempfile.mkstemp", side_effect=PermissionError("read-only")):
+                    with self.assertRaisesRegex(RuntimeError, "not writable"):
+                        validate_configured_data_root()
+
+    def test_explicit_data_root_write_probe_is_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.dict(os.environ, {"YUKI_HOME": directory}, clear=True):
+                self.assertEqual(validate_configured_data_root(), root.resolve())
+            self.assertEqual(list(root.iterdir()), [])
+
+
+    def test_runtime_config_fails_before_using_unavailable_explicit_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "disconnected" / "YukiData"
+            with patch.dict(os.environ, {"YUKI_HOME": str(missing)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    load_config()
 
 
 if __name__ == "__main__":

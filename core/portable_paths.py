@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -46,6 +47,47 @@ def data_root() -> Path:
     if (REPOSITORY_ROOT / "config.yaml").is_file():
         return REPOSITORY_ROOT.resolve()
     return _user_data_root().resolve()
+
+
+
+def validate_configured_data_root() -> Path | None:
+    """Fail closed when an explicitly selected portable data volume is unavailable.
+
+    An explicit YUKI_HOME is an operator choice: silently falling back to another
+    directory risks splitting memory and application state across machines.
+    The launcher/default path remains lazily created by normal workspace setup.
+    """
+    configured = os.environ.get("YUKI_HOME", "").strip()
+    if not configured:
+        return None
+    root = data_root()
+    if not root.exists():
+        raise RuntimeError(
+            f"Configured YUKI_HOME is unavailable: {root}. "
+            "Reconnect the selected drive or correct YUKI_HOME; Yuki will not use another data directory."
+        )
+    if not root.is_dir():
+        raise RuntimeError(f"Configured YUKI_HOME is not a directory: {root}.")
+    descriptor = None
+    probe_path = None
+    try:
+        descriptor, probe_path = tempfile.mkstemp(prefix=".yuki-write-check-", dir=str(root))
+    except OSError as exc:
+        raise RuntimeError(
+            f"Configured YUKI_HOME is not writable: {root}. "
+            "Check that the drive is mounted and has write access."
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if probe_path is not None:
+            try:
+                os.unlink(probe_path)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not clean up YUKI_HOME write check in {root}; inspect the directory before retrying."
+                ) from exc
+    return root
 
 
 def config_path() -> Path:

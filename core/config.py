@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 import yaml
 
-from core.portable_paths import config_path as resolve_config_path, workspace_path
+from core.portable_paths import config_path as resolve_config_path, validate_configured_data_root, workspace_path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -66,6 +66,7 @@ def _mcp_servers(raw):
 
 
 def load_config(path=None):
+    validate_configured_data_root()
     selected_config_path = Path(path) if path else resolve_config_path()
     if path is None and not selected_config_path.exists():
         # Wheels carry a non-secret default template. Create the user's first
