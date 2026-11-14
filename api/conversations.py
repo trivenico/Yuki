@@ -188,6 +188,23 @@ class YukiConversationAPI:
                 )
                 return await self._respond(send, 200, {"tool_executions": records})
 
+            provider_evidence_match = re.fullmatch(
+                r"/v1/conversations/([^/]+)/tool-executions/([^/]+)/provider-outcomes", path
+            )
+            if provider_evidence_match and method == "GET":
+                conversation_id, call_id = provider_evidence_match.groups()
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                query = self._query(scope)
+                if set(query) != {"request_id"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                evidence = await asyncio.to_thread(
+                    self.conversations.provider_outcome_evidence,
+                    owner_id=user.user_id, conversation_id=conversation_id,
+                    request_id=query["request_id"], call_id=call_id,
+                )
+                return await self._respond(send, 200, {"provider_outcomes": evidence})
+
             tool_review_match = re.fullmatch(
                 r"/v1/conversations/([^/]+)/tool-executions/([^/]+)/reviews", path
             )
