@@ -58,7 +58,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     if (
         value["schema_version"] != 1
         or value["product"] != "Yuki Portable Runtime"
-        or value["artifact_kind"] != "unsigned-portable-runtime"
+        or value["artifact_kind"] != "portable-runtime"
         or not isinstance(value["platform"], str) or not value["platform"] or len(value["platform"]) > 100
         or not isinstance(value["runtime_version"], str) or not value["runtime_version"] or len(value["runtime_version"]) > 100
         or not isinstance(value["files"], list) or not value["files"]
