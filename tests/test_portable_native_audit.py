@@ -45,6 +45,21 @@ class NativeAuditTests(unittest.TestCase):
         self.assertFalse(parsed["ok"])
         self.assertIn("/opt/homebrew/lib/libfoo.dylib", parsed["unsafe_links"])
 
+    def test_macho_rejects_loader_path_prefix_lookalikes(self):
+        for token in ("@loader_pathEvil", "@executable_pathEvil"):
+            with self.subTest(token=token):
+                loads = f"Load command 1\\n cmd LC_RPATH\\n path {token}/lib (offset 12)\\n"
+                parsed = parse_macho_load_commands(loads, "binary:\\n\\t@rpath/libYuki.dylib (compatibility version 1.0.0)\\n")
+                self.assertFalse(parsed["ok"])
+                self.assertIn(token + "/lib", parsed["unsafe_rpaths"])
+
+    def test_macho_accepts_exact_loader_tokens(self):
+        for token in ("@loader_path", "@executable_path"):
+            with self.subTest(token=token):
+                loads = f"Load command 1\\n cmd LC_RPATH\\n path {token} (offset 12)\\n"
+                parsed = parse_macho_load_commands(loads, "binary:\\n\\t@rpath/libYuki.dylib (compatibility version 1.0.0)\\n")
+                self.assertTrue(parsed["ok"])
+
     def test_windows_parser_reports_imports_without_claiming_resolution(self):
         parsed = parse_windows_dependents(
             "Image has the following dependencies:\n\n KERNEL32.dll\n VCRUNTIME140.dll\n\n"
