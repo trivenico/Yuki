@@ -1222,6 +1222,8 @@ class ConversationServiceTests(unittest.TestCase):
         entered_recovery = threading.Event()
         allow_recovery_to_finish = threading.Event()
         original_recover = self.service.recovery_coordinator.recover
+        renewal_rejected = threading.Event()
+        original_renew = self.store.renew_generation_lease
 
         def blocked_recovery(**kwargs):
             entered_recovery.set()
@@ -1229,12 +1231,18 @@ class ConversationServiceTests(unittest.TestCase):
                 raise TimeoutError("test did not release recovery")
             return original_recover(**kwargs)
 
+        def observe_rejected_renewal(**kwargs):
+            try:
+                return original_renew(**kwargs)
+            finally:
+                renewal_rejected.set()
+
         self.service.LEASE_TTL_SECONDS = 60
         self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
         with patch.object(
             self.service.recovery_coordinator, "recover",
             side_effect=blocked_recovery,
-        ):
+        ), patch.object(self.store, "renew_generation_lease", side_effect=observe_rejected_renewal):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     self.service.reply,
@@ -1255,6 +1263,8 @@ class ConversationServiceTests(unittest.TestCase):
                             ("replacement-during-recovery", 9999999999,
                              "owner-a", self.conversation["conversation_id"]),
                         )
+                try:
+                    self.assertTrue(renewal_rejected.wait(timeout=2))
                 finally:
                     allow_recovery_to_finish.set()
                 with self.assertRaises(ConversationConflict):
