@@ -88,7 +88,9 @@ def verify_provider_outcome(
     lookup = getattr(adapter, "lookup_tool_outcome", None)
     if not callable(lookup):
         raise TypeError("provider adapter must explicitly implement lookup_tool_outcome.")
-    evidence = lookup(dict(execution))
+    # Adapters receive only the minimum durable identity required for a read-only lookup.
+    adapter_execution = {key: execution[key] for key in required}
+    evidence = lookup(adapter_execution)
     if not isinstance(evidence, ProviderOutcomeEvidence):
         raise TypeError("provider adapter returned untyped outcome evidence.")
     if (evidence.idempotency_key != execution["idempotency_key"]
