@@ -24,12 +24,13 @@ from scripts.portable_runtime_inputs import (
 )
 
 _TOKEN = re.compile(r"^[A-Za-z0-9_.-]+$")
+_EXACT_PIN = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\\[[A-Za-z0-9._,-]+\\])?==(?P<version>[A-Za-z0-9][A-Za-z0-9.!+_-]*)$")
 
 
 def _validate_lock(lock_file: Path) -> None:
     """Validate lock syntax before invoking pip, without needing wheel files."""
     from scripts.portable_runtime_inputs import (
-        _HASH_TOKEN, _PINNED_REQUIREMENT, _logical_requirement_lines,
+        _HASH_TOKEN, _logical_requirement_lines,
     )
 
     lines = _logical_requirement_lines(_regular_file(lock_file, "Requirements lock"))
@@ -37,11 +38,17 @@ def _validate_lock(lock_file: Path) -> None:
         raise InputValidationError("Requirements lock is empty.")
     for number, line in enumerate(lines, start=1):
         tokens = line.split()
-        if not tokens or tokens[0].startswith("-") or not _PINNED_REQUIREMENT.fullmatch(tokens[0]):
-            raise InputValidationError(f"Lock line {number} must be an exact pinned requirement.")
+        match = _EXACT_PIN.fullmatch(tokens[0]) if tokens else None
+        if not match:
+            raise InputValidationError(
+                f"Lock line {number} must be an exact version pin without environment markers or options."
+            )
         if any(not _HASH_TOKEN.fullmatch(token) for token in tokens[1:]) or not tokens[1:]:
             raise InputValidationError(f"Lock line {number} must contain only SHA-256 hashes.")
-    if not any(line.split()[0].lower().replace("_", "-").startswith("yuki-ai-assistant==") for line in lines):
+        normalized_name = match.group("name").lower().replace("_", "-").replace(".", "-")
+        if normalized_name == "yuki-ai-assistant":
+            has_yuki = True
+    if not locals().get("has_yuki", False):
         raise InputValidationError("Portable lock must include an exact yuki-ai-assistant application wheel pin.")
 
 
