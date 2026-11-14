@@ -20,6 +20,9 @@ production-storage = [
   "cryptography>=42,<47",
   "keyring>=25,<27",
 ]
+portable-bootstrap = [
+  "cryptography>=42,<47",
+]
 voice = [
   "pyttsx3>=2.90,<3.0",
   "faster-whisper>=1.2.1,<2.0",
@@ -46,7 +49,7 @@ include-package-data = true
 where = ["."]
 include = [
   "automation*", "companion*", "core*", "defense*", "evaluation*",
-  "hackback*", "knowledge*", "providers*", "skills*", "ui*", "voice*",
+  "hackback*", "knowledge*", "providers*", "skills*", "ui*", "voice*", "yuki_trust*",
 ]
 exclude = ["tests*", "benchmarks*", "scripts*"]
 

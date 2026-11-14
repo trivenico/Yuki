@@ -1,0 +1,47 @@
+name: Trusted portable bootstrap
+
+on:
+  pull_request:
+    paths:
+      - "yuki_trust/**"
+      - "tests/test_trusted_portable_bootstrap.py"
+      - "pyproject.toml"
+      - ".github/workflows/portable-bootstrap.yml"
+  push:
+    paths:
+      - "yuki_trust/**"
+      - "tests/test_trusted_portable_bootstrap.py"
+      - "pyproject.toml"
+      - ".github/workflows/portable-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-portable-bootstrap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap-tests:
+    name: Bootstrap security tests / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install bootstrap package
+        run: python -m pip install ".[portable-bootstrap]"
+      - name: Verify installed package contains trusted bootstrap
+        run: python -c "import yuki_trust.portable_bootstrap as bootstrap; assert callable(bootstrap.verify_signed_bundle)"
+      - name: Run trusted bootstrap security tests
+        run: python -m unittest discover -s tests -p "test_trusted_portable_bootstrap.py" -v
