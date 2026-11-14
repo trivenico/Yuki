@@ -110,8 +110,24 @@ class PortableHostInstallerTests(unittest.TestCase):
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertTrue(Path(result["public_key"]).is_file())
 
+    @unittest.skipIf(os.name == "nt", "POSIX no-follow symlink open")
+    def test_public_key_reader_rejects_symlink_source(self):
+        target = self.root / "target.pem"
+        target.write_bytes(b"not-a-key")
+        link = self.root / "linked.pem"
+        link.symlink_to(target)
+        with self.assertRaises(BootstrapError):
+            installer._validate_public_key(link)
+
+    @unittest.skipIf(os.name == "nt", "POSIX FIFO semantics")
+    def test_public_key_reader_rejects_non_regular_source_without_blocking(self):
+        fifo = self.root / "key.fifo"
+        os.mkfifo(fifo)
+        with self.assertRaisesRegex(BootstrapError, "regular PEM file"):
+            installer._validate_public_key(fifo)
+
     def test_windows_acl_grants_directory_and_inherited_full_control(self):
-        completed = type("Completed", (), {"stdout": 'User Name,SID\\r\\nDOMAIN\\\\user,S-1-5-21-1-2-3-1001\\r\\n'})()
+        completed = type("Completed", (), {"stdout": 'User Name,SID\r\nDOMAIN\\user,S-1-5-21-1-2-3-1001\r\n'})()
         with (
             patch.object(installer.os, "name", "nt"),
             patch.object(installer.subprocess, "run", return_value=completed) as run,
