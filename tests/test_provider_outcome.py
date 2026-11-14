@@ -65,6 +65,18 @@ class ProviderOutcomeTests(unittest.TestCase):
             "status": "uncertain",
         }])
 
+    def test_evidence_for_different_execution_is_rejected_even_when_fingerprints_match(self):
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                return ProviderOutcomeTests().evidence(
+                    execution_id="another-execution",
+                    idempotency_key=execution["idempotency_key"],
+                    arguments_sha256=execution["arguments_sha256"],
+                )
+
+        with self.assertRaisesRegex(ValueError, "exact durable execution identity"):
+            verify_provider_outcome(Adapter(), self.execution)
+
     def test_expected_provider_identity_is_enforced(self):
         class Adapter:
             def lookup_tool_outcome(self, execution):
