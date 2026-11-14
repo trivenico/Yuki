@@ -74,6 +74,31 @@ class PortableHostPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
             _read_host_file_secure(self.policy, label="Test policy", max_bytes=4)
 
+    @unittest.skipUnless(os.name == "posix" and Path("/proc/self/fd").is_dir(), "Linux /proc file descriptor accounting")
+    def test_posix_secure_reader_closes_descriptors_after_repeated_failures(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        def descriptor_count():
+            return len(os.listdir("/proc/self/fd"))
+
+        before = descriptor_count()
+        for _ in range(10):
+            with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
+                _read_host_file_secure(
+                    self.policy, label="Test policy", max_bytes=1
+                )
+            with self.assertRaisesRegex(BootstrapError, "could not be securely read"):
+                _read_host_file_secure(
+                    self.trust_dir / "missing-policy.json",
+                    label="Test policy",
+                    max_bytes=64 * 1024,
+                )
+        after = descriptor_count()
+        self.assertLessEqual(
+            after, before + 1,
+            "rejected POSIX secure reads leaked file descriptors",
+        )
+
     @unittest.skipUnless(os.name == "nt", "Windows native handle read semantics")
     def test_windows_secure_reader_reads_regular_file_and_enforces_size_limit(self):
         from yuki_trust.portable_host import _read_host_file_secure
