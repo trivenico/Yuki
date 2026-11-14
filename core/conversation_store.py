@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import hashlib
+import json
 
 from core.sqlite_file_security import prepare_private_sqlite_path
 import time
@@ -437,10 +438,11 @@ class ConversationStore:
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
                 raise ValueError(f"{label} must be non-empty bounded text.")
         if idempotency_key is None:
-            idempotency_key = hashlib.sha256(
-                ("yuki-tool-v1|" + owner + "|" + conversation_id + "|"
-                 + request_id.strip() + "|" + call_id.strip()).encode("utf-8")
-            ).hexdigest()
+            scope = json.dumps(
+                ["yuki-tool-v1", owner, conversation_id, request_id.strip(), call_id.strip()],
+                ensure_ascii=False, separators=(",", ":"),
+            )
+            idempotency_key = hashlib.sha256(scope.encode("utf-8")).hexdigest()
         if not isinstance(idempotency_key, str) or len(idempotency_key) != 64 or any(char not in "0123456789abcdef" for char in idempotency_key):
             raise ValueError("idempotency_key must be a lowercase SHA-256 hex digest.")
         if type(provider_idempotency) is not bool:
