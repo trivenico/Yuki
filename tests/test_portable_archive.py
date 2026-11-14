@@ -68,6 +68,21 @@ class PortableArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ArchiveValidationError, "parent directory"):
             extract_zip_safely(self.archive, self.destination)
 
+    def test_rejects_casefolded_file_parent_collision(self):
+        self._zip([("A", b"file", stat.S_IFREG | 0o644), ("a/child", b"child", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(ArchiveValidationError, "parent directory"):
+            extract_zip_safely(self.archive, self.destination)
+
+    def test_rejects_casefolded_parent_spelling_collision(self):
+        self._zip([("a/child", b"child", stat.S_IFREG | 0o644), ("A", b"file", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(ArchiveValidationError, "both a file and directory"):
+            extract_zip_safely(self.archive, self.destination)
+
+    def test_rejects_casefolded_directory_spelling_collision(self):
+        self._zip([("A/first", b"one", stat.S_IFREG | 0o644), ("a/second", b"two", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(ArchiveValidationError, "colliding directory"):
+            extract_zip_safely(self.archive, self.destination)
+
     def test_rejects_expanded_size_limit(self):
         self._zip([("large.bin", b"x" * 128, stat.S_IFREG | 0o644)])
         with self.assertRaisesRegex(ArchiveValidationError, "per-file size"):
