@@ -28,6 +28,10 @@ class ToolProtocolError(ValueError):
 class ToolDispatchCancelled(RuntimeError):
     """Raised when cancellation stops a validated batch before its next side effect."""
 
+    def __init__(self, completed_results):
+        super().__init__("tool dispatch cancelled before the next invocation.")
+        self.completed_results = tuple(completed_results)
+
 
 @dataclass(frozen=True)
 class StructuredToolCall:
@@ -102,7 +106,7 @@ class StructuredToolProtocol:
         results = []
         for call in calls:
             if cancellation_requested is not None and cancellation_requested():
-                raise ToolDispatchCancelled("tool dispatch cancelled before the next invocation.")
+                raise ToolDispatchCancelled(results)
             argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
             output = self._runtime.invoke(call.name, argument)
             results.append(StructuredToolResult(call.call_id, call.name, output))
