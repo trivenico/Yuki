@@ -60,6 +60,31 @@ class ConversationStoreTests(unittest.TestCase):
             ))
         self.assertEqual(second["expires_at"], 1_036.0)
 
+    def test_assistant_message_commit_requires_active_matching_lease(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="hello", idempotency_key="user:lease-test",
+            expected_version=0, generation_request_id="lease-test",
+        )
+        with patch("core.conversation_store.time.time", return_value=3_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="current-worker", ttl_seconds=5,
+            )
+            with self.assertRaisesRegex(ConversationConflict, "lease expired or is no longer owned"):
+                self.store.append_message(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    role="assistant", content="stale", idempotency_key="assistant:stale",
+                    expected_version=1, lease_token="stale-worker",
+                )
+            accepted = self.store.append_message(
+                owner_id=self.owner, conversation_id=conversation_id,
+                role="assistant", content="valid", idempotency_key="assistant:valid",
+                expected_version=1, lease_token="current-worker",
+            )
+            self.assertEqual(accepted["message"]["content"], "valid")
+
     def test_lease_renewal_extends_only_the_live_matching_fencing_token(self):
         conversation_id = self.conversation["conversation_id"]
         with patch("core.conversation_store.time.time", return_value=2_000.0):
