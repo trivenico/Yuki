@@ -190,10 +190,12 @@ class ConversationService:
                     raise
                 # Preserve the execution/lease-loss exception while retaining
                 # cleanup diagnostics for logs and debuggers.
-                active_error.add_note(
-                    "conversation lease cleanup also failed: "
-                    + type(cleanup_error).__name__
-                )
+                add_note = getattr(active_error, "add_note", None)
+                if callable(add_note):
+                    add_note(
+                        "conversation lease cleanup also failed: "
+                        + type(cleanup_error).__name__
+                    )
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
