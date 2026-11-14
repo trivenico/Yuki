@@ -65,6 +65,7 @@ class PortableReleaseBuildTests(unittest.TestCase):
                     output_root=output,
                     platform_tag="linux-x86_64",
                     runtime_version="3.12.9",
+                    release_sequence=42,
                 )
 
             self.assertEqual(calls, ["runtime", "bundle", "manifest", "audit"])
