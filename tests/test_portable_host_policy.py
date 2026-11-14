@@ -94,6 +94,40 @@ class PortableHostPolicyTests(unittest.TestCase):
                 self.trust_dir, label="Test policy", max_bytes=64 * 1024
             )
 
+    @unittest.skipUnless(os.name == "nt", "Windows native handle cleanup")
+    def test_windows_secure_reader_closes_handles_after_repeated_failures(self):
+        import ctypes
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_handle_count = kernel32.GetProcessHandleCount
+        get_handle_count.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        get_handle_count.restype = ctypes.c_int
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.argtypes = []
+        get_current_process.restype = ctypes.c_void_p
+
+        def handle_count():
+            count = ctypes.c_ulong()
+            self.assertTrue(get_handle_count(get_current_process(), ctypes.byref(count)))
+            return count.value
+
+        before = handle_count()
+        for _ in range(10):
+            with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
+                _read_host_file_secure(
+                    self.policy, label="Test policy", max_bytes=1
+                )
+            with self.assertRaisesRegex(BootstrapError, "directory|could not be securely read"):
+                _read_host_file_secure(
+                    self.trust_dir, label="Test policy", max_bytes=64 * 1024
+                )
+        after = handle_count()
+        self.assertLessEqual(
+            after, before + 1,
+            "rejected Windows secure reads leaked native file handles",
+        )
+
     @unittest.skipUnless(os.name == "nt", "Windows native handle copy semantics")
     def test_windows_secure_copy_hashes_source_and_creates_target_exclusively(self):
         from yuki_trust.portable_host import _copy_windows_file_handle_secure
