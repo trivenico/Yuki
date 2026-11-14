@@ -115,6 +115,20 @@ class ConversationStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_tool_executions_owner_request
                     ON conversation_tool_executions(owner_id, conversation_id, request_id, started_at);
+
+                CREATE TABLE IF NOT EXISTS conversation_tool_reviews (
+                    review_id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain')),
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_tool_reviews_owner_execution
+                    ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at);
             """)
             tool_columns = {
                 row["name"] for row in db.execute(
@@ -539,6 +553,71 @@ class ConversationStore:
                 (owner, conversation_id, request_id),
             ).fetchall()
         return [{**dict(row), "provider_idempotency": bool(row["provider_idempotency"])} for row in rows]
+
+    def review_tool_execution(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        call_id: str, action: str, reason: str,
+    ) -> dict[str, Any]:
+        """Append an owner-authenticated review event without changing execution outcome."""
+        owner = self._owner(owner_id)
+        for value, label, maximum in (
+            (conversation_id, "conversation_id", 64),
+            (request_id, "request_id", 160),
+            (call_id, "call_id", 64),
+        ):
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError(f"{label} must be non-empty bounded text.")
+        if action != "acknowledge_uncertain":
+            raise ValueError("unsupported tool review action.")
+        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 1000:
+            raise ValueError("reason must be non-empty text of at most 1000 characters.")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                execution = db.execute(
+                    """SELECT execution_id, status FROM conversation_tool_executions
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?""",
+                    (owner, conversation_id, request_id.strip(), call_id.strip()),
+                ).fetchone()
+                if execution is None:
+                    raise ConversationNotFound("tool execution not found.")
+                if execution["status"] != "uncertain":
+                    raise ConversationConflict("only uncertain tool executions can be acknowledged.")
+                review_id, created_at = str(uuid.uuid4()), self._now()
+                db.execute(
+                    """INSERT INTO conversation_tool_reviews
+                       (review_id, execution_id, conversation_id, owner_id, request_id,
+                        call_id, action, reason, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (review_id, execution["execution_id"], conversation_id, owner,
+                     request_id.strip(), call_id.strip(), action, reason.strip(), created_at),
+                )
+                db.commit()
+                return {
+                    "review_id": review_id, "execution_id": execution["execution_id"],
+                    "conversation_id": conversation_id, "request_id": request_id.strip(),
+                    "call_id": call_id.strip(), "action": action,
+                    "reason": reason.strip(), "created_at": created_at,
+                    "execution_status": "uncertain",
+                }
+            except Exception:
+                db.rollback()
+                raise
+
+    def list_tool_execution_reviews(
+        self, *, owner_id: str, conversation_id: str, request_id: str, call_id: str,
+    ) -> list[dict[str, Any]]:
+        owner = self._owner(owner_id)
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT review_id, execution_id, conversation_id, request_id, call_id,
+                          action, reason, created_at
+                   FROM conversation_tool_reviews
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?
+                   ORDER BY created_at, review_id""",
+                (owner, conversation_id, request_id, call_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def mark_started_tool_executions_uncertain(
         self, *, owner_id: str, conversation_id: str, request_id: str,
