@@ -40,7 +40,7 @@ class ConversationRecoveryCoordinator:
         for generation in pending:
             request_id = generation["request_id"]
             recovered.append(request_id)
-            self.store.mark_started_tool_executions_uncertain(
+            uncertain_count = self.store.mark_started_tool_executions_uncertain(
                 owner_id=owner_id, conversation_id=conversation_id,
                 request_id=request_id, lease_token=lease_token,
             )
@@ -55,9 +55,10 @@ class ConversationRecoveryCoordinator:
                 idempotency_key="assistant:" + request_id,
             )
             if assistant_exists:
-                self.store.finish_generation(
+                self.store.finish_generation_with_recovery_event(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, status="completed", lease_token=lease_token,
+                    outcome="completed", uncertain_tool_calls=uncertain_count,
                 )
                 completed += 1
             elif user_message is not None:
@@ -67,15 +68,17 @@ class ConversationRecoveryCoordinator:
                     idempotency_key="assistant:" + request_id,
                     expected_version=conversation["version"], lease_token=lease_token,
                 )
-                self.store.finish_generation(
+                self.store.finish_generation_with_recovery_event(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, status="interrupted", lease_token=lease_token,
+                    outcome="interrupted", uncertain_tool_calls=uncertain_count,
                 )
                 interrupted += 1
             else:
-                self.store.finish_generation(
+                self.store.finish_generation_with_recovery_event(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, status="interrupted", lease_token=lease_token,
+                    outcome="orphaned", uncertain_tool_calls=uncertain_count,
                 )
                 orphaned += 1
         return RecoverySummary(
