@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import hashlib
 import uuid
 from typing import Any, Sequence
 
@@ -153,6 +154,10 @@ class ConversationService:
         )
         for generation in pending:
             recovered_request_ids.add(generation["request_id"])
+            self.store.mark_started_tool_executions_uncertain(
+                owner_id=owner_id, conversation_id=conversation_id,
+                request_id=generation["request_id"],
+            )
             conversation_now = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
             )
@@ -249,7 +254,31 @@ class ConversationService:
             kwargs = {"tools": list(tools), "history": history}
             if system_text is not None:
                 kwargs["system_text"] = system_text
-            result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+            def before_tool_call(call, argument):
+                digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+                claim = self.store.begin_tool_execution(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    request_id=request_id, call_id=call.call_id, tool_name=call.name,
+                    arguments_sha256=digest, lease_token=lease_token,
+                )
+                return "claimed" if claim["created"] else claim["status"]
+
+            def after_tool_call(call, argument, output):
+                if not self.store.finish_tool_execution(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    request_id=request_id, call_id=call.call_id,
+                    lease_token=lease_token, status="completed",
+                ):
+                    raise ConversationConflict(
+                        "tool side effect finished but its durable journal could not be finalized."
+                    )
+
+            result = agent_loop.run(
+                user_text, on_text_delta=on_text_delta,
+                cancellation_requested=cancellation_requested,
+                before_tool_call=before_tool_call, after_tool_call=after_tool_call,
+                **kwargs,
+            )
             status = result.status
             model_turns = result.model_turns
             tool_calls = result.tool_calls
@@ -257,6 +286,11 @@ class ConversationService:
                 answer = result.text
             elif result.status == "cancelled":
                 answer = "Generation was stopped at your request."
+            elif result.status == "interrupted":
+                answer = (
+                    "A previous attempt may already have performed a tool action. "
+                    "Yuki blocked automatic replay; review the action status before retrying."
+                )
             else:
                 answer = (
                     "I couldn't complete that request within the current execution limits. "
