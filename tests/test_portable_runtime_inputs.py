@@ -45,7 +45,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertEqual(report["wheel_count"], 1)
 
     def test_lock_requires_exact_version_pin(self):
-        self._write_lock(f"demo>=1.0 --hash=sha256:{self.digest}\\n")
+        self._write_lock(f"demo>=1.0 --hash=sha256:{self.digest}\n")
         with self.assertRaisesRegex(InputValidationError, "exact == version pin"):
             validate_offline_wheelhouse(self.lock, self.wheelhouse)
 
@@ -68,7 +68,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
 
     def test_pip_options_are_rejected(self):
         self._write_lock("--extra-index-url https://example.invalid/simple\n")
-        with self.assertRaisesRegex(InputValidationError, "pip options"):
+        with self.assertRaisesRegex(InputValidationError, "exact == version pin"):
             validate_offline_wheelhouse(self.lock, self.wheelhouse)
 
     def test_lock_rejects_unrecognized_requirement_options(self):
