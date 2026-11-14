@@ -12,6 +12,10 @@ import hashlib
 import json
 import re
 import sys
+import os
+import subprocess
+import shutil
+import tempfile
 from pathlib import Path
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
@@ -76,15 +80,17 @@ def validate_offline_wheelhouse(lock_file: Path, wheelhouse: Path) -> dict:
 
     requirement_hashes: list[set[str]] = []
     for line in lines:
-        if line.startswith(("-", "--")) or "://" in line or line.startswith((".", "/")):
-            raise InputValidationError("Lock may contain only pinned package requirements, not pip options, URLs, or local paths.")
-        if not _PINNED_REQUIREMENT.match(line):
+        tokens = line.split()
+        if tokens and tokens[0].startswith("-"):
+            raise InputValidationError("Standalone pip options are not permitted in the requirements lock.")
+        if not tokens or not _PINNED_REQUIREMENT.fullmatch(tokens[0]):
             raise InputValidationError("Every dependency must use an exact == version pin.")
-        hashes = {value.lower() for value in _HASH_TOKEN.findall(line)}
+        if any(not _HASH_TOKEN.fullmatch(token) for token in tokens[1:]):
+            raise InputValidationError("Lock lines may contain only SHA-256 hash options after the pinned requirement.")
+        hashes = {token.split(":", 1)[1].lower() for token in tokens[1:]}
         if not hashes:
             raise InputValidationError("Every locked requirement must include at least one SHA-256 hash.")
         requirement_hashes.append(hashes)
-
     wheel_hashes: dict[str, str] = {}
     for path in sorted(wheelhouse.iterdir()):
         if path.is_symlink() or not path.is_file():
@@ -117,20 +123,85 @@ def validate_offline_wheelhouse(lock_file: Path, wheelhouse: Path) -> dict:
     }
 
 
+def install_offline_dependencies(runtime_root: Path, python_executable: Path, lock_file: Path, wheelhouse: Path, target: Path, *, timeout_seconds: int = 1800, runner=subprocess.run) -> dict:
+    """Install a fully hash-locked dependency closure transactionally, offline."""
+    runtime_root = Path(runtime_root).expanduser()
+    if runtime_root.is_symlink() or not runtime_root.is_dir():
+        raise InputValidationError("Verified runtime root must be an existing non-symlink directory.")
+    runtime_root = runtime_root.resolve(strict=True)
+    python_executable = Path(python_executable).expanduser()
+    if python_executable.is_symlink() or not python_executable.is_file():
+        raise InputValidationError("Runtime Python must be a regular, non-symlink executable.")
+    python_executable = python_executable.resolve(strict=True)
+    try:
+        python_executable.relative_to(runtime_root)
+    except ValueError as exc:
+        raise InputValidationError("Runtime Python must resolve inside the independently verified runtime root.") from exc
+    if type(timeout_seconds) is not int or timeout_seconds <= 0:
+        raise ValueError("Installation timeout must be a positive integer.")
+    lock_file = _regular_file(Path(lock_file).expanduser(), "Requirements lock")
+    wheelhouse = Path(wheelhouse).expanduser()
+    report = validate_offline_wheelhouse(lock_file, wheelhouse)
+    target = Path(target).expanduser()
+    if target.exists() or target.is_symlink():
+        raise InputValidationError("Dependency target must not already exist.")
+    parent = target.parent.resolve(strict=True)
+    stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
+    command = [
+        str(python_executable), "-I", "-m", "pip", "install",
+        "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
+        "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
+        "--no-input", "--no-warn-script-location", "--target", str(stage), "-r", str(lock_file),
+    ]
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PIP_CONFIG_FILE": os.devnull,
+    }
+    try:
+        try:
+            completed = runner(command, check=False, capture_output=True, text=True, timeout=timeout_seconds, env=environment, shell=False)
+        except subprocess.TimeoutExpired as exc:
+            raise InputValidationError("Offline dependency installation exceeded its time limit.") from exc
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "pip failed without diagnostic output")[-4000:]
+            raise InputValidationError(f"Offline dependency installation failed: {detail}")
+        if not stage.is_dir() or stage.is_symlink():
+            raise InputValidationError("Installer removed or replaced its staging directory.")
+        os.replace(stage, target)
+    except Exception:
+        if stage.exists():
+            shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return {"installed_target": str(target), "requirement_count": report["requirement_count"], "wheel_count": report["wheel_count"], "network_index_access": False, "hash_checking": True, "atomic_publish": True}
+
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-archive", required=True, type=Path)
     parser.add_argument("--runtime-sha256", required=True)
     parser.add_argument("--requirements-lock", required=True, type=Path)
     parser.add_argument("--wheelhouse", required=True, type=Path)
+    parser.add_argument("--install-runtime-root", type=Path)
+    parser.add_argument("--install-python", type=Path)
+    parser.add_argument("--install-target", type=Path)
+    parser.add_argument("--install-timeout", type=int, default=1800)
     args = parser.parse_args(argv)
     try:
+        install_args = (args.install_runtime_root, args.install_python, args.install_target)
+        if any(install_args) and not all(install_args):
+            raise InputValidationError("--install-runtime-root, --install-python and --install-target must be supplied together.")
         report = {
             "runtime": validate_runtime_archive(args.runtime_archive, args.runtime_sha256),
             "dependencies": validate_offline_wheelhouse(args.requirements_lock, args.wheelhouse),
             "network_installation": False,
             "execution_performed": False,
         }
+        if args.install_python and args.install_target:
+            report["installation"] = install_offline_dependencies(args.install_runtime_root, args.install_python, args.requirements_lock, args.wheelhouse, args.install_target, timeout_seconds=args.install_timeout)
+            report["execution_performed"] = True
     except (OSError, UnicodeError, InputValidationError) as exc:
         print(f"Portable runtime input validation failed: {exc}", file=sys.stderr)
         return 2

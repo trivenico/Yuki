@@ -1,12 +1,17 @@
 import hashlib
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from types import SimpleNamespace
 from pathlib import Path
 
 from scripts.portable_runtime_inputs import (
     InputValidationError,
     validate_offline_wheelhouse,
     validate_runtime_archive,
+    install_offline_dependencies,
+    main,
 )
 
 
@@ -43,7 +48,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertEqual(report["wheel_count"], 1)
 
     def test_lock_requires_exact_version_pin(self):
-        self._write_lock(f"demo>=1.0 --hash=sha256:{self.digest}\\n")
+        self._write_lock(f"demo>=1.0 --hash=sha256:{self.digest}\n")
         with self.assertRaisesRegex(InputValidationError, "exact == version pin"):
             validate_offline_wheelhouse(self.lock, self.wheelhouse)
 
@@ -66,8 +71,80 @@ class PortableRuntimeInputTests(unittest.TestCase):
 
     def test_pip_options_are_rejected(self):
         self._write_lock("--extra-index-url https://example.invalid/simple\n")
-        with self.assertRaisesRegex(InputValidationError, "pip options"):
+        with self.assertRaisesRegex(InputValidationError, "Standalone pip options"):
             validate_offline_wheelhouse(self.lock, self.wheelhouse)
+
+    def test_lock_rejects_unrecognized_requirement_options(self):
+        self._write_lock(f"demo==1.0 --hash=sha256:{self.digest} --global-option=evil\n")
+        with self.assertRaisesRegex(InputValidationError, "only SHA-256 hash options"):
+            validate_offline_wheelhouse(self.lock, self.wheelhouse)
+
+    def test_installer_uses_isolated_offline_hash_required_pip(self):
+        self._write_lock()
+        runtime_root = self.root / "verified-runtime"
+        runtime_root.mkdir()
+        python = runtime_root / "python"
+        python.write_bytes(b"trusted interpreter placeholder")
+        target = self.root / "site-packages"
+        calls = []
+        def fake_runner(command, **kwargs):
+            calls.append((command, kwargs))
+            staged_target = Path(command[command.index("--target") + 1])
+            staged_target.mkdir(exist_ok=True)
+            (staged_target / "installed.marker").write_text("ok", encoding="utf-8")
+            return SimpleNamespace(returncode=0, stderr="", stdout="")
+        result = install_offline_dependencies(runtime_root, python, self.lock, self.wheelhouse, target, runner=fake_runner)
+        command, kwargs = calls[0]
+        self.assertIn("--no-index", command)
+        self.assertIn("--require-hashes", command)
+        self.assertIn("--isolated", command)
+        self.assertIn("--only-binary=:all:", command)
+        self.assertFalse(kwargs["shell"])
+        self.assertNotIn("PIP_INDEX_URL", kwargs["env"])
+        self.assertTrue(result["hash_checking"])
+        self.assertTrue(result["atomic_publish"])
+        self.assertTrue((target / "installed.marker").is_file())
+        self.assertEqual(Path(command[command.index("--target") + 1]).parent.resolve(), self.root.resolve())
+
+    def test_installer_rejects_failed_pip_execution(self):
+        self._write_lock()
+        runtime_root = self.root / "verified-runtime"
+        runtime_root.mkdir()
+        python = runtime_root / "python"
+        python.write_bytes(b"trusted interpreter placeholder")
+        def failed_runner(command, **kwargs):
+            staged_target = Path(command[command.index("--target") + 1])
+            staged_target.mkdir(exist_ok=True)
+            (staged_target / "partial.marker").write_text("partial", encoding="utf-8")
+            return SimpleNamespace(returncode=1, stderr="bad wheel", stdout="")
+        final_target = self.root / "site"
+        with self.assertRaisesRegex(InputValidationError, "bad wheel"):
+            install_offline_dependencies(runtime_root, python, self.lock, self.wheelhouse, final_target, runner=failed_runner)
+        self.assertFalse(final_target.exists())
+        self.assertEqual(list(self.root.glob(".yuki-dependencies-stage-*")), [])
+
+
+    def test_cli_requires_all_installation_paths_together(self):
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            result = main([
+                "--runtime-archive", "runtime.zip",
+                "--runtime-sha256", "0" * 64,
+                "--requirements-lock", "requirements.lock",
+                "--wheelhouse", "wheelhouse",
+                "--install-python", "runtime/python",
+            ])
+        self.assertEqual(result, 2)
+        self.assertIn("must be supplied together", errors.getvalue())
+
+    def test_installer_rejects_interpreter_outside_verified_runtime_root(self):
+        self._write_lock()
+        runtime_root = self.root / "verified-runtime"
+        runtime_root.mkdir()
+        external_python = self.root / "host-python"
+        external_python.write_bytes(b"host interpreter placeholder")
+        with self.assertRaisesRegex(InputValidationError, "inside the independently verified runtime root"):
+            install_offline_dependencies(runtime_root, external_python, self.lock, self.wheelhouse, self.root / "site")
 
 
 if __name__ == "__main__":
