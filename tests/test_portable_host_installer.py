@@ -98,6 +98,16 @@ class PortableHostInstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(BootstrapError, "64 hexadecimal"):
                 installer.install_host_trust(self.key, self.install, self.state, "not-a-fingerprint")
 
+    @unittest.skipIf(os.name == "nt", "POSIX launcher wrapper")
+    def test_posix_launcher_quotes_trusted_interpreter_and_preserves_arguments(self):
+        result = self._install()
+        launcher = Path(result["launcher"])
+        source = launcher.read_text(encoding="utf-8")
+        self.assertIn("exec ", source)
+        self.assertIn('"$@"', source)
+        self.assertTrue(os.access(launcher, os.X_OK))
+        self.assertTrue(Path(result["public_key"]).is_file())
+
     def test_windows_acl_grants_directory_and_inherited_full_control(self):
         completed = type("Completed", (), {"stdout": 'User Name,SID\\r\\nDOMAIN\\\\user,S-1-5-21-1-2-3-1001\\r\\n'})()
         with (
