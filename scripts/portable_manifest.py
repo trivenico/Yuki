@@ -89,7 +89,7 @@ def create_unsigned_manifest(
         raise InputValidationError("Platform must be non-empty text of at most 100 characters.")
     if not isinstance(runtime_version, str) or not runtime_version.strip() or len(runtime_version) > 100:
         raise InputValidationError("Runtime version must be non-empty text of at most 100 characters.")
-    root = Path(bundle).expanduser().resolve(strict=True)
+    root = Path(bundle).expanduser()
     files = inventory_bundle(root)
     return {
         "schema_version": 1,
