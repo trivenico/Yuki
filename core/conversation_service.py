@@ -267,12 +267,20 @@ class ConversationService:
                 kwargs["system_text"] = system_text
             def before_tool_call(call, argument):
                 digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+                idempotency_key = hashlib.sha256(
+                    ("yuki-tool-v1\\0" + owner_id + "\\0" + conversation_id + "\\0"
+                     + request_id + "\\0" + call.call_id).encode("utf-8")
+                ).hexdigest()
+                provider_support = agent_loop.tool_protocol.supports_idempotency(call.name)
                 claim = self.store.begin_tool_execution(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, call_id=call.call_id, tool_name=call.name,
                     arguments_sha256=digest, lease_token=lease_token,
+                    idempotency_key=idempotency_key, provider_idempotency=provider_support,
                 )
-                return "claimed" if claim["created"] else claim["status"]
+                if not claim["created"]:
+                    return claim["status"]
+                return {"status": "claimed", "idempotency_key": idempotency_key}
 
             def on_tool_error(call, argument, outcome):
                 # A handler exception cannot prove that an external provider did
