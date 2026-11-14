@@ -88,13 +88,13 @@ def _prepare_private_directory(path: Path, label: str) -> None:
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode):
         raise BootstrapError(f"{label} path must be a real directory, not a symlink.")
+    home = Path.home().resolve()
+    resolved = path.resolve(strict=True)
+    if resolved == Path(resolved.anchor) or resolved == home:
+        raise BootstrapError(f"{label} directory must be a dedicated child directory, not a filesystem or home root.")
     if os.name != "nt":
         if info.st_uid != os.getuid():
             raise BootstrapError(f"{label} directory must be owned by the current user.")
-        home = Path.home().resolve()
-        resolved = path.resolve(strict=True)
-        if resolved == Path(resolved.anchor) or resolved == home:
-            raise BootstrapError(f"{label} directory must be a dedicated child directory, not a filesystem or home root.")
         portable_host._validate_host_parent_directories(path / ".yuki-trust-check", label=label)
         path.chmod(0o700)
 
