@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 import re
+import inspect
 import sys
 import threading
 import uuid
@@ -103,6 +104,8 @@ def verify_provider_outcome(
     lookup = getattr(adapter, "lookup_tool_outcome", None)
     if not callable(lookup):
         raise TypeError("provider adapter must explicitly implement lookup_tool_outcome.")
+    if inspect.iscoroutinefunction(lookup):
+        raise TypeError("provider adapter lookup_tool_outcome must be synchronous.")
     # Adapters receive only the minimum durable identity required for a read-only lookup.
     adapter_execution = {key: execution[key] for key in required}
     evidence = lookup(adapter_execution)
@@ -137,12 +140,15 @@ class ProviderOutcomeRegistry:
             if (not isinstance(tool_name, str)
                     or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name)):
                 raise ValueError("adapter tool names must be bounded identifiers.")
-            if not callable(getattr(adapter, "lookup_tool_outcome", None)):
+            lookup = getattr(adapter, "lookup_tool_outcome", None)
+            if not callable(lookup):
                 raise TypeError(f"adapter for {tool_name!r} has no lookup_tool_outcome method.")
+            if inspect.iscoroutinefunction(lookup):
+                raise TypeError(f"adapter for {tool_name!r} must use a synchronous lookup method.")
             provider_id = getattr(adapter, "provider_id", None)
             if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", provider_id):
                 raise ValueError(f"adapter for {tool_name!r} must declare a bounded provider_id.")
-            validated[tool_name] = _RegisteredProviderAdapter(provider_id, adapter.lookup_tool_outcome)
+            validated[tool_name] = _RegisteredProviderAdapter(provider_id, lookup)
         self._adapters = MappingProxyType(validated)
 
     def lookup(self, tool_name: str, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
