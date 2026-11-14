@@ -64,7 +64,7 @@ class PortableManifestTests(unittest.TestCase):
     def test_rejects_backslash_in_manifest_path(self):
         from scripts.portable_manifest import _validate_relative_path
         with self.assertRaisesRegex(InputValidationError, "non-canonical"):
-            _validate_relative_path("folder\\\\evil")
+            _validate_relative_path("folder\\evil")
 
     def test_rejects_symlinked_bundle_root(self):
         alias = Path(self.temp.name) / "bundle-alias"
