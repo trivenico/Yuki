@@ -796,6 +796,22 @@ class ConversationStoreTests(unittest.TestCase):
                 {"conversation_tool_executions", "conversations"},
             )
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+            db.execute("PRAGMA foreign_keys=ON")
+            execution_id = db.execute(
+                "SELECT execution_id FROM conversation_tool_executions WHERE request_id=? AND call_id=?",
+                (request_id, "legacy-call"),
+            ).fetchone()[0]
+            db.execute(
+                "DELETE FROM conversation_tool_executions WHERE execution_id=?",
+                (execution_id,),
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM conversation_tool_reviews WHERE execution_id=?",
+                    (execution_id,),
+                ).fetchone()[0],
+                0,
+            )
 
 
     def test_failed_legacy_review_migration_rolls_back_table_and_history(self):
