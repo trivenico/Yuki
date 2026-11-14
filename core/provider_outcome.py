@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 import re
+import uuid
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -121,10 +122,12 @@ class ProviderOutcomeReconciler:
     """Read-only provider lookup plus append-only evidence recording."""
 
     def __init__(self, store: Any, registry: ProviderOutcomeRegistry) -> None:
-        if not callable(getattr(store, "list_tool_executions", None)) or not callable(
-            getattr(store, "record_provider_outcome_evidence", None)
-        ):
-            raise TypeError("store does not implement the provider evidence persistence contract.")
+        required_store_methods = (
+            "list_tool_executions", "acquire_provider_reconciliation_lease",
+            "release_provider_reconciliation_lease", "record_provider_outcome_evidence",
+        )
+        if any(not callable(getattr(store, name, None)) for name in required_store_methods):
+            raise TypeError("store does not implement the fenced provider reconciliation contract.")
         if not isinstance(registry, ProviderOutcomeRegistry):
             raise TypeError("registry must be a ProviderOutcomeRegistry.")
         self._store = store
@@ -139,16 +142,28 @@ class ProviderOutcomeReconciler:
         execution = next((item for item in executions if item["call_id"] == call_id), None)
         if execution is None:
             raise LookupError("tool execution not found.")
-        evidence = self._registry.lookup(
-            execution["tool_name"],
-            {
-                "execution_id": execution["execution_id"],
-                "idempotency_key": execution["idempotency_key"],
-                "arguments_sha256": execution["arguments_sha256"],
-                "status": execution["status"],
-            },
-        )
-        return self._store.record_provider_outcome_evidence(
+        lease_token = uuid.uuid4().hex
+        self._store.acquire_provider_reconciliation_lease(
             owner_id=owner_id, conversation_id=conversation_id,
-            request_id=request_id, call_id=call_id, evidence=evidence,
+            request_id=request_id, call_id=call_id, lease_token=lease_token,
         )
+        try:
+            evidence = self._registry.lookup(
+                execution["tool_name"],
+                {
+                    "execution_id": execution["execution_id"],
+                    "idempotency_key": execution["idempotency_key"],
+                    "arguments_sha256": execution["arguments_sha256"],
+                    "status": execution["status"],
+                },
+            )
+            return self._store.record_provider_outcome_evidence(
+                owner_id=owner_id, conversation_id=conversation_id,
+                request_id=request_id, call_id=call_id, evidence=evidence,
+                reconciliation_lease_token=lease_token,
+            )
+        finally:
+            self._store.release_provider_reconciliation_lease(
+                owner_id=owner_id, execution_id=execution["execution_id"],
+                lease_token=lease_token,
+            )
