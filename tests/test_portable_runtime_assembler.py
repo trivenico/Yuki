@@ -25,10 +25,17 @@ class PortableRuntimeAssemblerTests(unittest.TestCase):
         self.wheelhouse = self.root / "wheelhouse"
         self.wheelhouse.mkdir()
         self.wheel = self.wheelhouse / "demo-1.0-py3-none-any.whl"
-        self.wheel.write_bytes(b"verified wheel bytes")
+        self.wheel.write_bytes(b"verified dependency wheel bytes")
+        app_wheel = self.wheelhouse / "yuki_ai_assistant-0.1.0-py3-none-any.whl"
+        app_wheel.write_bytes(b"verified Yuki application wheel bytes")
         wheel_digest = hashlib.sha256(self.wheel.read_bytes()).hexdigest()
+        app_digest = hashlib.sha256(app_wheel.read_bytes()).hexdigest()
         self.lock = self.root / "requirements.lock"
-        self.lock.write_text(f"demo==1.0 --hash=sha256:{wheel_digest}\n", encoding="utf-8")
+        self.lock.write_text(
+            f"demo==1.0 --hash=sha256:{wheel_digest}\n"
+            f"yuki-ai-assistant==0.1.0 --hash=sha256:{app_digest}\n",
+            encoding="utf-8",
+        )
         self.runtime = self.root / "assembled-runtime"
         self.dependencies = self.root / "dependencies"
 
@@ -73,6 +80,15 @@ class PortableRuntimeAssemblerTests(unittest.TestCase):
         self.assertIn("-c", captured["command"])
         self.assertIn(str(pip_wheel), captured["command"])
         self.assertEqual(report["dependencies"]["pip_bootstrap"], "pinned-wheel")
+
+    def test_requires_yuki_application_wheel_pin(self):
+        self.lock.write_text("demo==1.0 --hash=sha256:" + hashlib.sha256(self.wheel.read_bytes()).hexdigest() + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(InputValidationError, "must include an exact yuki-ai-assistant"):
+            assemble_portable_runtime(
+                self.archive, self.digest, self.runtime, "python/bin/python",
+                self.lock, self.wheelhouse, self.dependencies, runner=self._runner(),
+            )
+        self.assertFalse(self.runtime.exists())
 
     def test_rejects_wrong_archive_digest_without_extracting(self):
         with self.assertRaisesRegex(InputValidationError, "does not match"):
