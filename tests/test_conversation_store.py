@@ -151,6 +151,35 @@ class ConversationStoreTests(unittest.TestCase):
                     request_id="recovery-fence",
                 )[0]["status"], "uncertain")
 
+    def test_generation_checkpoint_rejects_stale_worker_after_lease_takeover(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="checkpoint", idempotency_key="user:checkpoint-fence",
+            expected_version=0, generation_request_id="checkpoint-fence",
+        )
+        with patch("core.conversation_store.time.time", return_value=6_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="old-checkpoint-worker", ttl_seconds=5,
+            )
+            with patch("core.conversation_store.time.time", return_value=6_006.0):
+                self.store.acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="new-checkpoint-worker", ttl_seconds=30,
+                )
+                checkpoint = {"phase": "model_running"}
+                self.assertFalse(self.store.update_generation_checkpoint(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="checkpoint-fence", checkpoint=checkpoint,
+                    lease_token="old-checkpoint-worker",
+                ))
+                self.assertTrue(self.store.update_generation_checkpoint(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="checkpoint-fence", checkpoint=checkpoint,
+                    lease_token="new-checkpoint-worker",
+                ))
+
     def test_assistant_message_commit_requires_active_matching_lease(self):
         conversation_id = self.conversation["conversation_id"]
         self.store.append_message(
