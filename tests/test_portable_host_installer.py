@@ -168,8 +168,9 @@ exit 0
             environment = dict(os.environ)
             environment["YUKI_ACL_PATH"] = str(target)
             environment["YUKI_USER_SID"] = user_sid
+            windows_powershell = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
             completed = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                [str(windows_powershell), "-NoProfile", "-NonInteractive", "-Command", script],
                 check=False, capture_output=True, text=True, timeout=30, env=environment,
             )
             self.assertEqual(completed.returncode, 0, msg=completed.stdout + completed.stderr)
