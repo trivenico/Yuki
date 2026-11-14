@@ -135,7 +135,7 @@ class PortableHostPolicyTests(unittest.TestCase):
             link.symlink_to(real, target_is_directory=True)
         except (OSError, NotImplementedError):
             self.skipTest("directory symlinks unavailable")
-        with self.assertRaisesRegex(BootstrapError, "parent directories must be real directories"):
+        with self.assertRaisesRegex(BootstrapError, "must not contain replaceable symlinks"):
             load_host_policy(link / "policy.json", self.bundle)
 
     @unittest.skipIf(os.name == "nt", "POSIX permission bits are not Windows ACL validation")
