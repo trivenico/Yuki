@@ -86,5 +86,15 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.invoke("echo", "ok"), "ok")
 
 
+
+    def test_invoke_with_status_marks_handler_exception_uncertain(self):
+        runtime = GuardedToolRuntime(
+            {"send": lambda raw: (_ for _ in ()).throw(RuntimeError("ack lost"))},
+            Policy(),
+        )
+        output, status = runtime.invoke_with_status("send", "{}")
+        self.assertEqual(status, "uncertain")
+        self.assertIn("outcome may be uncertain", output)
+
 if __name__ == "__main__":
     unittest.main()
