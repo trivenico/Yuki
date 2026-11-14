@@ -186,8 +186,11 @@ directories/files receive owner-only permissions. Windows uses `icacls` to
 remove inherited ACLs and grant access to the current user, SYSTEM, and local
 Administrators; installation fails if ACL provisioning fails.
 
-Use the reported launcher with the root directory of the signed runtime bundle
-as its first argument. The signed bundle must contain the platform-specific
+On macOS/Linux, execute the reported launcher with the bundle directory as its
+first argument. On Windows, invoke the reported `.py` launcher using the same
+trusted Python environment, for example `python yuki-portable-launch.py E:\\YukiRuntime`.
+The launcher intentionally has no `.cmd` wrapper, avoiding unsafe batch `%*`
+argument forwarding. The signed bundle must contain the platform-specific
 interpreter and `portable_entry.py` in its manifest.
 
 This is an installer foundation, not yet a complete production installer:
