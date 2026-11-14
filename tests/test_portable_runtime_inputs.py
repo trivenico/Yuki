@@ -1,6 +1,8 @@
 import hashlib
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from scripts.portable_runtime_inputs import (
     validate_offline_wheelhouse,
     validate_runtime_archive,
     install_offline_dependencies,
+    main,
 )
 
 
@@ -120,6 +123,19 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertFalse(final_target.exists())
         self.assertEqual(list(self.root.glob(".yuki-dependencies-stage-*")), [])
 
+
+    def test_cli_requires_all_installation_paths_together(self):
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            result = main([
+                "--runtime-archive", "runtime.zip",
+                "--runtime-sha256", "0" * 64,
+                "--requirements-lock", "requirements.lock",
+                "--wheelhouse", "wheelhouse",
+                "--install-python", "runtime/python",
+            ])
+        self.assertEqual(result, 2)
+        self.assertIn("must be supplied together", errors.getvalue())
 
     def test_installer_rejects_interpreter_outside_verified_runtime_root(self):
         self._write_lock()
