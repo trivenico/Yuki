@@ -109,6 +109,11 @@ def verify_provider_outcome(
     # Adapters receive only the minimum durable identity required for a read-only lookup.
     adapter_execution = {key: execution[key] for key in required}
     evidence = lookup(adapter_execution)
+    if inspect.isawaitable(evidence):
+        close = getattr(evidence, "close", None)
+        if callable(close):
+            close()
+        raise TypeError("provider adapter lookup_tool_outcome returned an awaitable; synchronous evidence is required.")
     if not isinstance(evidence, ProviderOutcomeEvidence):
         raise TypeError("provider adapter returned untyped outcome evidence.")
     if (evidence.idempotency_key != execution["idempotency_key"]
