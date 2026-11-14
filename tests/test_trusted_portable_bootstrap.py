@@ -136,6 +136,21 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "colliding case-insensitive"):
             _validate_manifest(manifest)
 
+    def test_rejects_file_directory_prefix_collision(self):
+        manifest = {
+            "schema_version": 1,
+            "product": "Yuki Portable Runtime",
+            "artifact_kind": "unsigned-portable-runtime",
+            "platform": "test-platform",
+            "runtime_version": "3.12.7",
+            "files": [
+                {"path": "runtime", "size": 1, "sha256": "0" * 64},
+                {"path": "runtime/python.exe", "size": 1, "sha256": "1" * 64},
+            ],
+        }
+        with self.assertRaisesRegex(BootstrapError, "file/directory path collision"):
+            _validate_manifest(manifest)
+
     @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "case-insensitive filesystems cannot represent this collision")
     def test_rejects_case_colliding_directory_components(self):
         (self.bundle / "Alpha").mkdir()
