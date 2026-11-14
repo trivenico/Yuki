@@ -6,13 +6,13 @@ on:
       - "yuki_trust/**"
       - "tests/test_trusted_portable_bootstrap.py"
       - "tests/test_portable_host_policy.py"
-      - "tests/test_portable_host_policy.py"
       - "pyproject.toml"
       - ".github/workflows/portable-bootstrap.yml"
   push:
     paths:
       - "yuki_trust/**"
       - "tests/test_trusted_portable_bootstrap.py"
+      - "tests/test_portable_host_policy.py"
       - "pyproject.toml"
       - ".github/workflows/portable-bootstrap.yml"
   workflow_dispatch:
