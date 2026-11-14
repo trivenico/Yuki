@@ -213,6 +213,29 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(self.store.list_recovery_events(
             owner_id="owner-a", conversation_id=conversation_id,
         )[0]["outcome"], "completed")
+        messages = self.store.list_messages(
+            owner_id="owner-a", conversation_id=conversation_id, limit=100,
+        )
+        interruption_messages = [
+            message for message in messages
+            if message["role"] == "assistant"
+            and message["content"] == coordinator.INTERRUPTION_MESSAGE
+        ]
+        self.assertEqual(len(interruption_messages), 1)
+        repeated = coordinator.recover(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=retry_token,
+        )
+        self.assertEqual(repeated.recovered_request_ids, ())
+        messages_after_retry = self.store.list_messages(
+            owner_id="owner-a", conversation_id=conversation_id, limit=100,
+        )
+        self.assertEqual(
+            sum(1 for message in messages_after_retry
+                if message["role"] == "assistant"
+                and message["content"] == coordinator.INTERRUPTION_MESSAGE),
+            1,
+        )
 
     def test_recovery_audit_insert_failure_rolls_back_generation_finalization(self):
         conversation_id = self.conversation["conversation_id"]
