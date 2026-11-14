@@ -95,7 +95,12 @@ class ProviderOutcomeTests(unittest.TestCase):
                     "tool_name": "send_email", "idempotency_key": "a" * 64,
                     "arguments_sha256": "b" * 64, "status": "uncertain",
                 }]
+            def acquire_provider_reconciliation_lease(self, **kwargs):
+                calls.append(("claim", kwargs["lease_token"]))
+            def release_provider_reconciliation_lease(self, **kwargs):
+                calls.append(("release", kwargs["lease_token"]))
             def record_provider_outcome_evidence(self, **kwargs):
+                self.claim_token = kwargs["reconciliation_lease_token"]
                 return {"outcome": kwargs["evidence"].outcome.value}
         registry = ProviderOutcomeRegistry({"send_email": Adapter()})
         reconciler = ProviderOutcomeReconciler(Store(), registry)
