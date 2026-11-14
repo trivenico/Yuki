@@ -122,13 +122,14 @@ def extract_zip_safely(
             snapshot_path.unlink(missing_ok=True)
         raise ArchiveValidationError("Runtime archive is not a readable ZIP file.") from exc
 
-    stage = Path(tempfile.mkdtemp(prefix=".yuki-runtime-stage-", dir=parent))
+    stage: Path | None = None
     count = 0
     total = 0
     seen: dict[str, str] = {}
     file_paths: set[str] = set()
     dir_paths: set[str] = set()
     try:
+        stage = Path(tempfile.mkdtemp(prefix=".yuki-runtime-stage-", dir=parent))
         with zf:
             infos = zf.infolist()
             if len(infos) > max_files:
@@ -191,7 +192,8 @@ def extract_zip_safely(
             raise
         raise ArchiveValidationError("Runtime archive extraction failed.") from exc
     finally:
-        if stage.exists():
+        zf.close()
+        if stage is not None and stage.exists():
             shutil.rmtree(stage, ignore_errors=True)
         if snapshot_path is not None:
             snapshot_path.unlink(missing_ok=True)
