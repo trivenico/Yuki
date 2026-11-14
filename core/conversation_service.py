@@ -332,6 +332,7 @@ class ConversationService:
         self.store.update_generation_checkpoint(
             owner_id=owner_id, conversation_id=conversation_id,
             request_id=request_id, checkpoint={"phase": "model_running"},
+            lease_token=lease_token,
         )
         try:
             kwargs = {"tools": list(tools), "history": history}
