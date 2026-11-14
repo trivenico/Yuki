@@ -85,6 +85,27 @@ class ConversationStoreTests(unittest.TestCase):
             )
             self.assertEqual(accepted["message"]["content"], "valid")
 
+    def test_assistant_commit_rejects_expired_matching_lease_using_epoch_clock(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="hello", idempotency_key="user:expired-lease",
+            expected_version=0, generation_request_id="expired-lease",
+        )
+        with patch("core.conversation_store.time.time", return_value=4_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="expiring-worker", ttl_seconds=5,
+            )
+        with patch("core.conversation_store.time.time", return_value=4_006.0):
+            with self.assertRaisesRegex(ConversationConflict, "lease expired or is no longer owned"):
+                self.store.append_message(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    role="assistant", content="must not persist",
+                    idempotency_key="assistant:expired-lease",
+                    expected_version=1, lease_token="expiring-worker",
+                )
+
     def test_lease_renewal_extends_only_the_live_matching_fencing_token(self):
         conversation_id = self.conversation["conversation_id"]
         with patch("core.conversation_store.time.time", return_value=2_000.0):
