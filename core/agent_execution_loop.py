@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from core.structured_tool_protocol import StructuredToolProtocol
+from core.structured_tool_protocol import StructuredToolProtocol, ToolDispatchCancelled
 
 
 class AgentExecutionError(RuntimeError):
@@ -253,8 +253,17 @@ class AgentExecutionLoop:
 
             messages.append({"role": "assistant", "content": text or encoded_envelope})
             try:
-                results = self.tool_protocol.dispatch(encoded_envelope)
+                results = self.tool_protocol.dispatch(
+                    encoded_envelope, cancellation_requested=cancel_check
+                )
                 formatted = self.tool_protocol.format_results(results)
+            except ToolDispatchCancelled:
+                self._event("agent.stopped", reason="cancelled",
+                            model_turns=turns, tool_calls=calls_total)
+                return AgentExecutionResult(
+                    "cancelled", "", turns, calls_total,
+                    max(0.0, self.clock() - started),
+                )
             except Exception as exc:
                 self._event("agent.tool_dispatch_failed", error_type=type(exc).__name__)
                 raise AgentExecutionError("guarded tool dispatch failed.") from exc
