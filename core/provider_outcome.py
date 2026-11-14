@@ -13,6 +13,7 @@ import re
 import sys
 import threading
 import uuid
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -79,6 +80,11 @@ def verify_provider_outcome(
     expected_provider: str | None = None,
 ) -> ProviderOutcomeEvidence:
     """Query and bind evidence to the durable execution; never retry or infer success."""
+    if expected_provider is not None and (
+        not isinstance(expected_provider, str)
+        or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", expected_provider)
+    ):
+        raise ValueError("expected_provider must be a bounded provider identifier.")
     if not isinstance(execution, dict):
         raise TypeError("execution must be a mapping.")
     required = {"execution_id", "idempotency_key", "arguments_sha256", "status"}
@@ -127,9 +133,11 @@ class ProviderOutcomeRegistry:
             if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", provider_id):
                 raise ValueError(f"adapter for {tool_name!r} must declare a bounded provider_id.")
             validated[tool_name] = (adapter, provider_id)
-        self._adapters = validated
+        self._adapters = MappingProxyType(validated)
 
     def lookup(self, tool_name: str, execution: dict[str, Any]) -> ProviderOutcomeEvidence:
+        if not isinstance(tool_name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name):
+            raise ValueError("tool_name must be a bounded identifier.")
         registration = self._adapters.get(tool_name)
         if registration is None:
             raise LookupError(f"no provider outcome adapter is registered for {tool_name!r}.")
