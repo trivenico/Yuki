@@ -1,41 +1,56 @@
+import contextlib
+import io
 import json
+import tempfile
+import unittest
 from pathlib import Path
-
-import pytest
 
 from scripts.portable_import_audit import audit_imports, main
 
 
-def test_audit_classifies_stdlib_local_and_external_imports(tmp_path):
-    (tmp_path / "core").mkdir()
-    (tmp_path / "core" / "agent.py").write_text(
-        "import json\nfrom pathlib import Path\nimport yaml\nfrom providers.factory import create\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "providers").mkdir()
-    (tmp_path / "providers" / "factory.py").write_text("VALUE = 1\n", encoding="utf-8")
-    (tmp_path / "main.py").write_text("import core.agent\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "ignored.py").write_text("import pytest\n", encoding="utf-8")
+class PortableImportAuditTests(unittest.TestCase):
+    def test_audit_classifies_stdlib_local_and_external_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "core").mkdir()
+            (root / "core" / "agent.py").write_text(
+                "import json\nfrom pathlib import Path\nimport yaml\n"
+                "from providers.factory import create\n",
+                encoding="utf-8",
+            )
+            (root / "providers").mkdir()
+            (root / "providers" / "factory.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (root / "main.py").write_text("import core.agent\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "ignored.py").write_text("import unittest\n", encoding="utf-8")
 
-    report = audit_imports(tmp_path)
+            report = audit_imports(root)
 
-    assert "json" in report["stdlib"]
-    assert "pathlib" in report["stdlib"]
-    assert "core" in report["local"]
-    assert "providers" in report["local"]
-    assert "yaml" in report["third_party"]
-    assert "pytest" not in report["third_party"]
+            self.assertIn("json", report["stdlib"])
+            self.assertIn("pathlib", report["stdlib"])
+            self.assertIn("core", report["local"])
+            self.assertIn("providers", report["local"])
+            self.assertIn("yaml", report["third_party"])
+            self.assertNotIn("unittest", report["third_party"])
+
+    def test_audit_reports_parse_errors_with_relative_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "broken.py"):
+                audit_imports(root)
+
+    def test_cli_emits_valid_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.py").write_text("import json\n", encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = main(["--root", str(root), "--json"])
+            self.assertEqual(result, 0)
+            payload = json.loads(output.getvalue())
+            self.assertIn("json", payload["stdlib"])
 
 
-def test_audit_reports_parse_errors_with_relative_path(tmp_path):
-    (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="broken.py"):
-        audit_imports(tmp_path)
-
-
-def test_cli_emits_valid_json(tmp_path, capsys):
-    (tmp_path / "main.py").write_text("import json\n", encoding="utf-8")
-    assert main(["--root", str(tmp_path), "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert "json" in payload["stdlib"]
+if __name__ == "__main__":
+    unittest.main()
