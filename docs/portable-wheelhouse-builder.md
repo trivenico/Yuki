@@ -24,7 +24,7 @@ URLs.
 
 ## Guarantees
 
-- Requires exact `==` pins and SHA-256 hashes on every requirement line.
+- Requires exact `==` pins and SHA-256 hashes on every requirement line. Target locks must not use environment markers; generate a separate fully resolved lock for each target.
 - Requires the Yuki application wheel to be explicitly pinned in the lock.
 - Uses pip `download` with `--require-hashes`, `--only-binary=:all:`,
   `--no-deps`, and explicit target platform, Python version, implementation
