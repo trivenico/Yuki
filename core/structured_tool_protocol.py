@@ -130,12 +130,20 @@ class StructuredToolProtocol:
                 if isinstance(claim, str) and claim != "claimed":
                     raise ToolExecutionAlreadyClaimed(claim)
             try:
-                output = self._runtime.invoke(call.name, argument)
+                if callable(getattr(self._runtime, "invoke_with_status", None)):
+                    output, outcome = self._runtime.invoke_with_status(call.name, argument)
+                else:
+                    output, outcome = self._runtime.invoke(call.name, argument), "completed"
             except Exception as exc:
                 if on_tool_error is not None:
-                    on_tool_error(call, argument, exc)
+                    on_tool_error(call, argument, "uncertain")
                 raise
-            if after_tool_call is not None:
+            if outcome != "completed":
+                if on_tool_error is not None:
+                    on_tool_error(call, argument, outcome)
+                if outcome == "uncertain":
+                    raise ToolExecutionAlreadyClaimed("uncertain")
+            elif after_tool_call is not None:
                 after_tool_call(call, argument, output)
             results.append(StructuredToolResult(call.call_id, call.name, output))
         return tuple(results)
