@@ -16,15 +16,11 @@ fails closed; it is never silently reset.
 
 Important limitations:
 
-- This is the storage/locking primitive, not yet wired into the portable
-  launcher or signed manifest schema.
-- A later integration must add a monotonically increasing release sequence to
-  the signed manifest and call this primitive only after signature and full
-  inventory verification, immediately before launch.
+- The signed manifest now requires a non-negative `release_sequence`. Both manifest generators and the release-candidate builder require it explicitly.
+- The trusted bootstrap advances this state only after the staged copy passes signature and exact-inventory verification, immediately before starting the signed interpreter.
+- The host-installed launch policy pins an absolute `anti_rollback_state` path outside removable media. Parent directories must already exist and pass host ownership/permission checks.
 - State deletion by a privileged attacker or disk rollback cannot be prevented
   by a local file alone. Stronger guarantees require OS-backed protected
   storage, TPM/secure-enclave monotonic counters, or server-side release
   authorization.
-- Windows ACL provisioning is the installer's responsibility. The Windows
-  file lock is implemented, but clean-machine ACL and concurrency tests remain
-  required.
+- Windows ACL provisioning is the installer's responsibility. The Windows file lock is implemented, but clean-machine ACL and concurrent-process tests remain required.
