@@ -147,6 +147,46 @@ class ProviderOutcomeRegistry:
         )
 
 
+def _validate_reconciliation_record(execution: Any, call_id: str) -> dict[str, Any]:
+    """Validate the store record before acquiring a lease or contacting a provider."""
+    if not isinstance(execution, dict):
+        raise TypeError("durable tool execution must be a mapping.")
+    required = {
+        "execution_id", "call_id", "tool_name", "idempotency_key",
+        "arguments_sha256", "status",
+    }
+    if not required.issubset(execution):
+        raise ValueError("durable tool execution is missing required identity fields.")
+    if execution["call_id"] != call_id:
+        raise ValueError("durable tool execution call identity does not match the request.")
+    tool_name = execution["tool_name"]
+    if not isinstance(tool_name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tool_name):
+        raise ValueError("durable tool execution has an invalid tool name.")
+    # Reuse the same strict identity and status checks used by the adapter boundary.
+    for key in ("execution_id", "idempotency_key", "arguments_sha256", "status"):
+        if key not in execution:
+            raise ValueError("durable tool execution is missing required identity fields.")
+    identity = {
+        key: execution[key]
+        for key in ("execution_id", "idempotency_key", "arguments_sha256", "status")
+    }
+    if not isinstance(identity["execution_id"], str) or not identity["execution_id"].strip() or len(identity["execution_id"]) > 256:
+        raise ValueError("durable tool execution has an invalid execution_id.")
+    for key in ("idempotency_key", "arguments_sha256"):
+        if not isinstance(identity[key], str) or not re.fullmatch(r"[0-9a-f]{64}", identity[key]):
+            raise ValueError(f"durable tool execution has an invalid {key}.")
+    if not isinstance(identity["status"], str) or identity["status"] not in {"started", "uncertain"}:
+        raise ValueError("provider reconciliation requires a started or uncertain execution.")
+    return {
+        "execution_id": identity["execution_id"],
+        "call_id": call_id,
+        "tool_name": tool_name,
+        "idempotency_key": identity["idempotency_key"],
+        "arguments_sha256": identity["arguments_sha256"],
+        "status": identity["status"],
+    }
+
+
 class ProviderOutcomeReconciler:
     """Read-only provider lookup plus append-only evidence recording."""
 
@@ -179,9 +219,17 @@ class ProviderOutcomeReconciler:
         executions = self._store.list_tool_executions(
             owner_id=owner_id, conversation_id=conversation_id, request_id=request_id,
         )
-        execution = next((item for item in executions if item["call_id"] == call_id), None)
-        if execution is None:
+        if not isinstance(executions, (list, tuple)):
+            raise TypeError("tool execution store returned an invalid collection.")
+        matches = [
+            item for item in executions
+            if isinstance(item, dict) and item.get("call_id") == call_id
+        ]
+        if not matches:
             raise LookupError("tool execution not found.")
+        if len(matches) != 1:
+            raise ValueError("tool execution store returned an ambiguous call identity.")
+        execution = _validate_reconciliation_record(matches[0], call_id)
         lease_token = uuid.uuid4().hex
         self._store.acquire_provider_reconciliation_lease(
             owner_id=owner_id, conversation_id=conversation_id,
