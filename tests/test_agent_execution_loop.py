@@ -26,6 +26,33 @@ class AgentExecutionLoopTests(unittest.TestCase):
                              "value": {"type": "string"}}, "required": ["value"]}},
         }]
 
+    def test_cancellation_between_tool_calls_prevents_later_side_effects(self):
+        cancel = []
+        def on_first_call(raw):
+            cancel.append(True)
+            return raw
+        runtime = GuardedToolRuntime(
+            {"echo": on_first_call}, AllowPolicy()
+        )
+        protocol = StructuredToolProtocol(runtime)
+        envelope = json.dumps({"tool_calls": [
+            {"id": "call_1", "name": "echo", "arguments": {"value": "first"}},
+            {"id": "call_2", "name": "echo", "arguments": {"value": "second"}},
+        ]})
+        from core.structured_tool_protocol import ToolDispatchCancelled
+        with self.assertRaises(ToolDispatchCancelled):
+            protocol.dispatch(envelope, cancellation_requested=lambda: bool(cancel))
+        self.assertEqual(len(cancel), 1)
+
+    def test_cancellation_before_tool_batch_prevents_any_side_effect(self):
+        envelope = json.dumps({"tool_calls": [
+            {"id": "call_1", "name": "echo", "arguments": {"value": "first"}},
+        ]})
+        from core.structured_tool_protocol import ToolDispatchCancelled
+        with self.assertRaises(ToolDispatchCancelled):
+            self.protocol.dispatch(envelope, cancellation_requested=lambda: True)
+        self.assertEqual(self.invocations, [])
+
     def test_tool_result_is_returned_to_model_before_final_answer(self):
         observed = []
         def model(*, messages, tools, tool_choice):
