@@ -153,6 +153,7 @@ class PortableHostPolicyTests(unittest.TestCase):
         close_handle.restype = wintypes.BOOL
         invalid = wintypes.HANDLE(-1).value
         writer_denied = False
+        policy_path = self.policy
 
         class _FunctionProxy:
             def __init__(self, function, after_call):
@@ -183,7 +184,7 @@ class PortableHostPolicyTests(unittest.TestCase):
                     if handle == invalid or writer_denied:
                         return
                     writer = create_file(
-                        str(self.policy), 0x40000000, 0x00000007,
+                        str(policy_path), 0x40000000, 0x00000007,
                         None, 3, 0x08000000, None,
                     )
                     if writer != invalid:
