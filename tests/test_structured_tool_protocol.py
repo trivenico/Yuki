@@ -6,6 +6,7 @@ from core.structured_tool_protocol import (
     StructuredToolProtocol,
     ToolProtocolError,
     ToolExecutionAlreadyClaimed,
+    ToolDispatchLimitReached,
     parse_tool_calls,
 )
 
@@ -54,6 +55,13 @@ class StructuredToolProtocolTests(unittest.TestCase):
         ]))
         self.assertEqual([item.call_id for item in results], ["first", "second"])
         self.assertEqual(self.calls, [{"n": 1}, {"n": 2}])
+
+    def test_call_budget_stops_before_excess_side_effect_and_preserves_results(self):
+        envelope = self.envelope([self.call("first"), self.call("second")])
+        with self.assertRaises(ToolDispatchLimitReached) as raised:
+            self.protocol.dispatch(envelope, max_calls=1)
+        self.assertEqual([item.call_id for item in raised.exception.completed_results], ["first"])
+        self.assertEqual(self.calls, [{"text": "hello"}])
 
     def test_malformed_later_call_prevents_partial_execution(self):
         payload = self.envelope([
