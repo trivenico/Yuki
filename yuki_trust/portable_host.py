@@ -993,6 +993,12 @@ def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> b
         if info.st_size > max_bytes:
             raise BootstrapError(f"{label} exceeds its size limit.")
 
+        # The descriptor pins the inode, but another writer may already hold
+        # a writable descriptor. Detect in-place mutation during our read.
+        before_identity = (
+            info.st_dev, info.st_ino, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns,
+        )
         chunks = []
         remaining = max_bytes + 1
         while remaining:
@@ -1004,6 +1010,13 @@ def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> b
         data = b"".join(chunks)
         if len(data) > max_bytes:
             raise BootstrapError(f"{label} exceeds its size limit.")
+        after = os.fstat(file_fd)
+        after_identity = (
+            after.st_dev, after.st_ino, after.st_size,
+            after.st_mtime_ns, after.st_ctime_ns,
+        )
+        if before_identity != after_identity or len(data) != info.st_size:
+            raise BootstrapError(f"{label} changed while being read.")
         return data
     except BootstrapError:
         raise
