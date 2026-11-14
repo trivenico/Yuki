@@ -47,7 +47,11 @@ def parse_elf_dynamic(output: str) -> dict:
 def parse_macho_load_commands(load_output: str, linked_output: str) -> dict:
     rpaths = re.findall(r"\bpath (.*?) \(offset \d+\)", load_output)
     absolute_non_system = []
-    for line in linked_output.splitlines()[1:]:
+    linked_lines = [
+        line for line in linked_output.splitlines()[1:]
+        if "(architecture " not in line or not line.rstrip().endswith("):")
+    ]
+    for line in linked_lines:
         value = line.strip().split(" (", 1)[0]
         if value.startswith("/") and not value.startswith(SYSTEM_DYLIB_PREFIXES):
             absolute_non_system.append(value)
@@ -56,7 +60,7 @@ def parse_macho_load_commands(load_output: str, linked_output: str) -> dict:
                    for token in ("@loader_path", "@executable_path"))
     unsafe_rpaths = [p for p in rpaths if not loader_relative(p)]
     install_names = []
-    for line in linked_output.splitlines()[1:]:
+    for line in linked_lines:
         value = line.strip().split(" (", 1)[0]
         if value:
             install_names.append(value)
@@ -103,7 +107,8 @@ def audit_bundle(root: Path, platform_name: str, runner=subprocess.run) -> dict:
             magic == bytes((127, 69, 76, 70))
             or magic in {bytes((254, 237, 250, 206)), bytes((206, 250, 237, 254)),
                          bytes((254, 237, 250, 207)), bytes((207, 250, 237, 254)),
-                         bytes((202, 254, 186, 190)), bytes((190, 186, 254, 202))}
+                         bytes((202, 254, 186, 190)), bytes((190, 186, 254, 202)),
+                         bytes((202, 254, 186, 191)), bytes((191, 186, 254, 202))}
             or magic[:2] == b"MZ"
         )
 
