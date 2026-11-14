@@ -79,6 +79,8 @@ def validate_offline_wheelhouse(lock_file: Path, wheelhouse: Path) -> dict:
     requirement_hashes: list[set[str]] = []
     for line in lines:
         tokens = line.split()
+        if tokens and tokens[0].startswith("-"):
+            raise InputValidationError("Standalone pip options are not permitted in the requirements lock.")
         if not tokens or not _PINNED_REQUIREMENT.fullmatch(tokens[0]):
             raise InputValidationError("Every dependency must use an exact == version pin.")
         if any(not _HASH_TOKEN.fullmatch(token) for token in tokens[1:]):
