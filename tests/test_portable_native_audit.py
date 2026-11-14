@@ -61,13 +61,13 @@ class NativeAuditTests(unittest.TestCase):
                 self.assertTrue(parsed["ok"])
 
     def test_macho_universal_architecture_headers_are_not_install_names(self):
-        loads = "binary has no custom rpath\\n"
+        loads = "binary has no custom rpath\n"
         links = (
-            "Universal binary with 2 architectures: [x86_64:arm64]\\n"
-            "/bundle/libYuki.dylib (architecture x86_64):\\n"
-            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
-            "/bundle/libYuki.dylib (architecture arm64):\\n"
-            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
+            "Universal binary with 2 architectures: [x86_64:arm64]\n"
+            "/bundle/libYuki.dylib (architecture x86_64):\n"
+            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
+            "/bundle/libYuki.dylib (architecture arm64):\n"
+            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
         )
         parsed = parse_macho_load_commands(loads, links)
         self.assertTrue(parsed["ok"])
