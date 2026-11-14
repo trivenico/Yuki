@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+import hashlib
 
 from core.sqlite_file_security import prepare_private_sqlite_path
 import time
@@ -425,7 +426,7 @@ class ConversationStore:
     def begin_tool_execution(
         self, *, owner_id: str, conversation_id: str, request_id: str,
         call_id: str, tool_name: str, arguments_sha256: str, lease_token: str,
-        idempotency_key: str, provider_idempotency: bool = False,
+        idempotency_key: str | None = None, provider_idempotency: bool = False,
     ) -> dict[str, Any]:
         """Durably claim a tool call before its external side effect can begin."""
         owner = self._owner(owner_id)
@@ -435,6 +436,11 @@ class ConversationStore:
         ):
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
                 raise ValueError(f"{label} must be non-empty bounded text.")
+        if idempotency_key is None:
+            idempotency_key = hashlib.sha256(
+                ("yuki-tool-v1|" + owner + "|" + conversation_id + "|"
+                 + request_id.strip() + "|" + call_id.strip()).encode("utf-8")
+            ).hexdigest()
         if not isinstance(idempotency_key, str) or len(idempotency_key) != 64 or any(char not in "0123456789abcdef" for char in idempotency_key):
             raise ValueError("idempotency_key must be a lowercase SHA-256 hex digest.")
         if type(provider_idempotency) is not bool:
