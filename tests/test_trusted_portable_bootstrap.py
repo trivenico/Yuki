@@ -152,6 +152,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
+            "release_sequence": 1,
             "files": [
                 {"path": "Alpha/first.bin", "size": 1, "sha256": "0" * 64},
                 {"path": "alpha/second.bin", "size": 1, "sha256": "0" * 64},
