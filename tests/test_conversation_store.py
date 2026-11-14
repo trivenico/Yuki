@@ -1351,6 +1351,67 @@ class ConversationStoreTests(unittest.TestCase):
             lease_token="worker-recovered",
         )
 
+    def test_only_one_concurrent_worker_can_recover_expired_generation(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "concurrent-generation-recovery"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Recover once", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=400_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="crashed-generation-worker", ttl_seconds=5,
+            )
+        recovered_stores = [
+            ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+            for _ in range(2)
+        ]
+        barrier = Barrier(2)
+
+        def recover(index):
+            barrier.wait(timeout=5)
+            try:
+                result = recovered_stores[index].acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token=f"recovery-worker-{index}", ttl_seconds=30,
+                )
+                return ("claimed", index, result)
+            except ConversationConflict:
+                return ("busy", index, None)
+
+        with patch("core.conversation_store.time.time", return_value=400_006.0):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(recover, range(2)))
+
+            winners = [result for result in results if result[0] == "claimed"]
+            losers = [result for result in results if result[0] == "busy"]
+            self.assertEqual(len(winners), 1)
+            self.assertEqual(len(losers), 1)
+            _, winner_index, _ = winners[0]
+            winner_store = recovered_stores[winner_index]
+            winner_token = f"recovery-worker-{winner_index}"
+
+            self.assertEqual(winner_store.mark_started_tool_executions_uncertain(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, lease_token=winner_token,
+            ), 0)
+            self.assertTrue(winner_store.finish_generation(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, status="interrupted",
+                lease_token=winner_token,
+            ))
+            self.assertFalse(recovered_stores[losers[0][1]].finish_generation(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, status="interrupted",
+                lease_token=f"recovery-worker-{losers[0][1]}",
+            ))
+
+        self.assertEqual(winner_store.get_generation(
+            owner_id=self.owner, conversation_id=conversation_id, request_id=request_id,
+        )["status"], "interrupted")
+
     def test_generation_crash_recovery_to_provider_review_is_fenced_end_to_end(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
 
