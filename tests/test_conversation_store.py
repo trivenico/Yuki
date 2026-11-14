@@ -722,6 +722,16 @@ class ConversationStoreTests(unittest.TestCase):
 
 
 
+
+    def test_review_schema_allows_provider_completion_review_action(self):
+        with self.store._connect() as db:
+            schema = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_tool_reviews'"
+            ).fetchone()["sql"]
+        self.assertIn("confirm_provider_completed", schema)
+        self.assertIn("acknowledge_uncertain", schema)
+
+
     def test_review_can_confirm_completed_only_with_matching_provider_evidence(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
         conversation_id = self.conversation["conversation_id"]
