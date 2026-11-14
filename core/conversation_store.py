@@ -129,6 +129,24 @@ class ConversationStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_tool_reviews_owner_execution
                     ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at);
+                CREATE TABLE IF NOT EXISTS conversation_provider_outcome_evidence (
+                    evidence_id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('confirmed_completed', 'confirmed_not_applied', 'unknown')),
+                    idempotency_key TEXT NOT NULL,
+                    arguments_sha256 TEXT NOT NULL,
+                    evidence_sha256 TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    provider_reference TEXT,
+                    recorded_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_provider_evidence_owner_execution
+                    ON conversation_provider_outcome_evidence(owner_id, conversation_id, request_id, call_id, recorded_at);
             """)
             tool_columns = {
                 row["name"] for row in db.execute(
@@ -553,6 +571,73 @@ class ConversationStore:
                 (owner, conversation_id, request_id),
             ).fetchall()
         return [{**dict(row), "provider_idempotency": bool(row["provider_idempotency"])} for row in rows]
+
+    def record_provider_outcome_evidence(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        call_id: str, evidence,
+    ) -> dict[str, Any]:
+        """Append typed adapter evidence without mutating execution or authorizing replay."""
+        from core.provider_outcome import ProviderOutcomeEvidence
+        owner = self._owner(owner_id)
+        if not isinstance(evidence, ProviderOutcomeEvidence):
+            raise TypeError("evidence must be a validated ProviderOutcomeEvidence.")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                execution = db.execute(
+                    """SELECT execution_id, status, idempotency_key, arguments_sha256
+                       FROM conversation_tool_executions
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?""",
+                    (owner, conversation_id, request_id, call_id),
+                ).fetchone()
+                if execution is None:
+                    raise ConversationNotFound("tool execution not found.")
+                if execution["status"] not in {"started", "uncertain"}:
+                    raise ConversationConflict("provider evidence can only be recorded for unresolved executions.")
+                if (evidence.idempotency_key != execution["idempotency_key"]
+                        or evidence.arguments_sha256 != execution["arguments_sha256"]):
+                    raise ConversationConflict("provider evidence does not match the stored execution fingerprint.")
+                evidence_id, recorded_at = str(uuid.uuid4()), self._now()
+                db.execute(
+                    """INSERT INTO conversation_provider_outcome_evidence
+                       (evidence_id, execution_id, owner_id, conversation_id, request_id,
+                        call_id, provider, outcome, idempotency_key, arguments_sha256,
+                        evidence_sha256, observed_at, provider_reference, recorded_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (evidence_id, execution["execution_id"], owner, conversation_id,
+                     request_id, call_id, evidence.provider, evidence.outcome.value,
+                     evidence.idempotency_key, evidence.arguments_sha256,
+                     evidence.evidence_sha256, evidence.observed_at,
+                     evidence.provider_reference, recorded_at),
+                )
+                db.commit()
+                return {
+                    "evidence_id": evidence_id, "execution_id": execution["execution_id"],
+                    "conversation_id": conversation_id, "request_id": request_id,
+                    "call_id": call_id, "provider": evidence.provider,
+                    "outcome": evidence.outcome.value, "evidence_sha256": evidence.evidence_sha256,
+                    "observed_at": evidence.observed_at, "provider_reference": evidence.provider_reference,
+                    "recorded_at": recorded_at,
+                }
+            except Exception:
+                db.rollback()
+                raise
+
+    def list_provider_outcome_evidence(
+        self, *, owner_id: str, conversation_id: str, request_id: str, call_id: str,
+    ) -> list[dict[str, Any]]:
+        owner = self._owner(owner_id)
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT evidence_id, execution_id, conversation_id, request_id, call_id,
+                          provider, outcome, evidence_sha256, observed_at,
+                          provider_reference, recorded_at
+                   FROM conversation_provider_outcome_evidence
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?
+                   ORDER BY recorded_at, evidence_id""",
+                (owner, conversation_id, request_id, call_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def review_tool_execution(
         self, *, owner_id: str, conversation_id: str, request_id: str,
