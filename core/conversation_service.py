@@ -14,6 +14,7 @@ from typing import Any, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
+from core.conversation_recovery import ConversationRecoveryCoordinator
 
 
 class ConversationService:
@@ -35,6 +36,7 @@ class ConversationService:
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
         self.store = store
+        self.recovery_coordinator = ConversationRecoveryCoordinator(store)
         if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
             raise TypeError("agent_loop_for_owner must be callable.")
         self.agent_loop = agent_loop
@@ -216,66 +218,11 @@ class ConversationService:
         starting_version = self.store.get_conversation(
             owner_id=owner_id, conversation_id=conversation_id
         )["version"]
-        recovered_request_ids = set()
-        # Reconcile durable running records before accepting retries. Never
-        # re-execute a model/tool sequence after a process crash: side effects
-        # may already have happened before the crash.
-        pending = self.store.list_interrupted_generations(
-            owner_id=owner_id, conversation_id=conversation_id, limit=100
+        recovery = self.recovery_coordinator.recover(
+            owner_id=owner_id, conversation_id=conversation_id, lease_token=lease_token,
         )
-        for generation in pending:
-            # A matching request ID here is a prior durable attempt, not the
-            # current call: new generation rows are created only after this
-            # recovery pass. Reconcile it before considering idempotent replay.
-            recovered_request_ids.add(generation["request_id"])
-            self.store.mark_started_tool_executions_uncertain(
-                owner_id=owner_id, conversation_id=conversation_id,
-                request_id=generation["request_id"], lease_token=lease_token,
-            )
-            conversation_now = self.store.get_conversation(
-                owner_id=owner_id, conversation_id=conversation_id
-            )
-            messages_now = self.store.list_messages(
-                owner_id=owner_id, conversation_id=conversation_id, limit=200
-            )
-            user_message = next(
-                (item for item in messages_now if item["message_id"] == generation["user_message_id"]),
-                None,
-            )
-            assistant_already_persisted = self.store.has_message(
-                owner_id=owner_id, conversation_id=conversation_id,
-                idempotency_key="assistant:" + generation["request_id"],
-            )
-            if assistant_already_persisted:
-                self.store.finish_generation(
-                    owner_id=owner_id, conversation_id=conversation_id,
-                    request_id=generation["request_id"], status="completed", lease_token=lease_token,
-                )
-            elif user_message is not None:
-                self.store.append_message(
-                    owner_id=owner_id, conversation_id=conversation_id,
-                    role="assistant",
-                    content="This response was interrupted before completion. Please submit a new request; Yuki will not automatically repeat potentially side-effecting actions.",
-                    idempotency_key="assistant:" + generation["request_id"],
-                    expected_version=conversation_now["version"], lease_token=lease_token,
-                )
-                self.store.finish_generation(
-                    owner_id=owner_id, conversation_id=conversation_id,
-                    request_id=generation["request_id"], status="interrupted", lease_token=lease_token,
-                )
-            else:
-                # A missing user-message row is an invariant violation, but
-                # must not leave the durable generation permanently running.
-                # Any started tool records were already marked uncertain above.
-                self.store.finish_generation(
-                    owner_id=owner_id, conversation_id=conversation_id,
-                    request_id=generation["request_id"], status="interrupted",
-                    lease_token=lease_token,
-                )
-        # Process at most one bounded recovery page per request. If the page
-        # is full, conservatively require another request to drain the backlog
-        # rather than starting fresh model work while older generations remain.
-        if len(pending) == 100:
+        recovered_request_ids = set(recovery.recovered_request_ids)
+        if recovery.batch_limit_reached:
             raise ConversationConflict(
                 "conversation recovery backlog remains; retry after the current batch is reconciled."
             )
