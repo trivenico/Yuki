@@ -271,6 +271,7 @@ class ConversationService:
                 self.store.finish_generation(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=generation["request_id"], status="interrupted",
+                    lease_token=lease_token,
                 )
         # Check ownership and stale versions before invoking a model.
         conversation = self.store.get_conversation(
