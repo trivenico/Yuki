@@ -73,7 +73,7 @@ def create_manifest(root: str | Path, *, platform: str, runtime_version: str, re
     if type(release_sequence) is not int or release_sequence < 0:
         raise ValueError("release_sequence must be a non-negative integer.")
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "product": "Yuki Portable Runtime",
         "artifact_kind": "portable-runtime",
         "platform": platform.strip(),
@@ -91,7 +91,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     }:
         raise RuntimeManifestError("Runtime manifest has an invalid schema.")
     if (
-        value["schema_version"] != 1
+        value["schema_version"] != 2
         or value["product"] != "Yuki Portable Runtime"
         or value["artifact_kind"] != "portable-runtime"
         or not isinstance(value["platform"], str) or not value["platform"]
