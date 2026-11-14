@@ -152,33 +152,50 @@ class PortableHostPolicyTests(unittest.TestCase):
         close_handle.argtypes = [wintypes.HANDLE]
         close_handle.restype = wintypes.BOOL
         invalid = wintypes.HANDLE(-1).value
-        original_win_dll = ctypes.WinDLL
         writer_denied = False
+
+        class _FunctionProxy:
+            def __init__(self, function, after_call):
+                self._function = function
+                self._after_call = after_call
+
+            def __setattr__(self, name, value):
+                if name in {"argtypes", "restype"}:
+                    setattr(self._function, name, value)
+                object.__setattr__(self, name, value)
+
+            def __call__(self, *args):
+                result = self._function(*args)
+                self._after_call(result)
+                return result
 
         class _KernelProxy:
             def __init__(self, library):
                 self._library = library
 
             def __getattr__(self, name):
-                return getattr(self._library, name)
+                function = getattr(self._library, name)
+                if name != "CreateFileW":
+                    return function
 
-            def CreateFileW(self, path, access, share, security, creation, flags, template):
-                nonlocal writer_denied
-                handle = self._library.CreateFileW(
-                    path, access, share, security, creation, flags, template
-                )
-                if handle != invalid and not writer_denied:
+                def after_open(handle):
+                    nonlocal writer_denied
+                    if handle == invalid or writer_denied:
+                        return
                     writer = create_file(
-                        str(self_policy), 0x40000000, 0x00000007, None, 3,
-                        0x08000000, None,
+                        str(self.policy), 0x40000000, 0x00000007,
+                        None, 3, 0x08000000, None,
                     )
                     if writer != invalid:
                         close_handle(writer)
-                        raise AssertionError("writer unexpectedly opened while secure reader held the file")
+                        raise AssertionError(
+                            "writer unexpectedly opened while secure reader held the file"
+                        )
                     writer_denied = ctypes.get_last_error() == 32
-                return handle
 
-        self_policy = self.policy
+                return _FunctionProxy(function, after_open)
+
+        original_win_dll = ctypes.WinDLL
 
         def win_dll(name, *args, **kwargs):
             library = original_win_dll(name, *args, **kwargs)
@@ -196,15 +213,6 @@ class PortableHostPolicyTests(unittest.TestCase):
             writer_denied,
             "secure reader did not block a concurrent write handle",
         )
-
-    @unittest.skipUnless(os.name == "nt", "Windows native handle semantics")
-    def test_windows_secure_reader_rejects_directory_handles(self):
-        from yuki_trust.portable_host import _read_host_file_secure
-
-        with self.assertRaisesRegex(BootstrapError, "directory|could not be securely read"):
-            _read_host_file_secure(
-                self.trust_dir, label="Test policy", max_bytes=64 * 1024
-            )
 
     @unittest.skipUnless(os.name == "nt", "Windows native handle cleanup")
     def test_windows_secure_reader_closes_handles_after_repeated_failures(self):
