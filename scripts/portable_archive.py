@@ -128,6 +128,7 @@ def extract_zip_safely(
     seen: dict[str, str] = {}
     file_paths: set[str] = set()
     dir_paths: set[str] = set()
+    directory_spellings: dict[str, str] = {}
     try:
         stage = Path(tempfile.mkdtemp(prefix=".yuki-runtime-stage-", dir=parent))
         with zf:
@@ -144,17 +145,24 @@ def extract_zip_safely(
                 parts = name.split("/")
                 for index in range(1, len(parts)):
                     parent_name = "/".join(parts[:index])
-                    if parent_name in file_paths:
+                    parent_key = unicodedata.normalize("NFC", parent_name).casefold()
+                    if parent_key in file_paths:
                         raise ArchiveValidationError("Runtime archive has a file used as a parent directory.")
-                    dir_paths.add(parent_name)
+                    prior_spelling = directory_spellings.setdefault(parent_key, parent_name)
+                    if prior_spelling != parent_name:
+                        raise ArchiveValidationError("Runtime archive contains case- or Unicode-colliding directory paths.")
+                    dir_paths.add(parent_key)
                 if is_dir:
-                    if name in file_paths:
+                    if key in file_paths:
                         raise ArchiveValidationError("Runtime archive path is both a file and directory.")
-                    dir_paths.add(name)
+                    prior_spelling = directory_spellings.setdefault(key, name)
+                    if prior_spelling != name:
+                        raise ArchiveValidationError("Runtime archive contains case- or Unicode-colliding directory paths.")
+                    dir_paths.add(key)
                     continue
-                if name in dir_paths:
+                if key in dir_paths:
                     raise ArchiveValidationError("Runtime archive path is both a file and directory.")
-                file_paths.add(name)
+                file_paths.add(key)
                 count += 1
                 if info.file_size < 0 or info.file_size > max_file_bytes:
                     raise ArchiveValidationError("Runtime archive member exceeds the per-file size limit.")
