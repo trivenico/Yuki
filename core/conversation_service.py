@@ -273,6 +273,13 @@ class ConversationService:
                     request_id=generation["request_id"], status="interrupted",
                     lease_token=lease_token,
                 )
+        # Process at most one bounded recovery page per request. If the page
+        # is full, conservatively require another request to drain the backlog
+        # rather than starting fresh model work while older generations remain.
+        if len(pending) == 100:
+            raise ConversationConflict(
+                "conversation recovery backlog remains; retry after the current batch is reconciled."
+            )
         # Check ownership and stale versions before invoking a model.
         conversation = self.store.get_conversation(
             owner_id=owner_id, conversation_id=conversation_id
