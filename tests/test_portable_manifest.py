@@ -61,6 +61,15 @@ class PortableManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(InputValidationError, "symbolic-link"):
             inventory_bundle(self.root)
 
+    def test_rejects_symlinked_bundle_root(self):
+        alias = Path(self.temp.name) / "bundle-alias"
+        try:
+            alias.symlink_to(self.root, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Directory symlinks are unavailable on this host.")
+        with self.assertRaisesRegex(InputValidationError, "non-symlink"):
+            inventory_bundle(alias)
+
     def test_rejects_empty_metadata(self):
         with self.assertRaises(InputValidationError):
             create_unsigned_manifest(self.root, platform="", runtime_version="0.1.0")
