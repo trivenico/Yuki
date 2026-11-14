@@ -74,6 +74,24 @@ def _atomic_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
         temp_path.unlink()
 
 
+def _prepare_private_directory(path: Path, label: str) -> None:
+    if not path.is_absolute():
+        raise BootstrapError(f"{label} directory must be absolute.")
+    path.mkdir(parents=True, exist_ok=True)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise BootstrapError(f"{label} path must be a real directory, not a symlink.")
+    if os.name != "nt":
+        if info.st_uid != os.getuid():
+            raise BootstrapError(f"{label} directory must be owned by the current user.")
+        home = Path.home().resolve()
+        resolved = path.resolve(strict=True)
+        if resolved == Path(resolved.anchor) or resolved == home:
+            raise BootstrapError(f"{label} directory must be a dedicated child directory, not a filesystem or home root.")
+        portable_host._validate_host_parent_directories(path / ".yuki-trust-check", label=label)
+        path.chmod(0o700)
+
+
 def _validate_public_key(source: Path) -> bytes:
     if source.is_symlink() or not source.is_file() or source.stat().st_size > 65536:
         raise BootstrapError("Public key must be a regular, non-symlink PEM file no larger than 64 KiB.")
@@ -154,15 +172,8 @@ def install_host_trust(public_key_source: Path, install_root: Path, state_root: 
     state_root = state_root.expanduser().absolute()
     if install_root == state_root or install_root in state_root.parents or state_root in install_root.parents:
         raise BootstrapError("Trust and anti-rollback state directories must be separate.")
-    install_root.mkdir(parents=True, exist_ok=True)
-    state_root.mkdir(parents=True, exist_ok=True)
-    if os.name != "nt":
-        install_root.chmod(0o700)
-        state_root.chmod(0o700)
-        portable_host._validate_host_parent_directories(install_root / _POLICY_NAME, label="Host install")
-        portable_host._validate_host_parent_directories(state_root / "release-state.json", label="Anti-rollback state")
-    elif install_root.is_symlink() or state_root.is_symlink():
-        raise BootstrapError("Windows trust and state roots must not be symbolic links.")
+    _prepare_private_directory(install_root, "Host install")
+    _prepare_private_directory(state_root, "Anti-rollback state")
 
     key_path = install_root / _KEY_NAME
     policy_path = install_root / _POLICY_NAME
