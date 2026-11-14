@@ -82,6 +82,22 @@ class PortableHostInstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(BootstrapError, "real directory, not a symlink"):
                 installer.install_host_trust(self.key, link, self.state, hashlib.sha256(b"validated-ed25519-key").hexdigest())
 
+    def test_rejects_mismatched_out_of_band_key_fingerprint(self):
+        with (
+            patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")),
+            patch.object(installer, "_validate_public_key", return_value=b"validated-ed25519-key"),
+        ):
+            with self.assertRaisesRegex(BootstrapError, "does not match"):
+                installer.install_host_trust(self.key, self.install, self.state, "0" * 64)
+
+    def test_rejects_malformed_out_of_band_key_fingerprint(self):
+        with (
+            patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")),
+            patch.object(installer, "_validate_public_key", return_value=b"validated-ed25519-key"),
+        ):
+            with self.assertRaisesRegex(BootstrapError, "64 hexadecimal"):
+                installer.install_host_trust(self.key, self.install, self.state, "not-a-fingerprint")
+
 
 if __name__ == "__main__":
     unittest.main()
