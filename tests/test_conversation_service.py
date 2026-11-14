@@ -143,6 +143,26 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(renewals), 1)
         self.assertEqual(result["answer"], "renewed response")
 
+    def test_lease_is_released_if_heartbeat_thread_cannot_start(self):
+        service = ConversationService(self.store, self.loop)
+        with patch("core.conversation_service.threading.Thread.start",
+                   side_effect=RuntimeError("simulated thread startup failure")):
+            with self.assertRaisesRegex(RuntimeError, "thread startup failure"):
+                service.reply(
+                    owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+                    user_text="request", request_id="heartbeat-start-failure",
+                    expected_version=0, tools=[],
+                )
+        # The failed startup must not strand the durable lease until TTL expiry.
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            lease_token="replacement-worker", ttl_seconds=30,
+        )
+        self.store.release_generation_lease(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            lease_token="replacement-worker",
+        )
+
     def test_lease_renewal_failure_prevents_assistant_persistence(self):
         started = threading.Event()
 
