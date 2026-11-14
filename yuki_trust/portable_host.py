@@ -532,17 +532,23 @@ def _stage_windows_bundle_handle_secure(
                     next_prefix = f"{prefix}/{component}" if prefix else component
                     if next_prefix not in source_directories:
                         next_src = nt_open(source_directories[prefix], component, directory=True)
-                        _tag, standard = handle_metadata(next_src)
-                        if not standard.Directory:
+                        try:
+                            _tag, standard = handle_metadata(next_src)
+                            if not standard.Directory:
+                                raise BootstrapError(f"{label} source parent is not a directory.")
+                        except BaseException:
                             close_handle(next_src)
-                            raise BootstrapError(f"{label} source parent is not a directory.")
+                            raise
                         source_directories[next_prefix] = next_src
                     if next_prefix not in target_directories:
                         next_dst = nt_open(target_directories[prefix], component, directory=True, create=True)
-                        _tag, standard = handle_metadata(next_dst)
-                        if not standard.Directory:
+                        try:
+                            _tag, standard = handle_metadata(next_dst)
+                            if not standard.Directory:
+                                raise BootstrapError(f"{label} destination parent is not a directory.")
+                        except BaseException:
                             close_handle(next_dst)
-                            raise BootstrapError(f"{label} destination parent is not a directory.")
+                            raise
                         target_directories[next_prefix] = next_dst
                     prefix = next_prefix
                 src_parent = source_directories[prefix]
