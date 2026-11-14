@@ -51,7 +51,10 @@ def parse_macho_load_commands(load_output: str, linked_output: str) -> dict:
         value = line.strip().split(" (", 1)[0]
         if value.startswith("/") and not value.startswith(SYSTEM_DYLIB_PREFIXES):
             absolute_non_system.append(value)
-    unsafe_rpaths = [p for p in rpaths if not p.startswith(("@loader_path", "@executable_path"))]
+    def loader_relative(value: str) -> bool:
+        return any(value == token or value.startswith(token + "/")
+                   for token in ("@loader_path", "@executable_path"))
+    unsafe_rpaths = [p for p in rpaths if not loader_relative(p)]
     install_names = []
     for line in linked_output.splitlines()[1:]:
         value = line.strip().split(" (", 1)[0]
