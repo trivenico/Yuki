@@ -154,6 +154,15 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 verify_signed_bundle(self.bundle, self.public_path)
         self.assertTrue(replaced, "the test must replace the payload opened by inventory")
 
+    @unittest.skipUnless(os.name == "nt", "Windows handle-relative inventory")
+    def test_windows_inventory_uses_pinned_directory_handles(self):
+        with patch(
+            "yuki_trust.portable_bootstrap.os.walk",
+            side_effect=AssertionError("Windows inventory must not use path-based os.walk"),
+        ):
+            manifest = verify_signed_bundle(self.bundle, self.public_path)
+        self.assertEqual(manifest["platform"], "test-platform")
+
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
     def test_windows_inventory_rejects_file_symlink(self):
         outside = self.root / "outside-payload.txt"
