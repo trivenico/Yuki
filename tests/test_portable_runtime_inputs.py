@@ -1,6 +1,10 @@
+import base64
+import csv
 import hashlib
 import io
 import tempfile
+import sys
+import zipfile
 import unittest
 from contextlib import redirect_stderr
 from types import SimpleNamespace
@@ -105,6 +109,59 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertTrue(result["atomic_publish"])
         self.assertTrue((target / "installed.marker").is_file())
         self.assertEqual(Path(command[command.index("--target") + 1]).parent.resolve(), self.root.resolve())
+
+    def test_real_offline_pip_install_from_synthetic_hashed_wheel(self):
+        """Exercise pip itself with a valid local wheel and no package index."""
+        if not __import__("importlib.util").util.find_spec("pip"):
+            self.skipTest("pip is unavailable in this CI interpreter")
+        wheelhouse = self.root / "real-wheelhouse"
+        wheelhouse.mkdir()
+        wheel = wheelhouse / "demo_portable-1.0-py3-none-any.whl"
+        files = {
+            "demo_portable/__init__.py": b"VALUE = 'installed-offline'\\n",
+            "demo_portable-1.0.dist-info/METADATA": (
+                b"Metadata-Version: 2.1\\nName: demo-portable\\nVersion: 1.0\\n\\n"
+            ),
+            "demo_portable-1.0.dist-info/WHEEL": (
+                b"Wheel-Version: 1.0\\nGenerator: yuki-test\\nRoot-Is-Purelib: true\\n"
+                b"Tag: py3-none-any\\n"
+            ),
+        }
+        record_rows = []
+        for name, payload in files.items():
+            digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode("ascii")
+            record_rows.append((name, f"sha256={digest}", str(len(payload))))
+        record_rows.append(("demo_portable-1.0.dist-info/RECORD", "", ""))
+        record = io.StringIO()
+        csv.writer(record, lineterminator="\\n").writerows(record_rows)
+        with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for name, payload in files.items():
+                bundle.writestr(name, payload)
+            bundle.writestr("demo_portable-1.0.dist-info/RECORD", record.getvalue())
+        wheel_digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        lock = self.root / "real-requirements.lock"
+        lock.write_text(
+            f"demo-portable==1.0 --hash=sha256:{wheel_digest}\\n",
+            encoding="utf-8",
+        )
+        runtime_root = Path(sys.executable).resolve().parent
+        python = Path(sys.executable).resolve()
+        target = self.root / "real-installed"
+        result = install_offline_dependencies(
+            runtime_root, python, lock, wheelhouse, target, timeout_seconds=120
+        )
+        self.assertTrue(result["atomic_publish"])
+        self.assertTrue((target / "demo_portable" / "__init__.py").is_file())
+        check = subprocess.run(
+            [
+                sys.executable, "-I", "-c",
+                "import sys; sys.path.insert(0, sys.argv[1]); import demo_portable; "
+                "assert demo_portable.VALUE == 'installed-offline'",
+                str(target),
+            ],
+            check=False, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(check.returncode, 0, check.stderr)
 
     def test_installer_rejects_failed_pip_execution(self):
         self._write_lock()
