@@ -87,14 +87,14 @@ class NativeAuditTests(unittest.TestCase):
             def runner(command, **kwargs):
                 commands.append(command)
                 if "-l" in command:
-                    output = "Load command 1\\n cmd LC_RPATH\\n path @loader_path (offset 12)\\n"
+                    output = "Load command 1\n cmd LC_RPATH\n path @loader_path (offset 12)\n"
                 else:
                     output = (
-                        "Universal binary with 2 architectures: [x86_64:arm64]\\n"
-                        "universal.dylib (architecture x86_64):\\n"
-                        "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
-                        "universal.dylib (architecture arm64):\\n"
-                        "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
+                        "Universal binary with 2 architectures: [x86_64:arm64]\n"
+                        "universal.dylib (architecture x86_64):\n"
+                        "\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
+                        "universal.dylib (architecture arm64):\n"
+                        "\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
                     )
                 return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
