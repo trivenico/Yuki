@@ -55,3 +55,27 @@ It derives the owner from the authenticated session and returns redacted
 evidence metadata. Idempotency keys and argument fingerprints are not exposed
 by this endpoint. Evidence ingestion remains an internal trusted-adapter
 operation; clients cannot submit arbitrary provider claims through the API.
+
+## Explicit adapter registry and reconciliation operation
+
+The runtime now accepts an explicitly constructed
+`ProviderOutcomeRegistry`, mapping exact tool names to trusted adapter objects.
+There is no dynamic module loading, provider-name guessing, fallback adapter, or
+automatic network integration. A `ProviderOutcomeReconciler` loads the
+owner-scoped durable execution, passes only its durable identity and status to
+the registered adapter, validates the typed evidence, and appends it to the
+ledger.
+
+Authenticated reconciliation is requested with:
+
+`POST /v1/conversations/{conversation_id}/tool-executions/{call_id}/provider-outcomes`
+
+Body: `{"request_id":"..." }`
+
+The operation performs one lookup only. Missing adapter configuration returns
+a generic service-unavailable response. Adapter transport or parsing failures
+do not create a false negative record; the execution remains unresolved and
+blocked. The current repository has the adapter contract and registry seam,
+not production integrations with any particular email, payment, or cloud
+provider. Such integrations must be separately implemented and tested against
+each provider's documented status semantics.
