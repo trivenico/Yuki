@@ -369,26 +369,26 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "inventory or file hashes"):
             verify_signed_bundle(self.bundle, self.public_path)
 
-    @unittest.skipUnless(os.name == "nt", "Windows native handle staging")
-    def test_windows_staging_uses_native_handle_copy_for_every_file(self):
-        from yuki_trust.portable_host import _copy_windows_file_handle_secure
+    @unittest.skipUnless(os.name == "nt", "Windows handle-relative staging")
+    def test_windows_staging_uses_pinned_directory_handles(self):
+        from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
 
         with patch(
-            "yuki_trust.portable_host._copy_windows_file_handle_secure",
-            wraps=_copy_windows_file_handle_secure,
-        ) as secure_copy:
-            with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
-                staged = Path(temp_dir)
-                self.assertEqual(
-                    (staged / "payload.txt").read_text(encoding="utf-8"),
-                    "verified payload",
-                )
-        copied_sources = {Path(call.args[0]).name for call in secure_copy.call_args_list}
+            "yuki_trust.portable_host._stage_windows_bundle_handle_secure",
+            wraps=_stage_windows_bundle_handle_secure,
+        ) as secure_stage:
+            with patch.object(Path, "mkdir", side_effect=AssertionError("path-based staging mkdir forbidden")):
+                with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
+                    staged = Path(temp_dir)
+                    self.assertEqual(
+                        (staged / "payload.txt").read_text(encoding="utf-8"),
+                        "verified payload",
+                    )
+        self.assertEqual(secure_stage.call_count, 1)
         self.assertEqual(
-            copied_sources,
-            {"python.exe", "portable_entry.py", "payload.txt", "runtime-manifest.json", "runtime-manifest.sig"},
+            {item["path"] for item in secure_stage.call_args.kwargs["files"]},
+            {"python.exe", "portable_entry.py", "payload.txt"},
         )
-        self.assertEqual(secure_copy.call_count, 5)
 
     def test_staging_revalidates_host_controlled_copy(self):
         with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
