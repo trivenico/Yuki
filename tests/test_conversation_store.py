@@ -203,6 +203,87 @@ class ConversationStoreTests(unittest.TestCase):
 
 
 
+
+    def test_tool_execution_journal_claims_before_side_effect_and_rejects_replay(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Execute tool", idempotency_key="tool-journal-request",
+            expected_version=0, generation_request_id="tool-journal-request",
+        )
+        with patch("core.conversation_store.time.time", return_value=10_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="journal-worker", ttl_seconds=60,
+            )
+            digest = "a" * 64
+            first = self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="tool-journal-request", call_id="call-1",
+                tool_name="send_email", arguments_sha256=digest,
+                lease_token="journal-worker",
+            )
+            self.assertTrue(first["created"])
+            replay = self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="tool-journal-request", call_id="call-1",
+                tool_name="send_email", arguments_sha256=digest,
+                lease_token="journal-worker",
+            )
+            self.assertFalse(replay["created"])
+            self.assertEqual(replay["status"], "started")
+            with self.assertRaises(ConversationConflict):
+                self.store.begin_tool_execution(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="tool-journal-request", call_id="call-1",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token="journal-worker",
+                )
+            self.assertTrue(self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="tool-journal-request", call_id="call-1",
+                lease_token="journal-worker", status="completed",
+            ))
+            self.assertFalse(self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="tool-journal-request", call_id="call-1",
+                lease_token="journal-worker", status="failed",
+            ))
+        records = self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="tool-journal-request",
+        )
+        self.assertEqual(records[0]["status"], "completed")
+
+    def test_crash_recovery_marks_started_tool_execution_uncertain(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Possibly send email", idempotency_key="tool-uncertain-request",
+            expected_version=0, generation_request_id="tool-uncertain-request",
+        )
+        with patch("core.conversation_store.time.time", return_value=20_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="uncertain-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="tool-uncertain-request", call_id="call-uncertain",
+                tool_name="send_email", arguments_sha256="c" * 64,
+                lease_token="uncertain-worker",
+            )
+        changed = self.store.mark_started_tool_executions_uncertain(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="tool-uncertain-request",
+        )
+        self.assertEqual(changed, 1)
+        records = self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id="tool-uncertain-request",
+        )
+        self.assertEqual(records[0]["status"], "uncertain")
+
     def test_user_message_and_generation_run_are_created_atomically(self):
         result = self.store.append_message(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
