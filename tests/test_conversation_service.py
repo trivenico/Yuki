@@ -477,6 +477,41 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(len(self.observed), 1)
 
 
+    def test_recovery_matches_assistant_to_its_own_generation_not_next_turn(self):
+        first = self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="First interrupted turn", idempotency_key="first-run",
+            expected_version=0, generation_request_id="first-run",
+        )
+        second = self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Second interrupted turn", idempotency_key="second-run",
+            expected_version=first["version"], generation_request_id="second-run",
+        )
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="assistant", content="First answer persisted before crash",
+            idempotency_key="assistant:first-run", expected_version=second["version"],
+        )
+
+        result = self.service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="A fresh request", request_id="fresh-after-two-crashes",
+            expected_version=3, tools=[],
+        )
+
+        self.assertEqual(result["status"], "completed")
+        generations = self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual(generations, [])
+        history = self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual(history[2]["content"], "First answer persisted before crash")
+        self.assertIn("interrupted", history[3]["content"])
+        self.assertEqual(len(self.observed), 1)
+
     def test_recovery_marks_run_completed_if_assistant_was_already_persisted(self):
         user = self.store.append_message(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
