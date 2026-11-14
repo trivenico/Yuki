@@ -46,28 +46,37 @@ class GuardedToolRuntime:
                 pass
 
     def invoke(self, name: str, argument: str = "") -> str:
+        output, _status = self.invoke_with_status(name, argument)
+        return output
+
+    def invoke_with_status(self, name: str, argument: str = "") -> tuple[str, str]:
+        """Invoke a guarded tool and expose a conservative side-effect outcome.
+
+        Handler exceptions are uncertain: a remote side effect may have committed
+        before the handler failed to receive or return its acknowledgement.
+        """
         if not isinstance(name, str) or not name or len(name) > 128:
             self._record("invalid", "invalid_name")
-            return "Invalid tool name."
+            return "Invalid tool name.", "failed"
         if not isinstance(argument, str) or len(argument) > self._max_argument_chars:
             self._record(name, "invalid_argument")
-            return "Tool argument is invalid or too long."
+            return "Tool argument is invalid or too long.", "failed"
         if name not in self._tools:
             self._record(name, "not_found")
-            return "Unknown tool."
+            return "Unknown tool.", "failed"
         try:
             authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
         if not authorized:
             self._record(name, "denied")
-            return "Tool blocked by Yuki's local security policy."
+            return "Tool blocked by Yuki's local security policy.", "failed"
         try:
             result = str(self._tools[name](argument))
         except Exception:
             self._record(name, "failed")
-            return "The tool failed. Check the input and try again."
+            return "The tool failed. Its external outcome may be uncertain.", "uncertain"
         if len(result) > self._max_result_chars:
             result = result[: self._max_result_chars] + "… [truncated]"
         self._record(name, "completed")
-        return result
+        return result, "completed"
