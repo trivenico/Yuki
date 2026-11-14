@@ -16,7 +16,7 @@ from pathlib import Path
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 _HASH_TOKEN = re.compile(r"--hash=sha256:([a-fA-F0-9]{64})")
-_PINNED_REQUIREMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\\[[A-Za-z0-9._,-]+\\])?==[^\\s;]+")
+_PINNED_REQUIREMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]+\])?==[^\s;]+")
 
 
 class InputValidationError(ValueError):
