@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import subprocess
+import stat
 import sys
 import tempfile
 from pathlib import Path
