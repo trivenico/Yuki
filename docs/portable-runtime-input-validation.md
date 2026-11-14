@@ -52,7 +52,7 @@ The installer requires the interpreter to resolve inside the supplied verified r
 use package indexes or source distributions. The lock must contain the complete
 dependency closure, exact versions, and hashes for the selected platform and
 Python ABI. Pip itself validates wheel metadata, compatibility and hashes.
-Installation runs with a timeout and into a new target directory.
+Installation runs with a timeout in a fresh sibling staging directory. The staging directory is atomically published as the final target only after pip succeeds; failed or timed-out installs are cleaned up and never appear as completed targets.
 
 This stage executes the supplied runtime interpreter and pip, so it must only
 be used after the archive digest has been checked against an independently
