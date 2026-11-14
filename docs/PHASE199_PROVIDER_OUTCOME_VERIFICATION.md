@@ -6,8 +6,8 @@ separate read-only operation.
 
 ## Adapter contract
 
-An adapter explicitly implements `lookup_tool_outcome(execution)` and returns
-a `ProviderOutcomeEvidence`. The result must bind to the exact durable
+An adapter explicitly implements a synchronous `lookup_tool_outcome(execution)` method and returns
+a `ProviderOutcomeEvidence`. Asynchronous lookup methods are rejected at registration and at the direct verification boundary; this contract does not create un-awaited coroutine work. The result must bind to the exact durable
 `idempotency_key` and `arguments_sha256` already stored for that execution.
 
 Outcomes are deliberately limited to:
