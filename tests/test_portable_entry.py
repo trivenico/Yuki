@@ -57,13 +57,13 @@ class PortableEntryTests(unittest.TestCase):
         marker = self.root.parent / "launched.txt"
         bundled_main = self.root / "site-packages" / "main.py"
         bundled_main.write_text(
-            "import os\\nfrom pathlib import Path\\n"
-            "Path(os.environ['YUKI_SMOKE_MARKER']).write_text('bundled', encoding='utf-8')\\n"
+            "import os\nfrom pathlib import Path\n"
+            "Path(os.environ['YUKI_SMOKE_MARKER']).write_text('bundled', encoding='utf-8')\n"
         )
         hostile = self.root.parent / "hostile"
         hostile.mkdir()
         (hostile / "main.py").write_text(
-            "from pathlib import Path\\nPath('HOST_PATH_WAS_USED').write_text('bad')\\n"
+            "from pathlib import Path\nPath('HOST_PATH_WAS_USED').write_text('bad')\n"
         )
         env = os.environ.copy()
         env["PYTHONPATH"] = str(hostile)
