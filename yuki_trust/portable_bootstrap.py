@@ -118,7 +118,96 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     return value["files"]
 
 
+def _inventory_posix(root: Path) -> list[dict[str, Any]]:
+    """Inventory through pinned directory descriptors and no-follow opens."""
+    if (
+        not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.open not in os.supports_dir_fd
+        or os.stat not in os.supports_dir_fd
+    ):
+        raise BootstrapError("POSIX bundle inventory requires dir_fd, O_DIRECTORY and O_NOFOLLOW support.")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    files: list[dict[str, Any]] = []
+
+    def visit(directory_fd: int, prefix: str) -> None:
+        try:
+            names = sorted(os.listdir(directory_fd))
+        except OSError as exc:
+            raise BootstrapError("Bundle directory changed while being inspected.") from exc
+        for name in names:
+            relative = f"{prefix}/{name}" if prefix else name
+            if not prefix and relative in {MANIFEST_NAME, SIGNATURE_NAME}:
+                continue
+            try:
+                entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISDIR(entry.st_mode):
+                    child_fd = os.open(name, directory_flags, dir_fd=directory_fd)
+                    try:
+                        opened = os.fstat(child_fd)
+                        if not stat.S_ISDIR(opened.st_mode) or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino):
+                            raise BootstrapError(f"Bundle directory changed during inventory: {relative}")
+                        visit(child_fd, relative)
+                    finally:
+                        os.close(child_fd)
+                    continue
+                if not stat.S_ISREG(entry.st_mode):
+                    raise BootstrapError(f"Bundle contains a symbolic-link or non-regular file: {relative}")
+                file_fd = os.open(name, file_flags, dir_fd=directory_fd)
+                try:
+                    before = os.fstat(file_fd)
+                    if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                        raise BootstrapError(f"Bundle file changed during inventory: {relative}")
+                    digest = hashlib.sha256()
+                    size = 0
+                    while True:
+                        chunk = os.read(file_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        digest.update(chunk)
+                    after = os.fstat(file_fd)
+                    if (
+                        size != before.st_size
+                        or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    ):
+                        raise BootstrapError(f"Bundle file changed while being hashed: {relative}")
+                    files.append({"path": relative, "size": size, "sha256": digest.hexdigest()})
+                finally:
+                    os.close(file_fd)
+            except BootstrapError:
+                raise
+            except OSError as exc:
+                raise BootstrapError(f"Unable to securely inspect bundle entry: {relative}") from exc
+
+    root_fd = None
+    try:
+        root_fd = os.open(root, directory_flags)
+        root_info = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_info.st_mode):
+            raise BootstrapError("Portable bundle root must be a real directory.")
+        visit(root_fd, "")
+    except BootstrapError:
+        raise
+    except OSError as exc:
+        raise BootstrapError("Unable to securely open portable bundle root.") from exc
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+    files.sort(key=lambda item: item["path"])
+    if not files:
+        raise BootstrapError("Runtime bundle contains no regular files.")
+    return files
+
+
 def _inventory(root: Path) -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return _inventory_posix(root)
+
+    # Windows currently uses the path-based fallback. A handle-based
+    # FILE_FLAG_OPEN_REPARSE_POINT implementation is a separate hardening task.
     files: list[dict[str, Any]] = []
     for current, dirs, names in os.walk(root, followlinks=False):
         current_path = Path(current)
@@ -153,6 +242,50 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     return files
 
 
+def _read_bundle_metadata_posix(root: Path, name: str, limit: int) -> bytes:
+    """Read a root-level metadata file through pinned descriptors and O_NOFOLLOW."""
+    if (
+        not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.open not in os.supports_dir_fd
+        or os.stat not in os.supports_dir_fd
+    ):
+        raise BootstrapError("POSIX metadata reads require descriptor-relative no-follow support.")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    try:
+        entry = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        if not stat.S_ISREG(entry.st_mode) or entry.st_size > limit:
+            raise BootstrapError(f"Runtime metadata file is missing, oversized, or not regular: {name}")
+        fd = os.open(name, flags | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                raise BootstrapError(f"Runtime metadata changed while being opened: {name}")
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(fd, min(65536, limit + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    raise BootstrapError(f"Runtime metadata file is oversized: {name}")
+                chunks.append(chunk)
+            after = os.fstat(fd)
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns
+            ):
+                raise BootstrapError(f"Runtime metadata changed while being read: {name}")
+            return b"".join(chunks)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise BootstrapError(f"Runtime metadata is missing or unable to be securely read: {name}") from exc
+    finally:
+        os.close(root_fd)
+
+
 def verify_signed_bundle(
     bundle: str | Path,
     public_key_path: str | Path,
@@ -165,19 +298,27 @@ def verify_signed_bundle(
     root = root_candidate.resolve(strict=True)
     if not root.is_dir():
         raise BootstrapError("Portable bundle must be a directory.")
-    manifest_path = root / MANIFEST_NAME
-    signature_path = root / SIGNATURE_NAME
-    for path, label, limit in (
-        (manifest_path, "Runtime manifest", MAX_MANIFEST_BYTES),
-        (signature_path, "Runtime signature", MAX_SIGNATURE_BYTES),
-    ):
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
-            raise BootstrapError(f"{label} is missing, oversized, or not a regular file.")
+    if os.name != "nt":
+        manifest_bytes = _read_bundle_metadata_posix(root, MANIFEST_NAME, MAX_MANIFEST_BYTES)
+        signature_bytes = _read_bundle_metadata_posix(root, SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
+    else:
+        manifest_path = root / MANIFEST_NAME
+        signature_path = root / SIGNATURE_NAME
+        for path, label, limit in (
+            (manifest_path, "Runtime manifest", MAX_MANIFEST_BYTES),
+            (signature_path, "Runtime signature", MAX_SIGNATURE_BYTES),
+        ):
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+                raise BootstrapError(f"{label} is missing, oversized, or not a regular file.")
+        try:
+            manifest_bytes = manifest_path.read_bytes()
+            signature_bytes = signature_path.read_bytes()
+        except OSError as exc:
+            raise BootstrapError("Runtime manifest or signature is unreadable.") from exc
 
     try:
-        manifest_bytes = manifest_path.read_bytes()
         value = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise BootstrapError("Runtime manifest is unreadable or invalid JSON.") from exc
     expected = _validate_manifest(value)
     if expected_platform is not None:
@@ -201,7 +342,7 @@ def verify_signed_bundle(
             key_path, label="Host trust anchor", max_bytes=65536
         )
         public_key = serialization.load_pem_public_key(public_key_bytes)
-        signature = base64.b64decode(signature_path.read_text(encoding="ascii").strip(), validate=True)
+        signature = base64.b64decode(signature_bytes.decode("ascii").strip(), validate=True)
     except ImportError as exc:
         raise BootstrapError("Host bootstrap requires the cryptography package.") from exc
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
@@ -216,6 +357,145 @@ def verify_signed_bundle(
     if _inventory(root) != expected:
         raise BootstrapError("Portable bundle inventory or file hashes do not match the signed manifest.")
     return value
+
+
+def _copy_bundle_posix(source: Path, staged: Path, manifest: dict[str, Any]) -> None:
+    """Copy and re-hash bundle content using pinned source and destination directory FDs."""
+    if (
+        not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.open not in os.supports_dir_fd
+        or os.stat not in os.supports_dir_fd
+        or os.mkdir not in os.supports_dir_fd
+    ):
+        raise BootstrapError("POSIX staging requires descriptor-relative filesystem primitives.")
+    nofollow = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow
+    source_fd = os.open(source, directory_flags)
+    target_fd = os.open(staged, directory_flags)
+    try:
+        def open_directory(parent_fd: int, name: str, *, create: bool) -> int:
+            if create:
+                try:
+                    os.mkdir(name, 0o700, dir_fd=parent_fd)
+                except FileExistsError:
+                    pass
+            entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(entry.st_mode):
+                raise BootstrapError("Bundle staging encountered a non-directory path component.")
+            child_fd = os.open(name, directory_flags, dir_fd=parent_fd)
+            opened = os.fstat(child_fd)
+            if (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino):
+                os.close(child_fd)
+                raise BootstrapError("Directory changed while staging the portable bundle.")
+            return child_fd
+
+        def parent_fd_for(root_fd: int, parts: tuple[str, ...], *, create: bool) -> int:
+            current = os.dup(root_fd)
+            try:
+                for part in parts:
+                    child = open_directory(current, part, create=create)
+                    os.close(current)
+                    current = child
+                return current
+            except Exception:
+                os.close(current)
+                raise
+
+        def copy_metadata_file(name: str, limit: int) -> None:
+            entry = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+            if not stat.S_ISREG(entry.st_mode) or entry.st_size > limit:
+                raise BootstrapError(f"Bundle metadata file is invalid: {name}")
+            fd = os.open(name, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0), dir_fd=source_fd)
+            try:
+                before = os.fstat(fd)
+                if (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                    raise BootstrapError(f"Bundle metadata changed during staging: {name}")
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = os.read(fd, min(65536, limit + 1 - total))
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > limit:
+                        raise BootstrapError(f"Bundle metadata file is oversized: {name}")
+                    chunks.append(chunk)
+                after = os.fstat(fd)
+                if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                    before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns
+                ):
+                    raise BootstrapError(f"Bundle metadata changed while staging: {name}")
+                data = b"".join(chunks)
+            finally:
+                os.close(fd)
+            out_fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600, dir_fd=target_fd)
+            try:
+                view = memoryview(data)
+                while view:
+                    written = os.write(out_fd, view)
+                    if written <= 0:
+                        raise BootstrapError("Unable to write staged bundle metadata.")
+                    view = view[written:]
+            finally:
+                os.close(out_fd)
+
+        for item in manifest["files"]:
+            relative = PurePosixPath(item["path"])
+            source_parent = parent_fd_for(source_fd, relative.parts[:-1], create=False)
+            target_parent = parent_fd_for(target_fd, relative.parts[:-1], create=True)
+            source_file_fd = target_file_fd = None
+            try:
+                name = relative.parts[-1]
+                entry = os.stat(name, dir_fd=source_parent, follow_symlinks=False)
+                if not stat.S_ISREG(entry.st_mode):
+                    raise BootstrapError(f"Bundle changed during staging: {item['path']}")
+                source_file_fd = os.open(name, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0), dir_fd=source_parent)
+                before = os.fstat(source_file_fd)
+                if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                    raise BootstrapError(f"Bundle file changed during staging: {item['path']}")
+                target_file_fd = os.open(
+                    name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                    stat.S_IMODE(before.st_mode) & 0o755, dir_fd=target_parent
+                )
+                digest = hashlib.sha256()
+                size = 0
+                while True:
+                    chunk = os.read(source_file_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    digest.update(chunk)
+                    view = memoryview(chunk)
+                    while view:
+                        written = os.write(target_file_fd, view)
+                        if written <= 0:
+                            raise BootstrapError("Unable to write staged runtime file.")
+                        view = view[written:]
+                after = os.fstat(source_file_fd)
+                if (
+                    size != item["size"]
+                    or digest.hexdigest() != item["sha256"]
+                    or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                ):
+                    raise BootstrapError(f"Bundle content changed during staging: {item['path']}")
+                os.fchmod(target_file_fd, stat.S_IMODE(before.st_mode) & 0o755)
+            except OSError as exc:
+                raise BootstrapError(f"Unable to securely stage bundle file: {item['path']}") from exc
+            finally:
+                if source_file_fd is not None:
+                    os.close(source_file_fd)
+                if target_file_fd is not None:
+                    os.close(target_file_fd)
+                os.close(source_parent)
+                os.close(target_parent)
+
+        copy_metadata_file(MANIFEST_NAME, MAX_MANIFEST_BYTES)
+        copy_metadata_file(SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
+    finally:
+        os.close(source_fd)
+        os.close(target_fd)
 
 
 def stage_verified_bundle(
@@ -247,20 +527,24 @@ def stage_verified_bundle(
             staged.chmod(0o700)
         except OSError:
             pass
-        for item in manifest["files"]:
-            relative = PurePosixPath(item["path"])
-            source_file = source.joinpath(*relative.parts)
-            target_file = staged.joinpath(*relative.parts)
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            if source_file.is_symlink() or not source_file.is_file():
-                raise BootstrapError(f"Bundle changed during staging: {item['path']}")
-            shutil.copyfile(source_file, target_file)
-            try:
-                target_file.chmod(stat.S_IMODE(source_file.stat().st_mode))
-            except OSError:
-                pass
-        shutil.copyfile(source / MANIFEST_NAME, staged / MANIFEST_NAME)
-        shutil.copyfile(source / SIGNATURE_NAME, staged / SIGNATURE_NAME)
+        if os.name != "nt":
+            _copy_bundle_posix(source, staged, manifest)
+        else:
+            # Windows still needs a native handle-based no-reparse copy path.
+            for item in manifest["files"]:
+                relative = PurePosixPath(item["path"])
+                source_file = source.joinpath(*relative.parts)
+                target_file = staged.joinpath(*relative.parts)
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                if source_file.is_symlink() or not source_file.is_file():
+                    raise BootstrapError(f"Bundle changed during staging: {item['path']}")
+                shutil.copyfile(source_file, target_file)
+                try:
+                    target_file.chmod(stat.S_IMODE(source_file.stat().st_mode))
+                except OSError:
+                    pass
+            shutil.copyfile(source / MANIFEST_NAME, staged / MANIFEST_NAME)
+            shutil.copyfile(source / SIGNATURE_NAME, staged / SIGNATURE_NAME)
         verify_signed_bundle(staged, public_key_path, expected_platform=expected_platform)
         return staged_temp
     except Exception:

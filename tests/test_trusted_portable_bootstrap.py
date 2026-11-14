@@ -9,6 +9,7 @@ from pathlib import Path
 
 from yuki_trust.portable_bootstrap import (
     BootstrapError,
+    MAX_SIGNATURE_BYTES,
     run_verified_bundle,
     stage_verified_bundle,
     verify_signed_bundle,
@@ -112,6 +113,49 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
     def test_valid_bundle_authenticates(self):
         manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative inventory")
+    def test_posix_inventory_does_not_use_path_walk(self):
+        with patch("yuki_trust.portable_bootstrap.os.walk", side_effect=AssertionError("path walk must not be used")):
+            manifest = verify_signed_bundle(self.bundle, self.public_path)
+        self.assertEqual(
+            {item["path"] for item in manifest["files"]},
+            {"runtime/python", "portable_entry.py", "payload.txt"},
+        )
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
+    def test_posix_metadata_verification_avoids_path_based_reads(self):
+        with (
+            patch.object(Path, "read_bytes", side_effect=AssertionError("path read_bytes forbidden")),
+            patch.object(Path, "read_text", side_effect=AssertionError("path read_text forbidden")),
+        ):
+            manifest = verify_signed_bundle(self.bundle, self.public_path)
+        self.assertEqual(manifest["platform"], "test-platform")
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
+    def test_posix_metadata_reader_rejects_symlinked_signature(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        outside = self.bundle.parent / "external-signature"
+        outside.write_bytes(signature.read_bytes())
+        signature.unlink()
+        signature.symlink_to(outside)
+        with self.assertRaisesRegex(BootstrapError, "not regular|securely read"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
+    def test_posix_metadata_reader_rejects_oversized_signature(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        signature.write_bytes(b"x" * (MAX_SIGNATURE_BYTES + 1))
+        with self.assertRaisesRegex(BootstrapError, "oversized"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipIf(os.name == "nt" or not hasattr(os, "mkfifo"), "POSIX FIFO metadata rejection")
+    def test_posix_metadata_reader_rejects_fifo_without_opening_it(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        signature.unlink()
+        os.mkfifo(signature)
+        with self.assertRaisesRegex(BootstrapError, "not regular"):
+            verify_signed_bundle(self.bundle, self.public_path)
 
     def test_rejects_bundle_for_different_host_platform(self):
         with self.assertRaisesRegex(BootstrapError, "Runtime platform mismatch"):
@@ -268,6 +312,14 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.assertTrue((staged / "payload.txt").is_file())
             self.assertEqual((staged / "payload.txt").read_text(encoding="utf-8"), "verified payload")
             verify_signed_bundle(staged, self.public_path)
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative staging")
+    def test_posix_staging_does_not_use_path_based_copyfile(self):
+        with patch("yuki_trust.portable_bootstrap.shutil.copyfile", side_effect=AssertionError("path copy forbidden")):
+            with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
+                staged = Path(temp_dir)
+                self.assertEqual((staged / "payload.txt").read_text(encoding="utf-8"), "verified payload")
+                verify_signed_bundle(staged, self.public_path)
 
     @unittest.skipIf(os.name == "nt", "shell executable smoke test is POSIX-specific")
     def test_launches_only_signed_entrypoint_from_staging(self):
