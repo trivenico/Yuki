@@ -129,9 +129,16 @@ class StructuredToolProtocol:
                     raise ToolExecutionAlreadyClaimed("unknown")
                 if isinstance(claim, str) and claim != "claimed":
                     raise ToolExecutionAlreadyClaimed(claim)
+            idempotency_key = None
+            if isinstance(claim, dict):
+                if claim.get("status") != "claimed" or not isinstance(claim.get("idempotency_key"), str):
+                    raise ToolExecutionAlreadyClaimed(str(claim.get("status", "unknown")))
+                idempotency_key = claim["idempotency_key"]
             try:
                 if callable(getattr(self._runtime, "invoke_with_status", None)):
-                    output, outcome = self._runtime.invoke_with_status(call.name, argument)
+                    output, outcome = self._runtime.invoke_with_status(
+                        call.name, argument, idempotency_key=idempotency_key
+                    )
                 else:
                     output, outcome = self._runtime.invoke(call.name, argument), "completed"
             except Exception as exc:
