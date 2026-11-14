@@ -135,7 +135,7 @@ def _write_launcher(root: Path, policy_path: Path) -> tuple[Path, Path | None]:
 
 
 def install_host_trust(public_key_source: Path, install_root: Path, state_root: Path) -> dict[str, str]:
-    module_path = Path(portable_host.__file__).resolve(strict=True)
+    module_path = Path(portable_host.__file__).resolve()
     try:
         module_path.relative_to(Path(sys.prefix).resolve())
     except ValueError as exc:
