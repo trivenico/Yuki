@@ -86,6 +86,121 @@ class ConversationServiceTests(unittest.TestCase):
                 owner_id="owner-b", conversation_id=conversation_id,
             )
 
+    def _seed_interrupted_generation(self, request_id, expected_version):
+        return self.store.append_message(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            role="user",
+            content=f"Interrupted {request_id}",
+            idempotency_key=request_id,
+            expected_version=expected_version,
+            generation_request_id=request_id,
+        )
+
+    def _with_recovery_lease(self, callback):
+        conversation_id = self.conversation["conversation_id"]
+        token = "recovery-failure-test-lease"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=60,
+        )
+        try:
+            return callback(token)
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
+
+    def test_recovery_append_failure_leaves_generation_retryable(self):
+        conversation_id = self.conversation["conversation_id"]
+        self._seed_interrupted_generation("retryable-recovery", 0)
+        coordinator = ConversationRecoveryCoordinator(self.store)
+        original_append = self.store.append_message
+
+        def fail_append(**kwargs):
+            raise OSError("simulated disk write failure")
+
+        def attempt(token):
+            with patch.object(self.store, "append_message", side_effect=fail_append):
+                with self.assertRaisesRegex(OSError, "simulated disk write failure"):
+                    coordinator.recover(
+                        owner_id="owner-a", conversation_id=conversation_id,
+                        lease_token=token,
+                    )
+            pending = self.store.list_interrupted_generations(
+                owner_id="owner-a", conversation_id=conversation_id,
+            )
+            self.assertEqual([item["request_id"] for item in pending], ["retryable-recovery"])
+            self.assertEqual(self.store.list_recovery_events(
+                owner_id="owner-a", conversation_id=conversation_id,
+            ), [])
+            return coordinator.recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
+
+        summary = self._with_recovery_lease(attempt)
+        self.assertEqual(summary.interrupted_generations, 1)
+        self.assertEqual(len(self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )), 1)
+
+    def test_recovery_audit_insert_failure_rolls_back_generation_finalization(self):
+        conversation_id = self.conversation["conversation_id"]
+        self._seed_interrupted_generation("audit-rollback", 0)
+        with self.store._connect() as db:
+            db.execute("""CREATE TRIGGER fail_recovery_audit
+                          BEFORE INSERT ON conversation_recovery_events
+                          BEGIN SELECT RAISE(ABORT, 'simulated audit outage'); END""")
+
+        def attempt(token):
+            with self.assertRaisesRegex(Exception, "simulated audit outage"):
+                ConversationRecoveryCoordinator(self.store).recover(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token=token,
+                )
+            pending = self.store.list_interrupted_generations(
+                owner_id="owner-a", conversation_id=conversation_id,
+            )
+            self.assertEqual([item["request_id"] for item in pending], ["audit-rollback"])
+            self.assertEqual(self.store.list_recovery_events(
+                owner_id="owner-a", conversation_id=conversation_id,
+            ), [])
+            with self.store._connect() as db:
+                db.execute("DROP TRIGGER fail_recovery_audit")
+            return ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
+
+        summary = self._with_recovery_lease(attempt)
+        self.assertEqual(summary.interrupted_generations, 1)
+        self.assertEqual(len(self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )), 1)
+
+    def test_recovery_saturated_batch_is_reported_without_processing_101st(self):
+        conversation_id = self.conversation["conversation_id"]
+        version = 0
+        for index in range(ConversationRecoveryCoordinator.BATCH_LIMIT + 1):
+            result = self._seed_interrupted_generation(f"backlog-{index}", version)
+            version = result["version"]
+
+        summary = self._with_recovery_lease(lambda token:
+            ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
+        )
+        self.assertEqual(len(summary.recovered_request_ids), 100)
+        self.assertTrue(summary.batch_limit_reached)
+        remaining = self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=conversation_id, limit=100,
+        )
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["request_id"], "backlog-100")
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
