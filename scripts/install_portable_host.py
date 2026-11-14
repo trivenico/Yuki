@@ -11,6 +11,7 @@ import hmac
 import json
 import os
 import platform
+import shlex
 import subprocess
 import stat
 import sys
@@ -152,7 +153,15 @@ def _write_launcher(root: Path, policy_path: Path) -> tuple[Path, Path | None]:
     ).encode("utf-8")
     _atomic_write(launcher, source)
     if os.name != "nt":
-        launcher.chmod(0o700)
+        launcher.chmod(0o600)
+        shell_launcher = root / "yuki-portable-launch"
+        shell_source = (
+            "#!/bin/sh\\n"
+            f"exec {shlex.quote(sys.executable)} {shlex.quote(str(launcher))} \"$@\"\\n"
+        ).encode("utf-8")
+        _atomic_write(shell_launcher, shell_source, mode=0o700)
+        shell_launcher.chmod(0o700)
+        return shell_launcher, launcher
     # Do not generate a batch wrapper: forwarding arbitrary arguments through
     # cmd.exe's %* expansion creates avoidable command-injection ambiguity.
     return launcher, None
@@ -196,8 +205,8 @@ def install_host_trust(
     policy_path = install_root / _POLICY_NAME
     state_path = state_root / "release-state.json"
     launcher = install_root / _LAUNCHER_NAME
-    command = None
-    for target in (key_path, policy_path, launcher):
+    command = install_root / "yuki-portable-launch" if os.name != "nt" else None
+    for target in (key_path, policy_path, launcher, command):
         if target is not None and (target.exists() or target.is_symlink()):
             raise BootstrapError(f"Refusing to overwrite existing host trust file: {target}")
 
