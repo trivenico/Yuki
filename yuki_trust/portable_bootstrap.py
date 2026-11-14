@@ -269,7 +269,7 @@ def run_verified_bundle(
     expected_platform: str | None = None,
 ) -> int:
     def validate_relative(value: str, label: str) -> PurePosixPath:
-        if not isinstance(value, str) or not value or "\\\\" in value:
+        if not isinstance(value, str) or not value or "\\" in value:
             raise BootstrapError(f"{label} must be a canonical relative path inside the signed bundle.")
         relative = PurePosixPath(value)
         if relative.is_absolute() or any(part in {"", ".", ".."} for part in value.split("/")) or relative.as_posix() != value:
