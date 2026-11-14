@@ -130,8 +130,8 @@ def _apply_windows_acl(path: Path) -> None:
     subprocess.run(
         [
             "icacls", str(path), "/inheritance:r", "/grant:r",
-            f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F",
-            "*S-1-5-32-544:(OI)(CI)F", "/T",
+            f"*{sid}:(F)(OI)(CI)F", "*S-1-5-18:(F)(OI)(CI)F",
+            "*S-1-5-32-544:(F)(OI)(CI)F", "/T",
         ],
         check=True, capture_output=True, text=True, timeout=30,
     )
@@ -185,6 +185,11 @@ def install_host_trust(
         raise BootstrapError("Trust and anti-rollback state directories must be separate.")
     _prepare_private_directory(install_root, "Host install")
     _prepare_private_directory(state_root, "Anti-rollback state")
+    # Lock down Windows directories before creating any trust material so
+    # newly created files inherit the intended ACL from their first byte.
+    if os.name == "nt":
+        _apply_windows_acl(install_root)
+        _apply_windows_acl(state_root)
 
     key_path = install_root / _KEY_NAME
     policy_path = install_root / _POLICY_NAME
@@ -207,10 +212,7 @@ def install_host_trust(
         _atomic_write(key_path, key_bytes)
         _atomic_write(policy_path, (json.dumps(policy, sort_keys=True, indent=2) + "\n").encode())
         launcher, command = _write_launcher(install_root, policy_path)
-        if os.name == "nt":
-            _apply_windows_acl(install_root)
-            _apply_windows_acl(state_root)
-        else:
+        if os.name != "nt":
             key_path.chmod(0o600)
             policy_path.chmod(0o600)
             launcher.chmod(0o700)
