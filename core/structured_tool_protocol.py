@@ -123,6 +123,7 @@ class StructuredToolProtocol:
             if cancellation_requested is not None and cancellation_requested():
                 raise ToolDispatchCancelled(results)
             argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
+            claim = None
             if before_tool_call is not None:
                 claim = before_tool_call(call, argument)
                 if claim is False:
