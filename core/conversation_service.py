@@ -17,10 +17,10 @@ class ConversationService:
     LEASE_TTL_SECONDS = 3600
     LEASE_RENEW_INTERVAL_SECONDS = 1200
 
-    """Synchronous conversation orchestration for a single application worker.
+    """Synchronous conversation orchestration with durable per-conversation leases.
 
-    A process-local lock avoids duplicate work inside one instance; a database
-    lease additionally coordinates independent service instances sharing storage.
+    Independent conversations may execute concurrently. A database lease
+    coordinates workers that share the same conversation store.
     """
 
     def __init__(
@@ -85,7 +85,7 @@ class ConversationService:
             name="yuki-conversation-lease",
             daemon=True,
         )
-        heartbeat.start()
+        heartbeat_started = False
 
         def combined_cancellation_requested():
             if lease_lost.is_set():
@@ -93,6 +93,8 @@ class ConversationService:
             return bool(cancellation_requested and cancellation_requested())
 
         try:
+            heartbeat.start()
+            heartbeat_started = True
             result = self._reply_unleased(
                 owner_id=owner_id, conversation_id=conversation_id,
                 user_text=user_text, request_id=request_id,
@@ -104,7 +106,8 @@ class ConversationService:
             return result
         finally:
             stop_heartbeat.set()
-            heartbeat.join(timeout=max(1.0, min(float(interval), 5.0)))
+            if heartbeat_started:
+                heartbeat.join(timeout=max(1.0, min(float(interval), 5.0)))
             self.store.release_generation_lease(
                 owner_id=owner_id, conversation_id=conversation_id,
                 lease_token=token,
