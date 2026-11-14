@@ -111,7 +111,7 @@ class PortableHostInstallerTests(unittest.TestCase):
         self.assertTrue(Path(result["public_key"]).is_file())
 
     def test_windows_acl_grants_directory_and_inherited_full_control(self):
-        completed = type("Completed", (), {"stdout": 'User Name,SID\\r\\nDOMAIN\\\\user,S-1-5-21-1-2-3-1001\\r\\n'})()
+        completed = type("Completed", (), {"stdout": "User Name,SID\r\nDOMAIN\\user,S-1-5-21-1-2-3-1001\r\n"})()
         with (
             patch.object(installer.os, "name", "nt"),
             patch.object(installer.subprocess, "run", return_value=completed) as run,
