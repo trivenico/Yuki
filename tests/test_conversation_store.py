@@ -1,6 +1,8 @@
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import patch
 import unittest
 from pathlib import Path
@@ -715,6 +717,56 @@ class ConversationStoreTests(unittest.TestCase):
             owner_id=self.owner, conversation_id=conversation_id,
             request_id=request_id, call_id="call-reference",
         )), 1)
+
+    def test_concurrent_provider_reconciliation_claims_are_exclusive(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "provider-concurrent-claim"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Reconcile concurrently", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="provider-generation-worker", ttl_seconds=60,
+        )
+        self.store.begin_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-concurrent", tool_name="send_email",
+            arguments_sha256="b" * 64, idempotency_key="a" * 64,
+            lease_token="provider-generation-worker",
+        )
+        self.store.finish_tool_execution(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-concurrent",
+            lease_token="provider-generation-worker", status="uncertain",
+        )
+        barrier = Barrier(2)
+
+        def claim(token):
+            barrier.wait(timeout=5)
+            try:
+                result = self.store.acquire_provider_reconciliation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-concurrent",
+                    lease_token=token, ttl_seconds=30,
+                )
+                return ("claimed", result["execution_id"])
+            except ConversationConflict:
+                return ("busy", None)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(claim, ("provider-worker-a", "provider-worker-b")))
+
+        self.assertEqual(sum(result[0] == "claimed" for result in results), 1)
+        self.assertEqual(sum(result[0] == "busy" for result in results), 1)
+        self.assertEqual(
+            {result[1] for result in results if result[0] == "claimed"},
+            {self.store.list_tool_executions(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id,
+            )[0]["execution_id"]},
+        )
 
     def test_provider_reconciliation_lease_renewal_is_token_fenced(self):
         conversation_id = self.conversation["conversation_id"]
