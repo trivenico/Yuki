@@ -47,7 +47,7 @@ def _host_file(path: str | Path, *, bundle: Path, label: str) -> Path:
         raise BootstrapError(f"{label} must be stored outside the removable bundle.")
     if os.name != "nt":
         info = resolved.stat()
-        if info.st_uid != os.getuid():
+        if info.st_uid not in {0, os.getuid()}:
             raise BootstrapError(f"{label} must be owned by the current host user.")
         if stat.S_IMODE(info.st_mode) & 0o022:
             raise BootstrapError(f"{label} must not be group- or world-writable.")
@@ -78,11 +78,11 @@ def load_host_policy(policy_path: str | Path, bundle: str | Path) -> dict[str, s
 
     if not isinstance(value, dict) or set(value) != _REQUIRED_FIELDS:
         raise BootstrapError("Host launch policy has an invalid schema.")
-    if value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise BootstrapError("Unsupported host launch policy schema version.")
 
     for field in ("public_key", "expected_platform", "python", "entrypoint"):
-        if not isinstance(value[field], str) or not value[field] or len(value[field]) > 4096:
+        if not isinstance(value[field], str) or not value[field].strip() or len(value[field]) > 4096:
             raise BootstrapError(f"Host launch policy field {field!r} must be non-empty text.")
 
     public_key = Path(value["public_key"]).expanduser()
