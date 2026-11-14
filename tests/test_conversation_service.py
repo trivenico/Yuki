@@ -471,5 +471,48 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual([item["status"] for item in records], ["uncertain"])
         self.assertEqual([item["call_id"] for item in records], ["uncertain-echo"])
 
+
+    def test_provider_idempotency_key_is_forwarded_and_durably_recorded(self):
+        received_keys = []
+
+        class AllowSend:
+            def authorize_tool(self, name):
+                return name == "send"
+
+        def handler(raw, *, idempotency_key):
+            received_keys.append(idempotency_key)
+            return "accepted"
+
+        handler.supports_idempotency_key = True
+
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "provider-send-1", "name": "send", "arguments": {"to": "user"}},
+            ]}}
+
+        runtime = GuardedToolRuntime({"send": handler}, AllowSend())
+        service = ConversationService(
+            self.store, AgentExecutionLoop(model, StructuredToolProtocol(runtime))
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Send safely",
+            request_id="provider-idempotency-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(received_keys), 1)
+        self.assertEqual(len(received_keys[0]), 64)
+        record = self.store.list_tool_executions(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            request_id="provider-idempotency-request",
+        )[0]
+        self.assertTrue(record["provider_idempotency"])
+        self.assertEqual(record["idempotency_key"], received_keys[0])
+        self.assertEqual(record["status"], "completed")
+
 if __name__ == "__main__":
     unittest.main()
