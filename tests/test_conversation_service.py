@@ -36,6 +36,26 @@ def _multiprocess_claim_generation_lease(database_path, conversation_id, token, 
         )
 
 
+def _multiprocess_mark_uncertain_then_crash(database_path, conversation_id, request_id, connection):
+    import os
+    import core.conversation_store as conversation_store_module
+
+    conversation_store_module.time.time = lambda: 100.0
+    store = ConversationStore(database_path)
+    token = "recovery-crash-window-worker"
+    store.acquire_generation_lease(
+        owner_id="owner-a", conversation_id=conversation_id,
+        lease_token=token, ttl_seconds=5,
+    )
+    marked = store.mark_started_tool_executions_uncertain(
+        owner_id="owner-a", conversation_id=conversation_id,
+        request_id=request_id, lease_token=token,
+    )
+    connection.send(("marked-uncertain", marked))
+    connection.close()
+    os._exit(0)
+
+
 def _multiprocess_crash_after_generation_lease(database_path, conversation_id, token, connection):
     import os
     import core.conversation_store as conversation_store_module
@@ -1337,6 +1357,83 @@ class ConversationServiceTests(unittest.TestCase):
             idempotency_key="assistant:stale-worker-recovery",
         ))
 
+
+    def test_recovery_process_crash_preserves_uncertain_tool_outcome_without_replay(self):
+        database_path = Path(self.tempdir.name) / "chat.sqlite3"
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "recovery-crash-after-uncertain"
+        self._seed_interrupted_generation(request_id, 0)
+
+        initial_token = "seed-tool-execution-lease"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=initial_token, ttl_seconds=60,
+        )
+        try:
+            self.store.begin_tool_execution(
+                owner_id="owner-a", conversation_id=conversation_id,
+                request_id=request_id, call_id="send-once", tool_name="send",
+                arguments_sha256="a" * 64, lease_token=initial_token,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=initial_token,
+            )
+
+        context = multiprocessing.get_context("spawn")
+        parent_connection, child_connection = context.Pipe(duplex=False)
+        worker = context.Process(
+            target=_multiprocess_mark_uncertain_then_crash,
+            args=(str(database_path), conversation_id, request_id, child_connection),
+        )
+        worker.start()
+        child_connection.close()
+        try:
+            self.assertEqual(parent_connection.recv(), ("marked-uncertain", 1))
+            worker.join(timeout=10)
+            self.assertFalse(worker.is_alive(), "recovery worker did not exit")
+            self.assertEqual(worker.exitcode, 0)
+        finally:
+            parent_connection.close()
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+
+        records_before_retry = self.store.list_tool_executions(
+            owner_id="owner-a", conversation_id=conversation_id,
+            request_id=request_id,
+        )
+        self.assertEqual([record["status"] for record in records_before_retry], ["uncertain"])
+
+        replacement_token = "replacement-recovery-worker"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=replacement_token, ttl_seconds=60,
+        )
+        try:
+            summary = ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=replacement_token,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=replacement_token,
+            )
+
+        self.assertEqual(summary.interrupted_generations, 1)
+        records_after_retry = self.store.list_tool_executions(
+            owner_id="owner-a", conversation_id=conversation_id,
+            request_id=request_id,
+        )
+        self.assertEqual([record["status"] for record in records_after_retry], ["uncertain"])
+        events = self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["request_id"], request_id)
+        self.assertEqual(events[0]["uncertain_tool_calls"], 1)
 
     def test_expired_lease_can_be_reclaimed_after_worker_process_crashes(self):
         database_path = Path(self.tempdir.name) / "chat.sqlite3"
