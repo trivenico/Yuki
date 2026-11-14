@@ -122,6 +122,15 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             {"runtime/python", "portable_entry.py", "payload.txt"},
         )
 
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
+    def test_posix_metadata_verification_avoids_path_based_reads(self):
+        with (
+            patch.object(Path, "read_bytes", side_effect=AssertionError("path read_bytes forbidden")),
+            patch.object(Path, "read_text", side_effect=AssertionError("path read_text forbidden")),
+        ):
+            manifest = verify_signed_bundle(self.bundle, self.public_path)
+        self.assertEqual(manifest["platform"], "test-platform")
+
     def test_rejects_bundle_for_different_host_platform(self):
         with self.assertRaisesRegex(BootstrapError, "Runtime platform mismatch"):
             verify_signed_bundle(
