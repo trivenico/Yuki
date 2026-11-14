@@ -25,6 +25,14 @@ class ToolProtocolError(ValueError):
     """Raised when a provider response is not a valid structured tool envelope."""
 
 
+class ToolExecutionAlreadyClaimed(RuntimeError):
+    """Raised when a call ID was previously claimed and must not be replayed."""
+
+    def __init__(self, status):
+        super().__init__("tool call was already claimed; automatic replay is forbidden.")
+        self.status = status
+
+
 class ToolDispatchCancelled(RuntimeError):
     """Raised when cancellation stops a validated batch before its next side effect."""
 
@@ -96,19 +104,32 @@ class StructuredToolProtocol:
         self._runtime = runtime
 
     def dispatch(
-        self, response: str, *, cancellation_requested=None
+        self, response: str, *, cancellation_requested=None,
+        before_tool_call=None, after_tool_call=None,
     ) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
+        if before_tool_call is not None and not callable(before_tool_call):
+            raise TypeError("before_tool_call must be callable.")
+        if after_tool_call is not None and not callable(after_tool_call):
+            raise TypeError("after_tool_call must be callable.")
         calls = parse_tool_calls(response)
         results = []
         for call in calls:
             if cancellation_requested is not None and cancellation_requested():
                 raise ToolDispatchCancelled(results)
             argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
+            if before_tool_call is not None:
+                claim = before_tool_call(call, argument)
+                if claim is False:
+                    raise ToolExecutionAlreadyClaimed("unknown")
+                if isinstance(claim, str) and claim != "claimed":
+                    raise ToolExecutionAlreadyClaimed(claim)
             output = self._runtime.invoke(call.name, argument)
+            if after_tool_call is not None:
+                after_tool_call(call, argument, output)
             results.append(StructuredToolResult(call.call_id, call.name, output))
         return tuple(results)
 
