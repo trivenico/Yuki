@@ -562,6 +562,89 @@ class ProviderOutcomeTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "must be synchronous"):
             verify_provider_outcome(AsyncAdapter(), self.execution)
 
+    def test_durable_reconciliation_records_all_outcomes_without_replaying_execution(self):
+        import tempfile
+        from pathlib import Path
+        from core.conversation_store import ConversationStore
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "provider-outcomes.sqlite3")
+            outcomes = (
+                ProviderOutcome.CONFIRMED_COMPLETED,
+                ProviderOutcome.CONFIRMED_NOT_APPLIED,
+                ProviderOutcome.UNKNOWN,
+            )
+            for index, outcome in enumerate(outcomes):
+                with self.subTest(outcome=outcome.value):
+                    conversation = store.create_conversation(owner_id="owner-1")
+                    conversation_id = conversation["conversation_id"]
+                    request_id = f"reconcile-{index}"
+                    store.append_message(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        role="user", content="Perform a provider action",
+                        idempotency_key=request_id, expected_version=0,
+                        generation_request_id=request_id,
+                    )
+                    generation_token = f"generation-{index}"
+                    store.acquire_generation_lease(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        lease_token=generation_token, ttl_seconds=60,
+                    )
+                    try:
+                        store.begin_tool_execution(
+                            owner_id="owner-1", conversation_id=conversation_id,
+                            request_id=request_id, call_id="call-1",
+                            tool_name="send_email", arguments_sha256="b" * 64,
+                            lease_token=generation_token,
+                        )
+                        self.assertEqual(
+                            store.mark_started_tool_executions_uncertain(
+                                owner_id="owner-1", conversation_id=conversation_id,
+                                request_id=request_id, lease_token=generation_token,
+                            ),
+                            1,
+                        )
+                    finally:
+                        store.release_generation_lease(
+                            owner_id="owner-1", conversation_id=conversation_id,
+                            lease_token=generation_token,
+                        )
+
+                    evidence = self.evidence(
+                        outcome=outcome,
+                        idempotency_key=store.list_tool_executions(
+                            owner_id="owner-1", conversation_id=conversation_id,
+                            request_id=request_id,
+                        )[0]["idempotency_key"],
+                    )
+
+                    class Adapter:
+                        provider_id = "mail.example"
+
+                        def lookup_tool_outcome(self, execution):
+                            return evidence
+
+                    reconciler = ProviderOutcomeReconciler(
+                        store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+                    )
+                    recorded = reconciler.reconcile(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        request_id=request_id, call_id="call-1",
+                    )
+                    self.assertEqual(recorded["outcome"], outcome.value)
+                    executions = store.list_tool_executions(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        request_id=request_id,
+                    )
+                    self.assertEqual([item["status"] for item in executions], ["uncertain"])
+                    ledger = store.list_provider_outcome_evidence(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        request_id=request_id, call_id="call-1",
+                    )
+                    self.assertEqual(len(ledger), 1)
+                    self.assertEqual(ledger[0]["outcome"], outcome.value)
+
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
             return ProviderOutcomeTests().evidence()
