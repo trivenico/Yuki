@@ -205,6 +205,20 @@ class YukiConversationAPI:
                 )
                 return await self._respond(send, 200, {"provider_outcomes": evidence})
 
+            if provider_evidence_match and method == "POST":
+                conversation_id, call_id = provider_evidence_match.groups()
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                payload = await self._body(receive)
+                if set(payload) != {"request_id"} or not isinstance(payload["request_id"], str):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                evidence = await asyncio.to_thread(
+                    self.conversations.reconcile_provider_outcome,
+                    owner_id=user.user_id, conversation_id=conversation_id,
+                    request_id=payload["request_id"], call_id=call_id,
+                )
+                return await self._respond(send, 201, {"provider_outcome": evidence})
+
             tool_review_match = re.fullmatch(
                 r"/v1/conversations/([^/]+)/tool-executions/([^/]+)/reviews", path
             )
