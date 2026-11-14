@@ -105,9 +105,37 @@ def _prepare_private_directory(path: Path, label: str) -> None:
 
 
 def _validate_public_key(source: Path) -> bytes:
-    if source.is_symlink() or not source.is_file() or source.stat().st_size > 65536:
-        raise BootstrapError("Public key must be a regular, non-symlink PEM file no larger than 64 KiB.")
-    payload = source.read_bytes()
+    # Open without following a final-component symlink where the platform
+    # supports O_NOFOLLOW, then validate the opened descriptor rather than
+    # trusting a separate path stat before read_bytes().
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(source, flags)
+    except OSError as exc:
+        raise BootstrapError("Public key must be a readable, non-symlink host file.") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+            raise BootstrapError("Public key must be a regular PEM file no larger than 64 KiB.")
+        try:
+            path_info = source.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise BootstrapError("Public key path changed during validation.") from exc
+        if (path_info.st_dev, path_info.st_ino) != (info.st_dev, info.st_ino):
+            raise BootstrapError("Public key path changed during validation.")
+        chunks = []
+        remaining = 65537
+        while remaining:
+            chunk = os.read(fd, min(8192, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        if len(payload) > 65536:
+            raise BootstrapError("Public key exceeds the 64 KiB size limit.")
+    finally:
+        os.close(fd)
     try:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
