@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+import inspect
 
 
 class GuardedToolRuntime:
@@ -49,7 +50,9 @@ class GuardedToolRuntime:
         output, _status = self.invoke_with_status(name, argument)
         return output
 
-    def invoke_with_status(self, name: str, argument: str = "") -> tuple[str, str]:
+    def invoke_with_status(
+        self, name: str, argument: str = "", *, idempotency_key: str | None = None,
+    ) -> tuple[str, str]:
         """Invoke a guarded tool and expose a conservative side-effect outcome.
 
         Handler exceptions are uncertain: a remote side effect may have committed
@@ -71,8 +74,25 @@ class GuardedToolRuntime:
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy.", "failed"
+        handler = self._tools[name]
+        supports_key = getattr(handler, "supports_idempotency_key", False) is True
+        if idempotency_key is not None and supports_key:
+            try:
+                signature = inspect.signature(handler)
+                accepts_key = ("idempotency_key" in signature.parameters or any(
+                    item.kind is inspect.Parameter.VAR_KEYWORD
+                    for item in signature.parameters.values()
+                ))
+            except (TypeError, ValueError):
+                accepts_key = False
+            if not accepts_key:
+                self._record(name, "idempotency_contract_invalid")
+                return "Tool idempotency contract is invalid.", "failed"
         try:
-            result = str(self._tools[name](argument))
+            if idempotency_key is not None and supports_key:
+                result = str(handler(argument, idempotency_key=idempotency_key))
+            else:
+                result = str(handler(argument))
         except Exception:
             self._record(name, "failed")
             return "The tool failed. Its external outcome may be uncertain.", "uncertain"
