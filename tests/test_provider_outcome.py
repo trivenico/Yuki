@@ -173,6 +173,31 @@ class ProviderOutcomeTests(unittest.TestCase):
 
 
 
+    def test_registry_freezes_provider_identity_at_registration(self):
+        from core.provider_outcome import ProviderOutcomeRegistry
+
+        class Adapter:
+            provider_id = "mail.example"
+
+            def lookup_tool_outcome(self, execution):
+                return ProviderOutcomeTests().evidence(provider="mail.example")
+
+        adapter = Adapter()
+        registry = ProviderOutcomeRegistry({"send_email": adapter})
+        adapter.provider_id = "attacker.example"
+        result = registry.lookup("send_email", self.execution)
+        self.assertEqual(result.provider, "mail.example")
+
+    def test_registry_rejects_adapter_without_explicit_provider_identity(self):
+        from core.provider_outcome import ProviderOutcomeRegistry
+
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                return ProviderOutcomeTests().evidence()
+
+        with self.assertRaisesRegex(ValueError, "provider_id"):
+            ProviderOutcomeRegistry({"send_email": Adapter()})
+
     def test_registry_requires_explicit_adapter_and_reconciler_persists_evidence(self):
         from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
         calls = []
