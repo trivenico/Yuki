@@ -131,6 +131,23 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
+    def test_posix_metadata_reader_rejects_symlinked_signature(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        outside = self.bundle.parent / "external-signature"
+        outside.write_bytes(signature.read_bytes())
+        signature.unlink()
+        signature.symlink_to(outside)
+        with self.assertRaisesRegex(BootstrapError, "securely read"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative metadata reads")
+    def test_posix_metadata_reader_rejects_oversized_signature(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        signature.write_bytes(b"x" * (MAX_SIGNATURE_BYTES + 1))
+        with self.assertRaisesRegex(BootstrapError, "oversized"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
     def test_rejects_bundle_for_different_host_platform(self):
         with self.assertRaisesRegex(BootstrapError, "Runtime platform mismatch"):
             verify_signed_bundle(
