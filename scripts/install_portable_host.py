@@ -150,7 +150,6 @@ def _apply_windows_acl(path: Path) -> None:
 def _write_launcher(root: Path, policy_path: Path) -> tuple[Path, Path | None]:
     launcher = root / _LAUNCHER_NAME
     source = (
-        "#!/" + sys.executable + "\n"
         "import sys\n"
         "from pathlib import Path\n"
         "from yuki_trust.portable_host import launch_with_host_policy\n"
