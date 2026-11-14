@@ -6,6 +6,8 @@ command does not install or authenticate its own bootstrap package.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import platform
@@ -155,7 +157,12 @@ def _write_launcher(root: Path, policy_path: Path) -> tuple[Path, Path | None]:
     return launcher, None
 
 
-def install_host_trust(public_key_source: Path, install_root: Path, state_root: Path) -> dict[str, str]:
+def install_host_trust(
+    public_key_source: Path,
+    install_root: Path,
+    state_root: Path,
+    expected_key_sha256: str,
+) -> dict[str, str]:
     module_path = Path(portable_host.__file__).resolve()
     try:
         module_path.relative_to(Path(sys.prefix).resolve())
@@ -166,6 +173,11 @@ def install_host_trust(public_key_source: Path, install_root: Path, state_root: 
         ) from exc
 
     key_bytes = _validate_public_key(public_key_source)
+    if not isinstance(expected_key_sha256, str) or len(expected_key_sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in expected_key_sha256):
+        raise BootstrapError("Expected public-key SHA-256 must be exactly 64 hexadecimal characters.")
+    actual_key_sha256 = hashlib.sha256(key_bytes).hexdigest()
+    if not hmac.compare_digest(actual_key_sha256, expected_key_sha256.lower()):
+        raise BootstrapError("Public-key SHA-256 does not match the independently supplied trust pin.")
     expected_platform, python_path = _platform_id()
     install_root = install_root.expanduser().absolute()
     state_root = state_root.expanduser().absolute()
@@ -225,6 +237,7 @@ def install_host_trust(public_key_source: Path, install_root: Path, state_root: 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--public-key", required=True, type=Path, help="Public key delivered through an independently authenticated channel")
+    parser.add_argument("--expected-key-sha256", required=True, help="Out-of-band SHA-256 fingerprint of the exact PEM file bytes")
     parser.add_argument("--install-root", type=Path, help="Host trust directory")
     parser.add_argument("--state-root", type=Path, help="Host anti-rollback state directory")
     args = parser.parse_args()
@@ -234,6 +247,7 @@ def main() -> int:
             args.public_key,
             args.install_root or default_install,
             args.state_root or default_state,
+            args.expected_key_sha256,
         )
     except (OSError, ValueError, subprocess.SubprocessError, BootstrapError) as exc:
         print(f"Yuki host installation failed closed: {exc}", file=sys.stderr)
