@@ -496,12 +496,12 @@ class ConversationStoreTests(unittest.TestCase):
             observed_at="2026-11-14T10:00:00+00:00",
             provider_reference="message-reference-1",
         )
-        saved = self.store.record_provider_outcome_evidence(
+        saved = self._record_provider_evidence(
             owner_id=self.owner, conversation_id=conversation_id,
             request_id=request_id, call_id="call-evidence", evidence=evidence,
         )
         self.assertEqual(saved["outcome"], "unknown")
-        repeated = self.store.record_provider_outcome_evidence(
+        repeated = self._record_provider_evidence(
             owner_id=self.owner, conversation_id=conversation_id,
             request_id=request_id, call_id="call-evidence", evidence=evidence,
         )
@@ -525,7 +525,7 @@ class ConversationStoreTests(unittest.TestCase):
             observed_at="2026-11-14T10:00:00+00:00",
         )
         with self.assertRaises(ConversationConflict):
-            self.store.record_provider_outcome_evidence(
+            self._record_provider_evidence(
                 owner_id=self.owner, conversation_id=conversation_id,
                 request_id=request_id, call_id="call-evidence", evidence=mismatched,
             )
@@ -563,12 +563,12 @@ class ConversationStoreTests(unittest.TestCase):
         )
         first = ProviderOutcomeEvidence(**common, provider_reference="message-A")
         conflicting = ProviderOutcomeEvidence(**common, provider_reference="message-B")
-        saved = self.store.record_provider_outcome_evidence(
+        saved = self._record_provider_evidence(
             owner_id=self.owner, conversation_id=conversation_id,
             request_id=request_id, call_id="call-reference", evidence=first,
         )
         with self.assertRaises(ConversationConflict):
-            self.store.record_provider_outcome_evidence(
+            self._record_provider_evidence(
                 owner_id=self.owner, conversation_id=conversation_id,
                 request_id=request_id, call_id="call-reference", evidence=conflicting,
             )
