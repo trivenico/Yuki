@@ -577,5 +577,77 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="call-reference",
         )), 1)
 
+    def test_provider_reconciliation_claim_is_exclusive_and_fences_stale_workers(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "provider-claim-request"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Reconcile once", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=90_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="generation-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-claim", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="generation-worker",
+            )
+            self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-claim",
+                lease_token="generation-worker", status="uncertain",
+            )
+        with patch("core.conversation_store.time.time", return_value=91_000.0):
+            self.store.acquire_provider_reconciliation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-claim",
+                lease_token="worker-old", ttl_seconds=5,
+            )
+            with self.assertRaises(ConversationConflict):
+                self.store.acquire_provider_reconciliation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-claim",
+                    lease_token="worker-racing",
+                )
+        with patch("core.conversation_store.time.time", return_value=91_006.0):
+            self.store.acquire_provider_reconciliation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-claim",
+                lease_token="worker-new", ttl_seconds=30,
+            )
+            evidence = self._make_claim_test_evidence()
+            with self.assertRaisesRegex(ConversationConflict, "claim expired"):
+                self.store.record_provider_outcome_evidence(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-claim", evidence=evidence,
+                    reconciliation_lease_token="worker-old",
+                )
+            saved = self.store.record_provider_outcome_evidence(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-claim", evidence=evidence,
+                reconciliation_lease_token="worker-new",
+            )
+            self.assertEqual(saved["outcome"], "unknown")
+            self.assertFalse(self.store.release_provider_reconciliation_lease(
+                owner_id=self.owner, execution_id=saved["execution_id"],
+                lease_token="worker-old",
+            ))
+            self.assertTrue(self.store.release_provider_reconciliation_lease(
+                owner_id=self.owner, execution_id=saved["execution_id"],
+                lease_token="worker-new",
+            ))
+
+    def _make_claim_test_evidence(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        return ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="f" * 64, observed_at="2026-11-14T10:00:00+00:00",
+        )
+
 if __name__ == "__main__":
     unittest.main()
