@@ -109,7 +109,7 @@ class AgentExecutionLoop:
         history: Sequence[Mapping[str, str]] = (),
         on_text_delta: Callable[[str], None] | None = None,
         cancellation_requested: Callable[[], bool] | None = None,
-        before_tool_call=None, after_tool_call=None,
+        before_tool_call=None, after_tool_call=None, on_tool_error=None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
@@ -259,7 +259,7 @@ class AgentExecutionLoop:
                 results = self.tool_protocol.dispatch(
                     encoded_envelope, cancellation_requested=cancel_check,
                     before_tool_call=before_tool_call,
-                    after_tool_call=after_tool_call,
+                    after_tool_call=after_tool_call, on_tool_error=on_tool_error,
                 )
                 formatted = self.tool_protocol.format_results(results)
             except ToolExecutionAlreadyClaimed as claimed:
