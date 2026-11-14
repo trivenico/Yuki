@@ -46,6 +46,19 @@ class GuardedToolRuntime:
                 # Telemetry failure must not bypass or broaden authorization.
                 pass
 
+    def supports_idempotency(self, name: str) -> bool:
+        handler = self._tools.get(name)
+        if handler is None or getattr(handler, "supports_idempotency_key", False) is not True:
+            return False
+        try:
+            signature = inspect.signature(handler)
+        except (TypeError, ValueError):
+            return False
+        return "idempotency_key" in signature.parameters or any(
+            item.kind is inspect.Parameter.VAR_KEYWORD
+            for item in signature.parameters.values()
+        )
+
     def invoke(self, name: str, argument: str = "") -> str:
         output, _status = self.invoke_with_status(name, argument)
         return output
