@@ -9,9 +9,6 @@ import argparse
 import json
 import os
 import platform
-import shlex
-import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -158,11 +155,19 @@ def install_host_trust(public_key_source: Path, install_root: Path, state_root: 
     if os.name != "nt":
         install_root.chmod(0o700)
         state_root.chmod(0o700)
+        portable_host._validate_host_parent_directories(install_root / _POLICY_NAME, label="Host install")
+        portable_host._validate_host_parent_directories(state_root / "release-state.json", label="Anti-rollback state")
+    elif install_root.is_symlink() or state_root.is_symlink():
+        raise BootstrapError("Windows trust and state roots must not be symbolic links.")
 
     key_path = install_root / _KEY_NAME
     policy_path = install_root / _POLICY_NAME
     state_path = state_root / "release-state.json"
-    launcher, command = _write_launcher(install_root, policy_path)
+    launcher = install_root / _LAUNCHER_NAME
+    command = install_root / "yuki-portable-launch.cmd" if os.name == "nt" else None
+    for target in (key_path, policy_path, launcher, command):
+        if target is not None and (target.exists() or target.is_symlink()):
+            raise BootstrapError(f"Refusing to overwrite existing host trust file: {target}")
 
     policy = {
         "schema_version": 1,
@@ -173,11 +178,9 @@ def install_host_trust(public_key_source: Path, install_root: Path, state_root: 
         "anti_rollback_state": str(state_path),
     }
     try:
-        for target in (key_path, policy_path):
-            if target.exists() or target.is_symlink():
-                raise BootstrapError(f"Refusing to overwrite existing host trust file: {target}")
         _atomic_write(key_path, key_bytes)
         _atomic_write(policy_path, (json.dumps(policy, sort_keys=True, indent=2) + "\n").encode())
+        launcher, command = _write_launcher(install_root, policy_path)
         if os.name == "nt":
             _apply_windows_acl(install_root)
             _apply_windows_acl(state_root)
