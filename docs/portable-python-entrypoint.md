@@ -24,8 +24,18 @@ yuki-portable-bootstrap \
 ```
 
 Windows uses the same signed Python script but the platform-specific interpreter
-path, commonly `runtime/python.exe`; the exact path must match the reviewed
-runtime archive and host installer policy.
+path, commonly `runtime/python.exe`:
+
+```powershell
+yuki-portable-bootstrap.exe --bundle E:\\Yuki\\yuki-portable --public-key C:\\ProgramData\\Yuki\\trust\\release-ed25519.pem --expected-platform windows-x86_64 --python runtime/python.exe --entrypoint portable_entry.py
+```
+
+The host installer pins both relative paths for each supported runtime. The
+bootstrap requires both interpreter and script to appear in the signed inventory,
+then invokes the staged interpreter with `-I` (isolated mode). It never executes
+the Python script directly or trusts an interpreter path supplied by the bundle.
+The exact interpreter path must match the reviewed runtime archive and host
+installer policy.
 
 The entrypoint adds only the bundle's `site-packages/` and root to
 `sys.path`. On Windows it registers exactly two documented DLL search
