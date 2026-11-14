@@ -2,6 +2,7 @@ import concurrent.futures
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
