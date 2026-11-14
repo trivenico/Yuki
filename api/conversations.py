@@ -179,12 +179,13 @@ class YukiConversationAPI:
                 if not _CONVERSATION_ID.fullmatch(conversation_id):
                     return await self._respond(send, 404, {"error": "not_found"})
                 query = self._query(scope)
-                if set(query) != {"request_id"}:
+                request_id = self._validated_request_id(query.get("request_id"))
+                if set(query) != {"request_id"} or request_id is None:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 records = await asyncio.to_thread(
                     self.conversations.tool_executions,
                     owner_id=user.user_id, conversation_id=conversation_id,
-                    request_id=query["request_id"],
+                    request_id=request_id,
                 )
                 return await self._respond(send, 200, {"tool_executions": records})
 
@@ -196,12 +197,13 @@ class YukiConversationAPI:
                 if not _CONVERSATION_ID.fullmatch(conversation_id):
                     return await self._respond(send, 404, {"error": "not_found"})
                 query = self._query(scope)
-                if set(query) != {"request_id"}:
+                request_id = self._validated_request_id(query.get("request_id"))
+                if set(query) != {"request_id"} or request_id is None:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 evidence = await asyncio.to_thread(
                     self.conversations.provider_outcome_evidence,
                     owner_id=user.user_id, conversation_id=conversation_id,
-                    request_id=query["request_id"], call_id=call_id,
+                    request_id=request_id, call_id=call_id,
                 )
                 return await self._respond(send, 200, {"provider_outcomes": evidence})
 
@@ -210,9 +212,8 @@ class YukiConversationAPI:
                 if not _CONVERSATION_ID.fullmatch(conversation_id):
                     return await self._respond(send, 404, {"error": "not_found"})
                 payload = await self._body(receive)
-                request_id = payload.get("request_id")
-                if (set(payload) != {"request_id"} or not isinstance(request_id, str)
-                        or not request_id.strip() or len(request_id) > 160):
+                request_id = self._validated_request_id(payload.get("request_id"))
+                if set(payload) != {"request_id"} or request_id is None:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 evidence = await asyncio.to_thread(
                     self.conversations.reconcile_provider_outcome,
@@ -232,23 +233,25 @@ class YukiConversationAPI:
                     payload = await self._body(receive)
                     if (set(payload) != {"request_id", "action", "reason"}
                             or not all(isinstance(payload.get(key), str)
-                                       for key in ("request_id", "action", "reason"))):
+                                       for key in ("request_id", "action", "reason"))
+                            or self._validated_request_id(payload.get("request_id")) is None):
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     review = await asyncio.to_thread(
                         self.conversations.review_tool_execution,
                         owner_id=user.user_id, conversation_id=conversation_id,
-                        request_id=payload["request_id"], call_id=call_id,
+                        request_id=self._validated_request_id(payload["request_id"]), call_id=call_id,
                         action=payload["action"], reason=payload["reason"],
                     )
                     return await self._respond(send, 201, {"review": review})
                 if method == "GET":
                     query = self._query(scope)
-                    if set(query) != {"request_id"}:
+                    request_id = self._validated_request_id(query.get("request_id"))
+                    if set(query) != {"request_id"} or request_id is None:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     reviews = await asyncio.to_thread(
                         self.conversations.tool_execution_reviews,
                         owner_id=user.user_id, conversation_id=conversation_id,
-                        request_id=query["request_id"], call_id=call_id,
+                        request_id=request_id, call_id=call_id,
                     )
                     return await self._respond(send, 200, {"reviews": reviews})
 
@@ -258,7 +261,8 @@ class YukiConversationAPI:
                 if not _CONVERSATION_ID.fullmatch(conversation_id):
                     return await self._respond(send, 404, {"error": "not_found"})
                 payload = await self._body(receive)
-                if set(payload) != {"request_id"} or not isinstance(payload.get("request_id"), str) or not payload["request_id"].strip() or len(payload["request_id"]) > 160:
+                request_id = self._validated_request_id(payload.get("request_id"))
+                if set(payload) != {"request_id"} or request_id is None:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 # Ownership is checked before cancellation; callers cannot cancel
                 # another user's generation by guessing a conversation or request ID.
@@ -266,7 +270,7 @@ class YukiConversationAPI:
                     self.conversations.store.get_conversation,
                     owner_id=user.user_id, conversation_id=conversation_id,
                 )
-                key = (user.user_id, conversation_id, payload["request_id"])
+                key = (user.user_id, conversation_id, request_id)
                 with self._active_lock:
                     cancellation = self._active_generations.get(key)
                     if cancellation is not None:
@@ -327,7 +331,7 @@ class YukiConversationAPI:
                     owner_id=user.user_id,
                     conversation_id=match.group(1),
                     user_text=payload["content"],
-                    request_id=payload["request_id"],
+                    request_id=request_id,
                     expected_version=payload["expected_version"],
                     tools=tools,
                 )
@@ -471,11 +475,19 @@ class YukiConversationAPI:
         return value
 
     @staticmethod
+    def _validated_request_id(value):
+        if (not isinstance(value, str) or not value.strip() or len(value) > 160):
+            return None
+        return value.strip()
+
+    @staticmethod
     def _query(scope):
         from urllib.parse import parse_qs
-        raw = scope.get("query_string", b"").decode("ascii", "ignore")
-        parsed = parse_qs(raw, keep_blank_values=False, max_num_fields=8)
-        return {key: values[-1] for key, values in parsed.items() if values}
+        raw = scope.get("query_string", b"").decode("ascii", "strict")
+        parsed = parse_qs(raw, keep_blank_values=True, max_num_fields=8, strict_parsing=True)
+        if any(len(values) != 1 for values in parsed.values()):
+            raise ValueError("duplicate query parameter")
+        return {key: values[0] for key, values in parsed.items()}
 
     @staticmethod
     async def _respond(send, status, payload):
