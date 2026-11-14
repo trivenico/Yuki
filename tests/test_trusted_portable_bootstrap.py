@@ -443,9 +443,9 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             resolved = original_absolute(path)
             calls += 1
             if calls == 2:
-                # The source root has already been opened and pinned. Replace
-                # its pathname before the destination root is opened; all
-                # descendant reads must still resolve beneath the pinned root.
+                # The source root has already been opened and pinned. Rename
+                # it after opening; descendant reads must stay anchored to that
+                # original directory object, not the replacement at this path.
                 source_root.rename(moved_root)
                 source_root.mkdir()
                 (source_root / "payload.txt").write_text("attacker replacement", encoding="utf-8")
