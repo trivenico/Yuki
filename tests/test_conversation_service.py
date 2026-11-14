@@ -180,6 +180,33 @@ class ConversationServiceTests(unittest.TestCase):
             owner_id="owner-a", conversation_id=conversation_id,
         )), 1)
 
+    def test_recovery_finds_original_user_message_beyond_recent_history_window(self):
+        conversation_id = self.conversation["conversation_id"]
+        first = self._seed_interrupted_generation("old-recovery-turn", 0)
+        version = first["version"]
+        for index in range(200):
+            result = self.store.append_message(
+                owner_id="owner-a", conversation_id=conversation_id,
+                role="assistant", content=f"Later persisted message {index}",
+                idempotency_key=f"later-message-{index}", expected_version=version,
+            )
+            version = result["version"]
+
+        summary = self._with_recovery_lease(lambda token:
+            ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
+        )
+        self.assertEqual(summary.interrupted_generations, 1)
+        self.assertEqual(self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )[0]["request_id"], "old-recovery-turn")
+        self.assertTrue(self.store.has_message(
+            owner_id="owner-a", conversation_id=conversation_id,
+            idempotency_key="assistant:old-recovery-turn",
+        ))
+
     def test_recovery_saturated_batch_is_reported_without_processing_101st(self):
         conversation_id = self.conversation["conversation_id"]
         version = 0
