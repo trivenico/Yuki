@@ -113,6 +113,9 @@ def _read_windows_file_handle_secure(path: Path, *, label: str, max_bytes: int) 
         get_info = kernel32.GetFileInformationByHandle
         get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION)]
         get_info.restype = wintypes.BOOL
+        get_file_type = kernel32.GetFileType
+        get_file_type.argtypes = [wintypes.HANDLE]
+        get_file_type.restype = wintypes.DWORD
         read_file = kernel32.ReadFile
         read_file.argtypes = [
             wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
@@ -139,6 +142,11 @@ def _read_windows_file_handle_secure(path: Path, *, label: str, max_bytes: int) 
                 raise BootstrapError(f"{label} must not be a reparse point.")
             if attributes & 0x00000010:
                 raise BootstrapError(f"{label} must be a regular file, not a directory.")
+            # FILE_ATTRIBUTE_DEVICE is not a sufficient discriminator for
+            # every Win32 device handle. Require a disk-backed file handle
+            # before issuing bounded ReadFile calls.
+            if get_file_type(handle) != 0x0001:  # FILE_TYPE_DISK
+                raise BootstrapError(f"{label} must be a regular disk file.")
             size = (info.nFileSizeHigh << 32) | info.nFileSizeLow
             if size > max_bytes:
                 raise BootstrapError(f"{label} exceeds its size limit.")
