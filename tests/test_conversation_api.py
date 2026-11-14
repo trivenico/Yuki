@@ -496,5 +496,59 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
 
+
+    def test_authenticated_owner_can_read_provider_outcome_evidence_only(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid, request_id = conversation["conversation_id"], "provider-api-request"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="verify action", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=80_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="provider-api-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-2", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="provider-api-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-2",
+                lease_token="provider-api-lease", status="uncertain",
+            )
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="c" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+            provider_reference="provider-ref",
+        )
+        self.app.conversations.store.record_provider_outcome_evidence(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-2", evidence=evidence,
+        )
+        path = f"/v1/conversations/{cid}/tool-executions/send-2/provider-outcomes"
+        status, data, _ = self.request(
+            "GET", path, token=self.issued.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["provider_outcomes"][0]["outcome"], "unknown")
+        self.assertNotIn("idempotency_key", data["provider_outcomes"][0])
+        self.auth.create_account("provider-other", "provider-other-password")
+        other = self.auth.authenticate("provider-other", "provider-other-password")
+        status, data, _ = self.request(
+            "GET", path, token=other.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
 if __name__ == "__main__":
     unittest.main()
