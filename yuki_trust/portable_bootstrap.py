@@ -52,7 +52,7 @@ def _trusted_key_path(path: str | Path, bundle: Path) -> Path:
 
 
 def _validate_manifest(value: Any) -> list[dict[str, Any]]:
-    required = {"schema_version", "product", "artifact_kind", "platform", "runtime_version", "files"}
+    required = {"schema_version", "product", "artifact_kind", "platform", "runtime_version", "release_sequence", "files"}
     if not isinstance(value, dict) or set(value) != required:
         raise BootstrapError("Runtime manifest has an invalid schema.")
     if (
@@ -61,6 +61,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
         or value["artifact_kind"] != "portable-runtime"
         or not isinstance(value["platform"], str) or not value["platform"] or len(value["platform"]) > 100
         or not isinstance(value["runtime_version"], str) or not value["runtime_version"] or len(value["runtime_version"]) > 100
+        or type(value["release_sequence"]) is not int or value["release_sequence"] < 0
         or not isinstance(value["files"], list) or not value["files"]
     ):
         raise BootstrapError("Runtime manifest metadata is invalid.")
@@ -267,6 +268,7 @@ def run_verified_bundle(
     arguments: list[str] | None = None,
     *,
     expected_platform: str | None = None,
+    anti_rollback_state_path: str | Path,
 ) -> int:
     def validate_relative(value: str, label: str) -> PurePosixPath:
         if not isinstance(value, str) or not value or "\\" in value:
@@ -298,6 +300,14 @@ def run_verified_bundle(
         script = staged.joinpath(*entry_relative.parts)
         if os.name != "nt" and not os.access(interpreter, os.X_OK):
             raise BootstrapError("Signed Python interpreter is not executable on this host.")
+        # Import lazily: anti_rollback uses BootstrapError from this module.
+        from yuki_trust.anti_rollback import advance_release_state
+        manifest_bytes = (staged / MANIFEST_NAME).read_bytes()
+        advance_release_state(
+            anti_rollback_state_path,
+            manifest["release_sequence"],
+            manifest_bytes,
+        )
         completed = subprocess.run(
             [str(interpreter), "-I", str(script), *(arguments or [])],
             cwd=staged,
@@ -311,6 +321,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Authenticate and launch a signed Yuki portable runtime.")
     parser.add_argument("--bundle", required=True, type=Path, help="Path to the removable runtime bundle")
     parser.add_argument("--public-key", required=True, type=Path, help="Independently provisioned host trust anchor")
+    parser.add_argument("--anti-rollback-state", required=True, type=Path, help="Persistent host state file outside removable media")
     parser.add_argument("--python", required=True, help="Signed bundled Python interpreter path relative to the bundle")
     parser.add_argument("--entrypoint", required=True, help="Signed Python script path relative to the bundle")
     parser.add_argument(
@@ -329,6 +340,7 @@ def main() -> int:
             args.entrypoint,
             forwarded,
             expected_platform=args.expected_platform,
+            anti_rollback_state_path=args.anti_rollback_state,
         )
     except (OSError, ValueError, BootstrapError) as exc:
         print(f"Yuki portable bootstrap refused to launch: {exc}", file=sys.stderr)
