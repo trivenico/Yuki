@@ -65,7 +65,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         manifest = {
             "schema_version": 1,
             "product": "Yuki Portable Runtime",
-            "artifact_kind": "unsigned-portable-runtime",
+            "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
             "files": files,
@@ -137,7 +137,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         manifest = {
             "schema_version": 1,
             "product": "Yuki Portable Runtime",
-            "artifact_kind": "unsigned-portable-runtime",
+            "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
             "files": [
@@ -152,7 +152,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         manifest = {
             "schema_version": 1,
             "product": "Yuki Portable Runtime",
-            "artifact_kind": "unsigned-portable-runtime",
+            "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
             "files": [

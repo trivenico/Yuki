@@ -1,0 +1,34 @@
+name: Portable release manifest
+
+on:
+  pull_request:
+    paths:
+      - "scripts/portable_manifest.py"
+      - "tests/test_portable_manifest.py"
+      - "yuki_trust/portable_bootstrap.py"
+      - ".github/workflows/portable-release-manifest.yml"
+  push:
+    paths:
+      - "scripts/portable_manifest.py"
+      - "tests/test_portable_manifest.py"
+      - "yuki_trust/portable_bootstrap.py"
+      - ".github/workflows/portable-release-manifest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  manifest-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run manifest generator tests
+        run: python -m unittest discover -s tests -p 'test_portable_manifest.py' -v

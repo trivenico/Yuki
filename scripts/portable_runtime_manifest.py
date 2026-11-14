@@ -73,7 +73,7 @@ def create_manifest(root: str | Path, *, platform: str, runtime_version: str) ->
     manifest = {
         "schema_version": 1,
         "product": "Yuki Portable Runtime",
-        "artifact_kind": "unsigned-portable-runtime",
+        "artifact_kind": "portable-runtime",
         "platform": platform.strip(),
         "runtime_version": runtime_version.strip(),
         "files": _inventory(bundle),
@@ -90,7 +90,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     if (
         value["schema_version"] != 1
         or value["product"] != "Yuki Portable Runtime"
-        or value["artifact_kind"] != "unsigned-portable-runtime"
+        or value["artifact_kind"] != "portable-runtime"
         or not isinstance(value["platform"], str) or not value["platform"]
         or not isinstance(value["runtime_version"], str) or not value["runtime_version"]
         or not isinstance(value["files"], list) or not value["files"]
