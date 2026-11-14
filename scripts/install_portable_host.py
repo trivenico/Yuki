@@ -52,6 +52,8 @@ def _default_roots() -> tuple[Path, Path]:
 
 
 def _atomic_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
+    # Publish with an exclusive same-directory hard link: never replace an
+    # existing trust anchor, policy, or launcher, even under a path race.
     fd, temporary = tempfile.mkstemp(prefix=".yuki-install-", dir=path.parent)
     temp_path = Path(temporary)
     try:
@@ -61,13 +63,15 @@ def _atomic_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
             os.fsync(stream.fileno())
         if os.name != "nt":
             os.chmod(temp_path, mode)
-        os.replace(temp_path, path)
+        os.link(temp_path, path)
     except Exception:
         try:
             temp_path.unlink()
         except OSError:
             pass
         raise
+    else:
+        temp_path.unlink()
 
 
 def _validate_public_key(source: Path) -> bytes:
