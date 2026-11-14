@@ -562,5 +562,16 @@ class ProviderOutcomeTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "must be synchronous"):
             verify_provider_outcome(AsyncAdapter(), self.execution)
 
+    def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
+        async def deferred_evidence():
+            return ProviderOutcomeTests().evidence()
+
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                return deferred_evidence()
+
+        with self.assertRaisesRegex(TypeError, "returned an awaitable"):
+            verify_provider_outcome(Adapter(), self.execution)
+
 if __name__ == "__main__":
     unittest.main()
