@@ -94,5 +94,28 @@ class AntiRollbackStateTests(unittest.TestCase):
         stored = json.loads(self.state.read_text(encoding='utf-8'))
         self.assertEqual(stored['highest_sequence'], max(sequences))
 
+    @unittest.skipIf(os.name == "nt", "POSIX directory ownership and mode checks")
+    def test_rejects_group_or_world_writable_state_parent(self):
+        unsafe = self.root / "unsafe"
+        unsafe.mkdir(mode=0o700)
+        unsafe.chmod(0o777)
+        try:
+            with self.assertRaisesRegex(BootstrapError, "group- or world-writable"):
+                advance_release_state(unsafe / "state.json", 1, b"manifest")
+        finally:
+            unsafe.chmod(0o700)
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink parent check")
+    def test_rejects_symlinked_state_parent(self):
+        real = self.root / "real"
+        real.mkdir()
+        alias = self.root / "alias"
+        try:
+            alias.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        with self.assertRaisesRegex(BootstrapError, "real directories"):
+            advance_release_state(alias / "state.json", 1, b"manifest")
+
 if __name__ == "__main__":
     unittest.main()
