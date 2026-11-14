@@ -204,7 +204,13 @@ def _read_windows_file_handle_secure(path: Path, *, label: str, max_bytes: int) 
             close_handle(handle)
     except BootstrapError:
         raise
-    except (OSError, AttributeError, TypeError, ValueError) as exc:
+    except OSError as exc:
+        # Preserve a useful missing-file diagnostic for callers and policy
+        # tests while keeping all other Win32 open/read failures fail-closed.
+        if exc.errno == 2 or getattr(exc, "winerror", None) == 2:
+            raise BootstrapError(f"{label} is missing.") from exc
+        raise BootstrapError(f"{label} could not be securely read.") from exc
+    except (AttributeError, TypeError, ValueError) as exc:
         raise BootstrapError(f"{label} could not be securely read.") from exc
 
 
