@@ -14,7 +14,7 @@ import stat
 import sys
 import tempfile
 import unicodedata
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from scripts.portable_runtime_inputs import InputValidationError
 
@@ -113,7 +113,7 @@ def create_unsigned_manifest(
     return {
         "schema_version": 1,
         "product": "Yuki Portable Runtime",
-        "artifact_kind": "unsigned-portable-runtime",
+        "artifact_kind": "portable-runtime",
         "platform": platform,
         "runtime_version": runtime_version,
         "files": files,
