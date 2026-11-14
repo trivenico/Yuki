@@ -102,3 +102,21 @@ metadata is rejected. This prevents a digest collision from silently hiding a
 different provider-side object reference. This makes evidence ingestion
 idempotent across concurrent application workers;
 it does not serialize or suppress distinct provider observations.
+
+
+## Cross-worker reconciliation fencing
+
+A reconciliation request must acquire a durable per-execution lease before
+calling the registered adapter. SQLite serializes claim acquisition across
+processes; an unexpired claim prevents a second worker from performing the
+same provider lookup. Claims carry random fencing tokens and bounded leases.
+Expired claims may be replaced, but evidence insertion verifies the current
+token and expiry inside the same immediate transaction as the ledger write.
+A delayed worker therefore cannot append evidence or release a replacement
+worker's claim after its lease expires.
+
+The current claim TTL is bounded to 5–300 seconds (120 seconds by default).
+Adapters must enforce their own connect/read/request timeouts and return
+within the claim window; Python cannot safely terminate arbitrary synchronous
+adapter code. Lease fencing protects persistence if an adapter outlives its
+claim, but does not cancel the external read-only request.
