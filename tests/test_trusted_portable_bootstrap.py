@@ -149,6 +149,14 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "oversized"):
             verify_signed_bundle(self.bundle, self.public_path)
 
+    @unittest.skipIf(os.name == "nt" or not hasattr(os, "mkfifo"), "POSIX FIFO metadata rejection")
+    def test_posix_metadata_reader_rejects_fifo_without_opening_it(self):
+        signature = self.bundle / "runtime-manifest.sig"
+        signature.unlink()
+        os.mkfifo(signature)
+        with self.assertRaisesRegex(BootstrapError, "not regular"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
     def test_rejects_bundle_for_different_host_platform(self):
         with self.assertRaisesRegex(BootstrapError, "Runtime platform mismatch"):
             verify_signed_bundle(
