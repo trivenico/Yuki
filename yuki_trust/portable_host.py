@@ -435,13 +435,13 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
 
     root_text = str(root)
     if root_text.startswith("\\\\?\\UNC\\"):
-        native_root = "\\\\??\\UNC\\" + root_text[8:]
+        native_root = "\\??\\UNC\\" + root_text[8:]
     elif root_text.startswith("\\\\?\\"):
-        native_root = "\\\\??\\" + root_text[4:]
+        native_root = "\\??\\" + root_text[4:]
     elif root_text.startswith("\\\\"):
-        native_root = "\\\\??\\UNC\\" + root_text[2:]
+        native_root = "\\??\\UNC\\" + root_text[2:]
     else:
-        native_root = "\\\\??\\" + root_text
+        native_root = "\\??\\" + root_text
     root_name_buffer = ctypes.create_unicode_buffer(native_root)
     root_name_bytes = native_root.encode("utf-16-le")
     if not root_name_bytes or len(root_name_bytes) > 0xFFFC:
