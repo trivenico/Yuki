@@ -780,7 +780,7 @@ class ConversationStore:
         ):
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
                 raise ValueError(f"{label} must be non-empty bounded text.")
-        if action != "acknowledge_uncertain":
+        if action not in {"acknowledge_uncertain", "confirm_provider_completed"}:
             raise ConversationConflict("unsupported tool review action.")
         if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 1000:
             raise ValueError("reason must be non-empty text of at most 1000 characters.")
@@ -788,14 +788,31 @@ class ConversationStore:
             db.execute("BEGIN IMMEDIATE")
             try:
                 execution = db.execute(
-                    """SELECT execution_id, status FROM conversation_tool_executions
+                    """SELECT execution_id, status, provider_idempotency FROM conversation_tool_executions
                        WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?""",
                     (owner, conversation_id, request_id.strip(), call_id.strip()),
                 ).fetchone()
                 if execution is None:
                     raise ConversationNotFound("tool execution not found.")
                 if execution["status"] != "uncertain":
-                    raise ConversationConflict("only uncertain tool executions can be acknowledged.")
+                    raise ConversationConflict("only uncertain tool executions can be reviewed.")
+                if action == "confirm_provider_completed":
+                    if not execution["provider_idempotency"]:
+                        raise ConversationConflict("provider completion requires an idempotency-capable execution.")
+                    evidence = db.execute(
+                        "SELECT outcome FROM conversation_provider_outcome_evidence "
+                        "WHERE execution_id=? ORDER BY recorded_at DESC, evidence_id DESC LIMIT 1",
+                        (execution["execution_id"],),
+                    ).fetchone()
+                    if evidence is None or evidence["outcome"] != "confirmed_completed":
+                        raise ConversationConflict("provider completion evidence is not confirmed.")
+                    cursor = db.execute(
+                        "UPDATE conversation_tool_executions SET status='completed', updated_at=? "
+                        "WHERE execution_id=? AND owner_id=? AND status='uncertain'",
+                        (self._now(), execution["execution_id"], owner),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ConversationConflict("tool execution changed during review.")
                 review_id, created_at = str(uuid.uuid4()), self._now()
                 db.execute(
                     """INSERT INTO conversation_tool_reviews
@@ -811,7 +828,7 @@ class ConversationStore:
                     "conversation_id": conversation_id, "request_id": request_id.strip(),
                     "call_id": call_id.strip(), "action": action,
                     "reason": reason.strip(), "created_at": created_at,
-                    "execution_status": "uncertain",
+                    "execution_status": ("completed" if action == "confirm_provider_completed" else "uncertain"),
                 }
             except Exception:
                 db.rollback()
