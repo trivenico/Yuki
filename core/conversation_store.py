@@ -948,7 +948,18 @@ class ConversationStore:
                 (self._now(), owner, conversation_id, request_id,
                  conversation_id, owner, lease_token.strip(), time.time()),
             )
-            return cursor.rowcount
+            db.execute(
+                """SELECT 1 FROM conversation_generation_leases
+                   WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                (conversation_id, owner, lease_token.strip(), time.time()),
+            )
+            count = db.execute(
+                """SELECT COUNT(*) FROM conversation_tool_executions
+                   WHERE owner_id=? AND conversation_id=? AND request_id=?
+                     AND status='uncertain'""",
+                (owner, conversation_id, request_id),
+            ).fetchone()[0]
+            return int(count)
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
