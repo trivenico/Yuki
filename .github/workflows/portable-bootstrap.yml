@@ -8,6 +8,7 @@ on:
       - "tests/test_portable_host_policy.py"
       - "tests/test_portable_anti_rollback.py"
       - "tests/test_portable_host_installer.py"
+      - "tests/test_portable_launcher_argument_forwarding.py"
       - "scripts/install_portable_host.py"
       - "pyproject.toml"
       - ".github/workflows/portable-bootstrap.yml"
@@ -58,6 +59,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_portable_anti_rollback.py" -v
       - name: Run host installer provisioning tests
         run: python -m unittest discover -s tests -p "test_portable_host_installer.py" -v
+      - name: Execute POSIX launcher argument forwarding test
+        run: python -m unittest discover -s tests -p "test_portable_launcher_argument_forwarding.py" -v
 
   package-build-smoke:
     name: Build wheel and verify runtime contents / Python ${{ matrix.python-version }}
