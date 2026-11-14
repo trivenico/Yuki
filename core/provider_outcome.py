@@ -49,6 +49,11 @@ class ProviderOutcomeEvidence:
             raise ValueError("observed_at must be an ISO-8601 UTC timestamp.") from None
         if observed.tzinfo is None or observed.utcoffset() != timezone.utc.utcoffset(observed):
             raise ValueError("observed_at must include a UTC timezone.")
+        # Permit small provider clock skew, but reject evidence dated materially
+        # in the future; old observations remain valid for delayed reconciliation.
+        from datetime import timedelta
+        if observed > datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ValueError("observed_at cannot be more than five minutes in the future.")
         if self.provider_reference is not None and (
             not isinstance(self.provider_reference, str)
             or not self.provider_reference.strip()
