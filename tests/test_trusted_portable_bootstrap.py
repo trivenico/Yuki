@@ -9,6 +9,7 @@ from pathlib import Path
 
 from yuki_trust.portable_bootstrap import (
     BootstrapError,
+    MAX_SIGNATURE_BYTES,
     run_verified_bundle,
     stage_verified_bundle,
     verify_signed_bundle,
