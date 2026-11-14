@@ -25,7 +25,7 @@ inventory imported DLL names.
 - A clean-machine launch test and runtime health check remain mandatory.
 - Inspection tools must come from the trusted build environment. The inspected
   bundle is treated as untrusted input and is never executed by this audit.
-- No native binary found is not proof that the bundle has no dynamic imports.
+- An empty native-binary inventory fails closed; a portable runtime is expected to contain at least its platform interpreter executable.
 
 Use the audit as a release gate alongside signed inventory verification,
 hash-locked wheel installation, and per-platform clean-machine tests.
