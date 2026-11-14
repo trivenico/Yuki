@@ -74,6 +74,17 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(summary.completed_generations, 0)
         self.assertEqual(summary.orphaned_generations, 0)
         self.assertFalse(summary.batch_limit_reached)
+        events = self.service.recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["request_id"], "coordinator-run")
+        self.assertEqual(events[0]["outcome"], "interrupted")
+        self.assertEqual(events[0]["uncertain_tool_calls"], 0)
+        with self.assertRaises(ConversationNotFound):
+            self.service.recovery_events(
+                owner_id="owner-b", conversation_id=conversation_id,
+            )
 
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
