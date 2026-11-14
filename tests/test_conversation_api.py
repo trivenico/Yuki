@@ -588,6 +588,7 @@ class ConversationAPITests(unittest.TestCase):
                     idempotency_key="a" * 64, arguments_sha256="b" * 64,
                     evidence_sha256="c" * 64,
                     observed_at="2026-11-14T10:00:00+00:00",
+                    provider_reference="private-provider-reference",
                 )
         self.app.conversations.provider_outcome_reconciler = ProviderOutcomeReconciler(
             self.app.conversations.store, ProviderOutcomeRegistry({"send_email": Adapter()})
@@ -598,6 +599,12 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         self.assertEqual(data["provider_outcome"]["outcome"], "unknown")
+        self.assertNotIn("provider_reference", data["provider_outcome"])
+        status, listed, _ = self.request(
+            "GET", path + "?request_id=" + request_id, None, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("provider_reference", listed["provider_outcomes"][0])
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["status"], "uncertain")
         self.assertEqual(self.app.conversations.store.list_tool_executions(
