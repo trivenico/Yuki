@@ -440,5 +440,67 @@ class ConversationStoreTests(unittest.TestCase):
         self.assertTrue(listed[0]["provider_idempotency"])
         self.assertEqual(listed[0]["idempotency_key"], "f" * 64)
 
+
+    def test_provider_outcome_evidence_is_owner_scoped_append_only_and_never_resolves_execution(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "provider-evidence-request"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Check provider outcome", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=70_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="evidence-worker", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-evidence", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="evidence-worker",
+            )
+            self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-evidence",
+                lease_token="evidence-worker", status="uncertain",
+            )
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="c" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+            provider_reference="message-reference-1",
+        )
+        saved = self.store.record_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence", evidence=evidence,
+        )
+        self.assertEqual(saved["outcome"], "unknown")
+        self.assertEqual(len(self.store.list_provider_outcome_evidence(
+            owner_id=self.owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence",
+        )), 1)
+        self.assertEqual(self.store.list_provider_outcome_evidence(
+            owner_id=self.other_owner, conversation_id=conversation_id,
+            request_id=request_id, call_id="call-evidence",
+        ), [])
+        record = self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id, request_id=request_id,
+        )[0]
+        self.assertEqual(record["status"], "uncertain")
+        mismatched = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+            idempotency_key="d" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="e" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+        )
+        with self.assertRaises(ConversationConflict):
+            self.store.record_provider_outcome_evidence(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-evidence", evidence=mismatched,
+            )
+
 if __name__ == "__main__":
     unittest.main()
