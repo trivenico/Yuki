@@ -755,12 +755,12 @@ class ConversationStoreTests(unittest.TestCase):
             action="acknowledge_uncertain", reason="Historical review must survive migration.",
         )
         with sqlite3.connect(database) as db:
-            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("PRAGMA foreign_keys=ON")
             db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_new")
             db.execute("""CREATE TABLE conversation_tool_reviews (
                 review_id TEXT PRIMARY KEY,
-                execution_id TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
+                execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
                 owner_id TEXT NOT NULL,
                 request_id TEXT NOT NULL,
                 call_id TEXT NOT NULL,
@@ -790,6 +790,14 @@ class ConversationStoreTests(unittest.TestCase):
             ).fetchone()[0]
             self.assertIn("confirm_provider_completed", schema)
             self.assertIn("acknowledge_uncertain", schema)
+            foreign_keys = db.execute(
+                "PRAGMA foreign_key_list(conversation_tool_reviews)"
+            ).fetchall()
+            self.assertEqual(
+                {row[2] for row in foreign_keys},
+                {"conversation_tool_executions", "conversations"},
+            )
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
 
     def test_review_schema_allows_provider_completion_review_action(self):
