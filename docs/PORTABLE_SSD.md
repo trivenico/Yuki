@@ -27,11 +27,11 @@ Use the Python interpreter from that virtual environment when starting Yuki. A v
 
 The runtime now supports:
 
-- `YUKI_HOME`: root for relative workspace data. If not set, the repository root is used.
+- `YUKI_HOME`: root for relative workspace data. If explicitly set, it must already exist as a writable directory; startup performs a temporary write probe and fails closed if the volume is missing, disconnected, or read-only. Yuki will not silently redirect memory/workspace data to another location. Reconnect the same volume or update `YUKI_HOME` after its mount point or drive letter changes. If unset, the repository-local default is used for a source checkout.
 - `YUKI_CONFIG`: optional config file path. If not set, the repository's `config.yaml` is used.
 - `workspace` in the YAML config: relative workspace paths resolve under `YUKI_HOME` when configured; absolute paths remain absolute.
 
-The Windows launcher defaults `YUKI_HOME` to `YukiData` beside the repository. The Unix launcher uses `YukiData` beside the repository unless `YUKI_HOME` is already set. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
+The Windows and Unix launchers default `YUKI_HOME` to `YukiData` beside the repository when it is unset, and preserve an explicit override. The default directory is created as the workspace initializes; an explicit override must exist and be writable before startup. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
 
 ## Recommended SSD layout
 
@@ -58,4 +58,4 @@ The launcher scripts are starter launchers, not a portable Python runtime and no
 
 ## Portability acceptance checklist
 
-Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. This commit adds path-resolution tests and launch scripts; it does not yet provide that complete cross-platform test matrix.
+Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. The runtime now fails closed for an explicitly configured unavailable or non-writable `YUKI_HOME`; hardware-level disconnect and filesystem read-only behavior still require cross-platform acceptance testing.
