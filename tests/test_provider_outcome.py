@@ -67,6 +67,32 @@ class ProviderOutcomeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fingerprint"):
             verify_provider_outcome(Adapter(), self.execution)
 
+    def test_malformed_execution_identity_is_rejected_before_adapter_lookup(self):
+        calls = []
+
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                calls.append(execution)
+                return ProviderOutcomeTests().evidence()
+
+        malformed = (
+            {"execution_id": "", "idempotency_key": "a" * 64,
+             "arguments_sha256": "b" * 64, "status": "uncertain"},
+            {"execution_id": "x" * 257, "idempotency_key": "a" * 64,
+             "arguments_sha256": "b" * 64, "status": "uncertain"},
+            {"execution_id": "execution-1", "idempotency_key": ["a" * 64],
+             "arguments_sha256": "b" * 64, "status": "uncertain"},
+            {"execution_id": "execution-1", "idempotency_key": "a" * 64,
+             "arguments_sha256": "not-a-digest", "status": "uncertain"},
+            {"execution_id": "execution-1", "idempotency_key": "a" * 64,
+             "arguments_sha256": "b" * 64, "status": []},
+        )
+        for execution in malformed:
+            with self.subTest(execution=execution):
+                with self.assertRaises(ValueError):
+                    verify_provider_outcome(Adapter(), execution)
+        self.assertEqual(calls, [])
+
     def test_untyped_adapter_result_is_rejected(self):
         class Adapter:
             def lookup_tool_outcome(self, execution):
