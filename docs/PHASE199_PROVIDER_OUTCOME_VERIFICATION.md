@@ -37,3 +37,21 @@ The current implementation is a typed contract and validation boundary. It is
 not a provider integration, durable evidence ledger, or automatic reconciliation
 workflow. Those require provider-specific adapters and a separately audited,
 owner-scoped persistence/API layer.
+
+## Durable evidence ledger and owner inspection
+
+Validated adapter evidence can now be appended to the conversation store's
+provider-outcome ledger. The write path requires a typed
+`ProviderOutcomeEvidence`, an existing unresolved execution, and an exact match
+for both the stored idempotency key and argument fingerprint. Each observation
+is append-only; it does not update the tool execution's status or authorize a
+retry.
+
+The authenticated read-only endpoint is:
+
+`GET /v1/conversations/{conversation_id}/tool-executions/{call_id}/provider-outcomes?request_id={request_id}`
+
+It derives the owner from the authenticated session and returns redacted
+evidence metadata. Idempotency keys and argument fingerprints are not exposed
+by this endpoint. Evidence ingestion remains an internal trusted-adapter
+operation; clients cannot submit arbitrary provider claims through the API.
