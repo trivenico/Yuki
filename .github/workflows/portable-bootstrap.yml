@@ -6,6 +6,7 @@ on:
       - "yuki_trust/**"
       - "tests/test_trusted_portable_bootstrap.py"
       - "tests/test_portable_host_policy.py"
+      - "tests/test_portable_anti_rollback.py"
       - "pyproject.toml"
       - ".github/workflows/portable-bootstrap.yml"
   push:
@@ -49,6 +50,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_trusted_portable_bootstrap.py" -v
       - name: Run host launch policy tests
         run: python -m unittest discover -s tests -p "test_portable_host_policy.py" -v
+      - name: Run portable anti-rollback tests
+        run: python -m unittest discover -s tests -p "test_portable_anti_rollback.py" -v
 
   package-build-smoke:
     name: Build wheel and verify runtime contents / Python ${{ matrix.python-version }}
