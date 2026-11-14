@@ -40,9 +40,21 @@ email = [
 
 [project.scripts]
 yuki = "yuki_cli:main"
+yuki-assistant = "main:main"
 
 [tool.setuptools]
-py-modules = ["yuki_cli"]
+# These root-level modules are still part of the supported runtime while the
+# repository is migrated incrementally into packages. Keep them in the wheel
+# so clean installs and portable runtime builds do not silently omit them.
+py-modules = [
+  "main", "yuki", "yuki_agent", "yuki_agent_runtime", "yuki_agent_worker",
+  "yuki_approvals", "yuki_cli", "yuki_evaluate_model", "yuki_events",
+  "yuki_hf_model_diff", "yuki_hf_model_scout", "yuki_identity",
+  "yuki_learning", "yuki_model_discovery", "yuki_model_registry",
+  "yuki_orchestrator", "yuki_planner", "yuki_provider_worker",
+  "yuki_providers", "yuki_security", "yuki_tasks", "yuki_tools",
+  "yuki_workflow",
+]
 include-package-data = true
 
 [tool.setuptools.packages.find]
