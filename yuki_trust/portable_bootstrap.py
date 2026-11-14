@@ -192,7 +192,15 @@ def verify_signed_bundle(
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-        public_key = serialization.load_pem_public_key(key_path.read_bytes())
+        # Import lazily to avoid the portable_host -> portable_bootstrap
+        # module dependency becoming an import cycle. The same host-side
+        # descriptor-relative reader protects both policy and trust-anchor reads.
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        public_key_bytes = _read_host_file_secure(
+            key_path, label="Host trust anchor", max_bytes=65536
+        )
+        public_key = serialization.load_pem_public_key(public_key_bytes)
         signature = base64.b64decode(signature_path.read_text(encoding="ascii").strip(), validate=True)
     except ImportError as exc:
         raise BootstrapError("Host bootstrap requires the cryptography package.") from exc

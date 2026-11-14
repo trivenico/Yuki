@@ -204,6 +204,30 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "signature verification failed"):
             verify_signed_bundle(self.bundle, wrong_path)
 
+    @unittest.skipIf(os.name == "nt", "POSIX no-follow open semantics")
+    def test_rejects_symlinked_host_trust_anchor(self):
+        link = self.root / "release-public-link.pem"
+        try:
+            link.symlink_to(self.public_path)
+        except (OSError, NotImplementedError):
+            self.skipTest("file symlinks unavailable")
+        with self.assertRaisesRegex(BootstrapError, "Trusted public key"):
+            verify_signed_bundle(self.bundle, link)
+
+    def test_rejects_oversized_host_trust_anchor(self):
+        oversized = self.root / "oversized-public.pem"
+        oversized.write_bytes(b"x" * 65537)
+        with self.assertRaisesRegex(BootstrapError, "Trusted public key"):
+            verify_signed_bundle(self.bundle, oversized)
+
+    def test_verification_uses_bounded_secure_host_file_reader(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+        with patch("yuki_trust.portable_host._read_host_file_secure", wraps=_read_host_file_secure) as secure_read:
+            verify_signed_bundle(self.bundle, self.public_path)
+        secure_read.assert_called_once()
+        self.assertEqual(secure_read.call_args.kwargs["max_bytes"], 65536)
+        self.assertEqual(secure_read.call_args.kwargs["label"], "Host trust anchor")
+
     def test_rejects_trust_anchor_inside_bundle(self):
         in_bundle = self.bundle / "release-public.pem"
         in_bundle.write_bytes(self.public_path.read_bytes())
