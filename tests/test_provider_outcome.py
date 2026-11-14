@@ -152,6 +152,35 @@ class ProviderOutcomeTests(unittest.TestCase):
         self.assertLess(events.index("renew"), events.index("record"))
         self.assertEqual(events[-1], "release")
 
+    def test_reconciler_preserves_lookup_error_when_claim_release_fails(self):
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                raise ValueError("provider lookup failed")
+        class Store:
+            def list_tool_executions(self, **kwargs):
+                return [{
+                    "execution_id": "execution-1", "call_id": "call-1",
+                    "tool_name": "send_email", "idempotency_key": "a" * 64,
+                    "arguments_sha256": "b" * 64, "status": "uncertain",
+                }]
+            def acquire_provider_reconciliation_lease(self, **kwargs):
+                return None
+            def renew_provider_reconciliation_lease(self, **kwargs):
+                return None
+            def release_provider_reconciliation_lease(self, **kwargs):
+                raise RuntimeError("release failed")
+            def record_provider_outcome_evidence(self, **kwargs):
+                raise AssertionError("must not persist evidence")
+        reconciler = ProviderOutcomeReconciler(
+            Store(), ProviderOutcomeRegistry({"send_email": Adapter()}),
+        )
+        with self.assertRaisesRegex(ValueError, "provider lookup failed"):
+            reconciler.reconcile(
+                owner_id="owner-1", conversation_id="conversation-1",
+                request_id="request-1", call_id="call-1",
+            )
+
     def test_registry_does_not_guess_missing_provider_adapter(self):
         from core.provider_outcome import ProviderOutcomeRegistry
         registry = ProviderOutcomeRegistry({})
