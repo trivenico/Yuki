@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from core.config import load_config
 from core.portable_paths import config_path, data_root, validate_configured_data_root, workspace_path
 
 
@@ -60,6 +61,14 @@ class PortablePathTests(unittest.TestCase):
             with patch.dict(os.environ, {"YUKI_HOME": directory}, clear=True):
                 self.assertEqual(validate_configured_data_root(), root.resolve())
             self.assertEqual(list(root.iterdir()), [])
+
+
+    def test_runtime_config_fails_before_using_unavailable_explicit_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "disconnected" / "YukiData"
+            with patch.dict(os.environ, {"YUKI_HOME": str(missing)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    load_config()
 
 
 if __name__ == "__main__":
