@@ -87,6 +87,8 @@ def _atomic_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
 def _prepare_private_directory(path: Path, label: str) -> None:
     if not path.is_absolute():
         raise BootstrapError(f"{label} directory must be absolute.")
+    if os.name != "nt":
+        portable_host._validate_host_parent_directories(path, label=label)
     path.mkdir(parents=True, exist_ok=True)
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode):
