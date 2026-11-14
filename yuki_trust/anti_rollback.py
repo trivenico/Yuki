@@ -172,7 +172,13 @@ def advance_release_state(
     path = Path(state_path).expanduser()
     if not path.is_absolute() or not path.parent.is_dir():
         raise BootstrapError("Anti-rollback state path must use an existing host-owned directory.")
-    # Validate every lexical parent so an attacker cannot redirect lock/state files.
+    # Resolve trusted OS aliases (for example macOS /var) before checking each
+    # actual directory. Keep the final filename lexical and reject a symlink leaf.
+    try:
+        canonical_parent = path.parent.resolve(strict=True)
+    except OSError as exc:
+        raise BootstrapError("Anti-rollback state parent directory is unavailable.") from exc
+    path = canonical_parent / path.name
     current = path.parent
     while True:
         try:
