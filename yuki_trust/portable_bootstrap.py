@@ -296,7 +296,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Authenticate and launch a signed Yuki portable runtime.")
     parser.add_argument("--bundle", required=True, type=Path, help="Path to the removable runtime bundle")
     parser.add_argument("--public-key", required=True, type=Path, help="Independently provisioned host trust anchor")
-    parser.add_argument("--entrypoint", required=True, help="Executable path relative to the signed bundle")
+    parser.add_argument("--python", required=True, help="Signed bundled Python interpreter path relative to the bundle")
+    parser.add_argument("--entrypoint", required=True, help="Signed Python script path relative to the bundle")
     parser.add_argument(
         "--expected-platform",
         required=True,
@@ -309,6 +310,7 @@ def main() -> int:
         return run_verified_bundle(
             args.bundle,
             args.public_key,
+            args.python,
             args.entrypoint,
             forwarded,
             expected_platform=args.expected_platform,
