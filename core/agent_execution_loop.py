@@ -254,7 +254,7 @@ class AgentExecutionLoop:
                 self._event("agent.stopped", reason="cancelled", model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult("cancelled", "", turns, calls_total,
                                             max(0.0, self.clock() - started))
-            if calls_total + len(parsed) > self.max_tool_calls:
+            if calls_total >= self.max_tool_calls:
                 self._event("agent.stopped", reason="limit_reached", limit="tool_calls",
                             model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult("limit_reached", "", turns, calls_total,
