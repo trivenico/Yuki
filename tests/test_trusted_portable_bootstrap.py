@@ -386,7 +386,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                     )
         self.assertEqual(secure_stage.call_count, 1)
         self.assertEqual(
-            {item["path"] for item in secure_stage.call_args.kwargs["files"]},
+            {item["path"] for item in secure_stage.call_args.args[2]},
             {"runtime/python.exe", "portable_entry.py", "payload.txt"},
         )
 
