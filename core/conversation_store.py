@@ -597,6 +597,23 @@ class ConversationStore:
                 if (evidence.idempotency_key != execution["idempotency_key"]
                         or evidence.arguments_sha256 != execution["arguments_sha256"]):
                     raise ConversationConflict("provider evidence does not match the stored execution fingerprint.")
+                # SQLite's IMMEDIATE transaction serializes this check across
+                # processes. Repeated delivery of identical provider evidence
+                # returns the original ledger entry instead of duplicating it.
+                previous = db.execute(
+                    """SELECT evidence_id, execution_id, conversation_id, request_id,
+                              call_id, provider, outcome, evidence_sha256, observed_at, recorded_at
+                       FROM conversation_provider_outcome_evidence
+                       WHERE execution_id=? AND evidence_sha256=?""",
+                    (execution["execution_id"], evidence.evidence_sha256),
+                ).fetchone()
+                if previous is not None:
+                    if (previous["provider"] != evidence.provider
+                            or previous["outcome"] != evidence.outcome.value
+                            or previous["observed_at"] != evidence.observed_at):
+                        raise ConversationConflict("provider evidence digest was reused with different metadata.")
+                    db.commit()
+                    return dict(previous)
                 evidence_id, recorded_at = str(uuid.uuid4()), self._now()
                 db.execute(
                     """INSERT INTO conversation_provider_outcome_evidence
