@@ -560,5 +560,74 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(record["idempotency_key"], received_keys[0])
         self.assertEqual(record["status"], "completed")
 
+    def test_crash_after_external_side_effect_before_journal_commit_never_replays(self):
+        executed = []
+
+        class AllowSend:
+            def authorize_tool(self, name):
+                return name == "send"
+
+        model_calls = []
+
+        def model(**kwargs):
+            model_calls.append(True)
+            if len(model_calls) > 1:
+                return {"text": "New request completed", "tool_calls": {"tool_calls": []}}
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "send-once", "name": "send", "arguments": {"message": "hello"}},
+            ]}}
+
+        runtime = GuardedToolRuntime(
+            {"send": lambda raw: executed.append(raw) or "accepted"}, AllowSend()
+        )
+        service = ConversationService(
+            self.store, AgentExecutionLoop(model, StructuredToolProtocol(runtime))
+        )
+        original_finish = self.store.finish_tool_execution
+        crash_once = {"pending": True}
+
+        def crash_after_side_effect(**kwargs):
+            if crash_once["pending"]:
+                crash_once["pending"] = False
+                raise SystemExit("simulated process termination after provider success")
+            return original_finish(**kwargs)
+
+        with patch.object(self.store, "finish_tool_execution", side_effect=crash_after_side_effect):
+            with self.assertRaisesRegex(SystemExit, "simulated process termination"):
+                service.reply(
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="Send once",
+                    request_id="crash-window-request",
+                    expected_version=0,
+                    tools=[],
+                )
+
+        self.assertEqual(len(executed), 1)
+        unresolved = self.store.list_tool_executions(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            request_id="crash-window-request",
+        )
+        self.assertEqual([item["status"] for item in unresolved], ["started"])
+
+        recovered = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Continue safely",
+            request_id="after-crash-window",
+            expected_version=1,
+            tools=[],
+        )
+        self.assertEqual(recovered["status"], "completed")
+        self.assertEqual(len(executed), 1)
+        resolved = self.store.list_tool_executions(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            request_id="crash-window-request",
+        )
+        self.assertEqual([item["status"] for item in resolved], ["uncertain"])
+        self.assertEqual(len(model_calls), 2)
+
 if __name__ == "__main__":
     unittest.main()
