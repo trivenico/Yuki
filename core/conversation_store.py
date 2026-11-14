@@ -631,6 +631,31 @@ class ConversationStore:
                 db.rollback()
                 raise
 
+    def renew_provider_reconciliation_lease(
+        self, *, owner_id: str, execution_id: str, lease_token: str,
+        ttl_seconds: int = 120,
+    ) -> dict[str, Any]:
+        """Extend only a live claim held by this exact worker token."""
+        owner = self._owner(owner_id)
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("execution_id must be non-empty text.")
+        if not isinstance(lease_token, str) or not lease_token.strip():
+            raise ValueError("lease_token must be non-empty text.")
+        if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 300:
+            raise ValueError("ttl_seconds must be an integer from 5 to 300.")
+        now = time.time()
+        expires_at = now + ttl_seconds
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE conversation_provider_reconciliation_leases
+                   SET expires_at=?
+                   WHERE execution_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                (expires_at, execution_id.strip(), owner, lease_token.strip(), now),
+            )
+            if cursor.rowcount != 1:
+                raise ConversationConflict("provider reconciliation claim expired or is no longer owned by this worker.")
+        return {"execution_id": execution_id.strip(), "expires_at": expires_at}
+
     def release_provider_reconciliation_lease(
         self, *, owner_id: str, execution_id: str, lease_token: str,
     ) -> bool:
