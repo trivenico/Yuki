@@ -24,6 +24,23 @@ def _multiprocess_claim_provider_reconciliation_lease(database_path, conversatio
         results.put(("won", token))
 
 
+def _multiprocess_provider_claim_then_crash(database_path, conversation_id, request_id, connection):
+    import os
+    import core.conversation_store as store_module
+    from core.conversation_store import ConversationStore
+
+    store_module.time.time = lambda: 100.0
+    store = ConversationStore(database_path)
+    store.acquire_provider_reconciliation_lease(
+        owner_id="owner-crash", conversation_id=conversation_id,
+        request_id=request_id, call_id="call-crash",
+        lease_token="crashed-worker", ttl_seconds=5,
+    )
+    connection.send("claim-acquired")
+    connection.close()
+    os._exit(0)
+
+
 class ProviderOutcomeTests(unittest.TestCase):
     def setUp(self):
         self.execution = {
@@ -1151,6 +1168,90 @@ class ProviderOutcomeTests(unittest.TestCase):
             )
             self.assertEqual(len(ledger), 1)
             self.assertEqual(ledger[0]["evidence_sha256"], "e" * 64)
+
+    def test_process_crash_releases_reconciliation_after_lease_expiry(self):
+        import multiprocessing
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.conversation_store import ConversationStore
+
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "provider-claim-crash.sqlite3"
+            store = ConversationStore(database)
+            conversation = store.create_conversation(owner_id="owner-crash")
+            conversation_id = conversation["conversation_id"]
+            request_id = "provider-claim-process-crash"
+            store.append_message(
+                owner_id="owner-crash", conversation_id=conversation_id,
+                role="user", content="Check provider execution",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            generation_token = "generation-crash"
+            store.acquire_generation_lease(
+                owner_id="owner-crash", conversation_id=conversation_id,
+                lease_token=generation_token, ttl_seconds=60,
+            )
+            try:
+                execution = store.begin_tool_execution(
+                    owner_id="owner-crash", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-crash",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=generation_token,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-crash", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=generation_token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-crash", conversation_id=conversation_id,
+                    lease_token=generation_token,
+                )
+
+            parent, child = context.Pipe(duplex=False)
+            worker = context.Process(
+                target=_multiprocess_provider_claim_then_crash,
+                args=(str(database), conversation_id, request_id, child),
+            )
+            worker.start()
+            child.close()
+            self.assertEqual(parent.recv(), "claim-acquired")
+            parent.close()
+            worker.join(timeout=15)
+            self.assertEqual(worker.exitcode, 0)
+
+            evidence = self.evidence(
+                execution_id=execution["execution_id"],
+                idempotency_key=execution["idempotency_key"],
+                arguments_sha256=execution["arguments_sha256"],
+                evidence_sha256="f" * 64,
+            )
+            with patch("core.conversation_store.time.time", return_value=106.0):
+                store.acquire_provider_reconciliation_lease(
+                    owner_id="owner-crash", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-crash",
+                    lease_token="recovery-worker", ttl_seconds=30,
+                )
+                recorded = store.record_provider_outcome_evidence(
+                    owner_id="owner-crash", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-crash",
+                    evidence=evidence,
+                    reconciliation_lease_token="recovery-worker",
+                )
+                self.assertEqual(recorded["evidence_sha256"], "f" * 64)
+                self.assertTrue(store.release_provider_reconciliation_lease(
+                    owner_id="owner-crash", execution_id=execution["execution_id"],
+                    lease_token="recovery-worker",
+                ))
+            ledger = store.list_provider_outcome_evidence(
+                owner_id="owner-crash", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-crash",
+            )
+            self.assertEqual(len(ledger), 1)
+            self.assertEqual(ledger[0]["provider"], "mail.example")
 
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
