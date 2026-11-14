@@ -49,7 +49,7 @@ class PortableManifestTests(unittest.TestCase):
         (self.root / "runtime-manifest.sig").write_text("not signed", encoding="ascii")
         with self.assertRaisesRegex(InputValidationError, "already exists"):
             write_unsigned_manifest(
-                self.root, platform="linux-x86_64", runtime_version="0.1.0"
+                self.root, platform="linux-x86_64", runtime_version="0.1.0", release_sequence=1
             )
 
     def test_rejects_symlink_files(self):
