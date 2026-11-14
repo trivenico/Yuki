@@ -85,25 +85,30 @@ def build_release_candidate(
     )
 
     output_root.parent.mkdir(parents=True, exist_ok=True)
+    output_root.mkdir(mode=0o700)
     bundle = output_root / "yuki-portable"
-    bundle_report = assemble_bundle(runtime_root, dependency_root, bundle)
+    try:
+        bundle_report = assemble_bundle(runtime_root, dependency_root, bundle)
 
-    entry_source = Path(__file__).resolve().parents[1] / "portable_entry.py"
-    if entry_source.is_symlink() or not entry_source.is_file():
-        raise InputValidationError("Trusted portable_entry.py source is missing or is not a regular file.")
-    entry_target = bundle / "portable_entry.py"
-    shutil.copyfile(entry_source, entry_target)
-    entry_target.chmod(0o755)
+        entry_source = Path(__file__).resolve().parents[1] / "portable_entry.py"
+        if entry_source.is_symlink() or not entry_source.is_file():
+            raise InputValidationError("Trusted portable_entry.py source is missing or is not a regular file.")
+        entry_target = bundle / "portable_entry.py"
+        shutil.copyfile(entry_source, entry_target)
+        entry_target.chmod(0o755)
 
-    manifest_report = write_unsigned_manifest(
-        bundle, platform=platform_tag, runtime_version=runtime_version
-    )
-    audit_platform = _host_audit_platform()
-    audit_report = audit_bundle(bundle, audit_platform)
-    if audit_report["metadata_failures"]:
-        raise NativeAuditError(
-            f"Native metadata audit found {audit_report['metadata_failures']} release-blocking issue(s)."
+        manifest_report = write_unsigned_manifest(
+            bundle, platform=platform_tag, runtime_version=runtime_version
         )
+        audit_platform = _host_audit_platform()
+        audit_report = audit_bundle(bundle, audit_platform)
+        if audit_report["metadata_failures"]:
+            raise NativeAuditError(
+                f"Native metadata audit found {audit_report['metadata_failures']} release-blocking issue(s)."
+            )
+    except Exception:
+        shutil.rmtree(output_root, ignore_errors=True)
+        raise
 
     return {
         "candidate": str(bundle),
