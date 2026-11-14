@@ -66,6 +66,51 @@ class ConversationAPITests(unittest.TestCase):
             return status, data, response_headers
         return asyncio.run(run())
 
+
+    def test_owner_can_inspect_sanitized_tool_execution_records(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="inspect", idempotency_key="inspect-request",
+            expected_version=0, generation_request_id="inspect-request",
+        )
+        with __import__("unittest").mock.patch(
+            "core.conversation_store.time.time", return_value=40_000.0
+        ):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="inspection-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id="inspect-request", call_id="mail-1",
+                tool_name="send_email", arguments_sha256="d" * 64,
+                lease_token="inspection-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id="inspect-request", call_id="mail-1",
+                lease_token="inspection-lease", status="uncertain",
+            )
+        status, data, headers = self.request(
+            "GET", f"/v1/conversations/{cid}/tool-executions",
+            token=self.issued.token, query=b"request_id=inspect-request",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["tool_executions"][0]["status"], "uncertain")
+        self.assertNotIn("arguments", data["tool_executions"][0])
+        self.assertEqual(headers[b"cache-control"], b"no-store")
+
+        self.auth.create_account("journal-other", "journal-other-password")
+        other = self.auth.authenticate("journal-other", "journal-other-password")
+        status, data, _ = self.request(
+            "GET", f"/v1/conversations/{cid}/tool-executions",
+            token=other.token, query=b"request_id=inspect-request",
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
     def test_provider_catalog_requires_authentication_and_projects_safe_fields(self):
         self.app.provider_catalog = lambda: [{
             "name": "openai", "label": "OpenAI", "implemented": True,
