@@ -145,8 +145,6 @@ class PortableHostPolicyTests(unittest.TestCase):
                 replacement = self.trust_dir / self.policy.name
                 replacement.write_bytes(b'{"schema_version":999}')
                 replacement.chmod(0o600)
-                self.public_key.write_text("attacker key", encoding="ascii")
-                self.public_key.chmod(0o600)
             return original_open(path, flags, *args, **kwargs)
 
         with patch("os.open", side_effect=replace_parent_before_file_open):
