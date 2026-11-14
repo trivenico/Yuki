@@ -177,6 +177,74 @@ class ConversationServiceTests(unittest.TestCase):
             lease_token="replacement-worker",
         )
 
+    def test_lease_loss_during_tool_batch_blocks_subsequent_side_effects(self):
+        first_started = threading.Event()
+        first_release = threading.Event()
+        invoked = []
+
+        class AllowEcho:
+            def authorize_tool(self, name):
+                return name == "echo"
+
+        def first_tool(raw):
+            invoked.append("first")
+            first_started.set()
+            if not first_release.wait(timeout=5):
+                raise TimeoutError("first tool release timed out")
+            return "first completed"
+
+        def second_tool(raw):
+            invoked.append("second")
+            return "second completed"
+
+        runtime = GuardedToolRuntime(
+            {"echo": first_tool, "second": second_tool}, AllowEcho()
+        )
+        protocol = StructuredToolProtocol(runtime)
+
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "call_1", "name": "echo", "arguments": {"value": "one"}},
+                {"id": "call_2", "name": "second", "arguments": {"value": "two"}},
+            ]}}
+
+        service = ConversationService(
+            self.store, AgentExecutionLoop(model, protocol)
+        )
+        service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
+
+        def failed_renewal(**kwargs):
+            raise OSError("simulated durable lease store outage")
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                with patch.object(self.store, "renew_generation_lease", side_effect=failed_renewal):
+                    future = pool.submit(
+                        service.reply,
+                        owner_id="owner-a",
+                        conversation_id=self.conversation["conversation_id"],
+                        user_text="Run the two tools",
+                        request_id="lease-loss-tool-batch",
+                        expected_version=0,
+                        tools=[],
+                    )
+                    self.assertTrue(first_started.wait(timeout=5), "first tool did not start")
+                    # Give the heartbeat a deterministic opportunity to observe the
+                    # simulated storage outage while the first side effect is blocked.
+                    deadline = threading.Event()
+                    deadline.wait(0.08)
+                    first_release.set()
+                    with self.assertRaisesRegex(ConversationConflict, "lease renewal failed"):
+                        future.result(timeout=5)
+            self.assertEqual(invoked, ["first"])
+            history = self.service.history(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+            )
+            self.assertEqual([item["role"] for item in history], ["user"])
+        finally:
+            first_release.set()
+
     def test_lease_renewal_failure_prevents_assistant_persistence(self):
         started = threading.Event()
 
