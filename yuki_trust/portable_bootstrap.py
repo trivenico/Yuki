@@ -118,7 +118,91 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
     return value["files"]
 
 
+def _inventory_posix(root: Path) -> list[dict[str, Any]]:
+    """Inventory through pinned directory descriptors and no-follow opens."""
+    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW") or not os.supports_dir_fd:
+        raise BootstrapError("POSIX bundle inventory requires dir_fd, O_DIRECTORY and O_NOFOLLOW support.")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    files: list[dict[str, Any]] = []
+
+    def visit(directory_fd: int, prefix: str) -> None:
+        try:
+            names = sorted(os.listdir(directory_fd))
+        except OSError as exc:
+            raise BootstrapError("Bundle directory changed while being inspected.") from exc
+        for name in names:
+            relative = f"{prefix}/{name}" if prefix else name
+            if not prefix and relative in {MANIFEST_NAME, SIGNATURE_NAME}:
+                continue
+            try:
+                entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISDIR(entry.st_mode):
+                    child_fd = os.open(name, directory_flags, dir_fd=directory_fd)
+                    try:
+                        opened = os.fstat(child_fd)
+                        if not stat.S_ISDIR(opened.st_mode) or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino):
+                            raise BootstrapError(f"Bundle directory changed during inventory: {relative}")
+                        visit(child_fd, relative)
+                    finally:
+                        os.close(child_fd)
+                    continue
+                if not stat.S_ISREG(entry.st_mode):
+                    raise BootstrapError(f"Bundle contains a symbolic-link or non-regular file: {relative}")
+                file_fd = os.open(name, file_flags, dir_fd=directory_fd)
+                try:
+                    before = os.fstat(file_fd)
+                    if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                        raise BootstrapError(f"Bundle file changed during inventory: {relative}")
+                    digest = hashlib.sha256()
+                    size = 0
+                    while True:
+                        chunk = os.read(file_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        digest.update(chunk)
+                    after = os.fstat(file_fd)
+                    if (
+                        size != before.st_size
+                        or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    ):
+                        raise BootstrapError(f"Bundle file changed while being hashed: {relative}")
+                    files.append({"path": relative, "size": size, "sha256": digest.hexdigest()})
+                finally:
+                    os.close(file_fd)
+            except BootstrapError:
+                raise
+            except OSError as exc:
+                raise BootstrapError(f"Unable to securely inspect bundle entry: {relative}") from exc
+
+    root_fd = None
+    try:
+        root_fd = os.open(root, directory_flags)
+        root_info = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_info.st_mode):
+            raise BootstrapError("Portable bundle root must be a real directory.")
+        visit(root_fd, "")
+    except BootstrapError:
+        raise
+    except OSError as exc:
+        raise BootstrapError("Unable to securely open portable bundle root.") from exc
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+    files.sort(key=lambda item: item["path"])
+    if not files:
+        raise BootstrapError("Runtime bundle contains no regular files.")
+    return files
+
+
 def _inventory(root: Path) -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return _inventory_posix(root)
+
+    # Windows currently uses the path-based fallback. A handle-based
+    # FILE_FLAG_OPEN_REPARSE_POINT implementation is a separate hardening task.
     files: list[dict[str, Any]] = []
     for current, dirs, names in os.walk(root, followlinks=False):
         current_path = Path(current)
