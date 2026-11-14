@@ -773,6 +773,10 @@ class ConversationStore:
                     raise ConversationNotFound("tool execution not found.")
                 if execution["status"] not in {"started", "uncertain"}:
                     raise ConversationConflict("provider evidence can only be recorded for unresolved executions.")
+                if evidence.execution_id != execution["execution_id"]:
+                    raise ConversationConflict(
+                        "provider evidence does not match the exact durable execution identity."
+                    )
                 if (evidence.idempotency_key != execution["idempotency_key"]
                         or evidence.arguments_sha256 != execution["arguments_sha256"]):
                     raise ConversationConflict("provider evidence does not match the stored execution fingerprint.")
