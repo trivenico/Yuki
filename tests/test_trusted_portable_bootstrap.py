@@ -278,6 +278,14 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.assertEqual((staged / "payload.txt").read_text(encoding="utf-8"), "verified payload")
             verify_signed_bundle(staged, self.public_path)
 
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative staging")
+    def test_posix_staging_does_not_use_path_based_copyfile(self):
+        with patch("yuki_trust.portable_bootstrap.shutil.copyfile", side_effect=AssertionError("path copy forbidden")):
+            with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
+                staged = Path(temp_dir)
+                self.assertEqual((staged / "payload.txt").read_text(encoding="utf-8"), "verified payload")
+                verify_signed_bundle(staged, self.public_path)
+
     @unittest.skipIf(os.name == "nt", "shell executable smoke test is POSIX-specific")
     def test_launches_only_signed_entrypoint_from_staging(self):
         result = run_verified_bundle(
