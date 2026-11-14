@@ -171,6 +171,23 @@ class YukiConversationAPI:
                 return await self._respond(send, 201, conversation)
 
 
+            tool_executions_match = re.fullmatch(
+                r"/v1/conversations/([^/]+)/tool-executions", path
+            )
+            if tool_executions_match and method == "GET":
+                conversation_id = tool_executions_match.group(1)
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                query = self._query(scope)
+                if set(query) != {"request_id"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                records = await asyncio.to_thread(
+                    self.conversations.tool_executions,
+                    owner_id=user.user_id, conversation_id=conversation_id,
+                    request_id=query["request_id"],
+                )
+                return await self._respond(send, 200, {"tool_executions": records})
+
             cancel_match = re.fullmatch(r"/v1/conversations/([^/]+)/messages/cancel", path)
             if cancel_match and method == "POST":
                 conversation_id = cancel_match.group(1)
