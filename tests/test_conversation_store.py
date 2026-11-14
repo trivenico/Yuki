@@ -111,6 +111,46 @@ class ConversationStoreTests(unittest.TestCase):
                     lease_token="replacement-worker",
                 ))
 
+    def test_recovery_cannot_mark_tool_uncertain_after_lease_takeover(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="run tool", idempotency_key="user:recovery-fence",
+            expected_version=0, generation_request_id="recovery-fence",
+        )
+        with patch("core.conversation_store.time.time", return_value=5_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="original-worker", ttl_seconds=5,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="recovery-fence", call_id="tool-1", tool_name="send",
+                arguments_sha256="a" * 64, lease_token="original-worker",
+                idempotency_key="b" * 64,
+            )
+            with patch("core.conversation_store.time.time", return_value=5_006.0):
+                self.store.acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="recovery-worker", ttl_seconds=30,
+                )
+                self.assertEqual(self.store.mark_started_tool_executions_uncertain(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="recovery-fence", lease_token="original-worker",
+                ), 0)
+                self.assertEqual(self.store.list_tool_executions(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="recovery-fence",
+                )[0]["status"], "started")
+                self.assertEqual(self.store.mark_started_tool_executions_uncertain(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="recovery-fence", lease_token="recovery-worker",
+                ), 1)
+                self.assertEqual(self.store.list_tool_executions(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="recovery-fence",
+                )[0]["status"], "uncertain")
+
     def test_assistant_message_commit_requires_active_matching_lease(self):
         conversation_id = self.conversation["conversation_id"]
         self.store.append_message(
