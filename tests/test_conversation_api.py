@@ -606,7 +606,7 @@ class ConversationAPITests(unittest.TestCase):
         status, data, _ = self.request(
             "POST", path, {"request_id": request_id}, self.issued.token,
         )
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201, data)
         self.assertEqual(data["provider_outcome"]["outcome"], "unknown")
         self.assertNotIn("provider_reference", data["provider_outcome"])
         status, listed, _ = self.request(
