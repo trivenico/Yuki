@@ -336,6 +336,8 @@ class YukiConversationAPI:
             return await self._respond(send, 404, {"error": "not_found"})
         except ConversationConflict:
             return await self._respond(send, 409, {"error": "conversation_conflict"})
+        except LookupError:
+            return await self._respond(send, 503, {"error": "provider_outcome_unavailable"})
         except (ValueError, ConversationError):
             return await self._respond(send, 400, {"error": "invalid_request"})
         except Exception:
