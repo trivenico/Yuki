@@ -140,14 +140,18 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         path_type = type(payload)
         original_open = path_type.open
 
+        replaced = []
+
         def open_replacement(path, *args, **kwargs):
-            if path.name == payload.name and path.parent == payload.parent and args[:1] == ("rb",):
+            if path.name == payload.name and args[:1] == ("rb",):
+                replaced.append(path)
                 return original_open(outside, *args, **kwargs)
             return original_open(path, *args, **kwargs)
 
         with patch.object(path_type, "open", new=open_replacement):
             with self.assertRaisesRegex(BootstrapError, "changed while being opened|inventory or file hashes"):
                 verify_signed_bundle(self.bundle, self.public_path)
+        self.assertTrue(replaced, "the test must replace the payload opened by inventory")
 
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
     def test_windows_inventory_rejects_file_symlink(self):
