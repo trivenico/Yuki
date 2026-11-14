@@ -21,6 +21,29 @@ class ConversationStoreTests(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
+    def _record_provider_evidence(self, *, owner_id, conversation_id, request_id, call_id, evidence):
+        import uuid
+        token = uuid.uuid4().hex
+        self.store.acquire_provider_reconciliation_lease(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, call_id=call_id, lease_token=token,
+        )
+        try:
+            return self.store.record_provider_outcome_evidence(
+                owner_id=owner_id, conversation_id=conversation_id,
+                request_id=request_id, call_id=call_id, evidence=evidence,
+                reconciliation_lease_token=token,
+            )
+        finally:
+            execution = next(
+                item for item in self.store.list_tool_executions(
+                    owner_id=owner_id, conversation_id=conversation_id, request_id=request_id,
+                ) if item["call_id"] == call_id
+            )
+            self.store.release_provider_reconciliation_lease(
+                owner_id=owner_id, execution_id=execution["execution_id"], lease_token=token,
+            )
+
     def append(self, role, content, key, version):
         return self.store.append_message(
             owner_id=self.owner,
