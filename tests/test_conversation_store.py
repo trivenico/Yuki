@@ -414,10 +414,11 @@ class ConversationStoreTests(unittest.TestCase):
                 tool_name="send_email", arguments_sha256="c" * 64,
                 lease_token="uncertain-worker",
             )
-        changed = self.store.mark_started_tool_executions_uncertain(
-            owner_id=self.owner, conversation_id=conversation_id,
-            request_id="tool-uncertain-request",
-        )
+        with patch("core.conversation_store.time.time", return_value=20_001.0):
+            changed = self.store.mark_started_tool_executions_uncertain(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id="tool-uncertain-request", lease_token="uncertain-worker",
+            )
         self.assertEqual(changed, 1)
         records = self.store.list_tool_executions(
             owner_id=self.owner, conversation_id=conversation_id,
@@ -469,6 +470,7 @@ class ConversationStoreTests(unittest.TestCase):
             self.store.update_generation_checkpoint(
                 owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
                 request_id="checkpoint-1", checkpoint={"payload": "x" * 5000},
+                lease_token="checkpoint-worker",
             )
 
     def test_generation_records_are_owner_scoped(self):
