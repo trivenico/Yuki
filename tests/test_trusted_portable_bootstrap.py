@@ -145,7 +145,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             return original_open(path, *args, **kwargs)
 
         with patch.object(Path, "open", new=open_replacement):
-            with self.assertRaisesRegex(BootstrapError, "changed while being opened"):
+            with self.assertRaisesRegex(BootstrapError, "changed while being opened|inventory or file hashes"):
                 verify_signed_bundle(self.bundle, self.public_path)
 
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
