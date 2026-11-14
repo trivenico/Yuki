@@ -133,7 +133,7 @@ def _atomic_write(path: Path, sequence: int, digest: str) -> None:
             },
             sort_keys=True,
             separators=(",", ":"),
-        ) + "\\n"
+        ) + "\n"
     ).encode("utf-8")
     fd, temporary = tempfile.mkstemp(prefix=".yuki-rollback-", dir=path.parent)
     temp_path = Path(temporary)
