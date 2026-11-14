@@ -83,6 +83,34 @@ class ConversationStoreTests(unittest.TestCase):
             ))
         self.assertEqual(second["expires_at"], 1_036.0)
 
+    def test_generation_finalization_requires_active_matching_lease(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="hello", idempotency_key="user:finalize-fence",
+            expected_version=0, generation_request_id="finalize-fence",
+        )
+        with patch("core.conversation_store.time.time", return_value=4_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="active-worker", ttl_seconds=5,
+            )
+            with patch("core.conversation_store.time.time", return_value=4_006.0):
+                self.store.acquire_generation_lease(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    lease_token="replacement-worker", ttl_seconds=30,
+                )
+                self.assertFalse(self.store.finish_generation(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="finalize-fence", status="interrupted",
+                    lease_token="active-worker",
+                ))
+                self.assertTrue(self.store.finish_generation(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    request_id="finalize-fence", status="interrupted",
+                    lease_token="replacement-worker",
+                ))
+
     def test_assistant_message_commit_requires_active_matching_lease(self):
         conversation_id = self.conversation["conversation_id"]
         self.store.append_message(
