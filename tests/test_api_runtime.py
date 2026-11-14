@@ -56,6 +56,32 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.app.conversations.agent_loop_for_owner, factory)
             runtime.close()
 
+    def test_owner_execution_factory_receives_conversation_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            resolved_owners = []
+
+            def factory(owner_id):
+                resolved_owners.append(owner_id)
+                return _loop()
+
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=factory,
+            )
+            try:
+                conversation = runtime.app.conversations.create(owner_id="authenticated-user-42")
+                result = runtime.app.conversations.reply(
+                    owner_id="authenticated-user-42",
+                    conversation_id=conversation["conversation_id"],
+                    user_text="hello", request_id="owner-loop-request-1",
+                    expected_version=conversation["version"], tools=[],
+                )
+                self.assertEqual(resolved_owners, ["authenticated-user-42"])
+                self.assertEqual(result["status"], "completed")
+            finally:
+                runtime.close()
+
     def test_runtime_rejects_invalid_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
