@@ -167,6 +167,38 @@ def _read_windows_file_handle_secure(path: Path, *, label: str, max_bytes: int) 
                 if total > max_bytes:
                     raise BootstrapError(f"{label} exceeds its size limit.")
                 chunks.append(buffer.raw[:read.value])
+
+            # A pre-existing writer handle may have compatible sharing flags.
+            # Re-query the pinned handle and reject any mutation observed
+            # during the read, even though this reader itself requested
+            # FILE_SHARE_READ only.
+            after = _BY_HANDLE_FILE_INFORMATION()
+            if not get_info(handle, ctypes.byref(after)):
+                raise OSError(ctypes.get_last_error(), "GetFileInformationByHandle failed", str(path))
+            before_identity = (
+                info.dwVolumeSerialNumber,
+                info.nFileIndexHigh,
+                info.nFileIndexLow,
+                info.nFileSizeHigh,
+                info.nFileSizeLow,
+                info.ftLastWriteTime_dwHighDateTime,
+                info.ftLastWriteTime_dwLowDateTime,
+                info.ftCreationTime_dwHighDateTime,
+                info.ftCreationTime_dwLowDateTime,
+            )
+            after_identity = (
+                after.dwVolumeSerialNumber,
+                after.nFileIndexHigh,
+                after.nFileIndexLow,
+                after.nFileSizeHigh,
+                after.nFileSizeLow,
+                after.ftLastWriteTime_dwHighDateTime,
+                after.ftLastWriteTime_dwLowDateTime,
+                after.ftCreationTime_dwHighDateTime,
+                after.ftCreationTime_dwLowDateTime,
+            )
+            if before_identity != after_identity or total != size:
+                raise BootstrapError(f"{label} changed while being read.")
             return b"".join(chunks)
         finally:
             close_handle(handle)
