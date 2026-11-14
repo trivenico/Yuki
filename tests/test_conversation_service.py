@@ -431,5 +431,45 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(records[0]["tool_name"], "echo")
         self.assertEqual(records[0]["status"], "completed")
 
+
+    def test_handler_exception_is_journaled_uncertain_and_stops_batch(self):
+        executed = []
+
+        class AllowEcho:
+            def authorize_tool(self, name):
+                return name == "echo"
+
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "uncertain-echo", "name": "echo", "arguments": {"value": "x"}},
+                {"id": "must-not-run", "name": "echo", "arguments": {"value": "y"}},
+            ]}}
+
+        def handler(raw):
+            executed.append(raw)
+            raise RuntimeError("remote acknowledgement lost")
+
+        runtime = GuardedToolRuntime({"echo": handler}, AllowEcho())
+        service = ConversationService(
+            self.store, AgentExecutionLoop(model, StructuredToolProtocol(runtime))
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Run uncertain echo",
+            request_id="uncertain-handler-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(len(executed), 1)
+        records = self.store.list_tool_executions(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            request_id="uncertain-handler-request",
+        )
+        self.assertEqual([item["status"] for item in records], ["uncertain"])
+        self.assertEqual([item["call_id"] for item in records], ["uncertain-echo"])
+
 if __name__ == "__main__":
     unittest.main()
