@@ -109,7 +109,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
                 self.skipTest("symlink creation is not permitted")
             with patch.object(sys, "argv", [
                 "portable_runtime_manifest.py", "create", str(self.root),
-                "--platform", "linux-x86_64", "--runtime-version", "3.12.7",
+                "--platform", "linux-x86_64", "--runtime-version", "3.12.7", "--release-sequence", "1",
             ]):
                 self.assertEqual(main(), 2)
             self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
