@@ -250,7 +250,7 @@ class ConversationService:
             if following and following[0]["role"] == "assistant":
                 self.store.finish_generation(
                     owner_id=owner_id, conversation_id=conversation_id,
-                    request_id=generation["request_id"], status="completed",
+                    request_id=generation["request_id"], status="completed", lease_token=lease_token,
                 )
             elif user_message is not None:
                 self.store.append_message(
@@ -258,11 +258,11 @@ class ConversationService:
                     role="assistant",
                     content="This response was interrupted before completion. Please submit a new request; Yuki will not automatically repeat potentially side-effecting actions.",
                     idempotency_key="assistant:" + generation["request_id"],
-                    expected_version=conversation_now["version"],
+                    expected_version=conversation_now["version"], lease_token=lease_token,
                 )
                 self.store.finish_generation(
                     owner_id=owner_id, conversation_id=conversation_id,
-                    request_id=generation["request_id"], status="interrupted",
+                    request_id=generation["request_id"], status="interrupted", lease_token=lease_token,
                 )
             else:
                 # A missing user-message row is an invariant violation, but
@@ -416,6 +416,7 @@ class ConversationService:
             owner_id=owner_id, conversation_id=conversation_id,
             request_id=request_id,
             status=status if status in {"completed", "failed", "cancelled", "interrupted"} else "failed",
+            lease_token=lease_token,
         )
         return {
             "conversation_id": conversation_id,
