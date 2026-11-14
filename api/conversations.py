@@ -171,6 +171,27 @@ class YukiConversationAPI:
                 return await self._respond(send, 201, conversation)
 
 
+            recovery_events_match = re.fullmatch(
+                r"/v1/conversations/([^/]+)/recovery-events", path
+            )
+            if recovery_events_match and method == "GET":
+                conversation_id = recovery_events_match.group(1)
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                query = self._query(scope)
+                raw_limit = query.get("limit", "50")
+                if (set(query) - {"limit"} or not isinstance(raw_limit, str)
+                        or not raw_limit.isascii() or not raw_limit.isdecimal()):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                limit = int(raw_limit)
+                if not 1 <= limit <= 100:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                events = await asyncio.to_thread(
+                    self.conversations.recovery_events,
+                    owner_id=user.user_id, conversation_id=conversation_id, limit=limit,
+                )
+                return await self._respond(send, 200, {"recovery_events": events})
+
             tool_executions_match = re.fullmatch(
                 r"/v1/conversations/([^/]+)/tool-executions", path
             )
