@@ -63,7 +63,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         self.state_path.parent.mkdir(mode=0o700)
         self._sign_bundle()
 
-    def _sign_bundle(self):
+    def _sign_bundle(self, release_sequence=1, runtime_version="3.12.7"):
         files = []
         for path in sorted(p for p in self.bundle.rglob("*") if p.is_file() and p.name not in {"runtime-manifest.json", "runtime-manifest.sig"}):
             data = path.read_bytes()
@@ -77,8 +77,8 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             "product": "Yuki Portable Runtime",
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
-            "runtime_version": "3.12.7",
-            "release_sequence": 1,
+            "runtime_version": runtime_version,
+            "release_sequence": release_sequence,
             "files": files,
         }
         manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -168,6 +168,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
+            "release_sequence": 1,
             "files": [
                 {"path": "runtime", "size": 1, "sha256": "0" * 64},
                 {"path": "runtime/python.exe", "size": 1, "sha256": "1" * 64},
@@ -304,6 +305,25 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 anti_rollback_state_path=self.state_path,
             )
 
+    def test_launcher_rejects_older_signed_release_after_newer_release(self):
+        self._sign_bundle(release_sequence=12)
+        with patch("yuki_trust.portable_bootstrap.subprocess.run") as run:
+            run.return_value.returncode = 0
+            self.assertEqual(run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path), 0)
+            self._sign_bundle(release_sequence=11)
+            with self.assertRaisesRegex(BootstrapError, "rollback rejected"):
+                run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path)
+            run.assert_called_once()
+
+    def test_launcher_rejects_same_sequence_with_different_signed_manifest(self):
+        self._sign_bundle(release_sequence=12, runtime_version="3.12.7")
+        with patch("yuki_trust.portable_bootstrap.subprocess.run") as run:
+            run.return_value.returncode = 0
+            self.assertEqual(run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path), 0)
+            self._sign_bundle(release_sequence=12, runtime_version="3.12.8")
+            with self.assertRaisesRegex(BootstrapError, "equivocation"):
+                run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path)
+            run.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
