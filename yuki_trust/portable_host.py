@@ -50,7 +50,13 @@ def _validate_host_parent_directories(path: Path, *, label: str) -> None:
         # macOS exposes /var as a system-managed alias to /private/var.
         # Permit only this exact platform alias; arbitrary symlinked parents
         # remain rejected.
-        if current == Path("/var") and current.is_symlink() and current.resolve() == Path("/private/var"):
+        system_aliases = {
+            Path("/var"): Path("/private/var"),
+            Path("/tmp"): Path("/private/tmp"),
+            Path("/Users"): Path("/System/Volumes/Data/Users"),
+        }
+        alias_target = system_aliases.get(current) if sys.platform == "darwin" else None
+        if alias_target is not None and current.is_symlink() and current.resolve() == alias_target:
             current = current.parent
             continue
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
