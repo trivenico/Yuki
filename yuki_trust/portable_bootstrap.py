@@ -202,7 +202,10 @@ def stage_verified_bundle(
     public_key_path: str | Path,
 ) -> tempfile.TemporaryDirectory:
     """Copy only authenticated files to host temp storage, then verify the copy."""
-    source = Path(bundle).expanduser().resolve(strict=True)
+    source_candidate = Path(bundle).expanduser()
+    if source_candidate.is_symlink():
+        raise BootstrapError("Portable bundle root must not be a symbolic link.")
+    source = source_candidate.resolve(strict=True)
     manifest = verify_signed_bundle(source, public_key_path)
     staged_temp = tempfile.TemporaryDirectory(prefix="yuki-verified-")
     staged_root = Path(staged_temp.name).resolve(strict=True)
