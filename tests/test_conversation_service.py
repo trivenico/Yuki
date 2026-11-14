@@ -35,6 +35,21 @@ def _multiprocess_claim_generation_lease(database_path, conversation_id, token, 
             lease_token=token,
         )
 
+
+def _multiprocess_crash_after_generation_lease(database_path, conversation_id, token, connection):
+    import os
+    import core.conversation_store as conversation_store_module
+
+    conversation_store_module.time.time = lambda: 100.0
+    store = ConversationStore(database_path)
+    store.acquire_generation_lease(
+        owner_id="owner-a", conversation_id=conversation_id,
+        lease_token=token, ttl_seconds=5,
+    )
+    connection.send("lease-acquired")
+    connection.close()
+    os._exit(0)
+
 class AllowNothing:
     def authorize_tool(self, name):
         return False
@@ -1322,6 +1337,43 @@ class ConversationServiceTests(unittest.TestCase):
             idempotency_key="assistant:stale-worker-recovery",
         ))
 
+
+    def test_expired_lease_can_be_reclaimed_after_worker_process_crashes(self):
+        database_path = Path(self.tempdir.name) / "chat.sqlite3"
+        conversation_id = self.conversation["conversation_id"]
+        context = multiprocessing.get_context("spawn")
+        parent_connection, child_connection = context.Pipe(duplex=False)
+        worker = context.Process(
+            target=_multiprocess_crash_after_generation_lease,
+            args=(
+                str(database_path), conversation_id,
+                "crashed-process-token", child_connection,
+            ),
+        )
+        worker.start()
+        child_connection.close()
+        try:
+            self.assertEqual(parent_connection.recv(), "lease-acquired")
+            worker.join(timeout=10)
+            self.assertFalse(worker.is_alive(), "crashed lease worker did not exit")
+            self.assertEqual(worker.exitcode, 0)
+        finally:
+            parent_connection.close()
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+
+        replacement = self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token="replacement-after-process-crash", ttl_seconds=60,
+        )
+        self.assertEqual(
+            replacement["lease_token"], "replacement-after-process-crash",
+        )
+        self.store.release_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token="replacement-after-process-crash",
+        )
 
     def test_separate_processes_cannot_both_acquire_generation_lease(self):
         database_path = Path(self.tempdir.name) / "chat.sqlite3"
