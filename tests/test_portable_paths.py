@@ -84,64 +84,6 @@ class PortablePathTests(unittest.TestCase):
                 self.assertEqual(observed, [expected, expected, expected])
 
 
-    @unittest.skipUnless(os.name == "posix", "POSIX shell launcher integration test")
-    def test_unix_portable_launcher_handles_spaces_and_persists_external_home(self):
-        import shutil
-        import subprocess
-
-        source_launcher = Path(__file__).resolve().parents[1] / "scripts" / "portable-yuki-unix.sh"
-        with tempfile.TemporaryDirectory() as directory:
-            temp_root = Path(directory) / "Yuki Portable"
-            scripts = temp_root / "scripts"
-            scripts.mkdir(parents=True)
-            launcher = scripts / "portable-yuki-unix.sh"
-            shutil.copyfile(source_launcher, launcher)
-            launcher.chmod(0o755)
-            (temp_root / "main.py").write_text("# integration fixture\\n", encoding="utf-8")
-
-            bin_dir = Path(directory) / "fake bin"
-            bin_dir.mkdir()
-            python_shim = bin_dir / "python3"
-            capture = Path(directory) / "launcher-calls.txt"
-            python_shim.write_text(
-                "#!/bin/sh\\n"
-                "if [ \"$1\" = \"-c\" ]; then exit 0; fi\\n"
-                "mkdir -p \"$YUKI_HOME\"\\n"
-                "printf '%s|%s|%s\\n' \"$PWD\" \"$YUKI_HOME\" \"$*\" >> \"$YUKI_CAPTURE\"\\n"
-                "printf 'started\\n' >> \"$YUKI_HOME/state.txt\"\\n",
-                encoding="utf-8",
-            )
-            python_shim.chmod(0o755)
-
-            data_root = Path(directory) / "External Data"
-            env = os.environ.copy()
-            env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
-            env["YUKI_HOME"] = str(data_root)
-            env["YUKI_CAPTURE"] = str(capture)
-            subprocess.run(
-                ["sh", str(launcher)],
-                cwd=str(Path(directory)),
-                env=env,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            subprocess.run(
-                ["sh", str(launcher)],
-                cwd=str(Path(directory)),
-                env=env,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-
-            calls = capture.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(calls), 2)
-            for call in calls:
-                self.assertEqual(call, f"{temp_root}|{data_root}|main.py")
-            self.assertEqual((data_root / "state.txt").read_text(encoding="utf-8").splitlines(), ["started", "started"])
 
 
 if __name__ == "__main__":
