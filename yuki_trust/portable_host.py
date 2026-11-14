@@ -846,8 +846,13 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
                     raise BootstrapError("Windows directory enumeration returned a truncated record.")
                 next_offset, _index, name_length = struct.unpack_from("<III", raw, offset)
                 record_end = offset + (next_offset if next_offset else returned - offset)
-                if name_length % 2 or name_length > record_end - offset - 12:
-                    raise BootstrapError("Windows directory enumeration returned an invalid filename.")
+                if (
+                    (next_offset and (next_offset < 12 + name_length or next_offset % 8 != 0))
+                    or record_end > returned
+                    or name_length % 2
+                    or name_length > record_end - offset - 12
+                ):
+                    raise BootstrapError("Windows directory enumeration returned an invalid filename or record boundary.")
                 name = raw[offset + 12:offset + 12 + name_length].decode("utf-16-le", errors="strict")
                 if name not in {".", ".."}:
                     relative = f"{prefix}/{name}" if prefix else name
