@@ -242,6 +242,50 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     return files
 
 
+def _read_bundle_metadata_posix(root: Path, name: str, limit: int) -> bytes:
+    """Read a root-level metadata file through pinned descriptors and O_NOFOLLOW."""
+    if (
+        not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.open not in os.supports_dir_fd
+        or os.stat not in os.supports_dir_fd
+    ):
+        raise BootstrapError("POSIX metadata reads require descriptor-relative no-follow support.")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    try:
+        entry = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        if not stat.S_ISREG(entry.st_mode) or entry.st_size > limit:
+            raise BootstrapError(f"Runtime metadata file is missing, oversized, or not regular: {name}")
+        fd = os.open(name, flags | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                raise BootstrapError(f"Runtime metadata changed while being opened: {name}")
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(fd, min(65536, limit + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    raise BootstrapError(f"Runtime metadata file is oversized: {name}")
+                chunks.append(chunk)
+            after = os.fstat(fd)
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns
+            ):
+                raise BootstrapError(f"Runtime metadata changed while being read: {name}")
+            return b"".join(chunks)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise BootstrapError(f"Unable to securely read runtime metadata: {name}") from exc
+    finally:
+        os.close(root_fd)
+
+
 def verify_signed_bundle(
     bundle: str | Path,
     public_key_path: str | Path,
@@ -254,19 +298,27 @@ def verify_signed_bundle(
     root = root_candidate.resolve(strict=True)
     if not root.is_dir():
         raise BootstrapError("Portable bundle must be a directory.")
-    manifest_path = root / MANIFEST_NAME
-    signature_path = root / SIGNATURE_NAME
-    for path, label, limit in (
-        (manifest_path, "Runtime manifest", MAX_MANIFEST_BYTES),
-        (signature_path, "Runtime signature", MAX_SIGNATURE_BYTES),
-    ):
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
-            raise BootstrapError(f"{label} is missing, oversized, or not a regular file.")
+    if os.name != "nt":
+        manifest_bytes = _read_bundle_metadata_posix(root, MANIFEST_NAME, MAX_MANIFEST_BYTES)
+        signature_bytes = _read_bundle_metadata_posix(root, SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
+    else:
+        manifest_path = root / MANIFEST_NAME
+        signature_path = root / SIGNATURE_NAME
+        for path, label, limit in (
+            (manifest_path, "Runtime manifest", MAX_MANIFEST_BYTES),
+            (signature_path, "Runtime signature", MAX_SIGNATURE_BYTES),
+        ):
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+                raise BootstrapError(f"{label} is missing, oversized, or not a regular file.")
+        try:
+            manifest_bytes = manifest_path.read_bytes()
+            signature_bytes = signature_path.read_bytes()
+        except OSError as exc:
+            raise BootstrapError("Runtime manifest or signature is unreadable.") from exc
 
     try:
-        manifest_bytes = manifest_path.read_bytes()
         value = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise BootstrapError("Runtime manifest is unreadable or invalid JSON.") from exc
     expected = _validate_manifest(value)
     if expected_platform is not None:
@@ -290,7 +342,7 @@ def verify_signed_bundle(
             key_path, label="Host trust anchor", max_bytes=65536
         )
         public_key = serialization.load_pem_public_key(public_key_bytes)
-        signature = base64.b64decode(signature_path.read_text(encoding="ascii").strip(), validate=True)
+        signature = base64.b64decode(signature_bytes.decode("ascii").strip(), validate=True)
     except ImportError as exc:
         raise BootstrapError("Host bootstrap requires the cryptography package.") from exc
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
