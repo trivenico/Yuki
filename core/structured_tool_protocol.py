@@ -77,10 +77,19 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
             decoded[key] = value
         return decoded
 
+    def reject_non_finite_number(value):
+        raise ValueError(f"non-finite JSON number is not permitted: {value}")
+
     try:
-        payload = json.loads(response, object_pairs_hook=reject_duplicate_keys)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ToolProtocolError("tool response must be valid JSON without duplicate object keys.") from exc
+        payload = json.loads(
+            response,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite_number,
+        )
+    except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise ToolProtocolError(
+            "tool response must be valid, finite JSON without duplicate object keys."
+        ) from exc
     if not isinstance(payload, dict) or set(payload) != {"tool_calls"}:
         raise ToolProtocolError("response must contain only the tool_calls field.")
     raw_calls = payload["tool_calls"]
