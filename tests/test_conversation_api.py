@@ -162,6 +162,84 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
 
+
+    def test_authenticated_api_requires_provider_evidence_before_completion_review(self):
+        from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid, request_id = conversation["conversation_id"], "review-confirm-api"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="review confirmed action", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=100_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="review-confirm-generation", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-confirm-api",
+                tool_name="send_email", arguments_sha256="b" * 64,
+                idempotency_key="a" * 64, provider_idempotency=True,
+                lease_token="review-confirm-generation",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-confirm-api",
+                lease_token="review-confirm-generation", status="uncertain",
+            )
+        path = f"/v1/conversations/{cid}/tool-executions/send-confirm-api/reviews"
+        payload = {
+            "request_id": request_id, "action": "confirm_provider_completed",
+            "reason": "Verified the provider's completed delivery receipt.",
+        }
+        status, data, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 409, data)
+        evidence = ProviderOutcomeEvidence(
+            provider="mail.example", outcome=ProviderOutcome.CONFIRMED_COMPLETED,
+            idempotency_key="a" * 64, arguments_sha256="b" * 64,
+            evidence_sha256="c" * 64,
+            observed_at="2026-11-14T10:00:00+00:00",
+            provider_reference="provider-delivery-42",
+        )
+        claim = self.app.conversations.store.acquire_provider_reconciliation_lease(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-confirm-api",
+            lease_token="review-confirm-evidence",
+        )
+        self.app.conversations.store.record_provider_outcome_evidence(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-confirm-api", evidence=evidence,
+            reconciliation_lease_token="review-confirm-evidence",
+        )
+        self.app.conversations.store.release_provider_reconciliation_lease(
+            owner_id=self.user.user_id, execution_id=claim["execution_id"],
+            lease_token="review-confirm-evidence",
+        )
+        status, data, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["review"]["execution_status"], "completed")
+        status, data, _ = self.request(
+            "POST", path, payload, self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        status, data, _ = self.request(
+            "GET", path, token=self.issued.token,
+            query=f"request_id={request_id}".encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [item["action"] for item in data["reviews"]],
+            ["confirm_provider_completed"],
+        )
+        self.auth.create_account("review-confirm-other", "review-confirm-other-password")
+        other = self.auth.authenticate("review-confirm-other", "review-confirm-other-password")
+        status, data, _ = self.request("POST", path, payload, other.token)
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
+
     def test_provider_catalog_requires_authentication_and_projects_safe_fields(self):
         self.app.provider_catalog = lambda: [{
             "name": "openai", "label": "OpenAI", "implemented": True,
