@@ -14,6 +14,7 @@ from scripts.portable_runtime_inputs import (
     InputValidationError,
     install_offline_dependencies,
     validate_runtime_archive,
+    _logical_requirement_lines,
 )
 
 
@@ -57,6 +58,10 @@ def assemble_portable_runtime(
     are installed only by the selected interpreter inside that extracted tree.
     If dependency installation fails, the newly extracted runtime is removed.
     """
+    requirements_lock = Path(requirements_lock).expanduser()
+    lock_lines = _logical_requirement_lines(requirements_lock)
+    if not any(line.split() and line.split()[0].lower().replace("_", "-").startswith("yuki-ai-assistant==") for line in lock_lines):
+        raise InputValidationError("Portable dependency lock must include an exact yuki-ai-assistant== application wheel pin.")
     archive = Path(archive).expanduser()
     runtime_root = Path(runtime_root).expanduser()
     dependency_target = Path(dependency_target).expanduser()
