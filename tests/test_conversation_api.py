@@ -619,7 +619,8 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["provider_outcome"]["outcome"], "unknown")
         self.assertNotIn("provider_reference", data["provider_outcome"])
         status, listed, _ = self.request(
-            "GET", path + "?request_id=" + request_id, None, self.issued.token,
+            "GET", path, None, self.issued.token,
+            query=("request_id=" + request_id).encode(),
         )
         self.assertEqual(status, 200)
         self.assertNotIn("provider_reference", listed["provider_outcomes"][0])
