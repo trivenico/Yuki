@@ -86,7 +86,9 @@ class PortableRuntimeInputTests(unittest.TestCase):
         calls = []
         def fake_runner(command, **kwargs):
             calls.append((command, kwargs))
-            target.mkdir()
+            staged_target = Path(command[command.index("--target") + 1])
+            staged_target.mkdir(exist_ok=True)
+            (staged_target / "installed.marker").write_text("ok", encoding="utf-8")
             return SimpleNamespace(returncode=0, stderr="", stdout="")
         result = install_offline_dependencies(runtime_root, python, self.lock, self.wheelhouse, target, runner=fake_runner)
         command, kwargs = calls[0]
@@ -97,6 +99,9 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertFalse(kwargs["shell"])
         self.assertNotIn("PIP_INDEX_URL", kwargs["env"])
         self.assertTrue(result["hash_checking"])
+        self.assertTrue(result["atomic_publish"])
+        self.assertTrue((target / "installed.marker").is_file())
+        self.assertEqual(Path(command[command.index("--target") + 1]).parent, self.root)
 
     def test_installer_rejects_failed_pip_execution(self):
         self._write_lock()
@@ -105,9 +110,15 @@ class PortableRuntimeInputTests(unittest.TestCase):
         python = runtime_root / "python"
         python.write_bytes(b"trusted interpreter placeholder")
         def failed_runner(command, **kwargs):
+            staged_target = Path(command[command.index("--target") + 1])
+            staged_target.mkdir(exist_ok=True)
+            (staged_target / "partial.marker").write_text("partial", encoding="utf-8")
             return SimpleNamespace(returncode=1, stderr="bad wheel", stdout="")
+        final_target = self.root / "site"
         with self.assertRaisesRegex(InputValidationError, "bad wheel"):
-            install_offline_dependencies(runtime_root, python, self.lock, self.wheelhouse, self.root / "site", runner=failed_runner)
+            install_offline_dependencies(runtime_root, python, self.lock, self.wheelhouse, final_target, runner=failed_runner)
+        self.assertFalse(final_target.exists())
+        self.assertEqual(list(self.root.glob(".yuki-dependencies-stage-*")), [])
 
 
     def test_installer_rejects_interpreter_outside_verified_runtime_root(self):
