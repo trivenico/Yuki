@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sys
@@ -22,12 +23,13 @@ class PortableHostInstallerTests(unittest.TestCase):
         self.state = self.root / "state"
 
     def _install(self):
+        fingerprint = hashlib.sha256(b"validated-ed25519-key").hexdigest()
         with (
             patch.object(portable_host, "__file__", str(Path(sys.prefix) / "lib/yuki_trust/portable_host.py")),
             patch.object(installer, "_validate_public_key", return_value=b"validated-ed25519-key"),
             patch.object(installer, "_apply_windows_acl"),
         ):
-            return installer.install_host_trust(self.key, self.install, self.state)
+            return installer.install_host_trust(self.key, self.install, self.state, fingerprint)
 
     def test_provisions_external_key_policy_state_and_launcher(self):
         result = self._install()
@@ -54,7 +56,7 @@ class PortableHostInstallerTests(unittest.TestCase):
             patch.object(installer, "_apply_windows_acl"),
         ):
             with self.assertRaisesRegex(BootstrapError, "Refusing to overwrite"):
-                installer.install_host_trust(self.key, self.install, self.state)
+                installer.install_host_trust(self.key, self.install, self.state, hashlib.sha256(b"validated-ed25519-key").hexdigest())
         self.assertEqual((self.install / installer._KEY_NAME).read_text(encoding="ascii"), "preexisting")
 
     def test_refuses_same_or_nested_trust_and_state_roots(self):
@@ -63,9 +65,9 @@ class PortableHostInstallerTests(unittest.TestCase):
             patch.object(installer, "_validate_public_key", return_value=b"validated-ed25519-key"),
         ):
             with self.assertRaisesRegex(BootstrapError, "must be separate"):
-                installer.install_host_trust(self.key, self.install, self.install)
+                installer.install_host_trust(self.key, self.install, self.install, hashlib.sha256(b"validated-ed25519-key").hexdigest())
             with self.assertRaisesRegex(BootstrapError, "must be separate"):
-                installer.install_host_trust(self.key, self.install, self.install / "state")
+                installer.install_host_trust(self.key, self.install, self.install / "state", hashlib.sha256(b"validated-ed25519-key").hexdigest())
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
     def test_rejects_symlinked_install_root(self):
@@ -78,7 +80,7 @@ class PortableHostInstallerTests(unittest.TestCase):
             patch.object(installer, "_validate_public_key", return_value=b"validated-ed25519-key"),
         ):
             with self.assertRaisesRegex(BootstrapError, "real directory, not a symlink"):
-                installer.install_host_trust(self.key, link, self.state)
+                installer.install_host_trust(self.key, link, self.state, hashlib.sha256(b"validated-ed25519-key").hexdigest())
 
 
 if __name__ == "__main__":
