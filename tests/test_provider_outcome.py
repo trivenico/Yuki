@@ -254,7 +254,7 @@ class ProviderOutcomeTests(unittest.TestCase):
             store, ProviderOutcomeRegistry({"send_email": Adapter()}),
             lease_ttl_seconds=5, lease_renew_interval_seconds=1,
         )
-        with self.assertRaisesRegex(ConversationConflict, "no longer owned"):
+        with self.assertRaisesRegex(ConversationConflict, "lease renewal failed"):
             reconciler.reconcile(
                 owner_id="owner-1", conversation_id="conversation-1",
                 request_id="request-1", call_id="call-1",
