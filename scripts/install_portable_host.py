@@ -73,6 +73,12 @@ def _atomic_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
         raise
     else:
         temp_path.unlink()
+        if os.name != "nt":
+            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
 
 def _prepare_private_directory(path: Path, label: str) -> None:
