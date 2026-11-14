@@ -257,7 +257,15 @@ class AgentExecutionLoop:
                     encoded_envelope, cancellation_requested=cancel_check
                 )
                 formatted = self.tool_protocol.format_results(results)
-            except ToolDispatchCancelled:
+            except ToolDispatchCancelled as cancelled:
+                completed_count = len(cancelled.completed_results)
+                calls_total += completed_count
+                self._event(
+                    "agent.tools_partially_dispatched",
+                    completed=completed_count,
+                    call_ids=[item.call_id for item in cancelled.completed_results],
+                    total=calls_total,
+                )
                 self._event("agent.stopped", reason="cancelled",
                             model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult(
