@@ -602,7 +602,8 @@ class ConversationStore:
                 # returns the original ledger entry instead of duplicating it.
                 previous = db.execute(
                     """SELECT evidence_id, execution_id, conversation_id, request_id,
-                              call_id, provider, outcome, evidence_sha256, observed_at, recorded_at
+                              call_id, provider, outcome, evidence_sha256, observed_at,
+                              provider_reference, recorded_at
                        FROM conversation_provider_outcome_evidence
                        WHERE execution_id=? AND evidence_sha256=?""",
                     (execution["execution_id"], evidence.evidence_sha256),
@@ -610,7 +611,8 @@ class ConversationStore:
                 if previous is not None:
                     if (previous["provider"] != evidence.provider
                             or previous["outcome"] != evidence.outcome.value
-                            or previous["observed_at"] != evidence.observed_at):
+                            or previous["observed_at"] != evidence.observed_at
+                            or previous["provider_reference"] != evidence.provider_reference):
                         raise ConversationConflict("provider evidence digest was reused with different metadata.")
                     db.commit()
                     return dict(previous)
