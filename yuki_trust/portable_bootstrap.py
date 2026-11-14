@@ -302,6 +302,145 @@ def verify_signed_bundle(
     return value
 
 
+def _copy_bundle_posix(source: Path, staged: Path, manifest: dict[str, Any]) -> None:
+    """Copy and re-hash bundle content using pinned source and destination directory FDs."""
+    if (
+        not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.open not in os.supports_dir_fd
+        or os.stat not in os.supports_dir_fd
+        or os.mkdir not in os.supports_dir_fd
+    ):
+        raise BootstrapError("POSIX staging requires descriptor-relative filesystem primitives.")
+    nofollow = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow
+    source_fd = os.open(source, directory_flags)
+    target_fd = os.open(staged, directory_flags)
+    try:
+        def open_directory(parent_fd: int, name: str, *, create: bool) -> int:
+            if create:
+                try:
+                    os.mkdir(name, 0o700, dir_fd=parent_fd)
+                except FileExistsError:
+                    pass
+            entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(entry.st_mode):
+                raise BootstrapError("Bundle staging encountered a non-directory path component.")
+            child_fd = os.open(name, directory_flags, dir_fd=parent_fd)
+            opened = os.fstat(child_fd)
+            if (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino):
+                os.close(child_fd)
+                raise BootstrapError("Directory changed while staging the portable bundle.")
+            return child_fd
+
+        def parent_fd_for(root_fd: int, parts: tuple[str, ...], *, create: bool) -> int:
+            current = os.dup(root_fd)
+            try:
+                for part in parts:
+                    child = open_directory(current, part, create=create)
+                    os.close(current)
+                    current = child
+                return current
+            except Exception:
+                os.close(current)
+                raise
+
+        def copy_metadata_file(name: str, limit: int) -> None:
+            entry = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+            if not stat.S_ISREG(entry.st_mode) or entry.st_size > limit:
+                raise BootstrapError(f"Bundle metadata file is invalid: {name}")
+            fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=source_fd)
+            try:
+                before = os.fstat(fd)
+                if (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                    raise BootstrapError(f"Bundle metadata changed during staging: {name}")
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = os.read(fd, min(65536, limit + 1 - total))
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > limit:
+                        raise BootstrapError(f"Bundle metadata file is oversized: {name}")
+                    chunks.append(chunk)
+                after = os.fstat(fd)
+                if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                    before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns
+                ):
+                    raise BootstrapError(f"Bundle metadata changed while staging: {name}")
+                data = b"".join(chunks)
+            finally:
+                os.close(fd)
+            out_fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600, dir_fd=target_fd)
+            try:
+                view = memoryview(data)
+                while view:
+                    written = os.write(out_fd, view)
+                    if written <= 0:
+                        raise BootstrapError("Unable to write staged bundle metadata.")
+                    view = view[written:]
+            finally:
+                os.close(out_fd)
+
+        for item in manifest["files"]:
+            relative = PurePosixPath(item["path"])
+            source_parent = parent_fd_for(source_fd, relative.parts[:-1], create=False)
+            target_parent = parent_fd_for(target_fd, relative.parts[:-1], create=True)
+            source_file_fd = target_file_fd = None
+            try:
+                name = relative.parts[-1]
+                entry = os.stat(name, dir_fd=source_parent, follow_symlinks=False)
+                if not stat.S_ISREG(entry.st_mode):
+                    raise BootstrapError(f"Bundle changed during staging: {item['path']}")
+                source_file_fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=source_parent)
+                before = os.fstat(source_file_fd)
+                if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
+                    raise BootstrapError(f"Bundle file changed during staging: {item['path']}")
+                target_file_fd = os.open(
+                    name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                    stat.S_IMODE(before.st_mode) & 0o755, dir_fd=target_parent
+                )
+                digest = hashlib.sha256()
+                size = 0
+                while True:
+                    chunk = os.read(source_file_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    digest.update(chunk)
+                    view = memoryview(chunk)
+                    while view:
+                        written = os.write(target_file_fd, view)
+                        if written <= 0:
+                            raise BootstrapError("Unable to write staged runtime file.")
+                        view = view[written:]
+                after = os.fstat(source_file_fd)
+                if (
+                    size != item["size"]
+                    or digest.hexdigest() != item["sha256"]
+                    or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                ):
+                    raise BootstrapError(f"Bundle content changed during staging: {item['path']}")
+                os.fchmod(target_file_fd, stat.S_IMODE(before.st_mode) & 0o755)
+            except OSError as exc:
+                raise BootstrapError(f"Unable to securely stage bundle file: {item['path']}") from exc
+            finally:
+                if source_file_fd is not None:
+                    os.close(source_file_fd)
+                if target_file_fd is not None:
+                    os.close(target_file_fd)
+                os.close(source_parent)
+                os.close(target_parent)
+
+        copy_metadata_file(MANIFEST_NAME, MAX_MANIFEST_BYTES)
+        copy_metadata_file(SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
+    finally:
+        os.close(source_fd)
+        os.close(target_fd)
+
+
 def stage_verified_bundle(
     bundle: str | Path,
     public_key_path: str | Path,
@@ -331,20 +470,24 @@ def stage_verified_bundle(
             staged.chmod(0o700)
         except OSError:
             pass
-        for item in manifest["files"]:
-            relative = PurePosixPath(item["path"])
-            source_file = source.joinpath(*relative.parts)
-            target_file = staged.joinpath(*relative.parts)
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            if source_file.is_symlink() or not source_file.is_file():
-                raise BootstrapError(f"Bundle changed during staging: {item['path']}")
-            shutil.copyfile(source_file, target_file)
-            try:
-                target_file.chmod(stat.S_IMODE(source_file.stat().st_mode))
-            except OSError:
-                pass
-        shutil.copyfile(source / MANIFEST_NAME, staged / MANIFEST_NAME)
-        shutil.copyfile(source / SIGNATURE_NAME, staged / SIGNATURE_NAME)
+        if os.name != "nt":
+            _copy_bundle_posix(source, staged, manifest)
+        else:
+            # Windows still needs a native handle-based no-reparse copy path.
+            for item in manifest["files"]:
+                relative = PurePosixPath(item["path"])
+                source_file = source.joinpath(*relative.parts)
+                target_file = staged.joinpath(*relative.parts)
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                if source_file.is_symlink() or not source_file.is_file():
+                    raise BootstrapError(f"Bundle changed during staging: {item['path']}")
+                shutil.copyfile(source_file, target_file)
+                try:
+                    target_file.chmod(stat.S_IMODE(source_file.stat().st_mode))
+                except OSError:
+                    pass
+            shutil.copyfile(source / MANIFEST_NAME, staged / MANIFEST_NAME)
+            shutil.copyfile(source / SIGNATURE_NAME, staged / SIGNATURE_NAME)
         verify_signed_bundle(staged, public_key_path, expected_platform=expected_platform)
         return staged_temp
     except Exception:
