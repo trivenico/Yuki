@@ -92,6 +92,25 @@ class ConversationStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_generation_runs_owner_status
                     ON conversation_generation_runs(owner_id, status, updated_at);
+                CREATE TABLE IF NOT EXISTS conversation_tool_executions (
+                    execution_id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    arguments_sha256 TEXT NOT NULL,
+                    lease_token TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('started', 'completed', 'failed', 'uncertain')),
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(conversation_id, request_id, call_id),
+                    FOREIGN KEY(conversation_id, request_id)
+                        REFERENCES conversation_generation_runs(conversation_id, request_id)
+                        ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_tool_executions_owner_request
+                    ON conversation_tool_executions(owner_id, conversation_id, request_id, started_at);
             """)
 
     @staticmethod
@@ -390,6 +409,117 @@ class ConversationStore:
             )
             return cursor.rowcount == 1
 
+
+
+    def begin_tool_execution(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        call_id: str, tool_name: str, arguments_sha256: str, lease_token: str,
+    ) -> dict[str, Any]:
+        """Durably claim a tool call before its external side effect can begin."""
+        owner = self._owner(owner_id)
+        for value, label, maximum in (
+            (request_id, "request_id", 160), (call_id, "call_id", 64),
+            (tool_name, "tool_name", 128), (lease_token, "lease_token", 200),
+        ):
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError(f"{label} must be non-empty bounded text.")
+        if (not isinstance(arguments_sha256, str) or len(arguments_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in arguments_sha256)):
+            raise ValueError("arguments_sha256 must be a lowercase SHA-256 hex digest.")
+        now = time.time()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                lease = db.execute(
+                    """SELECT 1 FROM conversation_generation_leases
+                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                    (conversation_id, owner, lease_token.strip(), now),
+                ).fetchone()
+                if lease is None:
+                    raise ConversationConflict("tool execution requires the active generation lease.")
+                generation = db.execute(
+                    """SELECT 1 FROM conversation_generation_runs
+                       WHERE conversation_id=? AND owner_id=? AND request_id=? AND status='running'""",
+                    (conversation_id, owner, request_id.strip()),
+                ).fetchone()
+                if generation is None:
+                    raise ConversationConflict("tool execution generation is not active.")
+                previous = db.execute(
+                    """SELECT * FROM conversation_tool_executions
+                       WHERE conversation_id=? AND request_id=? AND call_id=?""",
+                    (conversation_id, request_id.strip(), call_id.strip()),
+                ).fetchone()
+                if previous is not None:
+                    if (previous["tool_name"] != tool_name
+                            or previous["arguments_sha256"] != arguments_sha256):
+                        raise ConversationConflict("tool call ID was reused with different arguments.")
+                    db.commit()
+                    return {"created": False, "status": previous["status"],
+                            "execution_id": previous["execution_id"]}
+                execution_id = str(uuid.uuid4())
+                db.execute(
+                    """INSERT INTO conversation_tool_executions
+                       (execution_id, conversation_id, owner_id, request_id, call_id,
+                        tool_name, arguments_sha256, lease_token, status, started_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?)""",
+                    (execution_id, conversation_id, owner, request_id.strip(), call_id.strip(),
+                     tool_name, arguments_sha256, lease_token.strip(), self._now(), self._now()),
+                )
+                db.commit()
+                return {"created": True, "status": "started", "execution_id": execution_id}
+            except Exception:
+                db.rollback()
+                raise
+
+    def finish_tool_execution(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        call_id: str, lease_token: str, status: str,
+    ) -> bool:
+        """Finalize a claimed tool call without allowing a stale worker to overwrite it."""
+        owner = self._owner(owner_id)
+        if status not in {"completed", "failed", "uncertain"}:
+            raise ValueError("invalid tool execution status.")
+        now = self._now()
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE conversation_tool_executions SET status=?, updated_at=?
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?
+                     AND lease_token=? AND status='started'
+                     AND EXISTS (
+                       SELECT 1 FROM conversation_generation_leases
+                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?
+                     )""",
+                (status, now, owner, conversation_id, request_id, call_id,
+                 lease_token, conversation_id, owner, lease_token, time.time()),
+            )
+            return cursor.rowcount == 1
+
+    def list_tool_executions(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+    ) -> list[dict[str, Any]]:
+        owner = self._owner(owner_id)
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT call_id, tool_name, arguments_sha256, status, started_at, updated_at
+                   FROM conversation_tool_executions
+                   WHERE owner_id=? AND conversation_id=? AND request_id=?
+                   ORDER BY started_at, call_id""",
+                (owner, conversation_id, request_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_started_tool_executions_uncertain(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+    ) -> int:
+        """Mark in-flight calls uncertain during crash recovery; never replay them."""
+        owner = self._owner(owner_id)
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'""",
+                (self._now(), owner, conversation_id, request_id),
+            )
+            return cursor.rowcount
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
