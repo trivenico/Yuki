@@ -32,5 +32,52 @@ class PortablePathTests(unittest.TestCase):
                 self.assertEqual(config_path(), config.resolve())
 
 
+    @unittest.skipUnless(os.name == "nt", "Windows batch launcher integration test")
+    def test_windows_portable_launcher_preserves_and_defaults_yuki_home(self):
+        import subprocess
+
+        repository_root = Path(__file__).resolve().parents[1]
+        launcher = repository_root / "scripts" / "portable-yuki-windows.bat"
+        if (repository_root / ".venv" / "Scripts" / "python.exe").exists():
+            self.skipTest("repository virtual environment takes precedence over PATH shim")
+
+        with tempfile.TemporaryDirectory() as directory:
+            temp_root = Path(directory)
+            shim = temp_root / "python.bat"
+            capture = temp_root / "captured-home.txt"
+            shim.write_text(
+                '@echo off\r\n'
+                '>>"%YUKI_CAPTURE%" echo %YUKI_HOME%\r\n'
+                'exit /b 0\r\n',
+                encoding="utf-8",
+            )
+
+            for configured, expected in (
+                (str(temp_root / "custom-data"), str(temp_root / "custom-data")),
+                ("", str(repository_root / "YukiData")),
+            ):
+                capture.unlink(missing_ok=True)
+                env = os.environ.copy()
+                env["PATH"] = str(temp_root) + os.pathsep + env.get("PATH", "")
+                env["YUKI_CAPTURE"] = str(capture)
+                if configured:
+                    env["YUKI_HOME"] = configured
+                else:
+                    env.pop("YUKI_HOME", None)
+                completed = subprocess.run(
+                    ["cmd.exe", "/d", "/c", "call", str(launcher)],
+                    cwd=str(repository_root),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                self.assertTrue(capture.is_file(), completed.stdout + completed.stderr)
+                observed = capture.read_text(encoding="utf-8").splitlines()
+                self.assertEqual(observed, [expected, expected, expected])
+
+
 if __name__ == "__main__":
     unittest.main()
