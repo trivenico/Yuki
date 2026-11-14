@@ -166,3 +166,41 @@ can still replace the bootstrap or its trust anchor. Anti-rollback, key
 rotation/revocation, per-platform runtime artifacts, and clean-machine
 end-to-end release tests remain release blockers. Do not treat this PR as
 certifying the current SSD launcher as secure against a malicious USB.
+
+
+## Host trust provisioning installer foundation
+
+After installing the Yuki trusted-bootstrap Python package from an independently
+authenticated distribution, provision host-owned trust files with the installer:
+
+```sh
+python scripts/install_portable_host.py \\
+  --public-key /trusted/release-ed25519-public.pem \\
+  --expected-key-sha256 <out-of-band-pem-sha256>
+```
+
+The public key and its exact PEM-byte SHA-256 fingerprint must arrive through
+separate authenticated release metadata; do not select either from the removable
+SSD. The installer verifies the required fingerprint before copying the key.
+The installer refuses to run when the active
+bootstrap import resolves outside the active Python environment. It creates
+separate private host directories for the trust anchor and anti-rollback state,
+writes a strict host launch policy, and creates a host-side launcher. POSIX
+directories/files receive owner-only permissions. Windows uses `icacls` to
+remove inherited ACLs and grant access to the current user, SYSTEM, and local
+Administrators; installation fails if ACL provisioning fails.
+
+On macOS/Linux, execute the reported launcher with the bundle directory as its
+first argument. On Windows, invoke the reported `.py` launcher using the same
+trusted Python environment, for example `python yuki-portable-launch.py E:\\YukiRuntime`.
+The launcher intentionally has no `.cmd` wrapper, avoiding unsafe batch `%*`
+argument forwarding. The signed bundle must contain the platform-specific
+interpreter and `portable_entry.py` in its manifest.
+
+This is an installer foundation, not yet a complete production installer:
+the trusted Python package still has to be installed and updated separately
+from a verified distribution; there is no signed host installer executable,
+bootstrap package hash/rollback update mechanism, uninstall/recovery workflow,
+or clean-machine acceptance evidence yet. Windows ACL behavior and launcher
+execution require real Windows clean-machine testing. Do not treat this
+provisioning script as independently authenticating itself.
