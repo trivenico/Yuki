@@ -367,6 +367,27 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "inventory or file hashes"):
             verify_signed_bundle(self.bundle, self.public_path)
 
+    @unittest.skipUnless(os.name == "nt", "Windows native handle staging")
+    def test_windows_staging_uses_native_handle_copy_for_every_file(self):
+        from yuki_trust.portable_host import _copy_windows_file_handle_secure
+
+        with patch(
+            "yuki_trust.portable_host._copy_windows_file_handle_secure",
+            wraps=_copy_windows_file_handle_secure,
+        ) as secure_copy:
+            with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
+                staged = Path(temp_dir)
+                self.assertEqual(
+                    (staged / "payload.txt").read_text(encoding="utf-8"),
+                    "verified payload",
+                )
+        copied_sources = {Path(call.args[0]).name for call in secure_copy.call_args_list}
+        self.assertEqual(
+            copied_sources,
+            {"python.exe", "portable_entry.py", "payload.txt", "runtime-manifest.json", "runtime-manifest.sig"},
+        )
+        self.assertEqual(secure_copy.call_count, 5)
+
     def test_staging_revalidates_host_controlled_copy(self):
         with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
             staged = Path(temp_dir)
