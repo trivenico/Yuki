@@ -47,6 +47,9 @@ def assemble_portable_runtime(
     *,
     timeout_seconds: int = 1800,
     runner=None,
+    pip_bootstrap_wheel: Path | None = None,
+    pip_bootstrap_sha256: str | None = None,
+    pip_bootstrap_version: str | None = None,
 ) -> dict:
     """Verify and assemble one runtime from pinned, offline inputs.
 
@@ -70,7 +73,12 @@ def assemble_portable_runtime(
     extraction_report = extract_zip_safely(archive, runtime_root, expected_sha256=expected_sha256)
     try:
         interpreter = _runtime_python_path(runtime_root, python_relative_path)
-        install_kwargs = {"timeout_seconds": timeout_seconds}
+        install_kwargs = {
+            "timeout_seconds": timeout_seconds,
+            "pip_wheel": pip_bootstrap_wheel,
+            "pip_sha256": pip_bootstrap_sha256,
+            "pip_version": pip_bootstrap_version,
+        }
         if runner is not None:
             install_kwargs["runner"] = runner
         install_report = install_offline_dependencies(
