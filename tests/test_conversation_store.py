@@ -1397,6 +1397,9 @@ class ConversationStoreTests(unittest.TestCase):
                 owner_id=self.owner, conversation_id=conversation_id,
                 request_id=request_id, lease_token=winner_token,
             ), 0)
+            self.assertEqual(winner_store.list_interrupted_generations(
+                owner_id=self.owner, conversation_id=conversation_id,
+            )[0]["request_id"], request_id)
             self.assertTrue(winner_store.finish_generation(
                 owner_id=self.owner, conversation_id=conversation_id,
                 request_id=request_id, status="interrupted",
@@ -1408,9 +1411,6 @@ class ConversationStoreTests(unittest.TestCase):
                 lease_token=f"recovery-worker-{losers[0][1]}",
             ))
 
-        self.assertEqual(winner_store.list_interrupted_generations(
-            owner_id=self.owner, conversation_id=conversation_id,
-        )[0]["request_id"], request_id)
 
     def test_generation_crash_recovery_to_provider_review_is_fenced_end_to_end(self):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
