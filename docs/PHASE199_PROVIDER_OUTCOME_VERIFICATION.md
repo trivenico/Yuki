@@ -7,7 +7,7 @@ separate read-only operation.
 ## Adapter contract
 
 An adapter explicitly implements a synchronous `lookup_tool_outcome(execution)` method and returns
-a `ProviderOutcomeEvidence`. Asynchronous lookup methods are rejected at registration and at the direct verification boundary; this contract does not create un-awaited coroutine work. The result must bind to the exact durable
+a `ProviderOutcomeEvidence`. Asynchronous lookup methods are rejected at registration and at the direct verification boundary. The result is also checked for awaitables at runtime, so a synchronous wrapper cannot smuggle a coroutine across the boundary; coroutine results are closed before rejection. The result must bind to the exact durable
 `idempotency_key` and `arguments_sha256` already stored for that execution.
 
 Outcomes are deliberately limited to:
