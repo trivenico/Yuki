@@ -23,6 +23,7 @@ class ProviderOutcomeTests(unittest.TestCase):
             "arguments_sha256": "b" * 64,
             "evidence_sha256": "c" * 64,
             "observed_at": datetime.now(timezone.utc).isoformat(),
+            "execution_id": "execution-1",
             "provider_reference": "message-123",
         }
         values.update(overrides)
@@ -612,6 +613,10 @@ class ProviderOutcomeTests(unittest.TestCase):
                         )
 
                     evidence = self.evidence(
+                        execution_id=store.list_tool_executions(
+                            owner_id="owner-1", conversation_id=conversation_id,
+                            request_id=request_id,
+                        )[0]["execution_id"],
                         outcome=outcome,
                         idempotency_key=store.list_tool_executions(
                             owner_id="owner-1", conversation_id=conversation_id,
@@ -654,13 +659,19 @@ class ProviderOutcomeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = ConversationStore(Path(directory) / "evidence-binding.sqlite3")
             shared_key = "d" * 64
-            evidence = self.evidence(idempotency_key=shared_key)
+            first_execution_id = None
 
             class Adapter:
                 provider_id = "mail.example"
 
                 def lookup_tool_outcome(self, execution):
-                    return evidence
+                    nonlocal first_execution_id
+                    if first_execution_id is None:
+                        first_execution_id = execution["execution_id"]
+                    return ProviderOutcomeTests().evidence(
+                        execution_id=first_execution_id,
+                        idempotency_key=shared_key,
+                    )
 
             reconciler = ProviderOutcomeReconciler(
                 store, ProviderOutcomeRegistry({"send_email": Adapter()}),
@@ -769,11 +780,13 @@ class ProviderOutcomeTests(unittest.TestCase):
                     outcome=ProviderOutcome.UNKNOWN,
                     evidence_sha256="c" * 64,
                     idempotency_key=execution["idempotency_key"],
+                    execution_id=execution["execution_id"],
                 ),
                 self.evidence(
                     outcome=ProviderOutcome.CONFIRMED_COMPLETED,
                     evidence_sha256="e" * 64,
                     idempotency_key=execution["idempotency_key"],
+                    execution_id=execution["execution_id"],
                 ),
             ]
 
@@ -857,6 +870,7 @@ class ProviderOutcomeTests(unittest.TestCase):
 
                 def lookup_tool_outcome(self, identity):
                     return ProviderOutcomeTests().evidence(
+                        execution_id=identity["execution_id"],
                         idempotency_key=identity["idempotency_key"],
                         arguments_sha256=identity["arguments_sha256"],
                     )
@@ -866,6 +880,7 @@ class ProviderOutcomeTests(unittest.TestCase):
 
                 def lookup_tool_outcome(self, identity):
                     return ProviderOutcomeTests().evidence(
+                        execution_id=identity["execution_id"],
                         provider="mail-replacement.example",
                         idempotency_key=identity["idempotency_key"],
                         arguments_sha256=identity["arguments_sha256"],
