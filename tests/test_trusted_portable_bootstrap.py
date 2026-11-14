@@ -390,6 +390,37 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             {"runtime/python.exe", "portable_entry.py", "payload.txt"},
         )
 
+    @unittest.skipUnless(os.name == "nt", "Windows native handle cleanup")
+    def test_windows_staging_closes_source_root_when_destination_open_fails(self):
+        import ctypes
+        from yuki_trust.portable_host import _stage_windows_bundle_handle_secure
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_handle_count = kernel32.GetProcessHandleCount
+        get_handle_count.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        get_handle_count.restype = ctypes.c_int
+
+        def handle_count():
+            count = ctypes.c_ulong()
+            self.assertTrue(get_handle_count(kernel32.GetCurrentProcess(), ctypes.byref(count)))
+            return count.value
+
+        missing_destination = self.root / "destination-does-not-exist"
+        before = handle_count()
+        for _ in range(10):
+            with self.assertRaises(BootstrapError):
+                _stage_windows_bundle_handle_secure(
+                    self.bundle,
+                    missing_destination,
+                    [],
+                    manifest_name="runtime-manifest.json",
+                    signature_name="runtime-manifest.sig",
+                    max_manifest_bytes=1024 * 1024,
+                    max_signature_bytes=MAX_SIGNATURE_BYTES,
+                )
+        after = handle_count()
+        self.assertLessEqual(after, before + 1, "failed destination opens leaked source-root handles")
+
     def test_staging_revalidates_host_controlled_copy(self):
         with stage_verified_bundle(self.bundle, self.public_path) as temp_dir:
             staged = Path(temp_dir)
