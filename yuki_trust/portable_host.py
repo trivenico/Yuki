@@ -46,8 +46,23 @@ def _validate_host_parent_directories(path: Path, *, label: str) -> None:
             info = current.lstat()
         except OSError as exc:
             raise BootstrapError(f"{label} parent directory is unavailable.") from exc
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-            raise BootstrapError(f"{label} parent directories must be real directories, not symlinks.")
+        if stat.S_ISLNK(info.st_mode):
+            # Permit only system-managed aliases (for example macOS /var)
+            # whose link and containing directory are both root-owned and
+            # whose containing directory cannot be replaced by unprivileged users.
+            parent_info = current.parent.lstat()
+            parent_mode = stat.S_IMODE(parent_info.st_mode)
+            if (
+                info.st_uid != 0
+                or not stat.S_ISDIR(parent_info.st_mode)
+                or parent_info.st_uid != 0
+                or parent_mode & 0o022
+            ):
+                raise BootstrapError(f"{label} parent directories must not contain replaceable symlinks.")
+            current = current.resolve(strict=True)
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise BootstrapError(f"{label} parent directories must be real directories.")
         if info.st_uid not in {0, os.getuid()}:
             raise BootstrapError(f"{label} parent directories must be owned by root or the current user.")
         mode = stat.S_IMODE(info.st_mode)
@@ -62,11 +77,10 @@ def _validate_host_parent_directories(path: Path, *, label: str) -> None:
 
 def _host_file(path: str | Path, *, bundle: Path, label: str) -> Path:
     candidate = Path(path).expanduser()
+    _validate_host_parent_directories(candidate, label=label)
     if candidate.is_symlink() or not candidate.is_file():
         raise BootstrapError(f"{label} must be a regular, non-symlink host file.")
     resolved = candidate.resolve(strict=True)
-    # Validate the canonical target path, not lexical aliases such as macOS
-    # /var -> /private/var. The final file itself must still not be a symlink.
     _validate_host_parent_directories(resolved, label=label)
     try:
         resolved.relative_to(bundle)
