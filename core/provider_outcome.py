@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 import re
+import threading
 import uuid
 from typing import Any, Protocol, runtime_checkable
 
@@ -121,17 +122,28 @@ class ProviderOutcomeRegistry:
 class ProviderOutcomeReconciler:
     """Read-only provider lookup plus append-only evidence recording."""
 
-    def __init__(self, store: Any, registry: ProviderOutcomeRegistry) -> None:
+    def __init__(
+        self, store: Any, registry: ProviderOutcomeRegistry, *,
+        lease_ttl_seconds: int = 120, lease_renew_interval_seconds: int = 30,
+    ) -> None:
         required_store_methods = (
             "list_tool_executions", "acquire_provider_reconciliation_lease",
-            "release_provider_reconciliation_lease", "record_provider_outcome_evidence",
+            "renew_provider_reconciliation_lease", "release_provider_reconciliation_lease",
+            "record_provider_outcome_evidence",
         )
         if any(not callable(getattr(store, name, None)) for name in required_store_methods):
             raise TypeError("store does not implement the fenced provider reconciliation contract.")
         if not isinstance(registry, ProviderOutcomeRegistry):
             raise TypeError("registry must be a ProviderOutcomeRegistry.")
+        if type(lease_ttl_seconds) is not int or not 5 <= lease_ttl_seconds <= 300:
+            raise ValueError("lease_ttl_seconds must be an integer from 5 to 300.")
+        if (type(lease_renew_interval_seconds) is not int
+                or not 1 <= lease_renew_interval_seconds < lease_ttl_seconds):
+            raise ValueError("lease_renew_interval_seconds must be positive and shorter than the lease TTL.")
         self._store = store
         self._registry = registry
+        self._lease_ttl_seconds = lease_ttl_seconds
+        self._lease_renew_interval_seconds = lease_renew_interval_seconds
 
     def reconcile(
         self, *, owner_id: str, conversation_id: str, request_id: str, call_id: str,
@@ -146,7 +158,27 @@ class ProviderOutcomeReconciler:
         self._store.acquire_provider_reconciliation_lease(
             owner_id=owner_id, conversation_id=conversation_id,
             request_id=request_id, call_id=call_id, lease_token=lease_token,
+            ttl_seconds=self._lease_ttl_seconds,
         )
+        stop_renewal = threading.Event()
+        lease_lost = threading.Event()
+
+        def renew_claim() -> None:
+            while not stop_renewal.wait(self._lease_renew_interval_seconds):
+                try:
+                    self._store.renew_provider_reconciliation_lease(
+                        owner_id=owner_id, execution_id=execution["execution_id"],
+                        lease_token=lease_token, ttl_seconds=self._lease_ttl_seconds,
+                    )
+                except Exception:
+                    lease_lost.set()
+                    return
+
+        heartbeat = threading.Thread(
+            target=renew_claim, name="yuki-provider-reconciliation-lease",
+            daemon=True,
+        )
+        heartbeat.start()
         try:
             evidence = self._registry.lookup(
                 execution["tool_name"],
@@ -157,12 +189,18 @@ class ProviderOutcomeReconciler:
                     "status": execution["status"],
                 },
             )
+            stop_renewal.set()
+            heartbeat.join()
+            if lease_lost.is_set():
+                raise ConversationConflict("provider reconciliation lease renewal failed.")
             return self._store.record_provider_outcome_evidence(
                 owner_id=owner_id, conversation_id=conversation_id,
                 request_id=request_id, call_id=call_id, evidence=evidence,
                 reconciliation_lease_token=lease_token,
             )
         finally:
+            stop_renewal.set()
+            heartbeat.join()
             self._store.release_provider_reconciliation_lease(
                 owner_id=owner_id, execution_id=execution["execution_id"],
                 lease_token=lease_token,
