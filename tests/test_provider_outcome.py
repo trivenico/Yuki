@@ -921,6 +921,67 @@ class ProviderOutcomeTests(unittest.TestCase):
             self.assertEqual(len(ledger), 1)
             self.assertEqual(ledger[0]["provider"], "mail.example")
 
+    def test_cross_instance_reconciliation_lease_allows_only_one_concurrent_worker(self):
+        import tempfile
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from pathlib import Path
+        from core.conversation_store import ConversationConflict, ConversationStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reconciliation-race.sqlite3"
+            setup = ConversationStore(database)
+            conversation = setup.create_conversation(owner_id="owner-race")
+            conversation_id = conversation["conversation_id"]
+            request_id = "cross-instance-reconciliation-race"
+            setup.append_message(
+                owner_id="owner-race", conversation_id=conversation_id,
+                role="user", content="Check provider execution",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            generation_token = "generation-race"
+            setup.acquire_generation_lease(
+                owner_id="owner-race", conversation_id=conversation_id,
+                lease_token=generation_token, ttl_seconds=60,
+            )
+            try:
+                setup.begin_tool_execution(
+                    owner_id="owner-race", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-race",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=generation_token,
+                )
+                setup.mark_started_tool_executions_uncertain(
+                    owner_id="owner-race", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=generation_token,
+                )
+            finally:
+                setup.release_generation_lease(
+                    owner_id="owner-race", conversation_id=conversation_id,
+                    lease_token=generation_token,
+                )
+
+            stores = (ConversationStore(database), ConversationStore(database))
+            barrier = threading.Barrier(2)
+
+            def claim(index):
+                barrier.wait(timeout=5)
+                try:
+                    stores[index].acquire_provider_reconciliation_lease(
+                        owner_id="owner-race", conversation_id=conversation_id,
+                        request_id=request_id, call_id="call-race",
+                        lease_token=f"worker-{index}", ttl_seconds=30,
+                    )
+                    return "won"
+                except ConversationConflict:
+                    return "lost"
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(claim, range(2)))
+            self.assertEqual(results.count("won"), 1)
+            self.assertEqual(results.count("lost"), 1)
+
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
             return ProviderOutcomeTests().evidence()
