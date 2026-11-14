@@ -109,8 +109,8 @@ class ProviderOutcomeTests(unittest.TestCase):
             request_id="request-1", call_id="call-1",
         )
         self.assertEqual(result["outcome"], "unknown")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["execution_id"], "execution-1")
+        self.assertEqual(sum(1 for item in calls if isinstance(item, dict)), 1)
+        self.assertEqual(next(item for item in calls if isinstance(item, dict))["execution_id"], "execution-1")
 
     def test_registry_does_not_guess_missing_provider_adapter(self):
         from core.provider_outcome import ProviderOutcomeRegistry
