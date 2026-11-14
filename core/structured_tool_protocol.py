@@ -119,8 +119,8 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
         try:
             encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
             size = len(encoded.encode("utf-8"))
-        except (TypeError, ValueError, UnicodeEncodeError) as exc:
-            raise ToolProtocolError("tool arguments must be JSON-compatible.") from exc
+        except (TypeError, ValueError, UnicodeEncodeError, RecursionError) as exc:
+            raise ToolProtocolError("tool arguments must be JSON-compatible and safely bounded.") from exc
         if size > _MAX_ARGUMENT_BYTES:
             raise ToolProtocolError("tool arguments exceed the size limit.")
         seen_ids.add(call_id)
