@@ -274,5 +274,138 @@ class PortableHostInstallerTests(unittest.TestCase):
         self.assertIn("*S-1-5-32-544:(OI)(CI)F", acl_command)
 
 
+    @unittest.skipUnless(os.name == "nt", "requires real Windows filesystem ACLs")
+    def test_actual_install_provisions_inherited_acl_on_trust_files(self):
+        # Exercise the production installer without mocking its ACL operation.
+        # Only key parsing and the installed-package location are isolated.
+        fingerprint = hashlib.sha256(b"validated-ed25519-key").hexdigest()
+        with (
+            patch.object(
+                portable_host, "__file__",
+                str(Path(sys.prefix) / "Lib/site-packages/yuki_trust/portable_host.py"),
+            ),
+            patch.object(
+                installer, "_validate_public_key",
+                return_value=b"validated-ed25519-key",
+            ),
+        ):
+            result = installer.install_host_trust(
+                self.key, self.install, self.state, fingerprint,
+            )
+
+        expected_identity = subprocess.run(
+            ["whoami", "/user", "/fo", "csv", "/nh"],
+            check=True, capture_output=True, text=True, timeout=10,
+        ).stdout
+        identity_rows = list(csv.reader(expected_identity.splitlines()))
+        self.assertTrue(identity_rows and identity_rows[-1])
+        expected_sids = {
+            "S-1-5-18", "S-1-5-32-544",
+            identity_rows[-1][-1].strip(),
+        }
+
+        import ctypes
+        from ctypes import wintypes
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class ACL_SIZE_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("AceCount", wintypes.DWORD),
+                ("AclBytesInUse", wintypes.DWORD),
+                ("AclBytesFree", wintypes.DWORD),
+            ]
+
+        get_security = advapi32.GetNamedSecurityInfoW
+        get_security.argtypes = [
+            wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        get_security.restype = wintypes.DWORD
+        get_acl_info = advapi32.GetAclInformation
+        get_acl_info.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.c_int,
+        ]
+        get_acl_info.restype = wintypes.BOOL
+        get_ace = advapi32.GetAce
+        get_ace.argtypes = [
+            ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+        ]
+        get_ace.restype = wintypes.BOOL
+        convert_sid = advapi32.ConvertSidToStringSidW
+        convert_sid.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+        convert_sid.restype = wintypes.BOOL
+        local_free = kernel32.LocalFree
+        local_free.argtypes = [ctypes.c_void_p]
+        local_free.restype = ctypes.c_void_p
+
+        provisioned_files = (
+            Path(result["public_key"]),
+            Path(result["policy"]),
+            Path(result["launcher"]),
+        )
+        for file_path in provisioned_files:
+            self.assertTrue(file_path.is_file(), f"Missing provisioned file: {file_path}")
+            owner = ctypes.c_void_p()
+            group = ctypes.c_void_p()
+            dacl = ctypes.c_void_p()
+            descriptor = ctypes.c_void_p()
+            status = get_security(
+                str(file_path), 1, 0x4,
+                ctypes.byref(owner), ctypes.byref(group), ctypes.byref(dacl),
+                None, ctypes.byref(descriptor),
+            )
+            self.assertEqual(status, 0, f"GetNamedSecurityInfoW failed for {file_path}: {status}")
+            try:
+                self.assertIsNotNone(dacl.value, f"Missing DACL on {file_path}")
+                info = ACL_SIZE_INFORMATION()
+                self.assertTrue(
+                    get_acl_info(dacl, ctypes.byref(info), ctypes.sizeof(info), 2),
+                    f"GetAclInformation failed for {file_path}: {ctypes.get_last_error()}",
+                )
+                inherited = {}
+                for index in range(info.AceCount):
+                    ace = ctypes.c_void_p()
+                    self.assertTrue(
+                        get_ace(dacl, index, ctypes.byref(ace)),
+                        f"GetAce({index}) failed for {file_path}: {ctypes.get_last_error()}",
+                    )
+                    header = ctypes.string_at(ace, 8)
+                    if header[0] != 0:  # ACCESS_ALLOWED_ACE_TYPE
+                        continue
+                    flags = header[1]
+                    mask = int.from_bytes(header[4:8], "little")
+                    sid_text = wintypes.LPWSTR()
+                    self.assertTrue(
+                        convert_sid(ctypes.c_void_p(ace.value + 8), ctypes.byref(sid_text)),
+                        f"ConvertSidToStringSidW failed: {ctypes.get_last_error()}",
+                    )
+                    try:
+                        inherited[sid_text.value] = (flags, mask)
+                    finally:
+                        local_free(ctypes.cast(sid_text, ctypes.c_void_p))
+
+                for sid in expected_sids:
+                    self.assertIn(
+                        sid, inherited,
+                        f"{file_path} did not inherit an allow ACE for {sid}",
+                    )
+                    flags, mask = inherited[sid]
+                    self.assertTrue(
+                        flags & 0x10,
+                        f"ACE for {sid} on {file_path} is not inherited (flags=0x{flags:02x})",
+                    )
+                    self.assertTrue(
+                        mask & 0x10000000 or mask & 0x1F01FF == 0x1F01FF,
+                        f"ACE for {sid} on {file_path} lacks full control (mask=0x{mask:08x})",
+                    )
+            finally:
+                if descriptor:
+                    local_free(descriptor)
+
+
 if __name__ == "__main__":
     unittest.main()
