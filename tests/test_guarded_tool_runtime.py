@@ -47,7 +47,7 @@ class GuardedToolRuntimeTests(unittest.TestCase):
 
     def test_tool_exception_does_not_leak_exception(self):
         runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy())
-        self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
+        self.assertEqual(runtime.invoke("bad"), "The tool failed. Its external outcome may be uncertain.")
 
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
@@ -95,6 +95,38 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         output, status = runtime.invoke_with_status("send", "{}")
         self.assertEqual(status, "uncertain")
         self.assertIn("outcome may be uncertain", output)
+
+
+    def test_explicit_idempotency_capability_receives_stable_key(self):
+        received = []
+        def handler(argument, *, idempotency_key):
+            received.append(idempotency_key)
+            return "accepted"
+        handler.supports_idempotency_key = True
+        runtime = GuardedToolRuntime({"send": handler}, Policy())
+        output, status = runtime.invoke_with_status("send", "{}", idempotency_key="f" * 64)
+        self.assertEqual((output, status), ("accepted", "completed"))
+        self.assertEqual(received, ["f" * 64])
+
+    def test_handler_without_explicit_capability_does_not_receive_key(self):
+        received = []
+        def handler(argument):
+            received.append(argument)
+            return "accepted"
+        runtime = GuardedToolRuntime({"send": handler}, Policy())
+        self.assertEqual(runtime.invoke_with_status("send", "{}", idempotency_key="f" * 64),
+                         ("accepted", "completed"))
+        self.assertEqual(received, ["{}"])
+
+    def test_invalid_explicit_idempotency_contract_fails_before_handler(self):
+        calls = []
+        def handler(argument):
+            calls.append(argument)
+            return "unsafe"
+        handler.supports_idempotency_key = True
+        runtime = GuardedToolRuntime({"send": handler}, Policy())
+        self.assertEqual(runtime.invoke_with_status("send", "{}", idempotency_key="f" * 64)[1], "failed")
+        self.assertEqual(calls, [])
 
 if __name__ == "__main__":
     unittest.main()
