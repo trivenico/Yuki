@@ -65,9 +65,9 @@ class NativeAuditTests(unittest.TestCase):
         links = (
             "Universal binary with 2 architectures: [x86_64:arm64]\n"
             "/bundle/libYuki.dylib (architecture x86_64):\n"
-            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
+            "\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
             "/bundle/libYuki.dylib (architecture arm64):\n"
-            "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
+            "\t@rpath/libvendor.dylib (compatibility version 1.0.0)\n"
         )
         parsed = parse_macho_load_commands(loads, links)
         self.assertTrue(parsed["ok"])
