@@ -54,6 +54,21 @@ class ConversationService:
             owner_id=owner_id, conversation_id=conversation_id, request_id=request_id.strip()
         )
 
+    def provider_outcome_evidence(
+        self, *, owner_id: str, conversation_id: str,
+        request_id: str, call_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return redacted provider verification evidence to the authenticated owner."""
+        self.store.get_conversation(owner_id=owner_id, conversation_id=conversation_id)
+        if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
+            raise ValueError("request_id must be non-empty text of at most 160 characters.")
+        if not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 64:
+            raise ValueError("call_id must be non-empty text of at most 64 characters.")
+        return self.store.list_provider_outcome_evidence(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id.strip(), call_id=call_id.strip(),
+        )
+
     def review_tool_execution(
         self, *, owner_id: str, conversation_id: str, request_id: str,
         call_id: str, action: str, reason: str,
