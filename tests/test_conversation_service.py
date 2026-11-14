@@ -333,6 +333,76 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result["version"], 2)
 
 
+    def test_two_services_racing_to_recover_one_crash_run_model_once(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=conversation_id,
+            role="user", content="Potentially side-effecting task",
+            idempotency_key="racing-crashed-request", expected_version=0,
+            generation_request_id="racing-crashed-request",
+        )
+        model_started = threading.Event()
+        release_model = threading.Event()
+        model_calls = []
+
+        def blocking_model(**kwargs):
+            model_calls.append(kwargs)
+            model_started.set()
+            if not release_model.wait(timeout=5):
+                raise TimeoutError("recovery test model release timed out")
+            return {"text": "New task completed", "tool_calls": {"tool_calls": []}}
+
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        first_service = ConversationService(
+            self.store, AgentExecutionLoop(blocking_model, protocol)
+        )
+        second_service = ConversationService(
+            ConversationStore(Path(self.tempdir.name) / "chat.sqlite3"),
+            AgentExecutionLoop(blocking_model, protocol),
+        )
+        start = threading.Barrier(2)
+
+        def submit(service, request_id):
+            start.wait(timeout=5)
+            return service.reply(
+                owner_id="owner-a", conversation_id=conversation_id,
+                user_text="Continue safely", request_id=request_id,
+                expected_version=1, tools=[],
+            )
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(submit, first_service, "recovery-race-a")
+                second = pool.submit(submit, second_service, "recovery-race-b")
+                self.assertTrue(model_started.wait(timeout=5))
+                release_model.set()
+                outcomes = []
+                for future in (first, second):
+                    try:
+                        outcomes.append(future.result(timeout=5))
+                    except ConversationConflict:
+                        outcomes.append("conflict")
+        finally:
+            release_model.set()
+
+        self.assertEqual(sum(isinstance(value, dict) for value in outcomes), 1)
+        self.assertEqual(outcomes.count("conflict"), 1)
+        self.assertEqual(len(model_calls), 1)
+        history = self.store.list_messages(
+            owner_id="owner-a", conversation_id=conversation_id, limit=20,
+        )
+        self.assertEqual(
+            [message["role"] for message in history],
+            ["user", "assistant", "user", "assistant"],
+        )
+        self.assertIn("interrupted", history[1]["content"])
+        self.assertEqual(
+            self.store.list_interrupted_generations(
+                owner_id="owner-a", conversation_id=conversation_id,
+            ),
+            [],
+        )
+
     def test_interrupted_generation_is_reconciled_without_replaying_model(self):
         self.store.append_message(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
