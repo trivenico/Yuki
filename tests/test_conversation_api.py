@@ -550,5 +550,66 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
 
+
+    def test_authenticated_provider_reconciliation_uses_registered_read_only_adapter(self):
+        from core.provider_outcome import (
+            ProviderOutcome, ProviderOutcomeEvidence,
+            ProviderOutcomeReconciler, ProviderOutcomeRegistry,
+        )
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid, request_id = conversation["conversation_id"], "provider-reconcile-api"
+        self.app.conversations.store.append_message(
+            owner_id=self.user.user_id, conversation_id=cid, role="user",
+            content="verify", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=90_000.0):
+            self.app.conversations.store.acquire_generation_lease(
+                owner_id=self.user.user_id, conversation_id=cid,
+                lease_token="provider-reconcile-lease", ttl_seconds=60,
+            )
+            self.app.conversations.store.begin_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-3", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="provider-reconcile-lease",
+            )
+            self.app.conversations.store.finish_tool_execution(
+                owner_id=self.user.user_id, conversation_id=cid,
+                request_id=request_id, call_id="send-3",
+                lease_token="provider-reconcile-lease", status="uncertain",
+            )
+        calls = []
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                calls.append(execution)
+                return ProviderOutcomeEvidence(
+                    provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+                    idempotency_key="a" * 64, arguments_sha256="b" * 64,
+                    evidence_sha256="c" * 64,
+                    observed_at="2026-11-14T10:00:00+00:00",
+                )
+        self.app.conversations.provider_outcome_reconciler = ProviderOutcomeReconciler(
+            self.app.conversations.store, ProviderOutcomeRegistry({"send_email": Adapter()})
+        )
+        path = f"/v1/conversations/{cid}/tool-executions/send-3/provider-outcomes"
+        status, data, _ = self.request(
+            "POST", path, {"request_id": request_id}, self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(data["provider_outcome"]["outcome"], "unknown")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["status"], "uncertain")
+        self.assertEqual(self.app.conversations.store.list_tool_executions(
+            owner_id=self.user.user_id, conversation_id=cid, request_id=request_id,
+        )[0]["status"], "uncertain")
+        self.auth.create_account("provider-reconcile-other", "provider-reconcile-password")
+        other = self.auth.authenticate("provider-reconcile-other", "provider-reconcile-password")
+        status, data, _ = self.request(
+            "POST", path, {"request_id": request_id}, other.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
+
 if __name__ == "__main__":
     unittest.main()
