@@ -32,6 +32,8 @@ class ProviderOutcomeTests(unittest.TestCase):
         calls = []
         evidence = self.evidence()
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 calls.append(execution["execution_id"])
                 return evidence
@@ -42,6 +44,8 @@ class ProviderOutcomeTests(unittest.TestCase):
     def test_adapter_receives_only_minimum_execution_identity(self):
         received = []
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 received.append(execution)
                 return ProviderOutcomeTests().evidence()
@@ -60,8 +64,20 @@ class ProviderOutcomeTests(unittest.TestCase):
             "status": "uncertain",
         }])
 
+    def test_expected_provider_identity_is_enforced(self):
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                return ProviderOutcomeTests().evidence(provider="other.mail")
+
+        with self.assertRaisesRegex(ValueError, "registered provider identity"):
+            verify_provider_outcome(
+                Adapter(), self.execution, expected_provider="mail.example",
+            )
+
     def test_mismatched_idempotency_key_is_rejected(self):
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 return ProviderOutcomeTests().evidence(idempotency_key="d" * 64)
         with self.assertRaisesRegex(ValueError, "fingerprint"):
@@ -71,6 +87,8 @@ class ProviderOutcomeTests(unittest.TestCase):
         calls = []
 
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 calls.append(execution)
                 return ProviderOutcomeTests().evidence()
@@ -95,6 +113,8 @@ class ProviderOutcomeTests(unittest.TestCase):
 
     def test_mismatched_argument_fingerprint_is_rejected(self):
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 return ProviderOutcomeTests().evidence(arguments_sha256="d" * 64)
 
@@ -105,6 +125,8 @@ class ProviderOutcomeTests(unittest.TestCase):
         calls = []
 
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 calls.append(execution["execution_id"])
                 raise TimeoutError("provider lookup timed out")
@@ -115,6 +137,8 @@ class ProviderOutcomeTests(unittest.TestCase):
 
     def test_untyped_adapter_result_is_rejected(self):
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 return {"outcome": "confirmed_completed"}
         with self.assertRaisesRegex(TypeError, "untyped"):
@@ -122,6 +146,8 @@ class ProviderOutcomeTests(unittest.TestCase):
 
     def test_lookup_rejected_for_already_completed_execution(self):
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 raise AssertionError("must not query")
         execution = {**self.execution, "status": "completed"}
@@ -152,6 +178,8 @@ class ProviderOutcomeTests(unittest.TestCase):
         calls = []
         evidence = self.evidence()
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 calls.append(dict(execution))
                 return evidence
@@ -187,6 +215,8 @@ class ProviderOutcomeTests(unittest.TestCase):
         events = []
         evidence = self.evidence()
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 time.sleep(1.2)
                 return evidence
@@ -222,6 +252,8 @@ class ProviderOutcomeTests(unittest.TestCase):
     def test_reconciler_preserves_lookup_error_when_claim_release_fails(self):
         from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 raise ValueError("provider lookup failed")
         class Store:
@@ -253,6 +285,8 @@ class ProviderOutcomeTests(unittest.TestCase):
         from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
         events = []
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 time.sleep(1.2)
                 return ProviderOutcomeTests().evidence()
@@ -293,6 +327,8 @@ class ProviderOutcomeTests(unittest.TestCase):
         from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
         events = []
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 time.sleep(1.2)
                 return ProviderOutcomeTests().evidence()
