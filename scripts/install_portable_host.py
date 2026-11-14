@@ -95,8 +95,17 @@ def _validate_windows_path_chain(path: Path, label: str) -> None:
     """
     if not path.is_absolute():
         raise BootstrapError(f"{label} directory must be absolute.")
+    # Normalize lexical dot segments before inspecting components. Do not use
+    # resolve(): it follows the very junctions this check must detect.
+    path = Path(os.path.normpath(str(path)))
     current = Path(path.anchor)
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+    try:
+        anchor_info = current.lstat()
+    except OSError as exc:
+        raise BootstrapError(f"{label} path anchor could not be inspected safely.") from exc
+    if stat.S_ISLNK(anchor_info.st_mode) or getattr(anchor_info, "st_file_attributes", 0) & reparse_flag:
+        raise BootstrapError(f"{label} path anchor must not be a reparse point.")
     for part in path.parts[1:]:
         current = current / part
         try:
