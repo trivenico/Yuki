@@ -132,6 +132,8 @@ def validate_pip_bootstrap_wheel(pip_wheel: Path, expected_sha256: str, expected
         raise InputValidationError("Pip bootstrap wheel SHA-256 does not match the pinned digest.")
     if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", expected_version):
         raise InputValidationError("Expected pip version must be an exact numeric version.")
+    if pip_wheel.name != f"pip-{expected_version}-py3-none-any.whl":
+        raise InputValidationError("Pip bootstrap wheel must use the pinned universal py3-none-any filename.")
     try:
         import zipfile
         with zipfile.ZipFile(pip_wheel) as archive:
