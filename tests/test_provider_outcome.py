@@ -68,5 +68,39 @@ class ProviderOutcomeTests(unittest.TestCase):
             self.evidence(evidence_sha256="not-a-digest")
 
 
+
+    def test_registry_requires_explicit_adapter_and_reconciler_persists_evidence(self):
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+        calls = []
+        evidence = self.evidence()
+        class Adapter:
+            def lookup_tool_outcome(self, execution):
+                calls.append(dict(execution))
+                return evidence
+        class Store:
+            def list_tool_executions(self, **kwargs):
+                return [{
+                    "execution_id": "execution-1", "call_id": "call-1",
+                    "tool_name": "send_email", "idempotency_key": "a" * 64,
+                    "arguments_sha256": "b" * 64, "status": "uncertain",
+                }]
+            def record_provider_outcome_evidence(self, **kwargs):
+                return {"outcome": kwargs["evidence"].outcome.value}
+        registry = ProviderOutcomeRegistry({"send_email": Adapter()})
+        reconciler = ProviderOutcomeReconciler(Store(), registry)
+        result = reconciler.reconcile(
+            owner_id="owner-1", conversation_id="conversation-1",
+            request_id="request-1", call_id="call-1",
+        )
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["execution_id"], "execution-1")
+
+    def test_registry_does_not_guess_missing_provider_adapter(self):
+        from core.provider_outcome import ProviderOutcomeRegistry
+        registry = ProviderOutcomeRegistry({})
+        with self.assertRaisesRegex(LookupError, "no provider outcome adapter"):
+            registry.lookup("send_email", self.execution)
+
 if __name__ == "__main__":
     unittest.main()
