@@ -180,6 +180,81 @@ class PortableHostInstallerTests(unittest.TestCase):
                     control.value & 0x1000,
                     f"DACL is not protected (control=0x{control.value:04x})",
                 )
+                self.assertIsNotNone(dacl.value, "Windows directory has no DACL")
+                # Inspect the real ACL entries, not just the protected-DACL flag.
+                class ACL_SIZE_INFORMATION(ctypes.Structure):
+                    _fields_ = [
+                        ("AceCount", wintypes.DWORD),
+                        ("AclBytesInUse", wintypes.DWORD),
+                        ("AclBytesFree", wintypes.DWORD),
+                    ]
+
+                get_acl_information = advapi32.GetAclInformation
+                get_acl_information.argtypes = [
+                    ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.c_int,
+                ]
+                get_acl_information.restype = wintypes.BOOL
+                get_ace = advapi32.GetAce
+                get_ace.argtypes = [
+                    ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+                ]
+                get_ace.restype = wintypes.BOOL
+                convert_sid = advapi32.ConvertSidToStringSidW
+                convert_sid.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+                convert_sid.restype = wintypes.BOOL
+
+                acl_info = ACL_SIZE_INFORMATION()
+                self.assertTrue(
+                    get_acl_information(
+                        dacl, ctypes.byref(acl_info), ctypes.sizeof(acl_info), 2,
+                    ),
+                    f"GetAclInformation failed: {ctypes.get_last_error()}",
+                )
+                allowed = {}
+                for ace_index in range(acl_info.AceCount):
+                    ace = ctypes.c_void_p()
+                    self.assertTrue(
+                        get_ace(dacl, ace_index, ctypes.byref(ace)),
+                        f"GetAce({ace_index}) failed: {ctypes.get_last_error()}",
+                    )
+                    ace_type, ace_flags = ctypes.cast(
+                        ace, ctypes.POINTER(ctypes.c_ubyte * 2),
+                    ).contents
+                    if ace_type != 0:  # ACCESS_ALLOWED_ACE_TYPE
+                        continue
+                    raw = ctypes.string_at(ace, 8)
+                    access_mask = int.from_bytes(raw[4:8], "little")
+                    sid_text = wintypes.LPWSTR()
+                    sid_pointer = ctypes.c_void_p(ace.value + 8)
+                    self.assertTrue(
+                        convert_sid(sid_pointer, ctypes.byref(sid_text)),
+                        f"ConvertSidToStringSidW failed: {ctypes.get_last_error()}",
+                    )
+                    try:
+                        allowed[sid_text.value] = (ace_flags, access_mask)
+                    finally:
+                        local_free(ctypes.cast(sid_text, ctypes.c_void_p))
+
+                expected_sids = (
+                    "S-1-5-18",       # Local System
+                    "S-1-5-32-544",   # Built-in Administrators
+                )
+                whoami = subprocess.run(
+                    ["whoami", "/user", "/fo", "csv", "/nh"],
+                    check=True, capture_output=True, text=True, timeout=10,
+                ).stdout
+                identity_rows = list(csv.reader(whoami.splitlines()))
+                self.assertTrue(identity_rows and identity_rows[-1])
+                expected_sids += (identity_rows[-1][-1].strip(),)
+                for sid in expected_sids:
+                    self.assertIn(sid, allowed, f"Missing full-control ACE for {sid}")
+                    ace_flags, access_mask = allowed[sid]
+                    self.assertEqual(ace_flags & 0x03, 0x03, f"ACE for {sid} lacks OI/CI inheritance")
+                    self.assertTrue(
+                        access_mask & 0x10000000 or access_mask & 0x1F01FF == 0x1F01FF,
+                        f"ACE for {sid} does not grant full control (mask=0x{access_mask:08x})",
+                    )
+
             finally:
                 if security_descriptor:
                     local_free(security_descriptor)
