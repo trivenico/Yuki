@@ -102,12 +102,14 @@ def inventory_bundle(root: Path) -> list[dict]:
 
 
 def create_unsigned_manifest(
-    bundle: Path, *, platform: str, runtime_version: str
+    bundle: Path, *, platform: str, runtime_version: str, release_sequence: int
 ) -> dict:
     if not isinstance(platform, str) or not platform.strip() or len(platform) > 100:
         raise InputValidationError("Platform must be non-empty text of at most 100 characters.")
     if not isinstance(runtime_version, str) or not runtime_version.strip() or len(runtime_version) > 100:
         raise InputValidationError("Runtime version must be non-empty text of at most 100 characters.")
+    if type(release_sequence) is not int or release_sequence < 0:
+        raise InputValidationError("Release sequence must be a non-negative integer.")
     root = Path(bundle).expanduser()
     files = inventory_bundle(root)
     return {
@@ -116,17 +118,18 @@ def create_unsigned_manifest(
         "artifact_kind": "portable-runtime",
         "platform": platform,
         "runtime_version": runtime_version,
+        "release_sequence": release_sequence,
         "files": files,
     }
 
 
-def write_unsigned_manifest(bundle: Path, *, platform: str, runtime_version: str) -> dict:
+def write_unsigned_manifest(bundle: Path, *, platform: str, runtime_version: str, release_sequence: int) -> dict:
     root = Path(bundle).expanduser()
     manifest_path = root / MANIFEST_NAME
     signature_path = root / SIGNATURE_NAME
     if manifest_path.exists() or manifest_path.is_symlink() or signature_path.exists() or signature_path.is_symlink():
         raise InputValidationError("Manifest or signature already exists; refusing to overwrite release metadata.")
-    value = create_unsigned_manifest(root, platform=platform, runtime_version=runtime_version)
+    value = create_unsigned_manifest(root, platform=platform, runtime_version=runtime_version, release_sequence=release_sequence)
     payload = (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     fd, temporary = tempfile.mkstemp(prefix=".yuki-manifest-", dir=root)
     try:
@@ -149,9 +152,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bundle", required=True, type=Path)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--runtime-version", required=True)
+    parser.add_argument("--release-sequence", required=True, type=int)
     args = parser.parse_args(argv)
     try:
-        report = write_unsigned_manifest(args.bundle, platform=args.platform, runtime_version=args.runtime_version)
+        report = write_unsigned_manifest(args.bundle, platform=args.platform, runtime_version=args.runtime_version, release_sequence=args.release_sequence)
     except (OSError, ValueError, InputValidationError) as exc:
         print(f"Portable manifest generation failed: {exc}", file=sys.stderr)
         return 2
