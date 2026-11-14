@@ -1,8 +1,6 @@
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
-from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
 from unittest.mock import patch
 import unittest
 from pathlib import Path
@@ -798,7 +796,6 @@ class ConversationStoreTests(unittest.TestCase):
                 {"conversation_tool_executions", "conversations"},
             )
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
-
 
 
     def test_failed_legacy_review_migration_rolls_back_table_and_history(self):
