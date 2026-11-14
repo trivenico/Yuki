@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import os
 import stat
 import sys
@@ -212,6 +213,132 @@ def _read_windows_file_handle_secure(path: Path, *, label: str, max_bytes: int) 
         raise BootstrapError(f"{label} could not be securely read.") from exc
     except (AttributeError, TypeError, ValueError) as exc:
         raise BootstrapError(f"{label} could not be securely read.") from exc
+
+
+
+def _copy_windows_file_handle_secure(
+    source: str | Path,
+    target: str | Path,
+    *,
+    label: str,
+    max_bytes: int | None = None,
+    expected_size: int | None = None,
+    expected_sha256: str | None = None,
+) -> None:
+    """Copy a regular file through pinned Win32 handles and create the target exclusively.
+
+    The final source component is opened with OPEN_REPARSE_POINT and checked
+    through its handle. Target creation uses CREATE_NEW, so an existing file
+    or reparse point is never followed or overwritten. Parent components are
+    still resolved by Win32 pathname lookup; callers must treat this as
+    final-component protection, not full handle-relative traversal.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _INFO(ctypes.Structure):
+            _fields_ = [
+                ("dwFileAttributes", wintypes.DWORD),
+                ("ftCreationTime_dwLowDateTime", wintypes.DWORD),
+                ("ftCreationTime_dwHighDateTime", wintypes.DWORD),
+                ("ftLastAccessTime_dwLowDateTime", wintypes.DWORD),
+                ("ftLastAccessTime_dwHighDateTime", wintypes.DWORD),
+                ("ftLastWriteTime_dwLowDateTime", wintypes.DWORD),
+                ("ftLastWriteTime_dwHighDateTime", wintypes.DWORD),
+                ("dwVolumeSerialNumber", wintypes.DWORD),
+                ("nFileSizeHigh", wintypes.DWORD),
+                ("nFileSizeLow", wintypes.DWORD),
+                ("nNumberOfLinks", wintypes.DWORD),
+                ("nFileIndexHigh", wintypes.DWORD),
+                ("nFileIndexLow", wintypes.DWORD),
+            ]
+
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        create = k.CreateFileW
+        create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        create.restype = wintypes.HANDLE
+        get_info = k.GetFileInformationByHandle
+        get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(_INFO)]
+        get_info.restype = wintypes.BOOL
+        get_type = k.GetFileType
+        get_type.argtypes = [wintypes.HANDLE]
+        get_type.restype = wintypes.DWORD
+        read = k.ReadFile
+        read.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+        read.restype = wintypes.BOOL
+        write = k.WriteFile
+        write.argtypes = [wintypes.HANDLE, wintypes.LPCVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+        write.restype = wintypes.BOOL
+        close = k.CloseHandle
+        close.argtypes = [wintypes.HANDLE]
+        close.restype = wintypes.BOOL
+
+        invalid = wintypes.HANDLE(-1).value
+        src = create(str(source), 0x80000000, 0x00000001, None, 3, 0x00200000 | 0x08000000, None)
+        if src == invalid:
+            raise OSError(ctypes.get_last_error(), "CreateFileW source failed", str(source))
+        dst = None
+        try:
+            before = _INFO()
+            if not get_info(src, ctypes.byref(before)):
+                raise OSError(ctypes.get_last_error(), "GetFileInformationByHandle source failed", str(source))
+            if before.dwFileAttributes & (0x00000400 | 0x00000010) or get_type(src) != 1:
+                raise BootstrapError(f"{label} source must be a regular disk file, not a reparse point or directory.")
+            size = (before.nFileSizeHigh << 32) | before.nFileSizeLow
+            if (max_bytes is not None and size > max_bytes) or (expected_size is not None and size != expected_size):
+                raise BootstrapError(f"{label} source size does not match its permitted bounds.")
+            dst = create(str(target), 0x40000000, 0x00000001, None, 1, 0x00200000 | 0x08000000, None)
+            if dst == invalid:
+                dst = None
+                raise OSError(ctypes.get_last_error(), "CreateFileW target failed", str(target))
+
+            digest = hashlib.sha256()
+            total = 0
+            while True:
+                buffer = ctypes.create_string_buffer(1024 * 1024)
+                count = wintypes.DWORD()
+                if not read(src, buffer, len(buffer), ctypes.byref(count), None):
+                    raise OSError(ctypes.get_last_error(), "ReadFile source failed", str(source))
+                if count.value == 0:
+                    break
+                data = buffer.raw[:count.value]
+                total += len(data)
+                if (max_bytes is not None and total > max_bytes) or (expected_size is not None and total > expected_size):
+                    raise BootstrapError(f"{label} source grew beyond its permitted size.")
+                digest.update(data)
+                offset = 0
+                while offset < len(data):
+                    written = wintypes.DWORD()
+                    chunk = data[offset:]
+                    payload = ctypes.create_string_buffer(chunk)
+                    if not write(dst, payload, len(chunk), ctypes.byref(written), None) or written.value == 0:
+                        raise OSError(ctypes.get_last_error(), "WriteFile target failed", str(target))
+                    offset += written.value
+
+            after = _INFO()
+            if not get_info(src, ctypes.byref(after)):
+                raise OSError(ctypes.get_last_error(), "GetFileInformationByHandle source failed", str(source))
+            identity = lambda x: (
+                x.dwVolumeSerialNumber, x.nFileIndexHigh, x.nFileIndexLow,
+                x.nFileSizeHigh, x.nFileSizeLow,
+                x.ftLastWriteTime_dwHighDateTime, x.ftLastWriteTime_dwLowDateTime,
+                x.ftCreationTime_dwHighDateTime, x.ftCreationTime_dwLowDateTime,
+            )
+            if identity(before) != identity(after) or total != size:
+                raise BootstrapError(f"{label} source changed while being staged.")
+            if expected_size is not None and total != expected_size:
+                raise BootstrapError(f"{label} staged size does not match the signed manifest.")
+            if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
+                raise BootstrapError(f"{label} staged hash does not match the signed manifest.")
+        finally:
+            if dst is not None:
+                close(dst)
+            close(src)
+    except BootstrapError:
+        raise
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        raise BootstrapError(f"{label} could not be securely staged.") from exc
 
 
 def _read_host_file_secure(path: str | Path, *, label: str, max_bytes: int) -> bytes:
