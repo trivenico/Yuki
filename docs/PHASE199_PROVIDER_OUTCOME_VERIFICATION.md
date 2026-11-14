@@ -33,10 +33,11 @@ their own protected storage.
   approval.
 - Unknown remains blocked from replay.
 
-The current implementation is a typed contract and validation boundary. It is
-not a provider integration, durable evidence ledger, or automatic reconciliation
-workflow. Those require provider-specific adapters and a separately audited,
-owner-scoped persistence/API layer.
+The repository includes the typed contract, durable evidence ledger, owner-scoped
+inspection API, and fenced reconciliation workflow described below. It does
+not yet include production integrations with any specific provider; those
+require provider-specific adapters and separate validation against documented
+provider status semantics.
 
 ## Durable evidence ledger and owner inspection
 
