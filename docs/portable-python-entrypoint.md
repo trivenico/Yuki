@@ -19,8 +19,8 @@ yuki-portable-bootstrap \
   --bundle /media/YUKI/yuki-portable \
   --public-key /etc/yuki/trust/release-ed25519.pem \
   --expected-platform linux-x86_64 \
-  --entrypoint runtime/bin/python \
-  -- -I portable_entry.py
+  --python runtime/bin/python3 \
+  --entrypoint portable_entry.py
 ```
 
 Windows uses the same signed Python script but the platform-specific interpreter
