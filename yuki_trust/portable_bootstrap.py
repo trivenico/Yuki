@@ -67,6 +67,7 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
 
     seen: set[str] = set()
     portable_names: set[str] = set()
+    path_nodes: dict[str, tuple[str, bool]] = {}
     reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
     for item in value["files"]:
         if not isinstance(item, dict) or set(item) != {"path", "size", "sha256"}:
@@ -90,6 +91,22 @@ def _validate_manifest(value: Any) -> list[dict[str, Any]]:
             raise BootstrapError("Runtime manifest contains duplicate or reserved paths.")
         portable_names.add(portable_name)
         seen.add(relative)
+
+        prefix_parts: list[str] = []
+        for index, segment in enumerate(segments):
+            prefix_parts.append(segment)
+            original_prefix = "/".join(prefix_parts)
+            normalized_prefix = unicodedata.normalize("NFC", original_prefix).casefold()
+            is_file = index == len(segments) - 1
+            existing = path_nodes.get(normalized_prefix)
+            if existing is not None:
+                existing_spelling, existing_is_file = existing
+                if existing_spelling != original_prefix:
+                    raise BootstrapError("Runtime manifest contains colliding case-insensitive or Unicode-normalized path components.")
+                if existing_is_file or is_file:
+                    raise BootstrapError("Runtime manifest contains a file/directory path collision.")
+            else:
+                path_nodes[normalized_prefix] = (original_prefix, is_file)
         if type(item["size"]) is not int or item["size"] < 0:
             raise BootstrapError("Runtime manifest file size is invalid.")
         digest = item["sha256"]
