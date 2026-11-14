@@ -20,13 +20,19 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
+    def __init__(
+        self, store: ConversationStore, agent_loop: AgentExecutionLoop,
+        *, agent_loop_for_owner=None,
+    ):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
         self.store = store
+        if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
+            raise TypeError("agent_loop_for_owner must be callable.")
         self.agent_loop = agent_loop
+        self.agent_loop_for_owner = agent_loop_for_owner
         self._lock = threading.RLock()
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
@@ -144,6 +150,14 @@ class ConversationService:
                     "the previous turn has no persisted assistant response; reconcile it before sending another."
                 )
 
+            # Resolve the execution loop from the authenticated owner identity.
+            # The caller cannot supply an owner ID through the conversation payload.
+            agent_loop = self.agent_loop
+            if self.agent_loop_for_owner is not None:
+                agent_loop = self.agent_loop_for_owner(owner_id)
+                if not isinstance(agent_loop, AgentExecutionLoop):
+                    raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
+
             user_result = self.store.append_message(
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="user", content=user_text, idempotency_key=request_id,
@@ -168,7 +182,7 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
