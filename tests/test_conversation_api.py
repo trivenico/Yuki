@@ -668,6 +668,8 @@ class ConversationAPITests(unittest.TestCase):
             )
         calls = []
         class Adapter:
+            provider_id = "mail.example"
+
             def lookup_tool_outcome(self, execution):
                 calls.append(execution)
                 return ProviderOutcomeEvidence(
