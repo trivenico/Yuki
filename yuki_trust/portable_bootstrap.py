@@ -128,7 +128,7 @@ def _inventory_posix(root: Path) -> list[dict[str, Any]]:
     ):
         raise BootstrapError("POSIX bundle inventory requires dir_fd, O_DIRECTORY and O_NOFOLLOW support.")
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     files: list[dict[str, Any]] = []
 
     def visit(directory_fd: int, prefix: str) -> None:
@@ -354,7 +354,7 @@ def _copy_bundle_posix(source: Path, staged: Path, manifest: dict[str, Any]) -> 
             entry = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
             if not stat.S_ISREG(entry.st_mode) or entry.st_size > limit:
                 raise BootstrapError(f"Bundle metadata file is invalid: {name}")
-            fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=source_fd)
+            fd = os.open(name, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0), dir_fd=source_fd)
             try:
                 before = os.fstat(fd)
                 if (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
@@ -398,7 +398,7 @@ def _copy_bundle_posix(source: Path, staged: Path, manifest: dict[str, Any]) -> 
                 entry = os.stat(name, dir_fd=source_parent, follow_symlinks=False)
                 if not stat.S_ISREG(entry.st_mode):
                     raise BootstrapError(f"Bundle changed during staging: {item['path']}")
-                source_file_fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=source_parent)
+                source_file_fd = os.open(name, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0), dir_fd=source_parent)
                 before = os.fstat(source_file_fd)
                 if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (entry.st_dev, entry.st_ino):
                     raise BootstrapError(f"Bundle file changed during staging: {item['path']}")
