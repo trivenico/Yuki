@@ -577,6 +577,53 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="call-reference",
         )), 1)
 
+    def test_provider_reconciliation_lease_renewal_is_token_fenced(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "provider-renew-request"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id, role="user",
+            content="Renew reconciliation", idempotency_key=request_id,
+            expected_version=0, generation_request_id=request_id,
+        )
+        with patch("core.conversation_store.time.time", return_value=100_000.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="generation-renew", ttl_seconds=60,
+            )
+            self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-renew", tool_name="send_email",
+                arguments_sha256="b" * 64, idempotency_key="a" * 64,
+                lease_token="generation-renew",
+            )
+            self.store.finish_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-renew",
+                lease_token="generation-renew", status="uncertain",
+            )
+        with patch("core.conversation_store.time.time", return_value=100_001.0):
+            claim = self.store.acquire_provider_reconciliation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="call-renew", lease_token="renew-worker",
+                ttl_seconds=5,
+            )
+            renewed = self.store.renew_provider_reconciliation_lease(
+                owner_id=self.owner, execution_id=claim["execution_id"],
+                lease_token="renew-worker", ttl_seconds=30,
+            )
+            self.assertEqual(renewed["expires_at"], 100_031.0)
+            with self.assertRaises(ConversationConflict):
+                self.store.renew_provider_reconciliation_lease(
+                    owner_id=self.owner, execution_id=claim["execution_id"],
+                    lease_token="stale-worker", ttl_seconds=30,
+                )
+        with patch("core.conversation_store.time.time", return_value=100_032.0):
+            with self.assertRaises(ConversationConflict):
+                self.store.renew_provider_reconciliation_lease(
+                    owner_id=self.owner, execution_id=claim["execution_id"],
+                    lease_token="renew-worker", ttl_seconds=30,
+                )
+
     def test_provider_reconciliation_claim_is_exclusive_and_fences_stale_workers(self):
         conversation_id = self.conversation["conversation_id"]
         request_id = "provider-claim-request"
