@@ -274,13 +274,13 @@ class ConversationService:
                 )
                 return "claimed" if claim["created"] else claim["status"]
 
-            def on_tool_error(call, argument, error):
+            def on_tool_error(call, argument, outcome):
                 # A handler exception cannot prove that an external provider did
                 # not commit its side effect before the error reached us.
                 self.store.finish_tool_execution(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, call_id=call.call_id,
-                    lease_token=lease_token, status="uncertain",
+                    lease_token=lease_token, status=outcome,
                 )
 
             def after_tool_call(call, argument, output):
