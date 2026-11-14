@@ -401,7 +401,11 @@ class ConversationServiceTests(unittest.TestCase):
             def authorize_tool(self, name):
                 return name == "echo"
 
+        model_calls = []
         def model(**kwargs):
+            model_calls.append(True)
+            if len(model_calls) > 1:
+                return {"text": "Echo completed", "tool_calls": {"tool_calls": []}}
             return {"text": "", "tool_calls": {"tool_calls": [
                 {"id": "echo-1", "name": "echo", "arguments": {"value": "hello"}},
             ]}}
@@ -486,7 +490,11 @@ class ConversationServiceTests(unittest.TestCase):
 
         handler.supports_idempotency_key = True
 
+        model_calls = []
         def model(**kwargs):
+            model_calls.append(True)
+            if len(model_calls) > 1:
+                return {"text": "Message sent", "tool_calls": {"tool_calls": []}}
             return {"text": "", "tool_calls": {"tool_calls": [
                 {"id": "provider-send-1", "name": "send", "arguments": {"to": "user"}},
             ]}}
