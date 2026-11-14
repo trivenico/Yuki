@@ -97,6 +97,8 @@ class ProviderOutcomeTests(unittest.TestCase):
                 }]
             def acquire_provider_reconciliation_lease(self, **kwargs):
                 calls.append(("claim", kwargs["lease_token"]))
+            def renew_provider_reconciliation_lease(self, **kwargs):
+                calls.append(("renew", kwargs["lease_token"]))
             def release_provider_reconciliation_lease(self, **kwargs):
                 calls.append(("release", kwargs["lease_token"]))
             def record_provider_outcome_evidence(self, **kwargs):
