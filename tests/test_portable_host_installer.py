@@ -144,6 +144,8 @@ class PortableHostInstallerTests(unittest.TestCase):
             user_sid = list(user_sid)[-1][-1].strip()
             script = r"""
 $acl = Get-Acl -LiteralPath $env:YUKI_ACL_PATH
+Write-Output ("ACL_PROTECTED=" + $acl.AreAccessRulesProtected)
+Write-Output ("ACL_RULES=" + (($acl.Access | ForEach-Object { $_.IdentityReference.ToString() + ':' + $_.FileSystemRights + ':' + $_.InheritanceFlags + ':' + $_.IsInherited }) -join ';'))
 if (-not $acl.AreAccessRulesProtected) { exit 10 }
 $expected = @($env:YUKI_USER_SID, 'S-1-5-18', 'S-1-5-32-544')
 $required = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit -bor [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
@@ -166,10 +168,11 @@ exit 0
             environment = dict(os.environ)
             environment["YUKI_ACL_PATH"] = str(target)
             environment["YUKI_USER_SID"] = user_sid
-            subprocess.run(
+            completed = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                check=True, capture_output=True, text=True, timeout=30, env=environment,
+                check=False, capture_output=True, text=True, timeout=30, env=environment,
             )
+            self.assertEqual(completed.returncode, 0, msg=completed.stdout + completed.stderr)
 
     def test_windows_acl_grants_directory_and_inherited_full_control(self):
         completed = type("Completed", (), {"stdout": "User Name,SID\r\nDOMAIN\\user,S-1-5-21-1-2-3-1001\r\n"})()
