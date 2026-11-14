@@ -373,6 +373,24 @@ class ConversationStore:
                 db.rollback()
                 raise
 
+    def has_message(
+        self, *, owner_id: str, conversation_id: str, idempotency_key: str,
+    ) -> bool:
+        """Check an owner-scoped message idempotency key without exposing it in history."""
+        owner = self._owner(owner_id)
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200:
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT 1 FROM conversation_messages
+                   WHERE conversation_id=? AND idempotency_key=? AND EXISTS (
+                       SELECT 1 FROM conversations
+                       WHERE conversation_id=? AND owner_id=?
+                   )""",
+                (conversation_id, idempotency_key.strip(), conversation_id, owner),
+            ).fetchone()
+        return row is not None
+
     def list_messages(
         self, *, owner_id: str, conversation_id: str, limit: int = 100,
         after_sequence: int | None = None,
