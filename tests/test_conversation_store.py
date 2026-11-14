@@ -723,6 +723,42 @@ class ConversationStoreTests(unittest.TestCase):
 
 
 
+
+    def test_legacy_review_table_constraint_is_migrated_without_losing_rows(self):
+        import sqlite3
+        database = Path(self.tempdir.name) / "legacy-review.sqlite3"
+        ConversationStore(database)
+        with sqlite3.connect(database) as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_new")
+            db.execute("""CREATE TABLE conversation_tool_reviews (
+                review_id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                call_id TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain')),
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )""")
+            db.execute("""INSERT INTO conversation_tool_reviews
+                (review_id, execution_id, conversation_id, owner_id, request_id,
+                 call_id, action, reason, created_at)
+                SELECT review_id, execution_id, conversation_id, owner_id, request_id,
+                       call_id, action, reason, created_at
+                FROM conversation_tool_reviews_new""")
+            db.execute("DROP TABLE conversation_tool_reviews_new")
+            db.execute("CREATE INDEX idx_tool_reviews_owner_execution ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at)")
+        ConversationStore(database)
+        with sqlite3.connect(database) as db:
+            schema = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_tool_reviews'"
+            ).fetchone()[0]
+            self.assertIn("confirm_provider_completed", schema)
+            self.assertIn("acknowledge_uncertain", schema)
+
+
     def test_review_schema_allows_provider_completion_review_action(self):
         with self.store._connect() as db:
             schema = db.execute(
