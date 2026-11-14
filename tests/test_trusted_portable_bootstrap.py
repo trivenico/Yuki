@@ -59,9 +59,11 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ))
+        self.state_path = self.root / "host-state" / "release-state.json"
+        self.state_path.parent.mkdir(mode=0o700)
         self._sign_bundle()
 
-    def _sign_bundle(self):
+    def _sign_bundle(self, release_sequence=1, runtime_version="3.12.7"):
         files = []
         for path in sorted(p for p in self.bundle.rglob("*") if p.is_file() and p.name not in {"runtime-manifest.json", "runtime-manifest.sig"}):
             data = path.read_bytes()
@@ -71,11 +73,12 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 "sha256": __import__("hashlib").sha256(data).hexdigest(),
             })
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "product": "Yuki Portable Runtime",
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
-            "runtime_version": "3.12.7",
+            "runtime_version": runtime_version,
+            "release_sequence": release_sequence,
             "files": files,
         }
         manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -97,6 +100,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.bundle,
             platform="test-platform",
             runtime_version="3.12.7",
+            release_sequence=1,
         )
         manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
         (self.bundle / MANIFEST_NAME).write_bytes(manifest_bytes)
@@ -126,10 +130,10 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
 
         manifest_path = self.bundle / "runtime-manifest.json"
         manifest_text = manifest_path.read_text(encoding="utf-8")
-        self.assertIn('"schema_version": 1', manifest_text)
+        self.assertIn('"schema_version": 2', manifest_text)
         ambiguous = manifest_text.replace(
-            '"schema_version": 1',
-            '"schema_version": 1,\n  "schema_version": 1',
+            '"schema_version": 2',
+            '"schema_version": 2,\n  "schema_version": 2',
             1,
         ).encode("utf-8")
         manifest_path.write_bytes(ambiguous)
@@ -143,11 +147,12 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
 
     def test_rejects_case_colliding_directory_components_on_all_platforms(self):
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "product": "Yuki Portable Runtime",
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
+            "release_sequence": 1,
             "files": [
                 {"path": "Alpha/first.bin", "size": 1, "sha256": "0" * 64},
                 {"path": "alpha/second.bin", "size": 1, "sha256": "0" * 64},
@@ -158,11 +163,12 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
 
     def test_rejects_file_directory_prefix_collision(self):
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "product": "Yuki Portable Runtime",
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
+            "release_sequence": 1,
             "files": [
                 {"path": "runtime", "size": 1, "sha256": "0" * 64},
                 {"path": "runtime/python.exe", "size": 1, "sha256": "1" * 64},
@@ -246,6 +252,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.public_path,
             "runtime/python",
             "portable_entry.py",
+            anti_rollback_state_path=self.state_path,
         )
         self.assertEqual(result, 0)
 
@@ -259,6 +266,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 "runtime/python.exe",
                 "portable_entry.py",
                 ["--diagnostic"],
+                anti_rollback_state_path=self.state_path,
             )
 
         self.assertEqual(result, 0)
@@ -284,6 +292,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                         self.public_path,
                         interpreter,
                         entrypoint,
+                        anti_rollback_state_path=self.state_path,
                     )
 
     def test_rejects_unsigned_or_unlisted_entrypoint(self):
@@ -293,8 +302,43 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 self.public_path,
                 "runtime/python",
                 "bin/not-listed",
+                anti_rollback_state_path=self.state_path,
             )
 
+    def test_launcher_rejects_older_signed_release_after_newer_release(self):
+        self._sign_bundle(release_sequence=12)
+        with patch("yuki_trust.portable_bootstrap.subprocess.run") as run:
+            run.return_value.returncode = 0
+            self.assertEqual(run_verified_bundle(self.bundle, self.public_path, self.python_executable.relative_to(self.bundle).as_posix(), "portable_entry.py", anti_rollback_state_path=self.state_path), 0)
+            self._sign_bundle(release_sequence=11)
+            with self.assertRaisesRegex(BootstrapError, "rollback rejected"):
+                run_verified_bundle(self.bundle, self.public_path, self.python_executable.relative_to(self.bundle).as_posix(), "portable_entry.py", anti_rollback_state_path=self.state_path)
+            run.assert_called_once()
+
+    def test_launcher_rejects_same_sequence_with_different_signed_manifest(self):
+        self._sign_bundle(release_sequence=12, runtime_version="3.12.7")
+        with patch("yuki_trust.portable_bootstrap.subprocess.run") as run:
+            run.return_value.returncode = 0
+            self.assertEqual(run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path), 0)
+            self._sign_bundle(release_sequence=12, runtime_version="3.12.8")
+            with self.assertRaisesRegex(BootstrapError, "equivocation"):
+                run_verified_bundle(self.bundle, self.public_path, "runtime/python", "portable_entry.py", anti_rollback_state_path=self.state_path)
+            run.assert_called_once()
+
+    def test_rejects_anti_rollback_state_inside_removable_bundle(self):
+        state = self.bundle / 'release-state.json'
+        with self.assertRaisesRegex(BootstrapError, 'outside the removable bundle'):
+            run_verified_bundle(self.bundle, self.public_path, 'runtime/python', 'portable_entry.py', anti_rollback_state_path=state)
+
+    def test_rejects_non_integer_release_sequence(self):
+        manifest = {
+            'schema_version': 1, 'product': 'Yuki Portable Runtime',
+            'artifact_kind': 'portable-runtime', 'platform': 'test-platform',
+            'runtime_version': '3.12.7', 'release_sequence': True,
+            'files': [{'path': 'x', 'size': 1, 'sha256': '0' * 64}],
+        }
+        with self.assertRaisesRegex(BootstrapError, 'metadata is invalid'):
+            _validate_manifest(manifest)
 
 if __name__ == "__main__":
     unittest.main()

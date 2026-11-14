@@ -52,15 +52,16 @@ def _trusted_key_path(path: str | Path, bundle: Path) -> Path:
 
 
 def _validate_manifest(value: Any) -> list[dict[str, Any]]:
-    required = {"schema_version", "product", "artifact_kind", "platform", "runtime_version", "files"}
+    required = {"schema_version", "product", "artifact_kind", "platform", "runtime_version", "release_sequence", "files"}
     if not isinstance(value, dict) or set(value) != required:
         raise BootstrapError("Runtime manifest has an invalid schema.")
     if (
-        value["schema_version"] != 1
+        value["schema_version"] != 2
         or value["product"] != "Yuki Portable Runtime"
         or value["artifact_kind"] != "portable-runtime"
         or not isinstance(value["platform"], str) or not value["platform"] or len(value["platform"]) > 100
         or not isinstance(value["runtime_version"], str) or not value["runtime_version"] or len(value["runtime_version"]) > 100
+        or type(value["release_sequence"]) is not int or value["release_sequence"] < 0
         or not isinstance(value["files"], list) or not value["files"]
     ):
         raise BootstrapError("Runtime manifest metadata is invalid.")
@@ -267,6 +268,7 @@ def run_verified_bundle(
     arguments: list[str] | None = None,
     *,
     expected_platform: str | None = None,
+    anti_rollback_state_path: str | Path,
 ) -> int:
     def validate_relative(value: str, label: str) -> PurePosixPath:
         if not isinstance(value, str) or not value or "\\" in value:
@@ -278,6 +280,40 @@ def run_verified_bundle(
 
     python_relative = validate_relative(python_executable, "Python interpreter")
     entry_relative = validate_relative(entrypoint, "Entrypoint")
+    state_path = Path(anti_rollback_state_path).expanduser()
+    if not state_path.is_absolute() or not state_path.parent.is_dir():
+        raise BootstrapError("Anti-rollback state path must be absolute and use an existing host directory.")
+    current_parent = state_path.parent
+    while True:
+        info = current_parent.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            if current_parent != Path("/var") or current_parent.resolve(strict=True) != Path("/private/var"):
+                raise BootstrapError("Anti-rollback state parent directories must not contain symlinks.")
+        elif not stat.S_ISDIR(info.st_mode):
+            raise BootstrapError("Anti-rollback state parent directories must be real directories.")
+        if os.name != "nt":
+            if info.st_uid not in {0, os.getuid()}:
+                raise BootstrapError("Anti-rollback state parent directory has an untrusted owner.")
+            mode = stat.S_IMODE(info.st_mode)
+            if mode & 0o022 and not (mode & stat.S_ISVTX):
+                raise BootstrapError("Anti-rollback state parent directory is group- or world-writable.")
+        if current_parent.parent == current_parent:
+            break
+        current_parent = current_parent.parent
+    try:
+        canonical_state_parent = state_path.parent.resolve(strict=True)
+    except OSError as exc:
+        raise BootstrapError("Anti-rollback state parent directory is unavailable.") from exc
+    source_root = Path(bundle).expanduser().resolve(strict=True)
+    resolved_state = canonical_state_parent / state_path.name
+    try:
+        resolved_state.relative_to(source_root)
+    except ValueError:
+        pass
+    else:
+        raise BootstrapError("Anti-rollback state must be stored outside the removable bundle.")
+    if resolved_state.is_symlink():
+        raise BootstrapError("Anti-rollback state file must not be a symlink.")
     staged_temp = stage_verified_bundle(
         bundle, public_key_path, expected_platform=expected_platform
     )
@@ -298,6 +334,14 @@ def run_verified_bundle(
         script = staged.joinpath(*entry_relative.parts)
         if os.name != "nt" and not os.access(interpreter, os.X_OK):
             raise BootstrapError("Signed Python interpreter is not executable on this host.")
+        # Import lazily: anti_rollback uses BootstrapError from this module.
+        from yuki_trust.anti_rollback import advance_release_state
+        manifest_bytes = (staged / MANIFEST_NAME).read_bytes()
+        advance_release_state(
+            resolved_state,
+            manifest["release_sequence"],
+            manifest_bytes,
+        )
         completed = subprocess.run(
             [str(interpreter), "-I", str(script), *(arguments or [])],
             cwd=staged,
@@ -311,6 +355,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Authenticate and launch a signed Yuki portable runtime.")
     parser.add_argument("--bundle", required=True, type=Path, help="Path to the removable runtime bundle")
     parser.add_argument("--public-key", required=True, type=Path, help="Independently provisioned host trust anchor")
+    parser.add_argument("--anti-rollback-state", required=True, type=Path, help="Persistent host state file outside removable media")
     parser.add_argument("--python", required=True, help="Signed bundled Python interpreter path relative to the bundle")
     parser.add_argument("--entrypoint", required=True, help="Signed Python script path relative to the bundle")
     parser.add_argument(
@@ -329,6 +374,7 @@ def main() -> int:
             args.entrypoint,
             forwarded,
             expected_platform=args.expected_platform,
+            anti_rollback_state_path=args.anti_rollback_state,
         )
     except (OSError, ValueError, BootstrapError) as exc:
         print(f"Yuki portable bootstrap refused to launch: {exc}", file=sys.stderr)

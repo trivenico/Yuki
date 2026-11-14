@@ -23,7 +23,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         (self.root / "yuki" / "app.py").write_text("print('Yuki')\n", encoding="utf-8")
 
     def _write_manifest(self):
-        manifest = create_manifest(self.root, platform="linux-x86_64", runtime_version="3.12.7")
+        manifest = create_manifest(self.root, platform="linux-x86_64", runtime_version="3.12.7", release_sequence=1)
         (self.root / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
         return manifest
 
@@ -32,6 +32,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
         verified = verify_manifest(self.root)
         self.assertEqual(verified, manifest)
         self.assertEqual(manifest["artifact_kind"], "portable-runtime")
+        self.assertEqual(manifest["schema_version"], 2)
         self.assertEqual(len(manifest["files"]), 2)
 
     def test_modified_file_fails_integrity_check(self):
@@ -108,7 +109,7 @@ class PortableRuntimeManifestTests(unittest.TestCase):
                 self.skipTest("symlink creation is not permitted")
             with patch.object(sys, "argv", [
                 "portable_runtime_manifest.py", "create", str(self.root),
-                "--platform", "linux-x86_64", "--runtime-version", "3.12.7",
+                "--platform", "linux-x86_64", "--runtime-version", "3.12.7", "--release-sequence", "1",
             ]):
                 self.assertEqual(main(), 2)
             self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
