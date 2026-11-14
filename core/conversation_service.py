@@ -42,6 +42,17 @@ class ConversationService:
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
 
+    def tool_executions(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return sanitized execution metadata for the authenticated conversation owner."""
+        self.store.get_conversation(owner_id=owner_id, conversation_id=conversation_id)
+        if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
+            raise ValueError("request_id must be non-empty text of at most 160 characters.")
+        return self.store.list_tool_executions(
+            owner_id=owner_id, conversation_id=conversation_id, request_id=request_id.strip()
+        )
+
     def list(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
         return self.store.list_conversations(owner_id=owner_id, limit=limit)
 
@@ -263,6 +274,15 @@ class ConversationService:
                 )
                 return "claimed" if claim["created"] else claim["status"]
 
+            def on_tool_error(call, argument, error):
+                # A handler exception cannot prove that an external provider did
+                # not commit its side effect before the error reached us.
+                self.store.finish_tool_execution(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    request_id=request_id, call_id=call.call_id,
+                    lease_token=lease_token, status="uncertain",
+                )
+
             def after_tool_call(call, argument, output):
                 if not self.store.finish_tool_execution(
                     owner_id=owner_id, conversation_id=conversation_id,
@@ -277,6 +297,7 @@ class ConversationService:
                 user_text, on_text_delta=on_text_delta,
                 cancellation_requested=cancellation_requested,
                 before_tool_call=before_tool_call, after_tool_call=after_tool_call,
+                on_tool_error=on_tool_error,
                 **kwargs,
             )
             status = result.status
