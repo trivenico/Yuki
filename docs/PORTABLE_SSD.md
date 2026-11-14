@@ -142,14 +142,19 @@ The bootstrap can be exercised from an independently installed host package:
 python -m yuki_trust.portable_bootstrap \\
   --bundle /media/Yuki/YukiRuntime \\
   --public-key /etc/yuki/release-ed25519-public.pem \\
-  --entrypoint runtime/bin/python -- -m main
+  --entrypoint runtime/bin/python \\
+  --expected-platform linux-x86_64 -- -m main
 ```
 
 On Windows, use the host-installed Python module and a signed Windows runtime
 entrypoint, for example `runtime/python.exe`, with `-- -m main`. The paths
 and entrypoint must match the actual signed bundle layout. Install the
 `portable-bootstrap` optional dependency on the host from a trusted,
-authenticated Yuki distribution.
+authenticated Yuki distribution. The host installer must supply an exact platform identifier (for
+example `windows-x86_64`, `linux-x86_64`, or `macos-arm64`); the bootstrap
+rejects a signed bundle whose declared platform differs. Do not derive the
+expected platform from manifest contents, since that would trust the removable
+media to describe its own compatibility.
 
 **This is a verifier foundation, not yet a complete portable release.** The
 normal SSD launchers have not yet been changed to invoke this host-installed
