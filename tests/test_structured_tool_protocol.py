@@ -56,6 +56,16 @@ class StructuredToolProtocolTests(unittest.TestCase):
         self.assertEqual([item.call_id for item in results], ["first", "second"])
         self.assertEqual(self.calls, [{"n": 1}, {"n": 2}])
 
+    def test_equivalent_argument_objects_use_identical_canonical_bytes(self):
+        raw_arguments = []
+        runtime = GuardedToolRuntime(
+            {"echo": lambda raw: raw_arguments.append(raw) or "ok"}, self.policy
+        )
+        protocol = StructuredToolProtocol(runtime)
+        protocol.dispatch(self.envelope([self.call("one", arguments={"z": 1, "a": 2})]))
+        protocol.dispatch(self.envelope([self.call("two", arguments={"a": 2, "z": 1})]))
+        self.assertEqual(raw_arguments, ['{"a":2,"z":1}', '{"a":2,"z":1}'])
+
     def test_call_budget_stops_before_excess_side_effect_and_preserves_results(self):
         envelope = self.envelope([self.call("first"), self.call("second")])
         with self.assertRaises(ToolDispatchLimitReached) as raised:
