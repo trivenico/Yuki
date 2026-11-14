@@ -163,7 +163,7 @@ def _snapshot_verified_pip_wheel(pip_wheel: Path, expected_sha256: str, expected
     source = _regular_file(Path(pip_wheel).expanduser(), "Pip bootstrap wheel")
     if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(expected_sha256):
         raise InputValidationError("Expected pip wheel SHA-256 must be exactly 64 hexadecimal characters.")
-    if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\\.[0-9]+){1,3}", expected_version):
+    if not isinstance(expected_version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", expected_version):
         raise InputValidationError("Expected pip version must be an exact numeric version.")
     expected_name = f"pip-{expected_version}-py3-none-any.whl"
     if source.name != expected_name:
