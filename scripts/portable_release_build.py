@@ -58,6 +58,12 @@ def build_release_candidate(
         raise InputValidationError("Output parent and work root must be disjoint.")
     if not platform_tag.strip() or len(platform_tag) > 100:
         raise InputValidationError("Platform tag must be non-empty text of at most 100 characters.")
+    requested_os = platform_tag.split("-", 1)[0].lower()
+    host_os = _host_audit_platform()
+    if requested_os != host_os:
+        raise InputValidationError(
+            f"Build host ({host_os}) must match target platform OS ({requested_os}); cross-platform native audits are not supported."
+        )
     if not runtime_version.strip() or len(runtime_version) > 100:
         raise InputValidationError("Runtime version must be non-empty text of at most 100 characters.")
 
