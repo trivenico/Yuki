@@ -29,7 +29,7 @@ _WINDOWS_RESERVED = {
 
 def _validate_relative_path(relative: str) -> None:
     parts = relative.split("/")
-    if not relative or "\\\\" in relative or any(part in {"", ".", ".."} for part in parts):
+    if not relative or "\\" in relative or any(part in {"", ".", ".."} for part in parts):
         raise InputValidationError("Bundle contains a non-canonical relative path.")
     for part in parts:
         if (
