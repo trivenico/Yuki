@@ -1094,5 +1094,37 @@ class ConversationServiceTests(unittest.TestCase):
             )
 
 
+
+    def test_expired_worker_cannot_renew_or_release_replacement_lease(self):
+        conversation_id = self.conversation["conversation_id"]
+        with patch("core.conversation_store.time.time", side_effect=[100.0, 106.0, 107.0, 108.0]):
+            self.store.acquire_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="expired-worker", ttl_seconds=5,
+            )
+            self.store.acquire_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="replacement-worker", ttl_seconds=60,
+            )
+            with self.assertRaises(ConversationConflict):
+                self.store.renew_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="expired-worker", ttl_seconds=60,
+                )
+            self.assertFalse(self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="expired-worker",
+            ))
+            with self.assertRaises(ConversationConflict):
+                self.store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="third-worker", ttl_seconds=60,
+                )
+            self.assertTrue(self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="replacement-worker",
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()
