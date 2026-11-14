@@ -529,9 +529,18 @@ class ConversationAPITests(unittest.TestCase):
             observed_at="2026-11-14T10:00:00+00:00",
             provider_reference="provider-ref",
         )
+        claim = self.app.conversations.store.acquire_provider_reconciliation_lease(
+            owner_id=self.user.user_id, conversation_id=cid,
+            request_id=request_id, call_id="send-2", lease_token="provider-evidence-worker",
+        )
         self.app.conversations.store.record_provider_outcome_evidence(
             owner_id=self.user.user_id, conversation_id=cid,
             request_id=request_id, call_id="send-2", evidence=evidence,
+            reconciliation_lease_token="provider-evidence-worker",
+        )
+        self.app.conversations.store.release_provider_reconciliation_lease(
+            owner_id=self.user.user_id, execution_id=claim["execution_id"],
+            lease_token="provider-evidence-worker",
         )
         path = f"/v1/conversations/{cid}/tool-executions/send-2/provider-outcomes"
         status, data, _ = self.request(
