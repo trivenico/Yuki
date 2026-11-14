@@ -267,7 +267,7 @@ def install_host_trust(
             "policy": str(policy_path),
             "public_key": str(key_path),
             "anti_rollback_state": str(state_path),
-            "launcher": str(command or launcher),
+            "launcher": str(launcher),
             "expected_platform": expected_platform,
         }
         return result
