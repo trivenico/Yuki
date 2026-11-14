@@ -62,6 +62,14 @@ operation; clients cannot submit arbitrary provider claims through the API.
 
 The runtime now accepts an explicitly constructed
 `ProviderOutcomeRegistry`, mapping exact tool names to trusted adapter objects.
+Each adapter must declare a bounded `provider_id` (for example,
+`mail.example`). The registry snapshots that identity at registration time;
+it does not read a mutable adapter attribute during reconciliation. Returned
+evidence must identify that exact registered provider as well as match the
+execution's idempotency key and argument fingerprint. A provider mismatch is
+rejected before evidence is persisted. Provider identity is trusted runtime
+configuration, never caller-supplied request data.
+
 There is no dynamic module loading, provider-name guessing, fallback adapter, or
 automatic network integration. A `ProviderOutcomeReconciler` loads the
 owner-scoped durable execution, passes only its durable identity and status to
