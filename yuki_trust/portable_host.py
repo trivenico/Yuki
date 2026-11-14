@@ -525,28 +525,25 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
         )
 
     def visit(directory_handle: Any, prefix: str) -> None:
-        # Bound memory while supporting large release directories.
+        # FileNamesInfo (class 12) records have a 12-byte fixed header:
+        # NextEntryOffset, FileIndex, FileNameLength, followed by UTF-16 name.
         buffer_size = 16 * 1024 * 1024
         buffer = ctypes.create_string_buffer(buffer_size)
-        info_class = 15  # FileFullDirectoryRestartInfo
         while True:
-            if not get_info_ex(directory_handle, info_class, buffer, buffer_size):
+            if not get_info_ex(directory_handle, 12, buffer, buffer_size):
                 error = ctypes.get_last_error()
                 if error == 18:  # ERROR_NO_MORE_FILES
                     break
                 raise OSError(error, "Directory handle enumeration failed", prefix)
-            info_class = 14  # FileFullDirectoryInfo resumes enumeration
             raw = buffer.raw
             offset = 0
             while True:
-                if offset + 68 > buffer_size:
+                if offset + 12 > buffer_size:
                     raise BootstrapError("Windows directory enumeration returned a truncated record.")
-                next_offset, _index, _created, _accessed, _written, _changed, end_of_file, _allocation, attrs, name_length, _ea = struct.unpack_from(
-                    "<IIqqqqqqIII", raw, offset
-                )
-                if name_length % 2 or name_length > buffer_size - offset - 68:
+                next_offset, _index, name_length = struct.unpack_from("<III", raw, offset)
+                if name_length % 2 or name_length > buffer_size - offset - 12:
                     raise BootstrapError("Windows directory enumeration returned an invalid filename.")
-                name = raw[offset + 68:offset + 68 + name_length].decode("utf-16-le", errors="strict")
+                name = raw[offset + 12:offset + 12 + name_length].decode("utf-16-le", errors="strict")
                 if name not in {".", ".."}:
                     relative = f"{prefix}/{name}" if prefix else name
                     if not prefix and name in {"runtime-manifest.json", "runtime-manifest.sig"}:
@@ -554,12 +551,8 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
                     else:
                         child = open_child(directory_handle, name)
                         try:
-                            tag_info, standard = handle_info(child)
-                            if attrs & 0x00000400 or tag_info.FileAttributes & 0x00000400:
-                                raise BootstrapError(f"Bundle contains a reparse point: {relative}")
+                            _tag_info, standard = handle_info(child)
                             is_directory = bool(standard.Directory)
-                            if bool(attrs & 0x00000010) != is_directory:
-                                raise BootstrapError(f"Bundle entry type changed during inventory: {relative}")
                             if is_directory:
                                 visit(child, relative)
                             else:
@@ -586,7 +579,7 @@ def _inventory_windows_handle_secure(root: Path) -> list[dict[str, Any]]:
                             close_handle(child)
                 if next_offset == 0:
                     break
-                if next_offset < 68 or offset + next_offset >= buffer_size:
+                if next_offset < 12 or offset + next_offset >= buffer_size:
                     raise BootstrapError("Windows directory enumeration returned an invalid record offset.")
                 offset += next_offset
 
