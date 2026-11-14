@@ -59,6 +59,8 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ))
+        self.state_path = self.root / "host-state" / "release-state.json"
+        self.state_path.parent.mkdir(mode=0o700)
         self._sign_bundle()
 
     def _sign_bundle(self):
@@ -76,6 +78,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             "artifact_kind": "portable-runtime",
             "platform": "test-platform",
             "runtime_version": "3.12.7",
+            "release_sequence": 1,
             "files": files,
         }
         manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -97,6 +100,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.bundle,
             platform="test-platform",
             runtime_version="3.12.7",
+            release_sequence=1,
         )
         manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
         (self.bundle / MANIFEST_NAME).write_bytes(manifest_bytes)
@@ -246,6 +250,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.public_path,
             "runtime/python",
             "portable_entry.py",
+            anti_rollback_state_path=self.state_path,
         )
         self.assertEqual(result, 0)
 
@@ -259,6 +264,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 "runtime/python.exe",
                 "portable_entry.py",
                 ["--diagnostic"],
+                anti_rollback_state_path=self.state_path,
             )
 
         self.assertEqual(result, 0)
@@ -284,6 +290,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                         self.public_path,
                         interpreter,
                         entrypoint,
+                        anti_rollback_state_path=self.state_path,
                     )
 
     def test_rejects_unsigned_or_unlisted_entrypoint(self):
@@ -293,6 +300,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
                 self.public_path,
                 "runtime/python",
                 "bin/not-listed",
+                anti_rollback_state_path=self.state_path,
             )
 
 
