@@ -70,6 +70,11 @@ class PortableManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(InputValidationError, "non-symlink"):
             inventory_bundle(alias)
 
+    def test_rejects_windows_reserved_and_nonportable_paths(self):
+        (self.root / "CON.txt").write_text("reserved", encoding="utf-8")
+        with self.assertRaisesRegex(InputValidationError, "not portable"):
+            inventory_bundle(self.root)
+
     def test_rejects_empty_metadata(self):
         with self.assertRaises(InputValidationError):
             create_unsigned_manifest(self.root, platform="", runtime_version="0.1.0")
