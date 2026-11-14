@@ -399,10 +399,13 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         get_handle_count = kernel32.GetProcessHandleCount
         get_handle_count.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
         get_handle_count.restype = ctypes.c_int
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.argtypes = []
+        get_current_process.restype = ctypes.c_void_p
 
         def handle_count():
             count = ctypes.c_ulong()
-            self.assertTrue(get_handle_count(kernel32.GetCurrentProcess(), ctypes.byref(count)))
+            self.assertTrue(get_handle_count(get_current_process(), ctypes.byref(count)))
             return count.value
 
         missing_destination = self.root / "destination-does-not-exist"
