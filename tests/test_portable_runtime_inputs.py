@@ -200,6 +200,43 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertEqual(result["pip_bootstrap"], "pinned-wheel")
         self.assertEqual(result["pip"]["version"], "99.0")
 
+    def test_pip_bootstrap_executes_private_digest_bound_snapshot(self):
+        self._write_lock()
+        pip_wheel = self.root / "pip-99.0-py3-none-any.whl"
+        pip_files = {
+            "pip/__init__.py": b"__version__ = '99.0'\\n",
+            "pip/_internal/__init__.py": b"",
+            "pip/_internal/cli/__init__.py": b"",
+            "pip/_internal/cli/main.py": b"def main(args): return 0\\n",
+            "pip-99.0.dist-info/METADATA": b"Metadata-Version: 2.1\\nName: pip\\nVersion: 99.0\\n\\n",
+        }
+        with zipfile.ZipFile(pip_wheel, "w") as bundle:
+            for name, payload in pip_files.items():
+                bundle.writestr(name, payload)
+        digest = hashlib.sha256(pip_wheel.read_bytes()).hexdigest()
+        runtime_root = self.root / "runtime"
+        runtime_root.mkdir()
+        python = runtime_root / "python"
+        python.write_bytes(b"placeholder")
+        target = self.root / "published"
+        seen = {}
+        def runner(command, **kwargs):
+            snapshot = Path(command[4])
+            seen["snapshot"] = snapshot
+            seen["bytes"] = snapshot.read_bytes()
+            pip_wheel.write_bytes(b"replaced after verification")
+            stage = Path(command[command.index("--target") + 1])
+            stage.mkdir()
+            return SimpleNamespace(returncode=0, stderr="", stdout="")
+        install_offline_dependencies(
+            runtime_root, python, self.lock, self.wheelhouse, target,
+            runner=runner, pip_wheel=pip_wheel, pip_sha256=digest, pip_version="99.0",
+        )
+        self.assertEqual(hashlib.sha256(seen["bytes"]).hexdigest(), digest)
+        self.assertNotEqual(seen["snapshot"], pip_wheel)
+        self.assertFalse(seen["snapshot"].exists())
+        self.assertEqual(list(self.root.glob(".yuki-pip-wheel-*")), [])
+
     def test_pip_bootstrap_rejects_digest_mismatch(self):
         pip_wheel = self.root / "pip-99.0-py3-none-any.whl"
         with zipfile.ZipFile(pip_wheel, "w") as bundle:
