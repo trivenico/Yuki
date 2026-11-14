@@ -82,6 +82,18 @@ class StructuredToolProtocolTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(self.policy.requests, [])
 
+    def test_non_finite_json_numbers_are_rejected_before_dispatch(self):
+        invalid = (
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":NaN}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":Infinity}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"n":-Infinity}}]}',
+        )
+        for response in invalid:
+            with self.subTest(response=response), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
     def test_duplicate_ids_and_unknown_fields_are_rejected(self):
         with self.assertRaises(ToolProtocolError):
             parse_tool_calls(self.envelope([self.call("same"), self.call("same")]))
