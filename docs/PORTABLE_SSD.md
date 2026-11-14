@@ -166,3 +166,34 @@ can still replace the bootstrap or its trust anchor. Anti-rollback, key
 rotation/revocation, per-platform runtime artifacts, and clean-machine
 end-to-end release tests remain release blockers. Do not treat this PR as
 certifying the current SSD launcher as secure against a malicious USB.
+
+
+## Host trust provisioning installer foundation
+
+After installing the Yuki trusted-bootstrap Python package from an independently
+authenticated distribution, provision host-owned trust files with the installer:
+
+```sh
+python scripts/install_portable_host.py --public-key /trusted/release-ed25519-public.pem
+```
+
+The public key must arrive through a separate authenticated channel; do not
+select it from the removable SSD. The installer refuses to run when the active
+bootstrap import resolves outside the active Python environment. It creates
+separate private host directories for the trust anchor and anti-rollback state,
+writes a strict host launch policy, and creates a host-side launcher. POSIX
+directories/files receive owner-only permissions. Windows uses `icacls` to
+remove inherited ACLs and grant access to the current user, SYSTEM, and local
+Administrators; installation fails if ACL provisioning fails.
+
+Use the reported launcher with the root directory of the signed runtime bundle
+as its first argument. The signed bundle must contain the platform-specific
+interpreter and `portable_entry.py` in its manifest.
+
+This is an installer foundation, not yet a complete production installer:
+the trusted Python package still has to be installed and updated separately
+from a verified distribution; there is no signed host installer executable,
+bootstrap package hash/rollback update mechanism, uninstall/recovery workflow,
+or clean-machine acceptance evidence yet. Windows ACL behavior and launcher
+execution require real Windows clean-machine testing. Do not treat this
+provisioning script as independently authenticating itself.
