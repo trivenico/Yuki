@@ -127,8 +127,7 @@ class ConversationServiceTests(unittest.TestCase):
 
         def slow_model(**kwargs):
             started.set()
-            if not threading.Event().wait(0.08):
-                raise AssertionError("unreachable")
+            threading.Event().wait(0.08)
             return {"text": "renewed response", "tool_calls": {"tool_calls": []}}
 
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
