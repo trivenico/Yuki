@@ -42,11 +42,12 @@ python scripts/portable_runtime_inputs.py \
   --runtime-sha256 <trusted-64-character-sha256> \
   --requirements-lock locks/core-linux-x86_64-py312.lock \
   --wheelhouse wheelhouses/core-linux-x86_64-py312 \
+  --install-runtime-root build/runtime/python \
   --install-python build/runtime/python/bin/python \
   --install-target build/runtime/site-packages
 ```
 
-The installer invokes that interpreter with isolated pip, `--no-index`,
+The installer requires the interpreter to resolve inside the supplied verified runtime root, preventing an accidental fallback to the build host Python. It invokes that interpreter with isolated pip, `--no-index`,
 `--find-links`, `--require-hashes`, and `--only-binary=:all:`; it does not
 use package indexes or source distributions. The lock must contain the complete
 dependency closure, exact versions, and hashes for the selected platform and
