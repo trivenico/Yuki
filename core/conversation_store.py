@@ -797,7 +797,7 @@ class ConversationStore:
         self, *, owner_id: str, conversation_id: str, request_id: str,
         call_id: str, action: str, reason: str,
     ) -> dict[str, Any]:
-        """Append an owner-authenticated review event without changing execution outcome."""
+        """Append an owner review and atomically resolve verified provider completion."""
         owner = self._owner(owner_id)
         for value, label, maximum in (
             (conversation_id, "conversation_id", 64),
