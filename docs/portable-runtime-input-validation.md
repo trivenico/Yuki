@@ -31,3 +31,33 @@ stage must safely extract supported runtime archives, install only with
 `pip --no-index --require-hashes`, verify relocation, and run on clean machines
 without a host Python installation. Signed release manifests and the
 independently installed host bootstrap remain separate trust requirements.
+
+
+## Offline installation stage
+
+After the runtime archive has been independently digest-verified and safely
+extracted, the build process can install the reviewed dependency closure with
+the interpreter from that verified runtime:
+
+```bash
+python scripts/portable_runtime_inputs.py \
+  --runtime-archive vendor/python-runtime.zip \
+  --runtime-sha256 <trusted-64-character-sha256> \
+  --requirements-lock locks/core-linux-x86_64-py312.lock \
+  --wheelhouse wheelhouses/core-linux-x86_64-py312 \
+  --install-python build/runtime/python/bin/python \
+  --install-target build/runtime/site-packages
+```
+
+The installer invokes that interpreter with isolated pip, `--no-index`,
+`--find-links`, `--require-hashes`, and `--only-binary=:all:`; it does not
+use package indexes or source distributions. The lock must contain the complete
+dependency closure, exact versions, and hashes for the selected platform and
+Python ABI. Pip itself validates wheel metadata, compatibility and hashes.
+Installation runs with a timeout and into a new target directory.
+
+This stage executes the supplied runtime interpreter and pip, so it must only
+be used after the archive digest has been checked against an independently
+trusted value and the runtime has been extracted from that verified archive.
+The test suite mocks the installer process; it does not claim a real packaged
+runtime has been assembled or launched.
