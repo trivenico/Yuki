@@ -1,12 +1,14 @@
 import hashlib
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 from scripts.portable_runtime_inputs import (
     InputValidationError,
     validate_offline_wheelhouse,
     validate_runtime_archive,
+    install_offline_dependencies,
 )
 
 
@@ -68,6 +70,40 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self._write_lock("--extra-index-url https://example.invalid/simple\n")
         with self.assertRaisesRegex(InputValidationError, "pip options"):
             validate_offline_wheelhouse(self.lock, self.wheelhouse)
+
+    def test_lock_rejects_unrecognized_requirement_options(self):
+        self._write_lock(f"demo==1.0 --hash=sha256:{self.digest} --global-option=evil\n")
+        with self.assertRaisesRegex(InputValidationError, "only SHA-256 hash options"):
+            validate_offline_wheelhouse(self.lock, self.wheelhouse)
+
+    def test_installer_uses_isolated_offline_hash_required_pip(self):
+        self._write_lock()
+        python = self.root / "python"
+        python.write_bytes(b"trusted interpreter placeholder")
+        target = self.root / "site-packages"
+        calls = []
+        def fake_runner(command, **kwargs):
+            calls.append((command, kwargs))
+            target.mkdir()
+            return SimpleNamespace(returncode=0, stderr="", stdout="")
+        result = install_offline_dependencies(python, self.lock, self.wheelhouse, target, runner=fake_runner)
+        command, kwargs = calls[0]
+        self.assertIn("--no-index", command)
+        self.assertIn("--require-hashes", command)
+        self.assertIn("--isolated", command)
+        self.assertIn("--only-binary=:all:", command)
+        self.assertFalse(kwargs["shell"])
+        self.assertNotIn("PIP_INDEX_URL", kwargs["env"])
+        self.assertTrue(result["hash_checking"])
+
+    def test_installer_rejects_failed_pip_execution(self):
+        self._write_lock()
+        python = self.root / "python"
+        python.write_bytes(b"trusted interpreter placeholder")
+        def failed_runner(command, **kwargs):
+            return SimpleNamespace(returncode=1, stderr="bad wheel", stdout="")
+        with self.assertRaisesRegex(InputValidationError, "bad wheel"):
+            install_offline_dependencies(python, self.lock, self.wheelhouse, self.root / "site", runner=failed_runner)
 
 
 if __name__ == "__main__":
