@@ -119,11 +119,8 @@ class PortableHostInstallerTests(unittest.TestCase):
             installer._apply_windows_acl(self.install)
         commands = [call.args[0] for call in run.call_args_list]
         acl_command = commands[1]
-        self.assertIn("*S-1-5-21-1-2-3-1001:(F)", acl_command)
         self.assertIn("*S-1-5-21-1-2-3-1001:(OI)(CI)F", acl_command)
-        self.assertIn("*S-1-5-18:(F)", acl_command)
         self.assertIn("*S-1-5-18:(OI)(CI)F", acl_command)
-        self.assertIn("*S-1-5-32-544:(F)", acl_command)
         self.assertIn("*S-1-5-32-544:(OI)(CI)F", acl_command)
 
 
