@@ -5,6 +5,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import (
     StructuredToolProtocol,
     ToolProtocolError,
+    ToolExecutionAlreadyClaimed,
     parse_tool_calls,
 )
 
@@ -115,7 +116,7 @@ class StructuredToolProtocolTests(unittest.TestCase):
             self.policy,
         )
         protocol = StructuredToolProtocol(runtime)
-        with self.assertRaises(Exception):
+        with self.assertRaises(ToolExecutionAlreadyClaimed):
             protocol.dispatch(
                 self.envelope([self.call("first"), self.call("second")]),
                 before_tool_call=lambda call, argument: "claimed",
