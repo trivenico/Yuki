@@ -84,6 +84,15 @@ class PortableHostPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
             _read_host_file_secure(self.policy, label="Test policy", max_bytes=1)
 
+    @unittest.skipUnless(os.name == "nt", "Windows native handle semantics")
+    def test_windows_secure_reader_rejects_directory_handles(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        with self.assertRaisesRegex(BootstrapError, "directory"):
+            _read_host_file_secure(
+                self.trust_dir, label="Test policy", max_bytes=64 * 1024
+            )
+
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point semantics")
     def test_windows_secure_reader_rejects_file_symlink(self):
         from yuki_trust.portable_host import _read_host_file_secure
