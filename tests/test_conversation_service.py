@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
+from core.conversation_recovery import ConversationRecoveryCoordinator
 from core.conversation_store import ConversationConflict, ConversationNotFound, ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
@@ -44,6 +45,35 @@ class ConversationServiceTests(unittest.TestCase):
             expected_version=version,
             tools=[],
         )
+
+    def test_recovery_coordinator_returns_structured_outcomes(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=conversation_id,
+            role="user", content="Interrupted request", idempotency_key="coordinator-run",
+            expected_version=0, generation_request_id="coordinator-run",
+        )
+        lease_token = "recovery-coordinator-test-lease"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=lease_token, ttl_seconds=60,
+        )
+        try:
+            summary = ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=lease_token,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=lease_token,
+            )
+
+        self.assertEqual(summary.recovered_request_ids, ("coordinator-run",))
+        self.assertEqual(summary.interrupted_generations, 1)
+        self.assertEqual(summary.completed_generations, 0)
+        self.assertEqual(summary.orphaned_generations, 0)
+        self.assertFalse(summary.batch_limit_reached)
 
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
