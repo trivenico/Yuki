@@ -645,6 +645,86 @@ class ProviderOutcomeTests(unittest.TestCase):
                     self.assertEqual(len(ledger), 1)
                     self.assertEqual(ledger[0]["outcome"], outcome.value)
 
+    def test_provider_evidence_digest_cannot_be_rebound_to_another_execution(self):
+        import tempfile
+        from pathlib import Path
+        from core.conversation_store import ConversationConflict, ConversationStore
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "evidence-binding.sqlite3")
+            shared_key = "d" * 64
+            evidence = self.evidence(idempotency_key=shared_key)
+
+            class Adapter:
+                provider_id = "mail.example"
+
+                def lookup_tool_outcome(self, execution):
+                    return evidence
+
+            reconciler = ProviderOutcomeReconciler(
+                store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+            )
+            conversations = []
+            for index in range(2):
+                conversation = store.create_conversation(owner_id="owner-1")
+                conversation_id = conversation["conversation_id"]
+                request_id = f"evidence-binding-{index}"
+                store.append_message(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    role="user", content="Perform provider action",
+                    idempotency_key=request_id, expected_version=0,
+                    generation_request_id=request_id,
+                )
+                token = f"generation-{index}"
+                store.acquire_generation_lease(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    lease_token=token, ttl_seconds=60,
+                )
+                try:
+                    store.begin_tool_execution(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        request_id=request_id, call_id="call-1",
+                        tool_name="send_email", arguments_sha256="b" * 64,
+                        idempotency_key=shared_key, lease_token=token,
+                    )
+                    store.mark_started_tool_executions_uncertain(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        request_id=request_id, lease_token=token,
+                    )
+                finally:
+                    store.release_generation_lease(
+                        owner_id="owner-1", conversation_id=conversation_id,
+                        lease_token=token,
+                    )
+                conversations.append((conversation_id, request_id))
+
+            first_conversation, first_request = conversations[0]
+            reconciler.reconcile(
+                owner_id="owner-1", conversation_id=first_conversation,
+                request_id=first_request, call_id="call-1",
+            )
+            second_conversation, second_request = conversations[1]
+            with self.assertRaisesRegex(ConversationConflict, "another execution"):
+                reconciler.reconcile(
+                    owner_id="owner-1", conversation_id=second_conversation,
+                    request_id=second_request, call_id="call-1",
+                )
+            self.assertEqual(
+                len(store.list_provider_outcome_evidence(
+                    owner_id="owner-1", conversation_id=first_conversation,
+                    request_id=first_request, call_id="call-1",
+                )),
+                1,
+            )
+            self.assertEqual(
+                store.list_provider_outcome_evidence(
+                    owner_id="owner-1", conversation_id=second_conversation,
+                    request_id=second_request, call_id="call-1",
+                ),
+                [],
+            )
+
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
             return ProviderOutcomeTests().evidence()
