@@ -116,6 +116,17 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
             raise ToolProtocolError("tool name must be a valid registered-name identifier.")
         if not isinstance(arguments, dict):
             raise ToolProtocolError("tool arguments must be a JSON object.")
+        # Bound nesting independently of byte size: deeply nested small JSON can
+        # exhaust recursive serializers even when the payload is under 8 KiB.
+        pending = [(arguments, 1)]
+        while pending:
+            value, depth = pending.pop()
+            if depth > 64:
+                raise ToolProtocolError("tool arguments exceed the maximum nesting depth.")
+            if isinstance(value, dict):
+                pending.extend((child, depth + 1) for child in value.values())
+            elif isinstance(value, list):
+                pending.extend((child, depth + 1) for child in value)
         try:
             encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
             size = len(encoded.encode("utf-8"))
