@@ -129,6 +129,14 @@ class ConversationStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_tool_reviews_owner_execution
                     ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at);
+                CREATE TABLE IF NOT EXISTS conversation_provider_reconciliation_leases (
+                    execution_id TEXT PRIMARY KEY REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    lease_token TEXT NOT NULL,
+                    expires_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_provider_reconciliation_lease_expiry
+                    ON conversation_provider_reconciliation_leases(expires_at);
                 CREATE TABLE IF NOT EXISTS conversation_provider_outcome_evidence (
                     evidence_id TEXT PRIMARY KEY,
                     execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
@@ -572,9 +580,77 @@ class ConversationStore:
             ).fetchall()
         return [{**dict(row), "provider_idempotency": bool(row["provider_idempotency"])} for row in rows]
 
+    def acquire_provider_reconciliation_lease(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        call_id: str, lease_token: str, ttl_seconds: int = 120,
+    ) -> dict[str, Any]:
+        """Claim one unresolved execution for provider lookup across processes."""
+        owner = self._owner(owner_id)
+        for value, label, maximum in (
+            (conversation_id, "conversation_id", 64),
+            (request_id, "request_id", 160),
+            (call_id, "call_id", 64),
+        ):
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError(f"{label} must be non-empty bounded text.")
+        if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
+            raise ValueError("lease_token must be non-empty text of at most 200 characters.")
+        if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 300:
+            raise ValueError("ttl_seconds must be an integer from 5 to 300.")
+        now = time.time()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                execution = db.execute(
+                    """SELECT execution_id, status FROM conversation_tool_executions
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND call_id=?""",
+                    (owner, conversation_id, request_id.strip(), call_id.strip()),
+                ).fetchone()
+                if execution is None:
+                    raise ConversationNotFound("tool execution not found.")
+                if execution["status"] not in {"started", "uncertain"}:
+                    raise ConversationConflict("only unresolved executions can be reconciled.")
+                current = db.execute(
+                    """SELECT lease_token, expires_at FROM conversation_provider_reconciliation_leases
+                       WHERE execution_id=? AND owner_id=?""",
+                    (execution["execution_id"], owner),
+                ).fetchone()
+                if current is not None and current["expires_at"] > now:
+                    raise ConversationConflict("provider reconciliation is already in progress.")
+                db.execute(
+                    """INSERT INTO conversation_provider_reconciliation_leases
+                       (execution_id, owner_id, lease_token, expires_at) VALUES (?, ?, ?, ?)
+                       ON CONFLICT(execution_id) DO UPDATE SET
+                         owner_id=excluded.owner_id, lease_token=excluded.lease_token,
+                         expires_at=excluded.expires_at""",
+                    (execution["execution_id"], owner, lease_token.strip(), now + ttl_seconds),
+                )
+                db.commit()
+                return {"execution_id": execution["execution_id"], "expires_at": now + ttl_seconds}
+            except Exception:
+                db.rollback()
+                raise
+
+    def release_provider_reconciliation_lease(
+        self, *, owner_id: str, execution_id: str, lease_token: str,
+    ) -> bool:
+        """Release only the exact claim; stale workers cannot release replacements."""
+        owner = self._owner(owner_id)
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("execution_id must be non-empty text.")
+        if not isinstance(lease_token, str) or not lease_token.strip():
+            raise ValueError("lease_token must be non-empty text.")
+        with self._connect() as db:
+            cursor = db.execute(
+                """DELETE FROM conversation_provider_reconciliation_leases
+                   WHERE execution_id=? AND owner_id=? AND lease_token=?""",
+                (execution_id, owner, lease_token.strip()),
+            )
+            return cursor.rowcount == 1
+
     def record_provider_outcome_evidence(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        call_id: str, evidence,
+        call_id: str, evidence, reconciliation_lease_token: str,
     ) -> dict[str, Any]:
         """Append typed adapter evidence without mutating execution or authorizing replay."""
         from core.provider_outcome import ProviderOutcomeEvidence
@@ -597,6 +673,15 @@ class ConversationStore:
                 if (evidence.idempotency_key != execution["idempotency_key"]
                         or evidence.arguments_sha256 != execution["arguments_sha256"]):
                     raise ConversationConflict("provider evidence does not match the stored execution fingerprint.")
+                if not isinstance(reconciliation_lease_token, str) or not reconciliation_lease_token.strip():
+                    raise ValueError("reconciliation_lease_token must be non-empty text.")
+                active_claim = db.execute(
+                    """SELECT 1 FROM conversation_provider_reconciliation_leases
+                       WHERE execution_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                    (execution["execution_id"], owner, reconciliation_lease_token.strip(), time.time()),
+                ).fetchone()
+                if active_claim is None:
+                    raise ConversationConflict("provider reconciliation claim expired or is no longer owned by this worker.")
                 # SQLite's IMMEDIATE transaction serializes this check across
                 # processes. Repeated delivery of identical provider evidence
                 # returns the original ledger entry instead of duplicating it.
