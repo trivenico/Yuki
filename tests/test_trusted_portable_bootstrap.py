@@ -154,7 +154,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             run_verified_bundle(
                 self.bundle,
                 self.public_path,
-                "payload.txt",
+                "bin/not-listed",
             )
 
 
