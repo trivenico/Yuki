@@ -58,7 +58,7 @@ class PortableHostPolicyTests(unittest.TestCase):
             "portable_entry.py",
             ["--diagnostic"],
             expected_platform="linux-x86_64",
-            anti_rollback_state_path=str(self.state_path),
+            anti_rollback_state_path=str(self.state_path.resolve()),
         )
 
     def test_rejects_policy_inside_removable_bundle(self):
