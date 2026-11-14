@@ -1,8 +1,12 @@
 """Unit tests for static native loader metadata parsing."""
 from __future__ import annotations
 import unittest
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from scripts.portable_native_audit import (
-    parse_elf_dynamic, parse_macho_load_commands, parse_windows_dependents,
+    audit_bundle, parse_elf_dynamic, parse_macho_load_commands, parse_windows_dependents,
 )
 
 class NativeAuditTests(unittest.TestCase):
@@ -72,6 +76,34 @@ class NativeAuditTests(unittest.TestCase):
         parsed = parse_macho_load_commands(loads, links)
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["install_names"], ["@rpath/libvendor.dylib", "@rpath/libvendor.dylib"])
+
+    def test_macos_audit_inspects_all_universal_binary_architectures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "universal.dylib"
+            binary.write_bytes(bytes((0xCA, 0xFE, 0xBA, 0xBF)))
+            commands = []
+
+            def runner(command, **kwargs):
+                commands.append(command)
+                if "-l" in command:
+                    output = "Load command 1\\n cmd LC_RPATH\\n path @loader_path (offset 12)\\n"
+                else:
+                    output = (
+                        "Universal binary with 2 architectures: [x86_64:arm64]\\n"
+                        "universal.dylib (architecture x86_64):\\n"
+                        "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
+                        "universal.dylib (architecture arm64):\\n"
+                        "\\t@rpath/libvendor.dylib (compatibility version 1.0.0)\\n"
+                    )
+                return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+            with patch("scripts.portable_native_audit.shutil.which", return_value="/usr/bin/otool"):
+                report = audit_bundle(root, "macos", runner=runner)
+
+            self.assertEqual(report["binary_count"], 1)
+            self.assertTrue(all(command[1:3] == ["-arch", "all"] for command in commands))
+            self.assertEqual(len(commands), 2)
 
     def test_windows_parser_reports_imports_without_claiming_resolution(self):
         parsed = parse_windows_dependents(
