@@ -39,6 +39,22 @@ class PortableHostPolicyTests(unittest.TestCase):
             self.policy.chmod(0o600)
             self.public_key.chmod(0o600)
 
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative open semantics")
+    def test_secure_policy_reader_uses_descriptor_relative_file_access(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        content = _read_host_file_secure(
+            self.policy, label="Test policy", max_bytes=64 * 1024
+        )
+        self.assertEqual(json.loads(content.decode("utf-8"))["schema_version"], 1)
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative open semantics")
+    def test_secure_policy_reader_enforces_size_limit(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        with self.assertRaisesRegex(BootstrapError, "exceeds its size limit"):
+            _read_host_file_secure(self.policy, label="Test policy", max_bytes=4)
+
     def test_loads_host_owned_policy_and_pins_launch_parameters(self):
         policy = load_host_policy(self.policy, self.bundle)
         self.assertEqual(policy["public_key"], str(self.public_key.resolve()))
