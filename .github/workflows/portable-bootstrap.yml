@@ -84,4 +84,14 @@ jobs:
           missing = sorted(required - names)
           assert not missing, f"wheel is missing runtime files: {missing}"
           print(f"Verified {len(required)} required runtime files in {wheels[0].name}")
+      - name: Install built wheel and smoke-test runtime imports
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python - <<'PY'
+          import importlib
+          importlib.import_module("main")
+          importlib.import_module("yuki_cli")
+          importlib.import_module("yuki_trust.portable_bootstrap")
+          print("Installed wheel imports: main, yuki_cli, trusted portable bootstrap")
+          PY
           PY
