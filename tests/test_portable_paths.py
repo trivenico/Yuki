@@ -101,7 +101,9 @@ class PortablePathTests(unittest.TestCase):
             python_shim.write_text(
                 "#!/bin/sh\\n"
                 "if [ \"$1\" = \"-c\" ]; then exit 0; fi\\n"
-                "printf '%s|%s|%s\\n' \"$PWD\" \"$YUKI_HOME\" \"$*\" >> \"$YUKI_CAPTURE\"\\n",
+                "mkdir -p \"$YUKI_HOME\"\\n"
+                "printf '%s|%s|%s\\n' \"$PWD\" \"$YUKI_HOME\" \"$*\" >> \"$YUKI_CAPTURE\"\\n"
+                "printf 'started\\n' >> \"$YUKI_HOME/state.txt\"\\n",
                 encoding="utf-8",
             )
             python_shim.chmod(0o755)
@@ -134,7 +136,7 @@ class PortablePathTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             for call in calls:
                 self.assertEqual(call, f"{temp_root}|{data_root}|main.py")
-            self.assertTrue(data_root.is_dir() is False, "launcher should not silently create data storage")
+            self.assertEqual((data_root / "state.txt").read_text(encoding="utf-8").splitlines(), ["started", "started"])
 
 
 if __name__ == "__main__":
