@@ -563,7 +563,7 @@ class ConversationStore:
         owner = self._owner(owner_id)
         with self._connect() as db:
             rows = db.execute(
-                """SELECT call_id, tool_name, arguments_sha256, idempotency_key,
+                """SELECT execution_id, call_id, tool_name, arguments_sha256, idempotency_key,
                           provider_idempotency, status, started_at, updated_at
                    FROM conversation_tool_executions
                    WHERE owner_id=? AND conversation_id=? AND request_id=?
