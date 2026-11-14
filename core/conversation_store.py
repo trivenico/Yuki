@@ -793,10 +793,14 @@ class ConversationStore:
                               call_id, provider, outcome, evidence_sha256, observed_at,
                               provider_reference, recorded_at
                        FROM conversation_provider_outcome_evidence
-                       WHERE execution_id=? AND evidence_sha256=?""",
-                    (execution["execution_id"], evidence.evidence_sha256),
+                       WHERE evidence_sha256=?""",
+                    (evidence.evidence_sha256,),
                 ).fetchone()
                 if previous is not None:
+                    if previous["execution_id"] != execution["execution_id"]:
+                        raise ConversationConflict(
+                            "provider evidence has already been bound to another execution."
+                        )
                     if (previous["provider"] != evidence.provider
                             or previous["outcome"] != evidence.outcome.value
                             or previous["observed_at"] != evidence.observed_at
