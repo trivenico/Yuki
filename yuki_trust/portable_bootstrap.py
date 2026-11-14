@@ -227,11 +227,11 @@ def run_verified_bundle(
     try:
         staged = Path(staged_temp.name)
         executable = staged.joinpath(*relative.parts)
-        if executable.is_symlink() or not executable.is_file():
-            raise BootstrapError("Entrypoint is missing or is not a regular signed file.")
         signed_paths = {item["path"] for item in json.loads((staged / MANIFEST_NAME).read_text(encoding="utf-8"))["files"]}
         if entrypoint not in signed_paths:
             raise BootstrapError("Entrypoint is not part of the signed runtime inventory.")
+        if executable.is_symlink() or not executable.is_file():
+            raise BootstrapError("Entrypoint is missing or is not a regular signed file.")
         if os.name != "nt" and not os.access(executable, os.X_OK):
             raise BootstrapError("Entrypoint is not executable on this host.")
         completed = subprocess.run([str(executable), *(arguments or [])], cwd=staged, check=False)
