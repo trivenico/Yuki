@@ -1019,5 +1019,49 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual([item["status"] for item in resolved], ["uncertain"])
         self.assertEqual(len(model_calls), 2)
 
+
+    def test_only_one_concurrent_worker_can_claim_and_recover_generation(self):
+        conversation_id = self.conversation["conversation_id"]
+        self._seed_interrupted_generation("concurrent-recovery-claim", 0)
+        barrier = threading.Barrier(2)
+
+        def claim(token):
+            barrier.wait(timeout=5)
+            try:
+                self.store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token=token, ttl_seconds=60,
+                )
+                return token
+            except ConversationConflict:
+                return None
+
+        tokens = ("recovery-worker-a", "recovery-worker-b")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(claim, tokens))
+
+        winners = [token for token in outcomes if token is not None]
+        self.assertEqual(len(winners), 1)
+        winner = winners[0]
+        try:
+            summary = ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=winner,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=winner,
+            )
+
+        self.assertEqual(summary.interrupted_generations, 1)
+        events = self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["request_id"], "concurrent-recovery-claim")
+        self.assertEqual(events[0]["outcome"], "interrupted")
+
+
 if __name__ == "__main__":
     unittest.main()
