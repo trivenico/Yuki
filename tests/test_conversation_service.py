@@ -143,6 +143,20 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(renewals), 1)
         self.assertEqual(result["answer"], "renewed response")
 
+    def test_lease_cleanup_failure_does_not_mask_execution_error(self):
+        service = ConversationService(self.store, self.loop)
+        with patch.object(service, "_reply_unleased",
+                          side_effect=RuntimeError("original execution failure")):
+            with patch.object(self.store, "release_generation_lease",
+                              side_effect=OSError("simulated cleanup failure")):
+                with self.assertRaisesRegex(RuntimeError, "original execution failure") as caught:
+                    service.reply(
+                        owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+                        user_text="request", request_id="cleanup-failure",
+                        expected_version=0, tools=[],
+                    )
+        self.assertTrue(any("cleanup also failed" in note for note in getattr(caught.exception, "__notes__", [])))
+
     def test_lease_is_released_if_heartbeat_thread_cannot_start(self):
         service = ConversationService(self.store, self.loop)
         with patch("core.conversation_service.threading.Thread.start",
