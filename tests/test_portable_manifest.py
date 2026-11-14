@@ -37,7 +37,7 @@ class PortableManifestTests(unittest.TestCase):
 
     def test_write_is_deterministic_and_excludes_metadata_files(self):
         first = write_unsigned_manifest(
-            self.root, platform="linux-x86_64", runtime_version="0.1.0"
+            self.root, platform="linux-x86_64", runtime_version="0.1.0", release_sequence=1
         )
         payload = (self.root / "runtime-manifest.json").read_bytes()
         value = json.loads(payload)
@@ -80,9 +80,15 @@ class PortableManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(InputValidationError, "not portable"):
             inventory_bundle(self.root)
 
+    def test_rejects_invalid_release_sequence(self):
+        for sequence in (True, -1, "1"):
+            with self.subTest(sequence=sequence):
+                with self.assertRaises(InputValidationError):
+                    create_unsigned_manifest(self.root, platform="linux-x86_64", runtime_version="0.1.0", release_sequence=sequence)
+
     def test_rejects_empty_metadata(self):
         with self.assertRaises(InputValidationError):
-            create_unsigned_manifest(self.root, platform="", runtime_version="0.1.0")
+            create_unsigned_manifest(self.root, platform="", runtime_version="0.1.0", release_sequence=1)
 
 
 if __name__ == "__main__":
