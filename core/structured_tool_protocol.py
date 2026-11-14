@@ -25,6 +25,10 @@ class ToolProtocolError(ValueError):
     """Raised when a provider response is not a valid structured tool envelope."""
 
 
+class ToolDispatchCancelled(RuntimeError):
+    """Raised when cancellation stops a validated batch before its next side effect."""
+
+
 @dataclass(frozen=True)
 class StructuredToolCall:
     call_id: str
@@ -87,12 +91,18 @@ class StructuredToolProtocol:
             raise TypeError("runtime must be a GuardedToolRuntime.")
         self._runtime = runtime
 
-    def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
+    def dispatch(
+        self, response: str, *, cancellation_requested=None
+    ) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
+        if cancellation_requested is not None and not callable(cancellation_requested):
+            raise TypeError("cancellation_requested must be callable.")
         calls = parse_tool_calls(response)
         results = []
         for call in calls:
+            if cancellation_requested is not None and cancellation_requested():
+                raise ToolDispatchCancelled("tool dispatch cancelled before the next invocation.")
             argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
             output = self._runtime.invoke(call.name, argument)
             results.append(StructuredToolResult(call.call_id, call.name, output))
