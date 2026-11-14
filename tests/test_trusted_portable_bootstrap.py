@@ -140,6 +140,10 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         ):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
+        self.assertEqual(
+            {item["path"] for item in manifest["files"]},
+            {"runtime/python.exe", "portable_entry.py", "payload.txt"},
+        )
 
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
     def test_windows_inventory_rejects_file_symlink(self):
