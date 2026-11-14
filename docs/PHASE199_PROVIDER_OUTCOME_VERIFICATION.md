@@ -116,7 +116,10 @@ A delayed worker therefore cannot append evidence or release a replacement
 worker's claim after its lease expires.
 
 The current claim TTL is bounded to 5–300 seconds (120 seconds by default).
-Adapters must enforce their own connect/read/request timeouts and return
-within the claim window; Python cannot safely terminate arbitrary synchronous
-adapter code. Lease fencing protects persistence if an adapter outlives its
-claim, but does not cancel the external read-only request.
+The reconciler renews the claim in a background heartbeat (30 seconds by
+default) while the adapter lookup is running. Renewal is conditional on the
+same unexpired token; renewal failure is fail-closed and prevents evidence
+persistence. Adapters must still enforce their own connect/read/request
+timeouts: Python cannot safely terminate arbitrary synchronous adapter code.
+Lease fencing protects persistence if an adapter outlives its claim, but does
+not cancel the external read-only request.
