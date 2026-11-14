@@ -834,14 +834,22 @@ class ConversationStore:
 
     def mark_started_tool_executions_uncertain(
         self, *, owner_id: str, conversation_id: str, request_id: str,
+        lease_token: str,
     ) -> int:
-        """Mark in-flight calls uncertain during crash recovery; never replay them."""
+        """Mark in-flight calls uncertain only while the recovery worker owns the lease."""
         owner = self._owner(owner_id)
+        if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
+            raise ValueError("lease_token must be non-empty bounded text.")
         with self._connect() as db:
             cursor = db.execute(
                 """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'""",
-                (self._now(), owner, conversation_id, request_id),
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'
+                     AND EXISTS (
+                       SELECT 1 FROM conversation_generation_leases
+                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?
+                     )""",
+                (self._now(), owner, conversation_id, request_id,
+                 conversation_id, owner, lease_token.strip(), time.time()),
             )
             return cursor.rowcount
 
