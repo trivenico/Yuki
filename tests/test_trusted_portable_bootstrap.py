@@ -132,6 +132,21 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
 
+    def test_inventory_rejects_file_replaced_between_lstat_and_open(self):
+        payload = self.bundle / "payload.txt"
+        outside = self.root / "replacement.txt"
+        outside.write_text("replacement content", encoding="utf-8")
+        original_open = Path.open
+
+        def open_replacement(path, *args, **kwargs):
+            if path == payload and args[:1] == ("rb",):
+                return original_open(outside, *args, **kwargs)
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", new=open_replacement):
+            with self.assertRaisesRegex(BootstrapError, "changed while being opened"):
+                verify_signed_bundle(self.bundle, self.public_path)
+
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point inventory")
     def test_windows_inventory_rejects_file_symlink(self):
         outside = self.root / "outside-payload.txt"
