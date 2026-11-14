@@ -725,6 +725,94 @@ class ProviderOutcomeTests(unittest.TestCase):
                 [],
             )
 
+    def test_conflicting_provider_observations_cannot_be_overridden_by_later_success(self):
+        import tempfile
+        from pathlib import Path
+        from core.conversation_store import ConversationConflict, ConversationStore
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "conflicting-evidence.sqlite3")
+            conversation = store.create_conversation(owner_id="owner-1")
+            conversation_id = conversation["conversation_id"]
+            request_id = "conflicting-provider-observations"
+            store.append_message(
+                owner_id="owner-1", conversation_id=conversation_id,
+                role="user", content="Perform provider action",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            token = "generation-conflicting-evidence"
+            store.acquire_generation_lease(
+                owner_id="owner-1", conversation_id=conversation_id,
+                lease_token=token, ttl_seconds=60,
+            )
+            try:
+                execution = store.begin_tool_execution(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-1",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=token, provider_idempotency=True,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    lease_token=token,
+                )
+
+            observations = [
+                self.evidence(
+                    outcome=ProviderOutcome.UNKNOWN,
+                    evidence_sha256="c" * 64,
+                    idempotency_key=execution["idempotency_key"],
+                ),
+                self.evidence(
+                    outcome=ProviderOutcome.CONFIRMED_COMPLETED,
+                    evidence_sha256="e" * 64,
+                    idempotency_key=execution["idempotency_key"],
+                ),
+            ]
+
+            class Adapter:
+                provider_id = "mail.example"
+
+                def lookup_tool_outcome(self, execution):
+                    return observations.pop(0)
+
+            reconciler = ProviderOutcomeReconciler(
+                store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+            )
+            for _ in range(2):
+                reconciler.reconcile(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-1",
+                )
+
+            ledger = store.list_provider_outcome_evidence(
+                owner_id="owner-1", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-1",
+            )
+            self.assertEqual(
+                {item["outcome"] for item in ledger},
+                {"unknown", "confirmed_completed"},
+            )
+            with self.assertRaisesRegex(ConversationConflict, "unanimous"):
+                store.review_tool_execution(
+                    owner_id="owner-1", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-1",
+                    action="confirm_provider_completed",
+                    reason="A later lookup reported success, but an earlier observation remains unknown.",
+                )
+            execution_rows = store.list_tool_executions(
+                owner_id="owner-1", conversation_id=conversation_id,
+                request_id=request_id,
+            )
+            self.assertEqual(execution_rows[0]["status"], "uncertain")
+
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
             return ProviderOutcomeTests().evidence()
