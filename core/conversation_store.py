@@ -100,6 +100,8 @@ class ConversationStore:
                     call_id TEXT NOT NULL,
                     tool_name TEXT NOT NULL,
                     arguments_sha256 TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    provider_idempotency INTEGER NOT NULL DEFAULT 0 CHECK(provider_idempotency IN (0, 1)),
                     lease_token TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('started', 'completed', 'failed', 'uncertain')),
                     started_at TEXT NOT NULL,
@@ -112,6 +114,15 @@ class ConversationStore:
                 CREATE INDEX IF NOT EXISTS idx_tool_executions_owner_request
                     ON conversation_tool_executions(owner_id, conversation_id, request_id, started_at);
             """)
+            tool_columns = {
+                row["name"] for row in db.execute(
+                    "PRAGMA table_info(conversation_tool_executions)"
+                ).fetchall()
+            }
+            if "idempotency_key" not in tool_columns:
+                db.execute("ALTER TABLE conversation_tool_executions ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''")
+            if "provider_idempotency" not in tool_columns:
+                db.execute("ALTER TABLE conversation_tool_executions ADD COLUMN provider_idempotency INTEGER NOT NULL DEFAULT 0")
 
     @staticmethod
     def _now() -> str:
@@ -414,6 +425,7 @@ class ConversationStore:
     def begin_tool_execution(
         self, *, owner_id: str, conversation_id: str, request_id: str,
         call_id: str, tool_name: str, arguments_sha256: str, lease_token: str,
+        idempotency_key: str, provider_idempotency: bool = False,
     ) -> dict[str, Any]:
         """Durably claim a tool call before its external side effect can begin."""
         owner = self._owner(owner_id)
@@ -423,6 +435,10 @@ class ConversationStore:
         ):
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
                 raise ValueError(f"{label} must be non-empty bounded text.")
+        if not isinstance(idempotency_key, str) or len(idempotency_key) != 64 or any(char not in "0123456789abcdef" for char in idempotency_key):
+            raise ValueError("idempotency_key must be a lowercase SHA-256 hex digest.")
+        if type(provider_idempotency) is not bool:
+            raise ValueError("provider_idempotency must be a boolean.")
         if (not isinstance(arguments_sha256, str) or len(arguments_sha256) != 64
                 or any(char not in "0123456789abcdef" for char in arguments_sha256)):
             raise ValueError("arguments_sha256 must be a lowercase SHA-256 hex digest.")
@@ -451,22 +467,29 @@ class ConversationStore:
                 ).fetchone()
                 if previous is not None:
                     if (previous["tool_name"] != tool_name
-                            or previous["arguments_sha256"] != arguments_sha256):
+                            or previous["arguments_sha256"] != arguments_sha256
+                            or previous["idempotency_key"] != idempotency_key):
                         raise ConversationConflict("tool call ID was reused with different arguments.")
                     db.commit()
                     return {"created": False, "status": previous["status"],
-                            "execution_id": previous["execution_id"]}
+                            "execution_id": previous["execution_id"],
+                            "idempotency_key": previous["idempotency_key"],
+                            "provider_idempotency": bool(previous["provider_idempotency"])}
                 execution_id = str(uuid.uuid4())
                 db.execute(
                     """INSERT INTO conversation_tool_executions
                        (execution_id, conversation_id, owner_id, request_id, call_id,
-                        tool_name, arguments_sha256, lease_token, status, started_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?)""",
+                        tool_name, arguments_sha256, idempotency_key, provider_idempotency,
+                        lease_token, status, started_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?)""",
                     (execution_id, conversation_id, owner, request_id.strip(), call_id.strip(),
-                     tool_name, arguments_sha256, lease_token.strip(), self._now(), self._now()),
+                     tool_name, arguments_sha256, idempotency_key, int(provider_idempotency),
+                     lease_token.strip(), self._now(), self._now()),
                 )
                 db.commit()
-                return {"created": True, "status": "started", "execution_id": execution_id}
+                return {"created": True, "status": "started", "execution_id": execution_id,
+                        "idempotency_key": idempotency_key,
+                        "provider_idempotency": provider_idempotency}
             except Exception:
                 db.rollback()
                 raise
@@ -500,13 +523,14 @@ class ConversationStore:
         owner = self._owner(owner_id)
         with self._connect() as db:
             rows = db.execute(
-                """SELECT call_id, tool_name, arguments_sha256, status, started_at, updated_at
+                """SELECT call_id, tool_name, arguments_sha256, idempotency_key,
+                          provider_idempotency, status, started_at, updated_at
                    FROM conversation_tool_executions
                    WHERE owner_id=? AND conversation_id=? AND request_id=?
                    ORDER BY started_at, call_id""",
                 (owner, conversation_id, request_id),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [{**dict(row), "provider_idempotency": bool(row["provider_idempotency"])} for row in rows]
 
     def mark_started_tool_executions_uncertain(
         self, *, owner_id: str, conversation_id: str, request_id: str,
