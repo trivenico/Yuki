@@ -158,6 +158,17 @@ class ConversationServiceTests(unittest.TestCase):
                     )
         self.assertTrue(any("cleanup also failed" in note for note in getattr(caught.exception, "__notes__", [])))
 
+    def test_lease_cleanup_failure_preserves_errors_without_add_note_support(self):
+        service = ConversationService(self.store, self.loop)
+        original = RuntimeError("original execution failure")
+        original.add_note = None
+        with patch.object(service, "_reply_unleased", side_effect=original):
+            with patch.object(self.store, "release_generation_lease", side_effect=OSError("simulated cleanup failure")):
+                with self.assertRaisesRegex(RuntimeError, "original execution failure") as caught:
+                    service.reply(owner_id="owner-a", conversation_id=self.conversation["conversation_id"], user_text="request", request_id="cleanup-no-add-note", expected_version=0, tools=[])
+        self.assertIs(caught.exception, original)
+
+
     def test_lease_is_released_if_heartbeat_thread_cannot_start(self):
         service = ConversationService(self.store, self.loop)
         with patch("core.conversation_service.threading.Thread.start",
