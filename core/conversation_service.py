@@ -54,6 +54,26 @@ class ConversationService:
             owner_id=owner_id, conversation_id=conversation_id, request_id=request_id.strip()
         )
 
+    def review_tool_execution(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        call_id: str, action: str, reason: str,
+    ) -> dict[str, Any]:
+        self.store.get_conversation(owner_id=owner_id, conversation_id=conversation_id)
+        return self.store.review_tool_execution(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, call_id=call_id, action=action, reason=reason,
+        )
+
+    def tool_execution_reviews(
+        self, *, owner_id: str, conversation_id: str,
+        request_id: str, call_id: str,
+    ) -> list[dict[str, Any]]:
+        self.store.get_conversation(owner_id=owner_id, conversation_id=conversation_id)
+        return self.store.list_tool_execution_reviews(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, call_id=call_id,
+        )
+
     def list(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
         return self.store.list_conversations(owner_id=owner_id, limit=limit)
 
