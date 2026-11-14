@@ -123,7 +123,7 @@ class ConversationStore:
                     owner_id TEXT NOT NULL,
                     request_id TEXT NOT NULL,
                     call_id TEXT NOT NULL,
-                    action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain')),
+                    action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain', 'confirm_provider_completed')),
                     reason TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
@@ -165,6 +165,32 @@ class ConversationStore:
                 db.execute("ALTER TABLE conversation_tool_executions ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''")
             if "provider_idempotency" not in tool_columns:
                 db.execute("ALTER TABLE conversation_tool_executions ADD COLUMN provider_idempotency INTEGER NOT NULL DEFAULT 0")
+            review_schema = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_tool_reviews'"
+            ).fetchone()
+            if review_schema and "'confirm_provider_completed'" not in (review_schema["sql"] or ""):
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_legacy")
+                db.execute("""CREATE TABLE conversation_tool_reviews (
+                    review_id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL REFERENCES conversation_tool_executions(execution_id) ON DELETE CASCADE,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('acknowledge_uncertain', 'confirm_provider_completed')),
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )""")
+                db.execute("""INSERT INTO conversation_tool_reviews
+                    (review_id, execution_id, conversation_id, owner_id, request_id,
+                     call_id, action, reason, created_at)
+                    SELECT review_id, execution_id, conversation_id, owner_id, request_id,
+                           call_id, action, reason, created_at
+                    FROM conversation_tool_reviews_legacy""")
+                db.execute("DROP TABLE conversation_tool_reviews_legacy")
+                db.execute("CREATE INDEX idx_tool_reviews_owner_execution ON conversation_tool_reviews(owner_id, conversation_id, request_id, call_id, created_at)")
+                db.commit()
 
     @staticmethod
     def _now() -> str:
