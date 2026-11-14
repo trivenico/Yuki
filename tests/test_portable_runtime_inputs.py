@@ -101,7 +101,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertTrue(result["hash_checking"])
         self.assertTrue(result["atomic_publish"])
         self.assertTrue((target / "installed.marker").is_file())
-        self.assertEqual(Path(command[command.index("--target") + 1]).parent, self.root)
+        self.assertEqual(Path(command[command.index("--target") + 1]).parent.resolve(), self.root.resolve())
 
     def test_installer_rejects_failed_pip_execution(self):
         self._write_lock()
