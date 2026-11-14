@@ -457,11 +457,11 @@ class ConversationStoreTests(unittest.TestCase):
         ))
         self.assertTrue(self.store.finish_generation(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
-            request_id="checkpoint-1", status="interrupted",
+            request_id="checkpoint-1", status="interrupted", lease_token="checkpoint-worker",
         ))
         self.assertFalse(self.store.finish_generation(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
-            request_id="checkpoint-1", status="completed",
+            request_id="checkpoint-1", status="completed", lease_token="checkpoint-worker",
         ))
         self.assertEqual(self.store.list_interrupted_generations(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"]
