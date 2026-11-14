@@ -58,7 +58,7 @@ class PortableEntryTests(unittest.TestCase):
         def register(path):
             calls.append(path)
             return Handle()
-        expected = [str(self.root / "runtime"), str(self.root / "native-libs")]
+        expected = [str((self.root / "runtime").resolve()), str((self.root / "native-libs").resolve())]
         first = configure_native_libraries(self.root, platform_name="nt", add_dll_directory=register)
         second = configure_native_libraries(self.root, platform_name="nt", add_dll_directory=register)
         self.assertEqual(first, expected)
@@ -95,7 +95,7 @@ class PortableEntryTests(unittest.TestCase):
         bundled_main = self.root / "site-packages" / "main.py"
         bundled_main.write_text(
             "import os\nfrom pathlib import Path\n"
-            "Path(os.environ['YUKI_SMOKE_MARKER']).write_text('bundled', encoding='utf-8')\n"
+            "def main():\n    Path(os.environ['YUKI_SMOKE_MARKER']).write_text('bundled', encoding='utf-8')\n    return 0\n"
         )
         hostile = self.root.parent / "hostile"
         hostile.mkdir()
