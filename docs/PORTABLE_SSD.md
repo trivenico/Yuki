@@ -142,13 +142,17 @@ The bootstrap can be exercised from an independently installed host package:
 python -m yuki_trust.portable_bootstrap \\
   --bundle /media/Yuki/YukiRuntime \\
   --public-key /etc/yuki/release-ed25519-public.pem \\
-  --entrypoint runtime/bin/python \\
-  --expected-platform linux-x86_64 -- -m main
+  --anti-rollback-state /var/lib/yuki/release-state.json \\
+  --python runtime/bin/python \\
+  --entrypoint portable_entry.py \\
+  --expected-platform linux-x86_64
 ```
 
-On Windows, use the host-installed Python module and a signed Windows runtime
-entrypoint, for example `runtime/python.exe`, with `-- -m main`. The paths
-and entrypoint must match the actual signed bundle layout. Install the
+On Windows, use the host-installed Python module with `--python runtime/python.exe`,
+`--entrypoint portable_entry.py`, and a persistent host state path such as
+`C:\\ProgramData\\Yuki\\release-state.json`. The interpreter and entrypoint
+must both be listed in the signed inventory. The anti-rollback state must live
+outside the removable bundle in a protected host-owned directory. Install the
 `portable-bootstrap` optional dependency on the host from a trusted,
 authenticated Yuki distribution. The host installer must supply an exact platform identifier (for
 example `windows-x86_64`, `linux-x86_64`, or `macos-arm64`); the bootstrap
@@ -162,7 +166,8 @@ module, no signed host installer/package or OS-authenticated launcher has
 been published, and the production release key has not been provisioned.
 The host bootstrap itself must be installed and updated through a trusted
 channel independent of the removable drive. A malicious or compromised host
-can still replace the bootstrap or its trust anchor. Anti-rollback, key
-rotation/revocation, per-platform runtime artifacts, and clean-machine
-end-to-end release tests remain release blockers. Do not treat this PR as
+can still replace the bootstrap or its trust anchor. Key rotation/revocation, Windows ACL provisioning, per-platform runtime
+artifacts, and clean-machine end-to-end release tests remain release blockers.
+The local anti-rollback state detects older or equivocal signed releases, but
+cannot by itself prevent privileged deletion or disk-snapshot rollback. Do not treat this PR as
 certifying the current SSD launcher as secure against a malicious USB.
