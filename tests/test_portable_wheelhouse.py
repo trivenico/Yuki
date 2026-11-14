@@ -50,6 +50,38 @@ class PortableWheelhouseTests(unittest.TestCase):
         self.assertTrue(report["atomic_publish"])
         self.assertTrue((self.wheelhouse / self.wheel.name).is_file())
 
+    def test_passes_multiple_compatible_platform_and_abi_tags(self):
+        captured = {}
+        def runner(command, **kwargs):
+            captured["command"] = command
+            return self._runner(command, **kwargs)
+        build_wheelhouse(
+            self.lock, self.wheelhouse,
+            platform=["manylinux_2_28_x86_64", "manylinux2014_x86_64"],
+            python_version="3.12", implementation="cp",
+            abi=["cp312", "abi3"], runner=runner,
+        )
+        command = captured["command"]
+        self.assertEqual(
+            [command[i + 1] for i, value in enumerate(command[:-1]) if value == "--platform"],
+            ["manylinux_2_28_x86_64", "manylinux2014_x86_64"],
+        )
+        self.assertEqual(
+            [command[i + 1] for i, value in enumerate(command[:-1]) if value == "--abi"],
+            ["cp312", "abi3"],
+        )
+
+    def test_rejects_duplicate_compatibility_tags_before_download(self):
+        called = []
+        with self.assertRaisesRegex(InputValidationError, "duplicate"):
+            build_wheelhouse(
+                self.lock, self.wheelhouse,
+                platform=["manylinux_2_28_x86_64", "manylinux_2_28_x86_64"],
+                python_version="3.12", implementation="cp", abi="cp312",
+                runner=lambda *a, **k: called.append(True),
+            )
+        self.assertEqual(called, [])
+
     def test_failed_download_does_not_publish_destination(self):
         def fail(command, **kwargs):
             return subprocess.CompletedProcess(command, 1, "", "download failed")

@@ -64,14 +64,24 @@ def _validate_index_url(value: str | None) -> str | None:
     return value
 
 
+def _normalize_tags(value: str | list[str] | tuple[str, ...], label: str) -> list[str]:
+    """Normalize one or more pip compatibility tags and reject ambiguity."""
+    values = [value] if isinstance(value, str) else list(value)
+    if not values or any(not isinstance(item, str) or not _TOKEN.fullmatch(item) for item in values):
+        raise InputValidationError(f"Target {label} must contain one or more valid tags.")
+    if len(set(values)) != len(values):
+        raise InputValidationError(f"Target {label} contains duplicate tags.")
+    return values
+
+
 def build_wheelhouse(
     lock_file: Path,
     destination: Path,
     *,
-    platform: str,
+    platform: str | list[str] | tuple[str, ...],
     python_version: str,
     implementation: str,
-    abi: str,
+    abi: str | list[str] | tuple[str, ...],
     index_url: str | None = None,
     timeout_seconds: int = 1800,
     runner=subprocess.run,
@@ -83,8 +93,9 @@ def build_wheelhouse(
     parent = destination.parent.resolve(strict=True)
     if not destination.name or destination.name in {".", ".."}:
         raise InputValidationError("Wheelhouse destination name is invalid.")
-    for label, value in (("platform", platform), ("Python version", python_version),
-                         ("implementation", implementation), ("ABI", abi)):
+    platforms = _normalize_tags(platform, "platform")
+    abis = _normalize_tags(abi, "ABI")
+    for label, value in (("Python version", python_version), ("implementation", implementation)):
         if not isinstance(value, str) or not _TOKEN.fullmatch(value):
             raise InputValidationError(f"Target {label} contains unsupported characters.")
     if not re.fullmatch(r"[0-9]+\.[0-9]+", python_version):
@@ -99,10 +110,13 @@ def build_wheelhouse(
         sys.executable, "-I", "-m", "pip", "download", "--isolated",
         "--require-hashes", "--only-binary=:all:", "--no-deps", "--no-cache-dir",
         "--disable-pip-version-check", "--no-input",
-        "--platform", platform, "--python-version", python_version,
-        "--implementation", implementation, "--abi", abi,
+        "--python-version", python_version, "--implementation", implementation,
         "--dest", str(stage), "--requirement", str(lock_file),
     ]
+    for tag in platforms:
+        command.extend(["--platform", tag])
+    for tag in abis:
+        command.extend(["--abi", tag])
     if index_url:
         command.extend(["--index-url", index_url])
     environment = {
@@ -133,10 +147,10 @@ def build_wheelhouse(
         raise
     return {
         "destination": str(destination),
-        "platform": platform,
+        "platforms": platforms,
         "python_version": python_version,
         "implementation": implementation,
-        "abi": abi,
+        "abis": abis,
         "wheel_count": report["wheel_count"],
         "requirement_count": report["requirement_count"],
         "hash_checking": True,
@@ -151,10 +165,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock", required=True, type=Path)
     parser.add_argument("--destination", required=True, type=Path)
-    parser.add_argument("--platform", required=True)
+    parser.add_argument("--platform", required=True, action="append", help="Target platform tag; repeat for compatible tags.")
     parser.add_argument("--python-version", required=True)
     parser.add_argument("--implementation", default="cp")
-    parser.add_argument("--abi", required=True)
+    parser.add_argument("--abi", required=True, action="append", help="Target ABI tag; repeat for compatible tags.")
     parser.add_argument("--index-url")
     parser.add_argument("--timeout", type=int, default=1800)
     args = parser.parse_args(argv)
