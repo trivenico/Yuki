@@ -1,4 +1,6 @@
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import patch
 import unittest
 from pathlib import Path
@@ -179,6 +181,39 @@ class ConversationStoreTests(unittest.TestCase):
                     request_id="checkpoint-fence", checkpoint=checkpoint,
                     lease_token="new-checkpoint-worker",
                 ))
+
+    def test_concurrent_duplicate_tool_claims_create_exactly_one_execution(self):
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "concurrent-tool-claim"
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=conversation_id,
+            role="user", content="run once", idempotency_key="user:concurrent-tool-claim",
+            expected_version=0, generation_request_id=request_id,
+        )
+        self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="concurrent-claim-worker", ttl_seconds=30,
+        )
+        barrier = Barrier(2)
+
+        def claim():
+            barrier.wait(timeout=5)
+            return self.store.begin_tool_execution(
+                owner_id=self.owner, conversation_id=conversation_id,
+                request_id=request_id, call_id="tool-call-1", tool_name="send_email",
+                arguments_sha256="a" * 64, lease_token="concurrent-claim-worker",
+                idempotency_key="b" * 64,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: claim(), range(2)))
+
+        self.assertEqual(sum(1 for result in results if result["created"]), 1)
+        self.assertEqual(len({result["execution_id"] for result in results}), 1)
+        self.assertEqual({result["status"] for result in results}, {"started"})
+        self.assertEqual(len(self.store.list_tool_executions(
+            owner_id=self.owner, conversation_id=conversation_id, request_id=request_id,
+        )), 1)
 
     def test_assistant_message_commit_requires_active_matching_lease(self):
         conversation_id = self.conversation["conversation_id"]
