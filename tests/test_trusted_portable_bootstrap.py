@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -117,6 +118,16 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             encoding="ascii",
         )
         with self.assertRaisesRegex(BootstrapError, "duplicate JSON object keys"):
+            verify_signed_bundle(self.bundle, self.public_path)
+
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "case-insensitive filesystems cannot represent this collision")
+    def test_rejects_case_colliding_directory_components(self):
+        (self.bundle / "Alpha").mkdir()
+        (self.bundle / "alpha").mkdir()
+        (self.bundle / "Alpha" / "first.bin").write_bytes(b"first")
+        (self.bundle / "alpha" / "second.bin").write_bytes(b"second")
+        self._sign_bundle()
+        with self.assertRaisesRegex(BootstrapError, "colliding case-insensitive"):
             verify_signed_bundle(self.bundle, self.public_path)
 
     def test_rejects_tampered_payload(self):
