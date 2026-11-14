@@ -30,11 +30,11 @@ class ProviderOutcomeTests(unittest.TestCase):
 
     def test_explicit_adapter_returns_typed_unknown_without_retry(self):
         calls = []
+        evidence = self.evidence()
         class Adapter:
             def lookup_tool_outcome(self, execution):
                 calls.append(execution["execution_id"])
-                return self.evidence()
-            evidence = self.evidence
+                return evidence
         result = verify_provider_outcome(Adapter(), self.execution)
         self.assertEqual(result.outcome, ProviderOutcome.UNKNOWN)
         self.assertEqual(calls, ["execution-1"])
