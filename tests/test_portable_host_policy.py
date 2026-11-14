@@ -99,6 +99,30 @@ class PortableHostPolicyTests(unittest.TestCase):
             "rejected POSIX secure reads leaked file descriptors",
         )
 
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-relative read semantics")
+    def test_posix_secure_reader_rejects_in_place_mutation_during_read(self):
+        import os as os_module
+
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        original = os_module.read
+        mutated = False
+
+        def mutate_after_first_read(fd, size):
+            nonlocal mutated
+            chunk = original(fd, size)
+            if chunk and not mutated:
+                mutated = True
+                self.policy.write_bytes(b"X" * self.policy.stat().st_size)
+            return chunk
+
+        with patch("os.read", side_effect=mutate_after_first_read):
+            with self.assertRaisesRegex(BootstrapError, "changed while being read"):
+                _read_host_file_secure(
+                    self.policy, label="Test policy", max_bytes=64 * 1024
+                )
+        self.assertTrue(mutated, "test did not mutate the file during the read")
+
     @unittest.skipUnless(os.name == "nt", "Windows native handle read semantics")
     def test_windows_secure_reader_reads_regular_file_and_enforces_size_limit(self):
         from yuki_trust.portable_host import _read_host_file_secure
