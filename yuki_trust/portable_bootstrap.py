@@ -262,41 +262,57 @@ def stage_verified_bundle(
 def run_verified_bundle(
     bundle: str | Path,
     public_key_path: str | Path,
+    python_executable: str,
     entrypoint: str,
     arguments: list[str] | None = None,
     *,
     expected_platform: str | None = None,
 ) -> int:
-    if not isinstance(entrypoint, str) or not entrypoint or "\\" in entrypoint:
-        raise BootstrapError("Entrypoint must be a canonical relative path inside the signed bundle.")
-    relative = PurePosixPath(entrypoint)
-    if relative.is_absolute() or any(part in {"", ".", ".."} for part in entrypoint.split("/")) or relative.as_posix() != entrypoint:
-        raise BootstrapError("Entrypoint must be a canonical relative path inside the signed bundle.")
+    def validate_relative(value: str, label: str) -> PurePosixPath:
+        if not isinstance(value, str) or not value or "\\" in value:
+            raise BootstrapError(f"{label} must be a canonical relative path inside the signed bundle.")
+        relative = PurePosixPath(value)
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in value.split("/")) or relative.as_posix() != value:
+            raise BootstrapError(f"{label} must be a canonical relative path inside the signed bundle.")
+        return relative
 
+    python_relative = validate_relative(python_executable, "Python interpreter")
+    entry_relative = validate_relative(entrypoint, "Entrypoint")
     staged_temp = stage_verified_bundle(
         bundle, public_key_path, expected_platform=expected_platform
     )
     try:
         staged = Path(staged_temp.name)
-        executable = staged.joinpath(*relative.parts)
-        signed_paths = {item["path"] for item in json.loads((staged / MANIFEST_NAME).read_text(encoding="utf-8"))["files"]}
-        if entrypoint not in signed_paths:
-            raise BootstrapError("Entrypoint is not part of the signed runtime inventory.")
-        if executable.is_symlink() or not executable.is_file():
-            raise BootstrapError("Entrypoint is missing or is not a regular signed file.")
-        if os.name != "nt" and not os.access(executable, os.X_OK):
-            raise BootstrapError("Entrypoint is not executable on this host.")
-        completed = subprocess.run([str(executable), *(arguments or [])], cwd=staged, check=False)
+        manifest = json.loads((staged / MANIFEST_NAME).read_text(encoding="utf-8"))
+        signed_paths = {item["path"] for item in manifest["files"]}
+        for value, relative, label in (
+            (python_executable, python_relative, "Python interpreter"),
+            (entrypoint, entry_relative, "Entrypoint"),
+        ):
+            if value not in signed_paths:
+                raise BootstrapError(f"{label} is not part of the signed runtime inventory.")
+            candidate = staged.joinpath(*relative.parts)
+            if candidate.is_symlink() or not candidate.is_file():
+                raise BootstrapError(f"{label} is missing or is not a regular signed file.")
+        interpreter = staged.joinpath(*python_relative.parts)
+        script = staged.joinpath(*entry_relative.parts)
+        if os.name != "nt" and not os.access(interpreter, os.X_OK):
+            raise BootstrapError("Signed Python interpreter is not executable on this host.")
+        completed = subprocess.run(
+            [str(interpreter), "-I", str(script), *(arguments or [])],
+            cwd=staged,
+            check=False,
+        )
         return int(completed.returncode)
     finally:
         staged_temp.cleanup()
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Authenticate and launch a signed Yuki portable runtime.")
     parser.add_argument("--bundle", required=True, type=Path, help="Path to the removable runtime bundle")
     parser.add_argument("--public-key", required=True, type=Path, help="Independently provisioned host trust anchor")
-    parser.add_argument("--entrypoint", required=True, help="Executable path relative to the signed bundle")
+    parser.add_argument("--python", required=True, help="Signed bundled Python interpreter path relative to the bundle")
+    parser.add_argument("--entrypoint", required=True, help="Signed Python script path relative to the bundle")
     parser.add_argument(
         "--expected-platform",
         required=True,
@@ -309,6 +325,7 @@ def main() -> int:
         return run_verified_bundle(
             args.bundle,
             args.public_key,
+            args.python,
             args.entrypoint,
             forwarded,
             expected_platform=args.expected_platform,

@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from yuki_trust.portable_bootstrap import (
@@ -29,14 +30,21 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.bundle = self.root / "bundle"
         self.bundle.mkdir()
-        self.payload = self.bundle / "bin"
-        self.payload.mkdir()
-        self.entrypoint = self.payload / ("yuki.cmd" if os.name == "nt" else "yuki")
+        self.runtime = self.bundle / "runtime"
+        self.runtime.mkdir()
+        self.python_executable = self.runtime / ("python.exe" if os.name == "nt" else "python")
         if os.name == "nt":
-            self.entrypoint.write_text("@echo off\r\necho YUKI_BOOTSTRAP_OK\r\n", encoding="utf-8")
+            self.python_executable.write_bytes(b"test-only interpreter placeholder")
         else:
-            self.entrypoint.write_text("#!/bin/sh\nprintf 'YUKI_BOOTSTRAP_OK\\n'\n", encoding="utf-8")
-            self.entrypoint.chmod(0o755)
+            self.python_executable.write_text(
+                "#!/bin/sh\nexec " + __import__("shlex").quote(sys.executable) + ' "$@"\n',
+                encoding="utf-8",
+            )
+            self.python_executable.chmod(0o755)
+        self.entrypoint = self.bundle / "portable_entry.py"
+        self.entrypoint.write_text(
+            "print('YUKI_BOOTSTRAP_OK')\n", encoding="utf-8"
+        )
         (self.bundle / "payload.txt").write_text("verified payload", encoding="utf-8")
 
         self.private_key = Ed25519PrivateKey.generate()
@@ -236,15 +244,54 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         result = run_verified_bundle(
             self.bundle,
             self.public_path,
-            "bin/yuki",
+            "runtime/python",
+            "portable_entry.py",
         )
         self.assertEqual(result, 0)
+
+    @unittest.skipUnless(os.name == "nt", "Windows interpreter invocation contract")
+    def test_windows_launches_signed_interpreter_with_isolated_entrypoint(self):
+        with patch("yuki_trust.portable_bootstrap.subprocess.run") as run:
+            run.return_value.returncode = 0
+            result = run_verified_bundle(
+                self.bundle,
+                self.public_path,
+                "runtime/python.exe",
+                "portable_entry.py",
+                ["--diagnostic"],
+            )
+
+        self.assertEqual(result, 0)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        options = run.call_args.kwargs
+        self.assertEqual(Path(command[0]).name, "python.exe")
+        self.assertEqual(command[1], "-I")
+        self.assertEqual(Path(command[2]).name, "portable_entry.py")
+        self.assertEqual(command[3:], ["--diagnostic"])
+        self.assertEqual(Path(options["cwd"]), Path(command[0]).parents[1])
+        self.assertFalse(Path(command[0]).is_relative_to(self.bundle))
+
+    def test_rejects_backslash_paths_before_staging(self):
+        for interpreter, entrypoint in (
+            ("runtime\\python.exe", "portable_entry.py"),
+            ("runtime/python", "folder\\portable_entry.py"),
+        ):
+            with self.subTest(interpreter=interpreter, entrypoint=entrypoint):
+                with self.assertRaisesRegex(BootstrapError, "canonical relative path"):
+                    run_verified_bundle(
+                        self.bundle,
+                        self.public_path,
+                        interpreter,
+                        entrypoint,
+                    )
 
     def test_rejects_unsigned_or_unlisted_entrypoint(self):
         with self.assertRaisesRegex(BootstrapError, "not part of the signed"):
             run_verified_bundle(
                 self.bundle,
                 self.public_path,
+                "runtime/python",
                 "bin/not-listed",
             )
 
