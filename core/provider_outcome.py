@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 import re
+import sys
 import threading
 import uuid
 from typing import Any, Protocol, runtime_checkable
@@ -204,7 +205,15 @@ class ProviderOutcomeReconciler:
             stop_renewal.set()
             if heartbeat_started:
                 heartbeat.join()
-            self._store.release_provider_reconciliation_lease(
-                owner_id=owner_id, execution_id=execution["execution_id"],
-                lease_token=lease_token,
-            )
+            active_error = sys.exc_info()[1]
+            try:
+                self._store.release_provider_reconciliation_lease(
+                    owner_id=owner_id, execution_id=execution["execution_id"],
+                    lease_token=lease_token,
+                )
+            except BaseException as cleanup_error:
+                if active_error is None:
+                    raise
+                add_note = getattr(active_error, "add_note", None)
+                if callable(add_note):
+                    add_note(f"Provider reconciliation lease cleanup also failed: {cleanup_error!r}")
