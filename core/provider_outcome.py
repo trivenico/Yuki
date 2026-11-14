@@ -231,11 +231,8 @@ class ProviderOutcomeReconciler:
             raise ValueError("tool execution store returned an ambiguous call identity.")
         execution = _validate_reconciliation_record(matches[0], call_id)
         lease_token = uuid.uuid4().hex
-        self._store.acquire_provider_reconciliation_lease(
-            owner_id=owner_id, conversation_id=conversation_id,
-            request_id=request_id, call_id=call_id, lease_token=lease_token,
-            ttl_seconds=self._lease_ttl_seconds,
-        )
+        # Allocate all heartbeat primitives before claiming the durable lease so
+        # local resource-construction failures cannot strand a claim.
         stop_renewal = threading.Event()
         lease_lost = threading.Event()
 
@@ -255,6 +252,11 @@ class ProviderOutcomeReconciler:
             daemon=True,
         )
         heartbeat_started = False
+        self._store.acquire_provider_reconciliation_lease(
+            owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, call_id=call_id, lease_token=lease_token,
+            ttl_seconds=self._lease_ttl_seconds,
+        )
         try:
             heartbeat.start()
             heartbeat_started = True
