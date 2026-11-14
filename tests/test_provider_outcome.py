@@ -1061,6 +1061,97 @@ class ProviderOutcomeTests(unittest.TestCase):
             self.assertEqual([item[0] for item in outcomes].count("lost"), 1)
             self.assertFalse(any(item[0] == "error" for item in outcomes))
 
+    def test_expired_reconciliation_worker_is_fenced_after_claim_takeover(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.conversation_store import ConversationConflict, ConversationStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "expired-provider-claim.sqlite3")
+            conversation = store.create_conversation(owner_id="owner-fence")
+            conversation_id = conversation["conversation_id"]
+            request_id = "expired-provider-claim"
+            store.append_message(
+                owner_id="owner-fence", conversation_id=conversation_id,
+                role="user", content="Check provider execution",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            generation_token = "generation-fence"
+            store.acquire_generation_lease(
+                owner_id="owner-fence", conversation_id=conversation_id,
+                lease_token=generation_token, ttl_seconds=60,
+            )
+            try:
+                execution = store.begin_tool_execution(
+                    owner_id="owner-fence", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-fence",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=generation_token,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-fence", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=generation_token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-fence", conversation_id=conversation_id,
+                    lease_token=generation_token,
+                )
+
+            stale_evidence = self.evidence(
+                execution_id=execution["execution_id"],
+                idempotency_key=execution["idempotency_key"],
+                arguments_sha256=execution["arguments_sha256"],
+                evidence_sha256="d" * 64,
+            )
+            replacement_evidence = self.evidence(
+                execution_id=execution["execution_id"],
+                idempotency_key=execution["idempotency_key"],
+                arguments_sha256=execution["arguments_sha256"],
+                evidence_sha256="e" * 64,
+            )
+            with patch("core.conversation_store.time.time", side_effect=[100.0, 106.0, 106.0]):
+                store.acquire_provider_reconciliation_lease(
+                    owner_id="owner-fence", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-fence",
+                    lease_token="expired-worker", ttl_seconds=5,
+                )
+                store.acquire_provider_reconciliation_lease(
+                    owner_id="owner-fence", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-fence",
+                    lease_token="replacement-worker", ttl_seconds=30,
+                )
+                with self.assertRaisesRegex(ConversationConflict, "expired or is no longer owned"):
+                    store.record_provider_outcome_evidence(
+                        owner_id="owner-fence", conversation_id=conversation_id,
+                        request_id=request_id, call_id="call-fence",
+                        evidence=stale_evidence,
+                        reconciliation_lease_token="expired-worker",
+                    )
+                self.assertFalse(store.release_provider_reconciliation_lease(
+                    owner_id="owner-fence", execution_id=execution["execution_id"],
+                    lease_token="expired-worker",
+                ))
+                recorded = store.record_provider_outcome_evidence(
+                    owner_id="owner-fence", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-fence",
+                    evidence=replacement_evidence,
+                    reconciliation_lease_token="replacement-worker",
+                )
+                self.assertEqual(recorded["evidence_sha256"], "e" * 64)
+                self.assertTrue(store.release_provider_reconciliation_lease(
+                    owner_id="owner-fence", execution_id=execution["execution_id"],
+                    lease_token="replacement-worker",
+                ))
+            ledger = store.list_provider_outcome_evidence(
+                owner_id="owner-fence", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-fence",
+            )
+            self.assertEqual(len(ledger), 1)
+            self.assertEqual(ledger[0]["evidence_sha256"], "e" * 64)
+
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
             return ProviderOutcomeTests().evidence()
