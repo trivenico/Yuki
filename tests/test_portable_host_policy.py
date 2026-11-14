@@ -49,6 +49,17 @@ class PortableHostPolicyTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(content.decode("utf-8"))["schema_version"], 1)
 
+    @unittest.skipIf(os.name == "nt" or not hasattr(os, "mkfifo"), "POSIX FIFO semantics")
+    def test_posix_secure_reader_rejects_fifo_without_blocking(self):
+        from yuki_trust.portable_host import _read_host_file_secure
+
+        self.policy.unlink()
+        os.mkfifo(self.policy, 0o600)
+        with self.assertRaisesRegex(BootstrapError, "regular file"):
+            _read_host_file_secure(
+                self.policy, label="Test policy", max_bytes=64 * 1024
+            )
+
     @unittest.skipIf(os.name == "nt", "POSIX no-follow open semantics")
     def test_secure_policy_reader_rejects_symlinked_file_and_parent(self):
         from yuki_trust.portable_host import _read_host_file_secure
