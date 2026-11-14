@@ -6,6 +6,7 @@ command does not install or authenticate its own bootstrap package.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import hmac
 import json
@@ -124,10 +125,15 @@ def _validate_public_key(source: Path) -> bytes:
 def _apply_windows_acl(path: Path) -> None:
     if os.name != "nt":
         return
-    sid = subprocess.run(
+    identity = subprocess.run(
         ["whoami", "/user", "/fo", "csv", "/nh"],
         check=True, capture_output=True, text=True, timeout=10,
-    ).stdout.strip().split(",")[-1].strip().strip('"')
+    ).stdout
+    try:
+        rows = list(csv.reader(identity.splitlines()))
+        sid = rows[-1][-1].strip() if rows and rows[-1] else ""
+    except (csv.Error, IndexError):
+        sid = ""
     if not sid.startswith("S-1-"):
         raise BootstrapError("Unable to determine the current Windows user SID.")
     subprocess.run(
