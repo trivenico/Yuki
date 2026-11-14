@@ -855,12 +855,14 @@ class ConversationStore:
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        checkpoint: dict[str, Any],
+        checkpoint: dict[str, Any], lease_token: str,
     ) -> bool:
-        """Persist a bounded, non-sensitive execution checkpoint for recovery."""
+        """Persist a bounded checkpoint only while this worker owns the live generation lease."""
         owner = self._owner(owner_id)
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
+        if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
+            raise ValueError("lease_token must be non-empty bounded text.")
         if not isinstance(checkpoint, dict) or len(checkpoint) > 16:
             raise ValueError("checkpoint must be a small object.")
         import json
@@ -871,8 +873,13 @@ class ConversationStore:
             cursor = db.execute(
                 """UPDATE conversation_generation_runs
                    SET checkpoint=?, updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (encoded, self._now(), owner, conversation_id, request_id.strip()),
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'
+                     AND EXISTS (
+                       SELECT 1 FROM conversation_generation_leases
+                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?
+                     )""",
+                (encoded, self._now(), owner, conversation_id, request_id.strip(),
+                 conversation_id, owner, lease_token.strip(), time.time()),
             )
             return cursor.rowcount == 1
 
