@@ -36,13 +36,13 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             self.python_executable.write_bytes(b"test-only interpreter placeholder")
         else:
             self.python_executable.write_text(
-                "#!/bin/sh\\nexec " + __import__("shlex").quote(sys.executable) + ' "$@"\\n',
+                "#!/bin/sh\nexec " + __import__("shlex").quote(sys.executable) + ' "$@"\n',
                 encoding="utf-8",
             )
             self.python_executable.chmod(0o755)
         self.entrypoint = self.bundle / "portable_entry.py"
         self.entrypoint.write_text(
-            "print('YUKI_BOOTSTRAP_OK')\\n", encoding="utf-8"
+            "print('YUKI_BOOTSTRAP_OK')\n", encoding="utf-8"
         )
         (self.bundle / "payload.txt").write_text("verified payload", encoding="utf-8")
 
