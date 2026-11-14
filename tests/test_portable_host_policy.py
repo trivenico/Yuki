@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -91,6 +92,46 @@ class PortableHostPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "directory"):
             _read_host_file_secure(
                 self.trust_dir, label="Test policy", max_bytes=64 * 1024
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows native handle copy semantics")
+    def test_windows_secure_copy_hashes_source_and_creates_target_exclusively(self):
+        from yuki_trust.portable_host import _copy_windows_file_handle_secure
+
+        source = self.trust_dir / "source.bin"
+        target = self.bundle / "copied.bin"
+        payload = b"authenticated portable payload"
+        source.write_bytes(payload)
+        _copy_windows_file_handle_secure(
+            source,
+            target,
+            label="Test payload",
+            expected_size=len(payload),
+            expected_sha256=hashlib.sha256(payload).hexdigest(),
+        )
+        self.assertEqual(target.read_bytes(), payload)
+        with self.assertRaisesRegex(BootstrapError, "securely staged"):
+            _copy_windows_file_handle_secure(
+                source,
+                target,
+                label="Test payload",
+                expected_size=len(payload),
+                expected_sha256=hashlib.sha256(payload).hexdigest(),
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows native handle copy semantics")
+    def test_windows_secure_copy_rejects_source_symlink(self):
+        from yuki_trust.portable_host import _copy_windows_file_handle_secure
+
+        source = self.trust_dir / "source-link.bin"
+        target = self.bundle / "copied.bin"
+        try:
+            source.symlink_to(self.public_key)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows file symlink creation is unavailable")
+        with self.assertRaisesRegex(BootstrapError, "reparse point"):
+            _copy_windows_file_handle_secure(
+                source, target, label="Test payload", max_bytes=1024
             )
 
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point semantics")
