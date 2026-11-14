@@ -242,13 +242,12 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
             "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
             "--no-input", "--no-warn-script-location", "--target", str(stage), "-r", str(lock_file),
         ]
-    environment = {
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONNOUSERSITE": "1",
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PIP_CONFIG_FILE": os.devnull,
-    }
-    try:
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PIP_CONFIG_FILE": os.devnull,
+        }
         try:
             completed = runner(command, check=False, capture_output=True, text=True, timeout=timeout_seconds, env=environment, shell=False)
         except subprocess.TimeoutExpired as exc:
