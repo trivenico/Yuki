@@ -76,6 +76,25 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
             encoding="ascii",
         )
 
+    def test_release_manifest_generator_output_is_accepted_by_host_bootstrap(self):
+        from scripts.portable_runtime_manifest import (
+            MANIFEST_NAME,
+            create_manifest,
+            sign_manifest,
+        )
+
+        manifest = create_manifest(
+            self.bundle,
+            platform="test-platform",
+            runtime_version="3.12.7",
+        )
+        manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\\n").encode("utf-8")
+        (self.bundle / MANIFEST_NAME).write_bytes(manifest_bytes)
+        sign_manifest(self.bundle, self.private_path)
+
+        verified = verify_signed_bundle(self.bundle, self.public_path)
+        self.assertEqual(verified, manifest)
+
     def test_valid_bundle_authenticates(self):
         manifest = verify_signed_bundle(self.bundle, self.public_path)
         self.assertEqual(manifest["platform"], "test-platform")
