@@ -229,10 +229,30 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
             digest = hashlib.sha256()
             size = 0
             try:
+                # Keep the opened file identity tied to the no-follow lstat
+                # observation. This detects a final-component replacement
+                # between lstat and open, and mutation while hashing. Windows
+                # parent components are still path-resolved; this is not a
+                # substitute for full handle-relative traversal.
                 with candidate.open("rb") as stream:
+                    before = os.fstat(stream.fileno())
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or (before.st_dev, before.st_ino) != (info.st_dev, info.st_ino)
+                    ):
+                        raise BootstrapError(f"Bundle file changed while being opened: {relative}")
                     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                         size += len(chunk)
                         digest.update(chunk)
+                    after = os.fstat(stream.fileno())
+                    if (
+                        size != before.st_size
+                        or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    ):
+                        raise BootstrapError(f"Bundle file changed while being hashed: {relative}")
+            except BootstrapError:
+                raise
             except OSError as exc:
                 raise BootstrapError(f"Unable to read bundle file: {relative}") from exc
             files.append({"path": relative, "size": size, "sha256": digest.hexdigest()})
