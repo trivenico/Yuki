@@ -143,7 +143,8 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         replaced = []
 
         def open_replacement(path, *args, **kwargs):
-            if path.name == payload.name and args[:1] == ("rb",):
+            mode = kwargs.get("mode", args[0] if args else None)
+            if path.name == payload.name and mode == "rb":
                 replaced.append(path)
                 return original_open(outside, *args, **kwargs)
             return original_open(path, *args, **kwargs)
