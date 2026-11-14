@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from core.structured_tool_protocol import (
-    StructuredToolProtocol, ToolDispatchCancelled, ToolExecutionAlreadyClaimed,
+    StructuredToolProtocol, ToolDispatchCancelled, ToolDispatchLimitReached,
+    ToolExecutionAlreadyClaimed,
 )
 
 
@@ -266,6 +267,7 @@ class AgentExecutionLoop:
                     encoded_envelope, cancellation_requested=cancel_check,
                     before_tool_call=before_tool_call,
                     after_tool_call=after_tool_call, on_tool_error=on_tool_error,
+                    max_calls=self.max_tool_calls - calls_total,
                 )
                 formatted = self.tool_protocol.format_results(results)
             except ToolExecutionAlreadyClaimed as claimed:
@@ -275,6 +277,21 @@ class AgentExecutionLoop:
                 )
                 return AgentExecutionResult(
                     "interrupted", "", turns, calls_total,
+                    max(0.0, self.clock() - started),
+                )
+            except ToolDispatchLimitReached as limited:
+                completed_count = len(limited.completed_results)
+                calls_total += completed_count
+                self._event(
+                    "agent.tools_partially_dispatched",
+                    completed=completed_count,
+                    call_ids=[item.call_id for item in limited.completed_results],
+                    total=calls_total,
+                )
+                self._event("agent.stopped", reason="limit_reached", limit="tool_calls",
+                            model_turns=turns, tool_calls=calls_total)
+                return AgentExecutionResult(
+                    "limit_reached", "", turns, calls_total,
                     max(0.0, self.clock() - started),
                 )
             except ToolDispatchCancelled as cancelled:
