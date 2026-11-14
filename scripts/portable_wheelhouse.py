@@ -24,7 +24,7 @@ from scripts.portable_runtime_inputs import (
 )
 
 _TOKEN = re.compile(r"^[A-Za-z0-9_.-]+$")
-_EXACT_PIN = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\\[[A-Za-z0-9._,-]+\\])?==(?P<version>[A-Za-z0-9][A-Za-z0-9.!+_-]*)$")
+_EXACT_PIN = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[A-Za-z0-9._,-]+\])?==(?P<version>[A-Za-z0-9][A-Za-z0-9.!+_-]*)$")
 
 
 def _validate_lock(lock_file: Path) -> None:
