@@ -1,0 +1,34 @@
+name: Portable wheelhouse builder
+
+on:
+  pull_request:
+    paths:
+      - "scripts/portable_wheelhouse.py"
+      - "tests/test_portable_wheelhouse.py"
+      - "scripts/portable_runtime_inputs.py"
+      - ".github/workflows/portable-wheelhouse.yml"
+  push:
+    paths:
+      - "scripts/portable_wheelhouse.py"
+      - "tests/test_portable_wheelhouse.py"
+      - "scripts/portable_runtime_inputs.py"
+      - ".github/workflows/portable-wheelhouse.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  wheelhouse-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run wheelhouse builder tests
+        run: python -m unittest discover -s tests -p 'test_portable_wheelhouse.py' -v
