@@ -226,7 +226,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
             seen["bytes"] = snapshot.read_bytes()
             pip_wheel.write_bytes(b"replaced after verification")
             stage = Path(command[command.index("--target") + 1])
-            stage.mkdir()
+            stage.mkdir(exist_ok=True)
             return SimpleNamespace(returncode=0, stderr="", stdout="")
         install_offline_dependencies(
             runtime_root, python, self.lock, self.wheelhouse, target,
