@@ -568,7 +568,7 @@ class ConversationStore:
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
                 raise ValueError(f"{label} must be non-empty bounded text.")
         if action != "acknowledge_uncertain":
-            raise ValueError("unsupported tool review action.")
+            raise ConversationConflict("unsupported tool review action.")
         if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 1000:
             raise ValueError("reason must be non-empty text of at most 1000 characters.")
         with self._connect() as db:
