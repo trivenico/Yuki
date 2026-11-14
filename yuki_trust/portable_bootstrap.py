@@ -206,8 +206,12 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     if os.name != "nt":
         return _inventory_posix(root)
 
-    # Windows currently uses the path-based fallback. A handle-based
-    # FILE_FLAG_OPEN_REPARSE_POINT implementation is a separate hardening task.
+    # Resolve every descendant relative to a pinned directory handle. The
+    # helper opens each child as a single component with FILE_OPEN_REPARSE_POINT.
+    from yuki_trust.portable_host import _inventory_windows_handle_secure
+
+    return _inventory_windows_handle_secure(root)
+
     files: list[dict[str, Any]] = []
     for current, dirs, names in os.walk(root, followlinks=False):
         current_path = Path(current)
