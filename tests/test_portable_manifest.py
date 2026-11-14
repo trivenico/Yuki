@@ -29,7 +29,7 @@ class PortableManifestTests(unittest.TestCase):
 
     def test_manifest_matches_bootstrap_schema_and_inventory(self):
         value = create_unsigned_manifest(
-            self.root, platform="linux-x86_64", runtime_version="0.1.0"
+            self.root, platform="linux-x86_64", runtime_version="0.1.0", release_sequence=1
         )
         self.assertEqual(value["artifact_kind"], "portable-runtime")
         self.assertEqual(value["files"], inventory_bundle(self.root))
