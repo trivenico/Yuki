@@ -387,7 +387,7 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         self.assertEqual(secure_stage.call_count, 1)
         self.assertEqual(
             {item["path"] for item in secure_stage.call_args.kwargs["files"]},
-            {"python.exe", "portable_entry.py", "payload.txt"},
+            {"runtime/python.exe", "portable_entry.py", "payload.txt"},
         )
 
     def test_staging_revalidates_host_controlled_copy(self):
