@@ -184,6 +184,15 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapError, "outside the removable bundle"):
             verify_signed_bundle(self.bundle, in_bundle)
 
+    def test_staging_rejects_symlink_bundle_root_before_resolving(self):
+        link = self.parent / "staging-link"
+        try:
+            link.symlink_to(self.bundle, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("directory symlinks are unavailable on this host")
+        with self.assertRaisesRegex(BootstrapError, "must not be a symbolic link"):
+            stage_verified_bundle(link, self.public_path)
+
     def test_rejects_symlink_bundle_root(self):
         link = self.root / "bundle-link"
         try:
