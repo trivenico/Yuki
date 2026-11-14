@@ -69,7 +69,8 @@ the reviewed paths for the target runtime):
   "public_key": "/etc/yuki/trust/release-ed25519.pem",
   "expected_platform": "linux-x86_64",
   "python": "runtime/bin/python3",
-  "entrypoint": "portable_entry.py"
+  "entrypoint": "portable_entry.py",
+  "anti_rollback_state": "/var/lib/yuki/release-state.json"
 }
 ```
 
@@ -85,10 +86,14 @@ bundle-relative paths, and (on POSIX) policy/key files not owned by the current
 user or writable by group/other. Windows ACL enforcement is an installer
 responsibility and has not yet been implemented or validated by this library.
 The launcher then delegates signature, inventory, platform, staging, and
-isolated-interpreter checks to the trusted bootstrap.
+isolated-interpreter checks to the trusted bootstrap. The policy also pins a
+persistent anti-rollback state file outside removable media. The signed manifest
+contains a monotonically increasing `release_sequence`; the bootstrap commits
+that sequence and exact manifest digest after staged verification and immediately
+before executing the signed interpreter.
 
 This is a launch-policy library and CLI foundation, not yet a signed OS
 installer. The production installer must create the policy and trust anchor
 with restrictive ownership/ACLs, pin reviewed runtime paths, and prevent
-unprivileged modification. Anti-rollback state, key rotation/revocation,
-release signing, and clean-machine runtime tests remain separate release gates.
+unprivileged modification. Key rotation/revocation, protected release signing, Windows ACL provisioning,
+and clean-machine runtime tests remain separate release gates.
