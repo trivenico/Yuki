@@ -230,7 +230,7 @@ class ConversationService:
             recovered_request_ids.add(generation["request_id"])
             self.store.mark_started_tool_executions_uncertain(
                 owner_id=owner_id, conversation_id=conversation_id,
-                request_id=generation["request_id"],
+                request_id=generation["request_id"], lease_token=lease_token,
             )
             conversation_now = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
