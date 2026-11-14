@@ -356,6 +356,32 @@ class ConversationServiceTests(unittest.TestCase):
         )
         self.assertEqual([item["role"] for item in history], ["user", "assistant"])
 
+    def test_recovery_closes_generation_when_user_message_row_is_missing(self):
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Orphaned generation",
+            idempotency_key="orphaned-request", expected_version=0,
+            generation_request_id="orphaned-request",
+        )
+        with patch.object(self.store, "list_messages", return_value=[]):
+            result = self.service.reply(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="A new request",
+                request_id="after-orphan",
+                expected_version=1,
+                tools=[],
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(
+            self.store.list_interrupted_generations(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+            ),
+            [],
+        )
+        self.assertEqual(len(self.observed), 1)
+
     def test_new_turn_recovers_previous_crash_before_calling_model(self):
         self.store.append_message(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
