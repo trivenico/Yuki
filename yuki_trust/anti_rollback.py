@@ -170,8 +170,26 @@ def advance_release_state(
     if not isinstance(manifest_bytes, bytes) or not manifest_bytes:
         raise BootstrapError("Signed release manifest bytes are required.")
     path = Path(state_path).expanduser()
-    if not path.is_absolute() or not path.parent.is_dir() or path.parent.is_symlink():
+    if not path.is_absolute() or not path.parent.is_dir():
         raise BootstrapError("Anti-rollback state path must use an existing host-owned directory.")
+    # Validate every lexical parent so an attacker cannot redirect lock/state files.
+    current = path.parent
+    while True:
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            raise BootstrapError("Anti-rollback state parent directory is unavailable.") from exc
+        if not stat.S_ISDIR(info.st_mode):
+            raise BootstrapError("Anti-rollback state parent directories must be real directories.")
+        if os.name != "nt":
+            if info.st_uid not in {0, os.getuid()}:
+                raise BootstrapError("Anti-rollback state parent directory has an untrusted owner.")
+            mode = stat.S_IMODE(info.st_mode)
+            if mode & 0o022 and not (mode & stat.S_ISVTX):
+                raise BootstrapError("Anti-rollback state parent directory is group- or world-writable.")
+        if current.parent == current:
+            break
+        current = current.parent
     if path.is_symlink():
         raise BootstrapError("Anti-rollback state file must not be a symlink.")
     digest = hashlib.sha256(manifest_bytes).hexdigest()
