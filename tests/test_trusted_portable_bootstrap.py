@@ -272,6 +272,20 @@ class TrustedPortableBootstrapTests(unittest.TestCase):
         self.assertEqual(Path(options["cwd"]), Path(command[0]).parents[1])
         self.assertFalse(Path(command[0]).is_relative_to(self.bundle))
 
+    def test_rejects_backslash_paths_before_staging(self):
+        for interpreter, entrypoint in (
+            ("runtime\\python.exe", "portable_entry.py"),
+            ("runtime/python", "folder\\portable_entry.py"),
+        ):
+            with self.subTest(interpreter=interpreter, entrypoint=entrypoint):
+                with self.assertRaisesRegex(BootstrapError, "canonical relative path"):
+                    run_verified_bundle(
+                        self.bundle,
+                        self.public_path,
+                        interpreter,
+                        entrypoint,
+                    )
+
     def test_rejects_unsigned_or_unlisted_entrypoint(self):
         with self.assertRaisesRegex(BootstrapError, "not part of the signed"):
             run_verified_bundle(
