@@ -385,6 +385,24 @@ class ConversationStore:
                 db.rollback()
                 raise
 
+    def has_message_id(
+        self, *, owner_id: str, conversation_id: str, message_id: str,
+    ) -> bool:
+        """Check whether an exact message belongs to an owner-scoped conversation."""
+        owner = self._owner(owner_id)
+        if not isinstance(message_id, str) or not message_id.strip() or len(message_id) > 200:
+            raise ValueError("message_id must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT 1 FROM conversation_messages
+                   WHERE conversation_id=? AND message_id=? AND EXISTS (
+                       SELECT 1 FROM conversations
+                       WHERE conversation_id=? AND owner_id=?
+                   )""",
+                (conversation_id, message_id.strip(), conversation_id, owner),
+            ).fetchone()
+        return row is not None
+
     def has_message(
         self, *, owner_id: str, conversation_id: str, idempotency_key: str,
     ) -> bool:
