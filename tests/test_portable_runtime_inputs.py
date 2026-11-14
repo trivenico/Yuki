@@ -120,13 +120,13 @@ class PortableRuntimeInputTests(unittest.TestCase):
         wheelhouse.mkdir()
         wheel = wheelhouse / "demo_portable-1.0-py3-none-any.whl"
         files = {
-            "demo_portable/__init__.py": b"VALUE = 'installed-offline'\\n",
+            "demo_portable/__init__.py": b"VALUE = 'installed-offline'\n",
             "demo_portable-1.0.dist-info/METADATA": (
-                b"Metadata-Version: 2.1\\nName: demo-portable\\nVersion: 1.0\\n\\n"
+                b"Metadata-Version: 2.1\nName: demo-portable\nVersion: 1.0\n\n"
             ),
             "demo_portable-1.0.dist-info/WHEEL": (
-                b"Wheel-Version: 1.0\\nGenerator: yuki-test\\nRoot-Is-Purelib: true\\n"
-                b"Tag: py3-none-any\\n"
+                b"Wheel-Version: 1.0\nGenerator: yuki-test\nRoot-Is-Purelib: true\n"
+                b"Tag: py3-none-any\n"
             ),
         }
         record_rows = []
@@ -135,7 +135,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
             record_rows.append((name, f"sha256={digest}", str(len(payload))))
         record_rows.append(("demo_portable-1.0.dist-info/RECORD", "", ""))
         record = io.StringIO()
-        csv.writer(record, lineterminator="\\n").writerows(record_rows)
+        csv.writer(record, lineterminator="\n").writerows(record_rows)
         with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
             for name, payload in files.items():
                 bundle.writestr(name, payload)
@@ -143,7 +143,7 @@ class PortableRuntimeInputTests(unittest.TestCase):
         wheel_digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
         lock = self.root / "real-requirements.lock"
         lock.write_text(
-            f"demo-portable==1.0 --hash=sha256:{wheel_digest}\\n",
+            f"demo-portable==1.0 --hash=sha256:{wheel_digest}\n",
             encoding="utf-8",
         )
         runtime_root = Path(sys.executable).resolve().parent
