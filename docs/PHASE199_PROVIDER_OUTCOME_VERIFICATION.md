@@ -132,3 +132,14 @@ persistence. Adapters must still enforce their own connect/read/request
 timeouts: Python cannot safely terminate arbitrary synchronous adapter code.
 Lease fencing protects persistence if an adapter outlives its claim, but does
 not cancel the external read-only request.
+
+
+## Reconciliation record validation
+
+Before acquiring a reconciliation lease or invoking a provider adapter, the
+reconciler validates the store response shape, requires exactly one matching
+call identity, and checks the execution ID, tool name, idempotency key,
+argument fingerprint, and unresolved status. Missing, malformed, or ambiguous
+records fail closed without claiming a lease or contacting the provider. This
+preflight is defense in depth; the store's owner-scoped query and transactional
+lease/evidence fencing remain authoritative.
