@@ -179,7 +179,6 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
     if target.exists() or target.is_symlink():
         raise InputValidationError("Dependency target must not already exist.")
     parent = target.parent.resolve(strict=True)
-    stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
     if pip_wheel is not None:
         if pip_sha256 is None or pip_version is None:
             raise InputValidationError("Pip wheel, pinned SHA-256 and exact version must be supplied together.")
@@ -195,6 +194,7 @@ def install_offline_dependencies(runtime_root: Path, python_executable: Path, lo
             raise InputValidationError("Pip wheel, pinned SHA-256 and exact version must be supplied together.")
         pip_report = None
         pip_prefix = [str(python_executable), "-I", "-m", "pip"]
+    stage = Path(tempfile.mkdtemp(prefix=".yuki-dependencies-stage-", dir=parent))
     command = pip_prefix + [
         "install", "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
         "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
