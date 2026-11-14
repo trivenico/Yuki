@@ -50,6 +50,15 @@ class ConversationService:
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
 
+    def recovery_events(
+        self, *, owner_id: str, conversation_id: str, limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return sanitized recovery history for the authenticated conversation owner."""
+        self.store.get_conversation(owner_id=owner_id, conversation_id=conversation_id)
+        return self.store.list_recovery_events(
+            owner_id=owner_id, conversation_id=conversation_id, limit=limit,
+        )
+
     def tool_executions(
         self, *, owner_id: str, conversation_id: str, request_id: str,
     ) -> list[dict[str, Any]]:
