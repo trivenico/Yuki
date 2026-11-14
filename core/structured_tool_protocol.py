@@ -160,7 +160,15 @@ class StructuredToolProtocol:
                 raise ToolDispatchCancelled(results)
             if len(results) >= max_calls:
                 raise ToolDispatchLimitReached(results)
-            argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
+            # Canonical serialization keeps equivalent argument objects byte-identical
+            # for durable fingerprints and provider idempotency contracts.
+            argument = json.dumps(
+                call.arguments,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+                allow_nan=False,
+            )
             claim = None
             if before_tool_call is not None:
                 claim = before_tool_call(call, argument)
