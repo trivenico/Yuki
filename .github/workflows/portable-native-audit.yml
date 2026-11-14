@@ -1,0 +1,50 @@
+name: Portable native loader audit
+
+on:
+  pull_request:
+    paths:
+      - "scripts/portable_native_audit.py"
+      - "tests/test_portable_native_audit.py"
+      - "docs/portable-native-loader-audit.md"
+      - ".github/workflows/portable-native-audit.yml"
+  push:
+    paths:
+      - "scripts/portable_native_audit.py"
+      - "tests/test_portable_native_audit.py"
+      - "docs/portable-native-loader-audit.md"
+      - ".github/workflows/portable-native-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  parser-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run native audit parser tests
+        run: python -m unittest discover -s tests -p 'test_portable_native_audit.py' -v
+
+  host-metadata-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Audit Python runtime metadata
+        run: python -m scripts.portable_native_audit --bundle-root "${{ env.pythonLocation }}" --platform ${{ matrix.platform }}
+        env:
+          PYTHONPATH: ""
