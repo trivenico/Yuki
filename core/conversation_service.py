@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import threading
 import hashlib
+import json
 import uuid
 from typing import Any, Sequence
 
@@ -267,10 +268,11 @@ class ConversationService:
                 kwargs["system_text"] = system_text
             def before_tool_call(call, argument):
                 digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
-                idempotency_key = hashlib.sha256(
-                    ("yuki-tool-v1\\0" + owner_id + "\\0" + conversation_id + "\\0"
-                     + request_id + "\\0" + call.call_id).encode("utf-8")
-                ).hexdigest()
+                scope = json.dumps(
+                    ["yuki-tool-v1", owner_id, conversation_id, request_id, call.call_id],
+                    ensure_ascii=False, separators=(",", ":"),
+                )
+                idempotency_key = hashlib.sha256(scope.encode("utf-8")).hexdigest()
                 provider_support = agent_loop.tool_protocol.supports_idempotency(call.name)
                 claim = self.store.begin_tool_execution(
                     owner_id=owner_id, conversation_id=conversation_id,
