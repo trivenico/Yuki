@@ -66,7 +66,7 @@ class ConversationService:
         """Perform one explicitly configured read-only provider lookup."""
         self.store.get_conversation(owner_id=owner_id, conversation_id=conversation_id)
         if self.provider_outcome_reconciler is None:
-            raise ConversationConflict("provider outcome reconciliation is not configured.")
+            raise LookupError("provider outcome reconciliation is not configured.")
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
         if not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 64:
