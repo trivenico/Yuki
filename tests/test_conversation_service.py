@@ -392,5 +392,44 @@ class ConversationServiceTests(unittest.TestCase):
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
         ), [])
 
+
+    def test_reply_journals_tool_call_before_and_after_guarded_side_effect(self):
+        invoked = []
+
+        class AllowEcho:
+            def authorize_tool(self, name):
+                return name == "echo"
+
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "echo-1", "name": "echo", "arguments": {"value": "hello"}},
+            ]}}
+
+        runtime = GuardedToolRuntime(
+            {"echo": lambda raw: invoked.append(raw) or "ok"}, AllowEcho()
+        )
+        service = ConversationService(
+            self.store, AgentExecutionLoop(model, StructuredToolProtocol(runtime))
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Run echo",
+            request_id="journalled-tool-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(invoked), 1)
+        records = self.store.list_tool_executions(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            request_id="journalled-tool-request",
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["call_id"], "echo-1")
+        self.assertEqual(records[0]["tool_name"], "echo")
+        self.assertEqual(records[0]["status"], "completed")
+
 if __name__ == "__main__":
     unittest.main()
