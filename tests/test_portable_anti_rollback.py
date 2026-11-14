@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from yuki_trust.portable_bootstrap import BootstrapError
@@ -78,6 +79,20 @@ class AntiRollbackStateTests(unittest.TestCase):
                 with self.assertRaises(BootstrapError):
                     advance_release_state(self.state, value, b"manifest")
 
+
+    def test_concurrent_launch_attempts_never_lower_highest_sequence(self):
+        sequences = list(range(20, 30))
+        def attempt(sequence):
+            try:
+                return advance_release_state(self.state, sequence, f'manifest-{sequence}'.encode())
+            except BootstrapError as exc:
+                if 'rollback rejected' in str(exc):
+                    return None
+                raise
+        with ThreadPoolExecutor(max_workers=len(sequences)) as pool:
+            list(pool.map(attempt, sequences))
+        stored = json.loads(self.state.read_text(encoding='utf-8'))
+        self.assertEqual(stored['highest_sequence'], max(sequences))
 
 if __name__ == "__main__":
     unittest.main()
