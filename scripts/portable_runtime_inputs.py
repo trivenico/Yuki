@@ -121,11 +121,20 @@ def validate_offline_wheelhouse(lock_file: Path, wheelhouse: Path) -> dict:
     }
 
 
-def install_offline_dependencies(python_executable: Path, lock_file: Path, wheelhouse: Path, target: Path, *, timeout_seconds: int = 1800, runner=subprocess.run) -> dict:
-    """Install a fully hash-locked dependency closure without package indexes."""
+def install_offline_dependencies(runtime_root: Path, python_executable: Path, lock_file: Path, wheelhouse: Path, target: Path, *, timeout_seconds: int = 1800, runner=subprocess.run) -> dict:
+    """Install a fully hash-locked dependency closure using Python inside the verified runtime root."""
+    runtime_root = Path(runtime_root).expanduser()
+    if runtime_root.is_symlink() or not runtime_root.is_dir():
+        raise InputValidationError("Verified runtime root must be an existing non-symlink directory.")
+    runtime_root = runtime_root.resolve(strict=True)
     python_executable = Path(python_executable).expanduser()
     if python_executable.is_symlink() or not python_executable.is_file():
         raise InputValidationError("Runtime Python must be a regular, non-symlink executable.")
+    python_executable = python_executable.resolve(strict=True)
+    try:
+        python_executable.relative_to(runtime_root)
+    except ValueError as exc:
+        raise InputValidationError("Runtime Python must resolve inside the independently verified runtime root.") from exc
     if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise ValueError("Installation timeout must be a positive integer.")
     lock_file = _regular_file(Path(lock_file).expanduser(), "Requirements lock")
@@ -136,7 +145,7 @@ def install_offline_dependencies(python_executable: Path, lock_file: Path, wheel
         raise InputValidationError("Dependency target must not already exist.")
     target.parent.resolve(strict=True)
     command = [
-        str(python_executable.resolve(strict=True)), "-I", "-m", "pip", "install",
+        str(python_executable), "-I", "-m", "pip", "install",
         "--isolated", "--no-index", "--find-links", str(wheelhouse.resolve(strict=True)),
         "--require-hashes", "--only-binary=:all:", "--disable-pip-version-check",
         "--no-input", "--no-warn-script-location", "--target", str(target), "-r", str(lock_file),
@@ -180,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             "execution_performed": False,
         }
         if args.install_python and args.install_target:
-            report["installation"] = install_offline_dependencies(args.install_python, args.requirements_lock, args.wheelhouse, args.install_target, timeout_seconds=args.install_timeout)
+            report["installation"] = install_offline_dependencies(args.install_runtime_root, args.install_python, args.requirements_lock, args.wheelhouse, args.install_target, timeout_seconds=args.install_timeout)
             report["execution_performed"] = True
     except (OSError, UnicodeError, InputValidationError) as exc:
         print(f"Portable runtime input validation failed: {exc}", file=sys.stderr)
