@@ -36,6 +36,7 @@ def _validate_lock(lock_file: Path) -> None:
     lines = _logical_requirement_lines(_regular_file(lock_file, "Requirements lock"))
     if not lines:
         raise InputValidationError("Requirements lock is empty.")
+    has_yuki = False
     for number, line in enumerate(lines, start=1):
         tokens = line.split()
         match = _EXACT_PIN.fullmatch(tokens[0]) if tokens else None
@@ -48,7 +49,7 @@ def _validate_lock(lock_file: Path) -> None:
         normalized_name = match.group("name").lower().replace("_", "-").replace(".", "-")
         if normalized_name == "yuki-ai-assistant":
             has_yuki = True
-    if not locals().get("has_yuki", False):
+    if not has_yuki:
         raise InputValidationError("Portable lock must include an exact yuki-ai-assistant application wheel pin.")
 
 
