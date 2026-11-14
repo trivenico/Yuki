@@ -42,6 +42,11 @@ class PortableRuntimeInputTests(unittest.TestCase):
         self.assertEqual(report["requirement_count"], 1)
         self.assertEqual(report["wheel_count"], 1)
 
+    def test_lock_requires_exact_version_pin(self):
+        self._write_lock(f"demo>=1.0 --hash=sha256:{self.digest}\\n")
+        with self.assertRaisesRegex(InputValidationError, "exact == version pin"):
+            validate_offline_wheelhouse(self.lock, self.wheelhouse)
+
     def test_lock_requires_hashes(self):
         self._write_lock("demo==1.0\n")
         with self.assertRaisesRegex(InputValidationError, "SHA-256"):
