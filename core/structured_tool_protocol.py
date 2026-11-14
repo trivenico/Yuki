@@ -118,8 +118,8 @@ class StructuredToolProtocol:
     ) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
-        if type(max_calls) is not int or not 1 <= max_calls <= _MAX_CALLS:
-            raise ValueError("max_calls must be an integer from 1 to the protocol maximum.")
+        if type(max_calls) is not int or not 1 <= max_calls <= 500:
+            raise ValueError("max_calls must be an integer from 1 to 500.")
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
         if before_tool_call is not None and not callable(before_tool_call):
