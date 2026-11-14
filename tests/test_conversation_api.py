@@ -733,6 +733,10 @@ class ConversationAPITests(unittest.TestCase):
             b"request_id=%20%20",
             ("request_id=" + "x" * 161).encode(),
             b"request_id=first&request_id=second",
+            b"request_id=%",
+            b"request_id=%GG",
+            b"request_id=%FF",
+            b"request_id=%0Ainjected",
         ]
         for path in paths:
             for query in invalid_queries:
