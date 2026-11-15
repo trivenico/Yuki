@@ -7,7 +7,7 @@ outcomes rather than automatically replaying the action.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import re
@@ -64,6 +64,8 @@ class ToolAction:
     created_at: str
     updated_at: str
     version: int
+    lease_owner: str | None
+    lease_expires_at: str | None
 
 
 class ToolActionJournal:
@@ -88,9 +90,15 @@ class ToolActionJournal:
                     error_code TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    version INTEGER NOT NULL DEFAULT 0
+                    version INTEGER NOT NULL DEFAULT 0,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(tool_actions)")}
+            for column in ("lease_owner", "lease_expires_at"):
+                if column not in columns:
+                    db.execute("ALTER TABLE tool_actions ADD COLUMN " + column + " TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tool_actions_state_updated "
                 "ON tool_actions(state, updated_at)"
@@ -117,6 +125,8 @@ class ToolActionJournal:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             version=row["version"],
+            lease_owner=row["lease_owner"],
+            lease_expires_at=row["lease_expires_at"],
         )
 
     @staticmethod
@@ -168,12 +178,19 @@ class ToolActionJournal:
                 raise
         return self._record(row)
 
-    def begin_execution(self, idempotency_key: str, request_digest: str) -> ToolAction:
-        """Atomically grant the one dispatch attempt for a prepared action."""
+    def begin_execution(
+        self, idempotency_key: str, request_digest: str, *, lease_seconds: int = 120,
+    ) -> ToolAction:
+        """Atomically grant one dispatch attempt and issue its fencing token."""
         self._validate_key(idempotency_key)
         if not isinstance(request_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", request_digest):
             raise ValueError("request_digest must be a SHA-256 hex digest.")
-        now = _now()
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 5 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 5 to 3600.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        owner = secrets.token_urlsafe(24)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -191,9 +208,10 @@ class ToolActionJournal:
                         "action is not dispatchable; reconcile uncertain outcomes before retrying."
                     )
                 db.execute(
-                    """UPDATE tool_actions SET state='executing',updated_at=?,version=version+1
+                    """UPDATE tool_actions SET state='executing',updated_at=?,version=version+1,
+                       lease_owner=?,lease_expires_at=?
                        WHERE idempotency_key=? AND state='prepared' AND version=?""",
-                    (now, idempotency_key, row["version"]),
+                    (now, owner, expires, idempotency_key, row["version"]),
                 )
                 updated = db.execute(
                     "SELECT * FROM tool_actions WHERE idempotency_key=?",
@@ -205,9 +223,64 @@ class ToolActionJournal:
                 raise
         return self._record(updated)
 
+    def renew_execution(self, idempotency_key: str, lease_owner: str, *, lease_seconds: int = 120) -> ToolAction:
+        """Renew a live dispatch lease; stale workers cannot extend a recovered action."""
+        self._validate_key(idempotency_key)
+        if not isinstance(lease_owner, str) or not lease_owner:
+            raise ValueError("lease_owner must be a non-empty fencing token.")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 5 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 5 to 3600.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute(
+                    "SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,),
+                ).fetchone()
+                if row is None or row["state"] != "executing" or row["lease_owner"] != lease_owner:
+                    raise ToolActionTransitionError("execution lease is no longer owned by this worker.")
+                if row["lease_expires_at"] <= now:
+                    raise ToolActionTransitionError("execution lease has expired.")
+                db.execute(
+                    """UPDATE tool_actions SET lease_expires_at=?,updated_at=?,version=version+1
+                       WHERE idempotency_key=? AND state='executing' AND lease_owner=? AND version=?""",
+                    (expires, now, idempotency_key, lease_owner, row["version"]),
+                )
+                updated = db.execute(
+                    "SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,),
+                ).fetchone()
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return self._record(updated)
+
+    def recover_expired_executions(self) -> int:
+        """Fence expired workers and mark their external outcome as unknown."""
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = db.execute(
+                    """UPDATE tool_actions
+                       SET state='outcome_unknown',error_code='execution_lease_expired',
+                           lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
+                       WHERE state='executing' AND lease_expires_at IS NOT NULL
+                         AND lease_expires_at<=?""",
+                    (now, now),
+                )
+                count = cursor.rowcount
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return count
+
     def _transition(
         self, idempotency_key: str, expected_state: str, new_state: str,
-        *, result: Any = None, error_code: str | None = None,
+        *, result: Any = None, error_code: str | None = None, lease_owner: str | None = None,
     ) -> ToolAction:
         self._validate_key(idempotency_key)
         result_json = None
@@ -229,9 +302,14 @@ class ToolActionJournal:
                     raise ToolActionTransitionError(
                         f"action must be in {expected_state!r} state to transition."
                     )
+                if expected_state == "executing":
+                    if not isinstance(lease_owner, str) or not lease_owner or row["lease_owner"] != lease_owner:
+                        raise ToolActionTransitionError("execution lease is not owned by this worker.")
+                    if row["lease_expires_at"] is None or row["lease_expires_at"] <= now:
+                        raise ToolActionTransitionError("execution lease has expired.")
                 db.execute(
                     """UPDATE tool_actions SET state=?,result_json=?,error_code=?,
-                       updated_at=?,version=version+1
+                       updated_at=?,version=version+1,lease_owner=NULL,lease_expires_at=NULL
                        WHERE idempotency_key=? AND state=? AND version=?""",
                     (new_state, result_json, error_code, now, idempotency_key,
                      expected_state, row["version"]),
@@ -246,19 +324,19 @@ class ToolActionJournal:
                 raise
         return self._record(updated)
 
-    def mark_succeeded(self, idempotency_key: str, result: Any) -> ToolAction:
-        return self._transition(idempotency_key, "executing", "succeeded", result=result)
+    def mark_succeeded(self, idempotency_key: str, lease_owner: str, result: Any) -> ToolAction:
+        return self._transition(idempotency_key, "executing", "succeeded", result=result, lease_owner=lease_owner)
 
-    def mark_outcome_unknown(self, idempotency_key: str, error_code: str = "dispatch_interrupted") -> ToolAction:
+    def mark_outcome_unknown(self, idempotency_key: str, lease_owner: str, error_code: str = "dispatch_interrupted") -> ToolAction:
         """Record that a side effect may have happened; this state is never auto-replayed."""
         return self._transition(
-            idempotency_key, "executing", "outcome_unknown", error_code=error_code,
+            idempotency_key, "executing", "outcome_unknown", error_code=error_code, lease_owner=lease_owner,
         )
 
-    def mark_not_executed(self, idempotency_key: str, error_code: str) -> ToolAction:
+    def mark_not_executed(self, idempotency_key: str, lease_owner: str, error_code: str) -> ToolAction:
         """Use only when the adapter can prove no external side effect occurred."""
         return self._transition(
-            idempotency_key, "executing", "not_executed", error_code=error_code,
+            idempotency_key, "executing", "not_executed", error_code=error_code, lease_owner=lease_owner,
         )
 
     def reconcile_succeeded(self, idempotency_key: str, result: Any) -> ToolAction:
