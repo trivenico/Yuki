@@ -33,6 +33,7 @@ class ConversationService:
         self.store = store
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
+        self._owner_agent_loops: dict[str, AgentExecutionLoop] = {}
         self._lock = threading.RLock()
         self._closed = False
 
@@ -41,9 +42,38 @@ class ConversationService:
             raise RuntimeError("conversation service is closed")
 
     def close(self) -> None:
-        """Fence new operations and wait for an active reply to finish."""
+        """Fence new work and close every factory-owned owner loop exactly once."""
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
+            loops = tuple(self._owner_agent_loops.values())
+            self._owner_agent_loops.clear()
+            errors = []
+            for loop in loops:
+                close = getattr(loop, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception as exc:
+                        errors.append(exc)
+            if errors:
+                raise errors[0]
+
+    def _agent_loop_for_request(self, owner_id: str) -> AgentExecutionLoop:
+        """Return the shared loop or a cached, exclusively owned owner loop."""
+        if self.agent_loop_for_owner is None:
+            return self.agent_loop
+        cached = self._owner_agent_loops.get(owner_id)
+        if cached is not None:
+            return cached
+        loop = self.agent_loop_for_owner(owner_id)
+        if not isinstance(loop, AgentExecutionLoop):
+            raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
+        if loop is self.agent_loop or any(loop is item for item in self._owner_agent_loops.values()):
+            raise ValueError("agent_loop_for_owner must return a distinct loop per owner.")
+        self._owner_agent_loops[owner_id] = loop
+        return loop
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         with self._lock:
@@ -192,11 +222,7 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                agent_loop = self.agent_loop
-                if self.agent_loop_for_owner is not None:
-                    agent_loop = self.agent_loop_for_owner(owner_id)
-                    if not isinstance(agent_loop, AgentExecutionLoop):
-                        raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
+                agent_loop = self._agent_loop_for_request(owner_id)
                 result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
                 status = result.status
                 model_turns = result.model_turns
