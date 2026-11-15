@@ -18,6 +18,7 @@ from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 
 
 class _NoApprovals:
@@ -109,6 +110,21 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertFalse(approvals.consume(
                 token, context, principal_id="authenticated-user",
             ))
+            runtime.close()
+
+    def test_runtime_injects_pending_action_proposal_store_into_authenticated_api(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            proposals = SQLitePendingToolActionProposalStore(
+                str(root / "proposals.sqlite"),
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                pending_tool_action_proposals=proposals,
+            )
+            self.assertIs(runtime.app.pending_tool_action_proposals, proposals)
             runtime.close()
 
     def test_concurrent_close_waits_for_api_component_shutdown(self):
