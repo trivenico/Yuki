@@ -285,12 +285,27 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
-        """Atomically claim the oldest queued run; never steals or replays running work."""
+    def claim_next(
+        self, *, worker_id: str, lease_seconds: int = 60,
+        allowed_run_ids: tuple[str, ...] | None = None,
+    ) -> WorkflowRun | None:
+        """Atomically claim the oldest eligible queued run, optionally within a task set."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if allowed_run_ids is not None:
+            if not isinstance(allowed_run_ids, tuple) or len(allowed_run_ids) > 100:
+                raise ValueError("allowed_run_ids must be a tuple of at most 100 task IDs.")
+            if any(
+                not isinstance(item, str) or not item.strip() or len(item) > 200 or "\x00" in item
+                for item in allowed_run_ids
+            ):
+                raise ValueError("allowed_run_ids contains an invalid task ID.")
+            if len(set(allowed_run_ids)) != len(allowed_run_ids):
+                raise ValueError("allowed_run_ids must not contain duplicates.")
+            if not allowed_run_ids:
+                return None
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
@@ -298,10 +313,18 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
-            ).fetchall()
+            if allowed_run_ids is None:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    "ORDER BY created_at, run_id LIMIT 100"
+                ).fetchall()
+            else:
+                placeholders = ",".join("?" for _ in allowed_run_ids)
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    f"AND run_id IN ({placeholders}) ORDER BY created_at, run_id LIMIT 100",
+                    allowed_run_ids,
+                ).fetchall()
             row = next((
                 candidate for candidate in rows
                 if not self._requires_approval(json.loads(candidate["definition_json"]))
