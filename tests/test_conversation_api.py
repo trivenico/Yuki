@@ -177,7 +177,7 @@ class ConversationAPITests(unittest.TestCase):
                 owner_id=self.user.user_id, conversation_id=cid,
                 lease_token="review-confirm-generation", ttl_seconds=60,
             )
-            self.app.conversations.store.begin_tool_execution(
+            execution = self.app.conversations.store.begin_tool_execution(
                 owner_id=self.user.user_id, conversation_id=cid,
                 request_id=request_id, call_id="send-confirm-api",
                 tool_name="send_email", arguments_sha256="b" * 64,
@@ -201,6 +201,7 @@ class ConversationAPITests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=execution["execution_id"],
             provider_reference="provider-delivery-42",
         )
         claim = self.app.conversations.store.acquire_provider_reconciliation_lease(
@@ -589,7 +590,7 @@ class ConversationAPITests(unittest.TestCase):
                 owner_id=self.user.user_id, conversation_id=cid,
                 lease_token="provider-api-lease", ttl_seconds=60,
             )
-            self.app.conversations.store.begin_tool_execution(
+            execution = self.app.conversations.store.begin_tool_execution(
                 owner_id=self.user.user_id, conversation_id=cid,
                 request_id=request_id, call_id="send-2", tool_name="send_email",
                 arguments_sha256="b" * 64, idempotency_key="a" * 64,
@@ -605,6 +606,7 @@ class ConversationAPITests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=execution["execution_id"],
             provider_reference="provider-ref",
         )
         claim = self.app.conversations.store.acquire_provider_reconciliation_lease(
@@ -655,7 +657,7 @@ class ConversationAPITests(unittest.TestCase):
                 owner_id=self.user.user_id, conversation_id=cid,
                 lease_token="provider-reconcile-lease", ttl_seconds=60,
             )
-            self.app.conversations.store.begin_tool_execution(
+            execution = self.app.conversations.store.begin_tool_execution(
                 owner_id=self.user.user_id, conversation_id=cid,
                 request_id=request_id, call_id="send-3", tool_name="send_email",
                 arguments_sha256="b" * 64, idempotency_key="a" * 64,
@@ -677,6 +679,7 @@ class ConversationAPITests(unittest.TestCase):
                     idempotency_key="a" * 64, arguments_sha256="b" * 64,
                     evidence_sha256="c" * 64,
                     observed_at="2026-11-14T10:00:00+00:00",
+                    execution_id=execution["execution_id"],
                     provider_reference="private-provider-reference",
                 )
         self.app.conversations.provider_outcome_reconciler = ProviderOutcomeReconciler(
