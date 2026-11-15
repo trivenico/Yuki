@@ -1296,6 +1296,8 @@ class ProviderOutcomeTests(unittest.TestCase):
             lookup_started = threading.Event()
             finish_lookup = threading.Event()
             renewal_observed = threading.Event()
+            original_renew = store.renew_provider_reconciliation_lease
+
             def observe_renewal(**kwargs):
                 result = original_renew(**kwargs)
                 renewal_observed.set()
