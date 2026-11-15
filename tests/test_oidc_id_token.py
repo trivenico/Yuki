@@ -239,6 +239,26 @@ class OIDCIdentityTokenTests(unittest.TestCase):
         with self.assertRaisesRegex(OIDCIdentityTokenError, "jwks_invalid"):
             self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
 
+    def test_dynamic_subject_mode_returns_only_cryptographically_verified_subject(self):
+        verifier = OIDCIdentityTokenVerifier(
+            transport=self.transport,
+            jwks_uri="https://auth.example.com/.well-known/jwks.json",
+            issuer="https://auth.example.com",
+            client_id="yuki-client",
+            expected_subject=None,
+            clock=lambda: self.now,
+        )
+        result = verifier.verify(
+            id_token=self.token(sub="dynamic-google-subject"),
+            expected_nonce="nonce-value-1234567890",
+        )
+        self.assertEqual(result["subject"], "dynamic-google-subject")
+        with self.assertRaisesRegex(OIDCIdentityTokenError, "subject_invalid"):
+            verifier.verify(
+                id_token=self.token(sub=""),
+                expected_nonce="nonce-value-1234567890",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
