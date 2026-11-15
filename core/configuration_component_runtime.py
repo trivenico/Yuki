@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import RLock
 from types import MappingProxyType
 from typing import Any
