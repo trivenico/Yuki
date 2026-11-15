@@ -32,6 +32,7 @@ from evaluation.service import EvaluationService
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.approved_tool_action_executor import ApprovedToolActionExecutor
 
 
 class ConversationRuntime:
@@ -104,6 +105,7 @@ def build_conversation_runtime(
     evaluation_service: EvaluationService | None = None,
     tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
     pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
+    approved_tool_action_executor: ApprovedToolActionExecutor | None = None,
     pending_proposal_factory: Callable | None = None,
     action_context_factory: Callable | None = None,
     confirmation_check: Callable | None = None,
@@ -165,6 +167,13 @@ def build_conversation_runtime(
         pending_tool_action_proposals, SQLitePendingToolActionProposalStore
     ):
         raise TypeError("pending_tool_action_proposals must be a SQLitePendingToolActionProposalStore")
+    if approved_tool_action_executor is not None:
+        if not isinstance(approved_tool_action_executor, ApprovedToolActionExecutor):
+            raise TypeError("approved_tool_action_executor must be an ApprovedToolActionExecutor")
+        if pending_tool_action_proposals is None or approved_tool_action_executor.proposals is not pending_tool_action_proposals:
+            raise ValueError("executor must use the configured pending proposal store")
+        if tool_action_approvals is None or approved_tool_action_executor.approvals is not tool_action_approvals:
+            raise ValueError("executor must use the configured approval store")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -225,6 +234,7 @@ def build_conversation_runtime(
             provider_catalog=provider_catalog, provider_selector=provider_selector,
             tool_action_approvals=tool_action_approvals,
             pending_tool_action_proposals=pending_tool_action_proposals,
+            approved_tool_action_executor=approved_tool_action_executor,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
