@@ -9,6 +9,26 @@ from core.tool_action_journal import ToolActionJournal, ToolActionJournalError
 from core.tool_capabilities import ToolCapabilityCatalog, ToolCapabilityError, ToolEffect
 
 
+def _strict_json_object(argument: str) -> dict[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key.")
+            result[key] = value
+        return result
+
+    def reject_non_finite(value: str) -> None:
+        raise ValueError("non-finite JSON number.")
+
+    value = json.loads(
+        argument, object_pairs_hook=reject_duplicate_keys, parse_constant=reject_non_finite,
+    )
+    if not isinstance(value, dict):
+        raise ValueError("tool arguments must be a JSON object.")
+    return value
+
+
 class GuardedToolRuntime:
     def __init__(
         self,
@@ -101,9 +121,7 @@ class GuardedToolRuntime:
                     self._record(name, "confirmation_required")
                     return "Tool blocked: explicit user confirmation is required."
                 try:
-                    action_request = json.loads(argument)
-                    if not isinstance(action_request, dict):
-                        raise ToolActionContextError("tool request must be an object.")
+                    action_request = _strict_json_object(argument)
                     action_context.verify(principal_id, name, action_request)
                 except (TypeError, ValueError, ToolActionContextError):
                     self._record(name, "action_context_mismatch")
