@@ -193,5 +193,19 @@ class StructuredToolProtocolTests(unittest.TestCase):
             )
 
 
+    def test_confirmation_callback_and_token_factory_are_skipped_for_non_confirming_tool(self):
+        confirmation_calls = []
+        approval_calls = []
+        result = self.protocol.dispatch(
+            self.envelope([self.call("read-only", "echo")]),
+            confirmation_check=lambda call: confirmation_calls.append(call) or True,
+            approval_id_factory=lambda *args: approval_calls.append(args) or "token",
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(confirmation_calls, [])
+        self.assertEqual(approval_calls, [])
+        self.assertEqual(len(self.calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
