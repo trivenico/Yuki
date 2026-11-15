@@ -123,7 +123,10 @@ class ToolActionJournalTests(unittest.TestCase):
             self.journal.renew_execution("lease-expired", started.lease_owner)
 
     def test_existing_journal_schema_is_upgraded_with_lease_columns(self):
-        with sqlite3.connect(self.path) as db:
+        # setUp initializes the current schema; use a separate database to
+        # accurately model a pre-lease database created by an older release.
+        legacy_path = str(Path(self.temp_dir.name) / "legacy-actions.sqlite3")
+        with sqlite3.connect(legacy_path) as db:
             db.execute(
                 """CREATE TABLE tool_actions (
                     action_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE,
@@ -139,7 +142,7 @@ class ToolActionJournalTests(unittest.TestCase):
                    VALUES ('legacy-id','legacy-key','email.send',?,'prepared','2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00')""",
                 ("a" * 64,),
             )
-        upgraded = ToolActionJournal(self.path).get("legacy-key")
+        upgraded = ToolActionJournal(legacy_path).get("legacy-key")
         self.assertEqual(upgraded.state, "prepared")
         self.assertIsNone(upgraded.lease_owner)
         self.assertIsNone(upgraded.lease_expires_at)
