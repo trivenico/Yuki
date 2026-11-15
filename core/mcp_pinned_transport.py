@@ -39,7 +39,7 @@ class PinnedMCPHTTPTransport:
             raise ValueError("an explicit MCP host allow-list is required")
         hosts = set()
         for host in allowed_hosts:
-            if not isinstance(host, str) or not host or host != host.strip():
+            if not isinstance(host, str) or not host or host != host.strip() or host.endswith(".."):
                 raise ValueError("invalid MCP host allow-list")
             hosts.add(host.lower().rstrip("."))
         self.allowed_hosts = frozenset(hosts)
@@ -67,7 +67,10 @@ class PinnedMCPHTTPTransport:
             port = parts.port
         except ValueError:
             raise MCPPinnedTransportError("invalid_mcp_endpoint") from None
-        host = (parts.hostname or "").lower().rstrip(".")
+        raw_host = (parts.hostname or "").lower()
+        if raw_host.endswith(".."):
+            raise MCPPinnedTransportError("invalid_mcp_endpoint")
+        host = raw_host.rstrip(".")
         if (parts.scheme != "https" or not host or parts.username is not None
                 or parts.password is not None or port not in (None, 443)
                 or parts.fragment or host not in self.allowed_hosts):
