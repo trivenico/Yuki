@@ -62,15 +62,13 @@ class AgentExecutionComponentRuntimeTests(unittest.TestCase):
         self.assertEqual(registry.close(), ())
         self.assertEqual(registry.started_components, ())
 
-    def test_close_fences_agent_component_without_closing_shared_provider(self):
+    def test_close_fences_only_agent_component_lifecycle_state(self):
         runtime = build_agent_execution_component_runtime(self.loop)
-        close_calls = []
         registry = self._registry_with_dependencies(runtime)
         registry.start_all()
         # The agent adapter owns only its own lifecycle state, not providers.
         registry.close()
         self.assertFalse(runtime.health_check())
-        self.assertEqual(close_calls, [])
 
     def test_agent_health_is_false_before_start_and_after_close(self):
         runtime = build_agent_execution_component_runtime(self.loop)
