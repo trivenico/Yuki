@@ -50,6 +50,11 @@ class OAuthTokenRefreshService:
         self._clock = clock
         self._skew = refresh_skew_seconds
 
+    @property
+    def provider_id(self) -> str:
+        """Trusted provider identity used by host-side integrations."""
+        return self._provider_id
+
     def refresh_if_needed(self, *, owner_id: str, account_id: str) -> dict:
         """Return metadata unchanged while fresh; otherwise perform one refresh."""
         try:
