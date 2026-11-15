@@ -163,4 +163,6 @@ class SpecialistRegistry:
                     "max_transcript_chars": item.budget.max_transcript_chars,
                 },
             }
+        if not configs:
+            return {}
         return build_delegated_specialist_handlers(configs)
