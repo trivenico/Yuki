@@ -8,7 +8,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
-from core.tool_action_journal import ToolActionJournal
+from core.tool_action_journal import ToolActionConflict, ToolActionJournal
 from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
@@ -119,7 +119,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
             self.proposal.idempotency_key, "email.send",
             {"to": "different@example.com"}, action_id=self.proposal.action_id,
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(ToolActionConflict):
             self.executor._claim_proposal_and_reserve_action(
                 self.proposal, principal_id="owner-a",
             )
