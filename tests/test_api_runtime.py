@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock
 from pathlib import Path
@@ -46,6 +47,43 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
             self.assertTrue(runtime._closed)
+
+    def test_concurrent_close_waits_for_api_component_shutdown(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_attempting = threading.Event()
+        second_finished = threading.Event()
+
+        class BlockingRegistry:
+            def __init__(self):
+                self.calls = 0
+
+            def close(self):
+                self.calls += 1
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError("test shutdown release timed out")
+                return ()
+
+        registry = BlockingRegistry()
+        application = SimpleNamespace(store=object())
+        runtime = ConversationRuntime(lambda scope, receive, send: None, application, registry)
+        first = threading.Thread(target=runtime.close)
+        second = threading.Thread(
+            target=lambda: (second_attempting.set(), runtime.close(), second_finished.set())
+        )
+        first.start()
+        self.assertTrue(entered.wait(2))
+        second.start()
+        self.assertTrue(second_attempting.wait(2))
+        self.assertFalse(second_finished.wait(0.05))
+        release.set()
+        first.join(2)
+        second.join(2)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertTrue(second_finished.is_set())
+        self.assertEqual(registry.calls, 1)
 
     def test_runtime_close_is_not_retried_when_application_cleanup_fails(self):
         application = Mock()
