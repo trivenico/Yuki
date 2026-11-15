@@ -80,6 +80,15 @@ class RemoteInferenceJobClient:
                     urllib.request.ProxyHandler({}), NoRedirect(),
                 ).open(request, timeout=self.timeout)
             with response_context as response:
+                status = getattr(response, "status", 200)
+                if status in (401, 403):
+                    raise PermissionError("device_authentication_failed")
+                if status == 404:
+                    raise LookupError("inference_job_not_found")
+                if status in (400, 409):
+                    raise ValueError("inference_job_rejected")
+                if not 200 <= status < 300:
+                    raise RuntimeError("Yuki inference API request failed")
                 raw = response.read(self.max_response_bytes + 1)
                 if len(raw) > self.max_response_bytes:
                     raise RuntimeError("response_too_large")
