@@ -106,8 +106,9 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertTrue(approvals.consume(
                 token, context, principal_id="authenticated-user",
             ))
-            with self.assertRaises(Exception):
-                approvals.consume(token, context, principal_id="authenticated-user")
+            self.assertFalse(approvals.consume(
+                token, context, principal_id="authenticated-user",
+            ))
             runtime.close()
 
     def test_concurrent_close_waits_for_api_component_shutdown(self):
