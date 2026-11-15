@@ -1,10 +1,11 @@
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from core.local_cli_runtime import build_local_conversation_runtime
+from core.local_cli_runtime import LocalConversationRuntime, build_local_conversation_runtime
 from core.local_owner_identity import load_or_create_local_owner_id
 from core.conversation_store import ConversationStore
 
@@ -50,6 +51,42 @@ class LocalOwnerIdentityTests(unittest.TestCase):
 
 
 class LocalCliRuntimeTests(unittest.TestCase):
+    def test_concurrent_close_waits_for_cli_component_shutdown(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_attempting = threading.Event()
+        second_finished = threading.Event()
+
+        class BlockingRegistry:
+            def __init__(self):
+                self.calls = 0
+
+            def close(self):
+                self.calls += 1
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError("test shutdown release timed out")
+                return ()
+
+        registry = BlockingRegistry()
+        runtime = LocalConversationRuntime(object(), registry)
+        first = threading.Thread(target=runtime.close)
+        second = threading.Thread(
+            target=lambda: (second_attempting.set(), runtime.close(), second_finished.set())
+        )
+        first.start()
+        self.assertTrue(entered.wait(2))
+        second.start()
+        self.assertTrue(second_attempting.wait(2))
+        self.assertFalse(second_finished.wait(0.05))
+        release.set()
+        first.join(2)
+        second.join(2)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertTrue(second_finished.is_set())
+        self.assertEqual(registry.calls, 1)
+
     def test_provider_is_closed_if_cli_composition_fails_before_ownership_transfer(self):
         provider = FakeProvider()
         with self.assertRaisesRegex(ValueError, "max_agent_steps"):
