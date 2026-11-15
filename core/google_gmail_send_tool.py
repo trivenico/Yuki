@@ -47,11 +47,11 @@ class GmailSendTool:
                             "oneOf": [
                                 {"type": "string", "format": "email"},
                                 {"type": "array", "items": {"type": "string", "format": "email"},
-                                 "minItems": 1, "maxItems": 20},
+                                 "minItems": 1, "maxItems": 5},
                             ],
                         },
                         "subject": {"type": "string", "maxLength": 998},
-                        "body": {"type": "string", "maxLength": 900000},
+                        "body": {"type": "string", "maxLength": 4000},
                     },
                     "required": ["account_id", "to", "subject", "body"],
                     "additionalProperties": False,
