@@ -87,16 +87,19 @@ class StructuredToolProtocol:
             raise TypeError("runtime must be a GuardedToolRuntime.")
         self._runtime = runtime
 
+    def dispatch_call(self, call: StructuredToolCall) -> StructuredToolResult:
+        """Dispatch one already-validated call through the guarded runtime."""
+        if not isinstance(call, StructuredToolCall):
+            raise TypeError("call must be a validated StructuredToolCall.")
+        argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
+        output = self._runtime.invoke(call.name, argument)
+        return StructuredToolResult(call.call_id, call.name, output)
+
     def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
         calls = parse_tool_calls(response)
-        results = []
-        for call in calls:
-            argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
-            output = self._runtime.invoke(call.name, argument)
-            results.append(StructuredToolResult(call.call_id, call.name, output))
-        return tuple(results)
+        return tuple(self.dispatch_call(call) for call in calls)
 
     @staticmethod
     def format_results(results: tuple[StructuredToolResult, ...]) -> str:
