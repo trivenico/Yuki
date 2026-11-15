@@ -510,8 +510,17 @@ class AgentExecutionLoopTests(unittest.TestCase):
                 "id": "bad-confirmation", "name": "echo", "arguments": request,
             }]},
         }
+        from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
+        confirming_runtime = GuardedToolRuntime(
+            {"echo": lambda raw: self.invocations.append(json.loads(raw)) or raw},
+            AllowPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "echo": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
+            }),
+        )
+        confirming_protocol = StructuredToolProtocol(confirming_runtime)
         with self.assertRaises(AgentExecutionError):
-            AgentExecutionLoop(model, self.protocol, max_model_turns=1).run(
+            AgentExecutionLoop(model, confirming_protocol, max_model_turns=1).run(
                 "Run tool", tools=self.tools,
                 confirmation_check=lambda call: 1,
                 approval_id_factory=lambda *args: "token",
