@@ -13,6 +13,8 @@ import socket
 import ssl
 from urllib.parse import urlencode, urlsplit
 
+from core.network_firewall import NetworkFirewall
+
 
 class OAuthHTTPError(RuntimeError):
     """Stable, non-sensitive OAuth transport failure."""
@@ -40,7 +42,7 @@ class PinnedOAuthHTTPTransport:
     MAX_RESPONSE_BYTES = 1_000_000
     MAX_REQUEST_BYTES = 64_000
 
-    def __init__(self, *, allowed_hosts, timeout=10, resolver=None, connection_factory=None):
+    def __init__(self, *, allowed_hosts, timeout=10, resolver=None, connection_factory=None, firewall_policy=None):
         if not isinstance(allowed_hosts, (set, frozenset, tuple, list)) or not allowed_hosts:
             raise ValueError("an explicit OAuth host allow-list is required")
         normalized = set()
@@ -49,6 +51,15 @@ class PinnedOAuthHTTPTransport:
                 raise ValueError("invalid OAuth host allow-list")
             normalized.add(host.lower().rstrip("."))
         self.allowed_hosts = frozenset(normalized)
+        if firewall_policy is None:
+            firewall_policy = NetworkFirewall(allowed_hosts=self.allowed_hosts)
+        if not isinstance(firewall_policy, NetworkFirewall):
+            raise TypeError("firewall_policy must be a NetworkFirewall")
+        if not self.allowed_hosts.issubset(firewall_policy.allowed_hosts):
+            raise ValueError("firewall policy must allow every configured OAuth host")
+        if 443 not in firewall_policy.allowed_ports or "tcp" not in firewall_policy.allowed_protocols:
+            raise ValueError("firewall policy must allow HTTPS over TCP port 443")
+        self.firewall_policy = firewall_policy
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 30:
             raise ValueError("timeout must be between 1 and 30 seconds")
         self.timeout = float(timeout)
@@ -80,19 +91,28 @@ class PinnedOAuthHTTPTransport:
     def _resolve_public_ip(self, host):
         try:
             records = self._resolver(host, 443, type=socket.SOCK_STREAM)
-        except OSError:
+        except (OSError, TypeError):
             raise OAuthHTTPError("oauth_endpoint_resolution_failed") from None
         addresses = set()
-        for record in records:
-            try:
+        try:
+            for record in records:
                 address = ipaddress.ip_address(record[4][0])
-            except (ValueError, IndexError, TypeError):
-                raise OAuthHTTPError("oauth_endpoint_resolution_failed") from None
-            if not address.is_global:
-                raise OAuthHTTPError("oauth_endpoint_address_blocked")
-            addresses.add(str(address))
+                if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+                    address = address.ipv4_mapped
+                if not address.is_global:
+                    raise OAuthHTTPError("oauth_endpoint_address_blocked")
+                addresses.add(str(address))
+                if len(addresses) > 32:
+                    raise OAuthHTTPError("oauth_endpoint_resolution_failed")
+        except (ValueError, IndexError, TypeError):
+            raise OAuthHTTPError("oauth_endpoint_resolution_failed") from None
         if not addresses:
             raise OAuthHTTPError("oauth_endpoint_resolution_failed")
+        decision = self.firewall_policy.authorize(
+            host=host, port=443, protocol="tcp", resolved_addresses=tuple(addresses),
+        )
+        if not decision.allowed:
+            raise OAuthHTTPError("oauth_endpoint_address_blocked")
         # Deterministic choice avoids retrying alternate DNS answers on failure.
         return sorted(addresses)[0]
 
