@@ -773,6 +773,10 @@ class ConversationStore:
                     raise ConversationNotFound("tool execution not found.")
                 if execution["status"] not in {"started", "uncertain"}:
                     raise ConversationConflict("provider evidence can only be recorded for unresolved executions.")
+                if evidence.execution_id != execution["execution_id"]:
+                    raise ConversationConflict(
+                        "provider evidence does not match the exact durable execution identity."
+                    )
                 if (evidence.idempotency_key != execution["idempotency_key"]
                         or evidence.arguments_sha256 != execution["arguments_sha256"]):
                     raise ConversationConflict("provider evidence does not match the stored execution fingerprint.")
@@ -785,6 +789,16 @@ class ConversationStore:
                 ).fetchone()
                 if active_claim is None:
                     raise ConversationConflict("provider reconciliation claim expired or is no longer owned by this worker.")
+                existing_provider = db.execute(
+                    """SELECT provider FROM conversation_provider_outcome_evidence
+                       WHERE execution_id=? LIMIT 1""",
+                    (execution["execution_id"],),
+                ).fetchone()
+                if (existing_provider is not None
+                        and existing_provider["provider"] != evidence.provider):
+                    raise ConversationConflict(
+                        "provider identity cannot change during execution reconciliation."
+                    )
                 # SQLite's IMMEDIATE transaction serializes this check across
                 # processes. Repeated delivery of identical provider evidence
                 # returns the original ledger entry instead of duplicating it.
@@ -793,10 +807,14 @@ class ConversationStore:
                               call_id, provider, outcome, evidence_sha256, observed_at,
                               provider_reference, recorded_at
                        FROM conversation_provider_outcome_evidence
-                       WHERE execution_id=? AND evidence_sha256=?""",
-                    (execution["execution_id"], evidence.evidence_sha256),
+                       WHERE evidence_sha256=?""",
+                    (evidence.evidence_sha256,),
                 ).fetchone()
                 if previous is not None:
+                    if previous["execution_id"] != execution["execution_id"]:
+                        raise ConversationConflict(
+                            "provider evidence has already been bound to another execution."
+                        )
                     if (previous["provider"] != evidence.provider
                             or previous["outcome"] != evidence.outcome.value
                             or previous["observed_at"] != evidence.observed_at
@@ -880,12 +898,19 @@ class ConversationStore:
                     if not execution["provider_idempotency"]:
                         raise ConversationConflict("provider completion requires an idempotency-capable execution.")
                     evidence = db.execute(
-                        "SELECT outcome FROM conversation_provider_outcome_evidence "
-                        "WHERE execution_id=? ORDER BY recorded_at DESC, evidence_id DESC LIMIT 1",
+                        """SELECT COUNT(*) AS total,
+                                  SUM(CASE WHEN outcome='confirmed_completed' THEN 1 ELSE 0 END) AS completed,
+                                  SUM(CASE WHEN outcome!='confirmed_completed' THEN 1 ELSE 0 END) AS conflicting
+                           FROM conversation_provider_outcome_evidence
+                           WHERE execution_id=?""",
                         (execution["execution_id"],),
                     ).fetchone()
-                    if evidence is None or evidence["outcome"] != "confirmed_completed":
-                        raise ConversationConflict("provider completion evidence is not confirmed.")
+                    if (evidence is None or evidence["total"] < 1
+                            or evidence["completed"] != evidence["total"]
+                            or evidence["conflicting"] != 0):
+                        raise ConversationConflict(
+                            "provider completion requires unanimous confirmed evidence."
+                        )
                     cursor = db.execute(
                         "UPDATE conversation_tool_executions SET status='completed', updated_at=? "
                         "WHERE execution_id=? AND owner_id=? AND status='uncertain'",
@@ -938,17 +963,33 @@ class ConversationStore:
         if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
             raise ValueError("lease_token must be non-empty bounded text.")
         with self._connect() as db:
-            cursor = db.execute(
-                """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'
-                     AND EXISTS (
-                       SELECT 1 FROM conversation_generation_leases
-                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?
-                     )""",
-                (self._now(), owner, conversation_id, request_id,
-                 conversation_id, owner, lease_token.strip(), time.time()),
-            )
-            return cursor.rowcount
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                lease = db.execute(
+                    """SELECT 1 FROM conversation_generation_leases
+                       WHERE conversation_id=? AND owner_id=? AND lease_token=? AND expires_at>?""",
+                    (conversation_id, owner, lease_token.strip(), time.time()),
+                ).fetchone()
+                if lease is None:
+                    raise ConversationConflict(
+                        "tool recovery requires the active generation lease."
+                    )
+                db.execute(
+                    """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'""",
+                    (self._now(), owner, conversation_id, request_id),
+                )
+                count = db.execute(
+                    """SELECT COUNT(*) FROM conversation_tool_executions
+                       WHERE owner_id=? AND conversation_id=? AND request_id=?
+                         AND status='uncertain'""",
+                    (owner, conversation_id, request_id),
+                ).fetchone()[0]
+                db.commit()
+                return int(count)
+            except Exception:
+                db.rollback()
+                raise
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,

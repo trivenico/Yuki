@@ -1,4 +1,5 @@
 import concurrent.futures
+import multiprocessing
 import tempfile
 import threading
 import unittest
@@ -12,6 +13,62 @@ from core.conversation_store import ConversationConflict, ConversationNotFound, 
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
+
+
+
+def _multiprocess_claim_generation_lease(database_path, conversation_id, token, barrier, results):
+    store = ConversationStore(database_path)
+    try:
+        barrier.wait(timeout=10)
+        store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=60,
+        )
+    except ConversationConflict:
+        results.put(("conflict", token))
+    except Exception as exc:
+        results.put(("error", repr(exc)))
+    else:
+        results.put(("acquired", token))
+        store.release_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=token,
+        )
+
+
+def _multiprocess_mark_uncertain_then_crash(database_path, conversation_id, request_id, connection):
+    import os
+    import core.conversation_store as conversation_store_module
+
+    conversation_store_module.time.time = lambda: 100.0
+    store = ConversationStore(database_path)
+    token = "recovery-crash-window-worker"
+    store.acquire_generation_lease(
+        owner_id="owner-a", conversation_id=conversation_id,
+        lease_token=token, ttl_seconds=5,
+    )
+    marked = store.mark_started_tool_executions_uncertain(
+        owner_id="owner-a", conversation_id=conversation_id,
+        request_id=request_id, lease_token=token,
+    )
+    connection.send(("marked-uncertain", marked))
+    connection.close()
+    os._exit(0)
+
+
+def _multiprocess_crash_after_generation_lease(database_path, conversation_id, token, connection):
+    import os
+    import core.conversation_store as conversation_store_module
+
+    conversation_store_module.time.time = lambda: 100.0
+    store = ConversationStore(database_path)
+    store.acquire_generation_lease(
+        owner_id="owner-a", conversation_id=conversation_id,
+        lease_token=token, ttl_seconds=5,
+    )
+    connection.send("lease-acquired")
+    connection.close()
+    os._exit(0)
 
 class AllowNothing:
     def authorize_tool(self, name):
@@ -213,6 +270,29 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(self.store.list_recovery_events(
             owner_id="owner-a", conversation_id=conversation_id,
         )[0]["outcome"], "completed")
+        messages = self.store.list_messages(
+            owner_id="owner-a", conversation_id=conversation_id, limit=100,
+        )
+        interruption_messages = [
+            message for message in messages
+            if message["role"] == "assistant"
+            and message["content"] == coordinator.INTERRUPTION_MESSAGE
+        ]
+        self.assertEqual(len(interruption_messages), 1)
+        repeated = coordinator.recover(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=retry_token,
+        )
+        self.assertEqual(repeated.recovered_request_ids, ())
+        messages_after_retry = self.store.list_messages(
+            owner_id="owner-a", conversation_id=conversation_id, limit=100,
+        )
+        self.assertEqual(
+            sum(1 for message in messages_after_retry
+                if message["role"] == "assistant"
+                and message["content"] == coordinator.INTERRUPTION_MESSAGE),
+            1,
+        )
 
     def test_recovery_audit_insert_failure_rolls_back_generation_finalization(self):
         conversation_id = self.conversation["conversation_id"]
@@ -1018,6 +1098,481 @@ class ConversationServiceTests(unittest.TestCase):
         )
         self.assertEqual([item["status"] for item in resolved], ["uncertain"])
         self.assertEqual(len(model_calls), 2)
+
+
+    def test_only_one_concurrent_worker_can_claim_and_recover_generation(self):
+        conversation_id = self.conversation["conversation_id"]
+        self._seed_interrupted_generation("concurrent-recovery-claim", 0)
+        barrier = threading.Barrier(2)
+
+        def claim(token):
+            barrier.wait(timeout=5)
+            try:
+                self.store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token=token, ttl_seconds=60,
+                )
+                return token
+            except ConversationConflict:
+                return None
+
+        tokens = ("recovery-worker-a", "recovery-worker-b")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(claim, tokens))
+
+        winners = [token for token in outcomes if token is not None]
+        self.assertEqual(len(winners), 1)
+        winner = winners[0]
+        try:
+            summary = ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=winner,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=winner,
+            )
+
+        self.assertEqual(summary.interrupted_generations, 1)
+        events = self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["request_id"], "concurrent-recovery-claim")
+        self.assertEqual(events[0]["outcome"], "interrupted")
+
+
+
+    def test_live_generation_lease_renewal_preserves_fencing_and_exclusivity(self):
+        conversation_id = self.conversation["conversation_id"]
+        token = "renewable-recovery-worker"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=5,
+        )
+        try:
+            renewed = self.store.renew_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token, ttl_seconds=60,
+            )
+            self.assertGreater(renewed["expires_at"], 0)
+            with self.assertRaises(ConversationConflict):
+                self.store.renew_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="stale-worker-token", ttl_seconds=60,
+                )
+            with self.assertRaises(ConversationConflict):
+                self.store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="competing-worker-token", ttl_seconds=60,
+                )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
+
+
+
+    def test_expired_worker_cannot_renew_or_release_replacement_lease(self):
+        conversation_id = self.conversation["conversation_id"]
+        with patch("core.conversation_store.time.time", side_effect=[100.0, 106.0, 107.0, 108.0]):
+            self.store.acquire_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="expired-worker", ttl_seconds=5,
+            )
+            self.store.acquire_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="replacement-worker", ttl_seconds=60,
+            )
+            with self.assertRaises(ConversationConflict):
+                self.store.renew_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="expired-worker", ttl_seconds=60,
+                )
+            self.assertFalse(self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="expired-worker",
+            ))
+            with self.assertRaises(ConversationConflict):
+                self.store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token="third-worker", ttl_seconds=60,
+                )
+            self.assertTrue(self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token="replacement-worker",
+            ))
+
+
+
+    def test_service_heartbeat_renews_lease_during_slow_recovery(self):
+        entered_recovery = threading.Event()
+        allow_recovery_to_finish = threading.Event()
+        lease_renewed = threading.Event()
+        original_recover = self.service.recovery_coordinator.recover
+        original_renew = self.store.renew_generation_lease
+
+        def slow_recovery(**kwargs):
+            entered_recovery.set()
+            if not allow_recovery_to_finish.wait(timeout=5):
+                raise TimeoutError("test did not release recovery")
+            return original_recover(**kwargs)
+
+        def observe_renewal(**kwargs):
+            result = original_renew(**kwargs)
+            lease_renewed.set()
+            return result
+
+        self.service.LEASE_TTL_SECONDS = 5
+        self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.05
+        with patch.object(self.service.recovery_coordinator, "recover", side_effect=slow_recovery), \
+             patch.object(self.store, "renew_generation_lease", side_effect=observe_renewal):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    self.service.reply,
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="Continue after recovery",
+                    request_id="heartbeat-during-recovery",
+                    expected_version=0,
+                    tools=[],
+                )
+                self.assertTrue(entered_recovery.wait(timeout=2))
+                try:
+                    self.assertTrue(lease_renewed.wait(timeout=2))
+                finally:
+                    allow_recovery_to_finish.set()
+                result = future.result(timeout=5)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(lease_renewed.is_set())
+
+
+
+    def test_heartbeat_renewal_failure_during_recovery_prevents_response_commit(self):
+        entered_recovery = threading.Event()
+        allow_recovery_to_finish = threading.Event()
+        renewal_attempted = threading.Event()
+        original_recover = self.service.recovery_coordinator.recover
+
+        def slow_recovery(**kwargs):
+            entered_recovery.set()
+            if not allow_recovery_to_finish.wait(timeout=5):
+                raise TimeoutError("test did not release recovery")
+            return original_recover(**kwargs)
+
+        def fail_renewal(**kwargs):
+            renewal_attempted.set()
+            raise OSError("simulated lease store outage")
+
+        self.service.LEASE_TTL_SECONDS = 5
+        self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
+        with patch.object(self.service.recovery_coordinator, "recover", side_effect=slow_recovery), \
+             patch.object(self.store, "renew_generation_lease", side_effect=fail_renewal):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    self.service.reply,
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="Do not commit without lease proof",
+                    request_id="heartbeat-failure-during-recovery",
+                    expected_version=0,
+                    tools=[],
+                )
+                self.assertTrue(entered_recovery.wait(timeout=2))
+                try:
+                    self.assertTrue(renewal_attempted.wait(timeout=2))
+                finally:
+                    allow_recovery_to_finish.set()
+                with self.assertRaisesRegex(ConversationConflict, "renewal failed"):
+                    future.result(timeout=5)
+
+        self.assertEqual(self.observed, [])
+        self.assertFalse(self.store.has_message(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            idempotency_key="assistant:heartbeat-failure-during-recovery",
+        ))
+
+
+
+    def test_replaced_lease_during_recovery_blocks_stale_worker_commit(self):
+        entered_recovery = threading.Event()
+        allow_recovery_to_finish = threading.Event()
+        original_recover = self.service.recovery_coordinator.recover
+        renewal_rejected = threading.Event()
+        original_renew = self.store.renew_generation_lease
+
+        def blocked_recovery(**kwargs):
+            entered_recovery.set()
+            if not allow_recovery_to_finish.wait(timeout=5):
+                raise TimeoutError("test did not release recovery")
+            return original_recover(**kwargs)
+
+        def observe_rejected_renewal(**kwargs):
+            try:
+                return original_renew(**kwargs)
+            finally:
+                renewal_rejected.set()
+
+        self.service.LEASE_TTL_SECONDS = 60
+        self.service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
+        with patch.object(
+            self.service.recovery_coordinator, "recover",
+            side_effect=blocked_recovery,
+        ), patch.object(self.store, "renew_generation_lease", side_effect=observe_rejected_renewal):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    self.service.reply,
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="Must not commit after losing the lease",
+                    request_id="stale-worker-recovery",
+                    expected_version=0,
+                    tools=[],
+                )
+                self.assertTrue(entered_recovery.wait(timeout=2))
+                try:
+                    with self.store._connect() as db:
+                        db.execute(
+                            """UPDATE conversation_generation_leases
+                               SET lease_token=?, expires_at=?
+                               WHERE owner_id=? AND conversation_id=?""",
+                            ("replacement-during-recovery", 9999999999,
+                             "owner-a", self.conversation["conversation_id"]),
+                        )
+                try:
+                    self.assertTrue(renewal_rejected.wait(timeout=2))
+                finally:
+                    allow_recovery_to_finish.set()
+                with self.assertRaises(ConversationConflict):
+                    future.result(timeout=5)
+
+        self.assertEqual(self.observed, [])
+        self.assertFalse(self.store.has_message(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            idempotency_key="assistant:stale-worker-recovery",
+        ))
+
+
+    def test_recovery_process_crash_preserves_uncertain_tool_outcome_without_replay(self):
+        database_path = Path(self.tempdir.name) / "chat.sqlite3"
+        conversation_id = self.conversation["conversation_id"]
+        request_id = "recovery-crash-after-uncertain"
+        self._seed_interrupted_generation(request_id, 0)
+
+        initial_token = "seed-tool-execution-lease"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=initial_token, ttl_seconds=60,
+        )
+        try:
+            self.store.begin_tool_execution(
+                owner_id="owner-a", conversation_id=conversation_id,
+                request_id=request_id, call_id="send-once", tool_name="send",
+                arguments_sha256="a" * 64, lease_token=initial_token,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=initial_token,
+            )
+
+        context = multiprocessing.get_context("spawn")
+        parent_connection, child_connection = context.Pipe(duplex=False)
+        worker = context.Process(
+            target=_multiprocess_mark_uncertain_then_crash,
+            args=(str(database_path), conversation_id, request_id, child_connection),
+        )
+        worker.start()
+        child_connection.close()
+        try:
+            self.assertEqual(parent_connection.recv(), ("marked-uncertain", 1))
+            worker.join(timeout=10)
+            self.assertFalse(worker.is_alive(), "recovery worker did not exit")
+            self.assertEqual(worker.exitcode, 0)
+        finally:
+            parent_connection.close()
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+
+        records_before_retry = self.store.list_tool_executions(
+            owner_id="owner-a", conversation_id=conversation_id,
+            request_id=request_id,
+        )
+        self.assertEqual([record["status"] for record in records_before_retry], ["uncertain"])
+
+        replacement_token = "replacement-recovery-worker"
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=replacement_token, ttl_seconds=60,
+        )
+        try:
+            summary = ConversationRecoveryCoordinator(self.store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=replacement_token,
+            )
+        finally:
+            self.store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=replacement_token,
+            )
+
+        self.assertEqual(summary.interrupted_generations, 1)
+        records_after_retry = self.store.list_tool_executions(
+            owner_id="owner-a", conversation_id=conversation_id,
+            request_id=request_id,
+        )
+        self.assertEqual([record["status"] for record in records_after_retry], ["uncertain"])
+        events = self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["request_id"], request_id)
+        self.assertEqual(events[0]["uncertain_tool_calls"], 1)
+
+    def test_expired_lease_can_be_reclaimed_after_worker_process_crashes(self):
+        database_path = Path(self.tempdir.name) / "chat.sqlite3"
+        conversation_id = self.conversation["conversation_id"]
+        context = multiprocessing.get_context("spawn")
+        parent_connection, child_connection = context.Pipe(duplex=False)
+        worker = context.Process(
+            target=_multiprocess_crash_after_generation_lease,
+            args=(
+                str(database_path), conversation_id,
+                "crashed-process-token", child_connection,
+            ),
+        )
+        worker.start()
+        child_connection.close()
+        try:
+            self.assertEqual(parent_connection.recv(), "lease-acquired")
+            worker.join(timeout=10)
+            self.assertFalse(worker.is_alive(), "crashed lease worker did not exit")
+            self.assertEqual(worker.exitcode, 0)
+        finally:
+            parent_connection.close()
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+
+        replacement = self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token="replacement-after-process-crash", ttl_seconds=60,
+        )
+        self.assertEqual(
+            replacement["lease_token"], "replacement-after-process-crash",
+        )
+        self.store.release_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token="replacement-after-process-crash",
+        )
+
+    def test_separate_processes_cannot_both_acquire_generation_lease(self):
+        database_path = Path(self.tempdir.name) / "chat.sqlite3"
+        conversation_id = self.conversation["conversation_id"]
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        results = context.Queue()
+        workers = [
+            context.Process(
+                target=_multiprocess_claim_generation_lease,
+                args=(str(database_path), conversation_id, token, barrier, results),
+            )
+            for token in ("process-worker-a", "process-worker-b")
+        ]
+
+        for worker in workers:
+            worker.start()
+        try:
+            outcomes = [results.get(timeout=20) for _ in workers]
+            for worker in workers:
+                worker.join(timeout=20)
+                self.assertFalse(worker.is_alive(), "lease worker process did not exit")
+                self.assertEqual(worker.exitcode, 0)
+        finally:
+            for worker in workers:
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=5)
+            results.close()
+            results.join_thread()
+
+        self.assertEqual(
+            sorted(outcome for outcome, _token in outcomes),
+            ["acquired", "conflict"],
+        )
+        self.assertEqual(
+            {token for _outcome, token in outcomes},
+            {"process-worker-a", "process-worker-b"},
+        )
+
+    def test_independent_store_instances_share_lease_and_recovery_state(self):
+        database_path = Path(self.tempdir.name) / "chat.sqlite3"
+        second_store = ConversationStore(database_path)
+        conversation_id = self.conversation["conversation_id"]
+        barrier = threading.Barrier(2)
+
+        def claim(store, token):
+            barrier.wait(timeout=5)
+            try:
+                store.acquire_generation_lease(
+                    owner_id="owner-a", conversation_id=conversation_id,
+                    lease_token=token, ttl_seconds=60,
+                )
+                return token
+            except ConversationConflict:
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = (
+                pool.submit(claim, self.store, "independent-store-a"),
+                pool.submit(claim, second_store, "independent-store-b"),
+            )
+            winners = [future.result(timeout=10) for future in futures]
+
+        winning_tokens = [token for token in winners if token is not None]
+        self.assertEqual(len(winning_tokens), 1)
+        winning_token = winning_tokens[0]
+        winning_store = (
+            self.store if winning_token == "independent-store-a" else second_store
+        )
+        winning_store.release_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=winning_token,
+        )
+
+        self._seed_interrupted_generation("cross-instance-recovery", 0)
+        recovery_token = "cross-instance-recovery-worker"
+        second_store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token=recovery_token, ttl_seconds=60,
+        )
+        try:
+            summary = ConversationRecoveryCoordinator(second_store).recover(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=recovery_token,
+            )
+        finally:
+            second_store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=recovery_token,
+            )
+
+        self.assertEqual(summary.interrupted_generations, 1)
+        events_seen_by_first_store = self.store.list_recovery_events(
+            owner_id="owner-a", conversation_id=conversation_id,
+        )
+        self.assertEqual(len(events_seen_by_first_store), 1)
+        self.assertEqual(
+            events_seen_by_first_store[0]["request_id"],
+            "cross-instance-recovery",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

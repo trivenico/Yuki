@@ -32,6 +32,7 @@ class ProviderOutcomeEvidence:
     arguments_sha256: str
     evidence_sha256: str
     observed_at: str
+    execution_id: str
     provider_reference: str | None = None
 
     def __post_init__(self) -> None:
@@ -39,6 +40,9 @@ class ProviderOutcomeEvidence:
             raise ValueError("provider must be a bounded provider identifier.")
         if not isinstance(self.outcome, ProviderOutcome):
             raise ValueError("outcome must be a ProviderOutcome.")
+        if (not isinstance(self.execution_id, str) or not self.execution_id.strip()
+                or len(self.execution_id) > 256):
+            raise ValueError("execution_id must be bounded non-empty text.")
         for value, label in (
             (self.idempotency_key, "idempotency_key"),
             (self.arguments_sha256, "arguments_sha256"),
@@ -116,6 +120,8 @@ def verify_provider_outcome(
         raise TypeError("provider adapter lookup_tool_outcome returned an awaitable; synchronous evidence is required.")
     if not isinstance(evidence, ProviderOutcomeEvidence):
         raise TypeError("provider adapter returned untyped outcome evidence.")
+    if evidence.execution_id != execution_id:
+        raise ValueError("provider evidence does not match the exact durable execution identity.")
     if (evidence.idempotency_key != execution["idempotency_key"]
             or evidence.arguments_sha256 != execution["arguments_sha256"]):
         raise ValueError("provider evidence does not match the durable execution fingerprint.")
