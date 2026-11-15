@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
+import math
 from dataclasses import dataclass, field
 from threading import RLock
 from types import MappingProxyType
@@ -25,7 +25,11 @@ def _freeze(value: Any) -> Any:
         return tuple(_freeze(item) for item in value)
     if isinstance(value, (set, frozenset)):
         return frozenset(_freeze(item) for item in value)
-    if value is None or isinstance(value, (str, bool, int, float)):
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("configuration floats must be finite.")
+        return value
+    if value is None or isinstance(value, (str, bool, int)):
         return value
     raise TypeError("configuration values must be mappings, sequences, sets or scalar primitives.")
 
@@ -55,7 +59,9 @@ def build_configuration_component_runtime(
     """
     if not isinstance(config, Mapping):
         raise TypeError("config must be a mapping.")
-    snapshot_values = deepcopy(dict(config))
+    # _freeze recursively copies supported containers into immutable forms;
+    # deepcopy is unnecessary and could execute arbitrary __deepcopy__ hooks.
+    snapshot_values = dict(config)
     workspace = snapshot_values.get("workspace")
     provider = snapshot_values.get("provider")
     storage_backend = snapshot_values.get("storage_backend", "sqlite")

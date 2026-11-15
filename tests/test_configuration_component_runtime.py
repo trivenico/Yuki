@@ -70,6 +70,28 @@ class ConfigurationComponentRuntimeTests(unittest.TestCase):
                 "nested": {1: "invalid key"},
             })
 
+    def test_non_finite_float_configuration_values_are_rejected(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "finite"):
+                    build_configuration_component_runtime({
+                        "workspace": "/tmp/yuki", "provider": "ollama",
+                        "threshold": value,
+                    })
+
+    def test_opaque_values_are_rejected_without_running_deepcopy_hooks(self):
+        class Opaque:
+            called = False
+            def __deepcopy__(self, memo):
+                self.called = True
+                raise AssertionError("deepcopy hook must not execute")
+        value = Opaque()
+        with self.assertRaisesRegex(TypeError, "scalar primitives"):
+            build_configuration_component_runtime({
+                "workspace": "/tmp/yuki", "provider": "ollama", "opaque": value,
+            })
+        self.assertFalse(value.called)
+
     def test_wrong_component_contract_is_rejected(self):
         wrong_contract = next(
             item for item in DEFAULT_COMPONENTS
