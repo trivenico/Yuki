@@ -105,6 +105,44 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
 
 
 
+
+    def test_recovers_claim_from_durable_success_without_redispatch(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        reserved = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send", self.arguments,
+            action_id=self.proposal.action_id,
+        )
+        running = self.journal.begin_execution(
+            self.proposal.idempotency_key, reserved.request_digest,
+        )
+        self.journal.mark_succeeded(
+            self.proposal.idempotency_key, running.lease_owner, "provider-confirmed",
+        )
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "finished")
+        self.assertEqual(recovered.result, "provider-confirmed")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "finished")
+
+    def test_recovers_claim_without_journal_record_as_unknown(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "unknown")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "unknown")
+
     def test_blocked_dispatch_is_not_reported_as_success(self):
         class DenyPolicy:
             def authorize_tool(self, name):
