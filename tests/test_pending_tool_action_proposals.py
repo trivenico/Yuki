@@ -123,6 +123,52 @@ class SQLitePendingToolActionProposalStoreTests(unittest.TestCase):
                 proposal.proposal_id, principal_id="user-1",
             ).status, "cancelled")
 
+
+    def test_schema_migration_rolls_back_when_index_creation_fails(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pending-proposals.sqlite3"
+            db = sqlite3.connect(path)
+            try:
+                db.execute("""CREATE TABLE pending_tool_action_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    principal_id TEXT NOT NULL,
+                    action_id TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT
+                )""")
+                # SQLite index and table names share a namespace. This makes
+                # the second index creation fail after ALTER TABLE has run.
+                db.execute("CREATE TABLE idx_pending_tool_proposals_expiry (id INTEGER)")
+                db.commit()
+            finally:
+                db.close()
+
+            with self.assertRaises(sqlite3.OperationalError):
+                self.make_store(directory)
+
+            db = sqlite3.connect(path)
+            try:
+                columns = {
+                    row[1] for row in db.execute(
+                        "PRAGMA table_info(pending_tool_action_proposals)"
+                    )
+                }
+                self.assertNotIn("execution_state", columns)
+                self.assertIsNone(db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='index' "
+                    "AND name='idx_pending_tool_proposals_owner_status'"
+                ).fetchone())
+            finally:
+                db.close()
+
     def test_invalid_ttl_and_limit_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             for ttl in (0, -1, True, 3601):
