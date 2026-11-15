@@ -1,5 +1,7 @@
+import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from threading import Barrier
 from unittest.mock import patch
 import unittest
@@ -10,6 +12,20 @@ from core.conversation_store import (
     ConversationNotFound,
     ConversationStore,
 )
+
+
+@contextmanager
+def _sqlite_connection(database):
+    """Close SQLite handles deterministically on Windows as well as POSIX."""
+    db = sqlite3.connect(database)
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 class ConversationStoreTests(unittest.TestCase):
@@ -633,6 +649,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
             provider_reference="message-reference-1",
         )
         saved = self._record_provider_evidence(
@@ -662,6 +679,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="d" * 64, arguments_sha256="b" * 64,
             evidence_sha256="e" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id="different-execution",
         )
         with self.assertRaises(ConversationConflict):
             self._record_provider_evidence(
@@ -701,6 +719,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
             provider_reference="provider-message-42",
         )
         saved = self._record_provider_evidence(
@@ -752,7 +771,7 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="legacy-call",
             action="acknowledge_uncertain", reason="Historical review must survive migration.",
         )
-        with sqlite3.connect(database) as db:
+        with _sqlite_connection(database) as db:
             db.execute("PRAGMA foreign_keys=ON")
             db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_new")
             db.execute("""CREATE TABLE conversation_tool_reviews (
@@ -921,6 +940,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="d" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
         )
         self._record_provider_evidence(
             owner_id=self.owner, conversation_id=conversation_id,
@@ -976,7 +996,7 @@ class ConversationStoreTests(unittest.TestCase):
                 owner_id=self.owner, conversation_id=conversation_id,
                 lease_token="review-worker", ttl_seconds=60,
             )
-            self.store.begin_tool_execution(
+            execution = self.store.begin_tool_execution(
                 owner_id=self.owner, conversation_id=conversation_id,
                 request_id=request_id, call_id="send-confirmed", tool_name="send_email",
                 arguments_sha256="b" * 64, idempotency_key="a" * 64,
@@ -998,6 +1018,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=execution["execution_id"],
             provider_reference="provider-message-confirmed",
         )
         self._record_provider_evidence(
@@ -1050,6 +1071,7 @@ class ConversationStoreTests(unittest.TestCase):
             provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64, observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
         )
         first = ProviderOutcomeEvidence(**common, provider_reference="message-A")
         conflicting = ProviderOutcomeEvidence(**common, provider_reference="message-B")
@@ -1206,7 +1228,7 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id=request_id, call_id="call-claim",
                 lease_token="worker-new", ttl_seconds=30,
             )
-            evidence = self._make_claim_test_evidence()
+            evidence = self._make_claim_test_evidence(request_id, "call-claim")
             with self.assertRaisesRegex(ConversationConflict, "claim expired"):
                 self.store.record_provider_outcome_evidence(
                     owner_id=self.owner, conversation_id=conversation_id,
@@ -1256,7 +1278,7 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="call-evidence-race",
             lease_token="evidence-race-worker", ttl_seconds=30,
         )
-        evidence = self._make_claim_test_evidence()
+        evidence = self._make_claim_test_evidence(request_id, "call-evidence-race")
         barrier = Barrier(2)
 
         def record():
@@ -1327,7 +1349,7 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id=request_id, call_id="call-restart",
                 lease_token="worker-recovered", ttl_seconds=30,
             )
-            evidence = self._make_claim_test_evidence()
+            evidence = self._make_claim_test_evidence(request_id, "call-restart", recovered_store)
             with self.assertRaisesRegex(ConversationConflict, "claim expired"):
                 self.store.record_provider_outcome_evidence(
                     owner_id=self.owner, conversation_id=conversation_id,
@@ -1461,6 +1483,7 @@ class ConversationStoreTests(unittest.TestCase):
             provider="mail.example", outcome=ProviderOutcome.CONFIRMED_COMPLETED,
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="e" * 64, observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=claimed["execution_id"],
             provider_reference="message-verified",
         )
         saved = self._record_provider_evidence(
@@ -1490,12 +1513,21 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="call-crash",
         )), 1)
 
-    def _make_claim_test_evidence(self):
+    def _make_claim_test_evidence(self, request_id, call_id, store=None):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        source = store or self.store
+        execution = next(
+            item for item in source.list_tool_executions(
+                owner_id=self.owner,
+                conversation_id=self.conversation["conversation_id"],
+                request_id=request_id,
+            ) if item["call_id"] == call_id
+        )
         return ProviderOutcomeEvidence(
             provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="f" * 64, observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=execution["execution_id"],
         )
 
 if __name__ == "__main__":

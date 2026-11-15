@@ -51,11 +51,34 @@ class ConversationRecoveryCoordinator:
                 owner_id=owner_id, conversation_id=conversation_id,
                 message_id=generation["user_message_id"],
             )
+            assistant_key = "assistant:" + request_id
             assistant_exists = self.store.has_message(
                 owner_id=owner_id, conversation_id=conversation_id,
-                idempotency_key="assistant:" + request_id,
+                idempotency_key=assistant_key,
             )
-            if assistant_exists:
+            # An interruption notice may have been persisted before the audit
+            # transaction failed. On retry, preserve its interrupted outcome
+            # instead of misclassifying the assistant message as a completed turn.
+            assistant_message = (
+                self.store.get_message_by_idempotency_key(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    idempotency_key=assistant_key,
+                ) if assistant_exists else None
+            )
+            interruption_persisted = (
+                assistant_message is not None
+                and assistant_message.get("content") == self.INTERRUPTION_MESSAGE
+            )
+            if interruption_persisted:
+                finalized = self.store.finish_generation_with_recovery_event(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    request_id=request_id, status="interrupted", lease_token=lease_token,
+                    outcome="interrupted", uncertain_tool_calls=uncertain_count,
+                )
+                if not finalized:
+                    raise ConversationConflict("interrupted generation changed during recovery.")
+                interrupted += 1
+            elif assistant_exists:
                 finalized = self.store.finish_generation_with_recovery_event(
                     owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, status="completed", lease_token=lease_token,

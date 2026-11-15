@@ -16,24 +16,34 @@ from core.structured_tool_protocol import StructuredToolProtocol
 
 
 
-def _multiprocess_claim_generation_lease(database_path, conversation_id, token, barrier, results):
+def _multiprocess_claim_generation_lease(
+    database_path, conversation_id, token, barrier, results, release_event,
+):
     store = ConversationStore(database_path)
+    acquired = False
     try:
         barrier.wait(timeout=10)
         store.acquire_generation_lease(
             owner_id="owner-a", conversation_id=conversation_id,
             lease_token=token, ttl_seconds=60,
         )
+        acquired = True
+        results.put(("acquired", token))
+        # Keep the winning lease alive until the parent has observed both
+        # competing claims; otherwise the winner may release before the loser
+        # reaches SQLite, making this a scheduling test rather than a fencing test.
+        if not release_event.wait(timeout=20):
+            raise RuntimeError("parent did not release the winning lease")
     except ConversationConflict:
         results.put(("conflict", token))
     except Exception as exc:
         results.put(("error", repr(exc)))
-    else:
-        results.put(("acquired", token))
-        store.release_generation_lease(
-            owner_id="owner-a", conversation_id=conversation_id,
-            lease_token=token,
-        )
+    finally:
+        if acquired:
+            store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
 
 
 def _multiprocess_mark_uncertain_then_crash(database_path, conversation_id, request_id, connection):
@@ -266,10 +276,12 @@ class ConversationServiceTests(unittest.TestCase):
                 owner_id="owner-a", conversation_id=conversation_id,
                 lease_token=retry_token,
             )
-        self.assertEqual(summary.completed_generations, 1)
+        # The durable assistant message is the interruption notice, so a
+        # replacement worker must preserve the interrupted outcome.
+        self.assertEqual(summary.interrupted_generations, 1)
         self.assertEqual(self.store.list_recovery_events(
             owner_id="owner-a", conversation_id=conversation_id,
-        )[0]["outcome"], "completed")
+        )[0]["outcome"], "interrupted")
         messages = self.store.list_messages(
             owner_id="owner-a", conversation_id=conversation_id, limit=100,
         )
@@ -591,6 +603,8 @@ class ConversationServiceTests(unittest.TestCase):
         service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
 
         def failed_renewal(**kwargs):
+            if not first_started.wait(timeout=5):
+                raise AssertionError("heartbeat ran before the first tool started")
             raise OSError("simulated durable lease store outage")
 
         try:
@@ -624,13 +638,16 @@ class ConversationServiceTests(unittest.TestCase):
 
     def test_lease_renewal_failure_prevents_assistant_persistence(self):
         started = threading.Event()
+        renewal_attempted = threading.Event()
 
         def failing_renew(**kwargs):
+            renewal_attempted.set()
             raise OSError("simulated lease store outage")
 
         def slow_model(**kwargs):
             started.set()
-            threading.Event().wait(0.08)
+            if not renewal_attempted.wait(timeout=5):
+                raise AssertionError("heartbeat did not attempt lease renewal")
             return {"text": "must not be committed", "tool_calls": {"tool_calls": []}}
 
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
@@ -1477,10 +1494,11 @@ class ConversationServiceTests(unittest.TestCase):
         context = multiprocessing.get_context("spawn")
         barrier = context.Barrier(2)
         results = context.Queue()
+        release_event = context.Event()
         workers = [
             context.Process(
                 target=_multiprocess_claim_generation_lease,
-                args=(str(database_path), conversation_id, token, barrier, results),
+                args=(str(database_path), conversation_id, token, barrier, results, release_event),
             )
             for token in ("process-worker-a", "process-worker-b")
         ]
@@ -1489,11 +1507,13 @@ class ConversationServiceTests(unittest.TestCase):
             worker.start()
         try:
             outcomes = [results.get(timeout=20) for _ in workers]
+            release_event.set()
             for worker in workers:
                 worker.join(timeout=20)
                 self.assertFalse(worker.is_alive(), "lease worker process did not exit")
                 self.assertEqual(worker.exitcode, 0)
         finally:
+            release_event.set()
             for worker in workers:
                 if worker.is_alive():
                     worker.terminate()

@@ -60,6 +60,14 @@ class ProviderAgentAdapterTests(unittest.TestCase):
                 ProviderAgentAdapter(FakeChatProvider(response))(
                     messages=[{"role": "user", "content": "x"}], tools=[])
 
+    def test_rejects_invalid_finish_reason(self):
+        adapter = ProviderAgentAdapter(FakeChatProvider({
+            "text": "hello", "tool_calls": {"tool_calls": []},
+            "finish_reason": {"unexpected": "object"},
+        }))
+        with self.assertRaisesRegex(ValueError, "finish_reason"):
+            adapter(messages=[{"role": "user", "content": "hello"}], tools=[])
+
     def test_requires_explicit_chat_provider_contract(self):
         with self.assertRaises(TypeError):
             ProviderAgentAdapter(object())

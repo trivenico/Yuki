@@ -2,6 +2,13 @@
 
 This roadmap tracks the gap between today's terminal prototype and the intended companion, developer, and defensive cybersecurity product.
 
+## Phase 0 — Canonical component architecture
+
+- [x] Inventory core modules and assign authoritative component ownership.
+- [x] Document dependency direction, stable contract requirements, integration order, and definition of done.
+- [ ] Align provider, tool, approval, task, and persistence interfaces to the canonical component map.
+- [ ] Ensure CLI, API, desktop, voice, and workers compose the same application services.
+
 ## Phase 1 — Reliability and safety foundations
 
 - [x] Add a minimal test suite and CI workflow.

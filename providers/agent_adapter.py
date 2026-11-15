@@ -52,26 +52,11 @@ class ProviderAgentAdapter:
         self, *, messages: Sequence[Mapping[str, str]],
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
     ) -> Mapping[str, Any]:
-        if not isinstance(messages, (list, tuple)) or not messages:
-            raise ValueError("messages must be a non-empty sequence.")
-        if len(messages) > 128:
-            raise ValueError("message transcript exceeds the item limit.")
-        normalized = []
-        total_chars = 0
-        for message in messages:
-            if not isinstance(message, Mapping) or set(message) != {"role", "content"}:
-                raise ValueError("each message must contain only role and content.")
-            role, content = message["role"], message["content"]
-            if not isinstance(role, str) or role not in {"system", "user", "assistant"} or not isinstance(content, str):
-                raise ValueError("message role or content is invalid.")
-            total_chars += len(content)
-            if total_chars > 100_000:
-                raise ValueError("message transcript exceeds the character limit.")
-            normalized.append({"role": role, "content": content})
-        if not isinstance(tools, (list, tuple)) or len(tools) > 32:
-            raise ValueError("tools must contain at most 32 definitions.")
-        if tool_choice not in {"auto", "none", "required"}:
-            raise ValueError("tool_choice is invalid.")
+        self._validate_inputs(messages, tools, tool_choice)
+        normalized = [
+            {"role": message["role"], "content": message["content"]}
+            for message in messages
+        ]
         response = self.provider.generate_chat(
             messages=normalized, tools=list(tools), tool_choice=tool_choice,
         )
@@ -79,7 +64,16 @@ class ProviderAgentAdapter:
             raise ValueError("provider returned an unsupported response envelope.")
         text = response.get("text", "")
         calls = response.get("tool_calls", {"tool_calls": []})
-        if not isinstance(text, str) or not isinstance(calls, Mapping):
+        finish_reason = response.get("finish_reason")
+        if not isinstance(text, str) or len(text) > 24_000 or not isinstance(calls, Mapping):
             raise ValueError("provider response fields are invalid.")
-        return {"text": text, "tool_calls": dict(calls),
-                "finish_reason": response.get("finish_reason")}
+        if finish_reason is not None and (
+            not isinstance(finish_reason, str) or not finish_reason.strip()
+            or len(finish_reason) > 80
+        ):
+            raise ValueError("provider finish_reason must be bounded non-empty text.")
+        return {
+            "text": text,
+            "tool_calls": dict(calls),
+            "finish_reason": finish_reason,
+        }

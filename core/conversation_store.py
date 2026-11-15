@@ -421,6 +421,22 @@ class ConversationStore:
             ).fetchone()
         return row is not None
 
+    def get_message_by_idempotency_key(
+        self, *, owner_id: str, conversation_id: str, idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """Return one owner-scoped message by its durable idempotency key."""
+        owner = self._owner(owner_id)
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200:
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT m.* FROM conversation_messages AS m
+                   JOIN conversations AS c ON c.conversation_id=m.conversation_id
+                   WHERE m.conversation_id=? AND c.owner_id=? AND m.idempotency_key=?""",
+                (conversation_id, owner, idempotency_key.strip()),
+            ).fetchone()
+        return self._message(row) if row is not None else None
+
     def list_messages(
         self, *, owner_id: str, conversation_id: str, limit: int = 100,
         after_sequence: int | None = None,
@@ -494,7 +510,7 @@ class ConversationStore:
             except Exception:
                 db.rollback()
                 raise
-        return {"conversation_id": conversation_id, "expires_at": expires_at}
+        return {"conversation_id": conversation_id, "lease_token": lease_token.strip(), "expires_at": expires_at}
 
     def renew_generation_lease(
         self, *, owner_id: str, conversation_id: str, lease_token: str,
@@ -600,6 +616,7 @@ class ConversationStore:
                     return {"created": False, "status": previous["status"],
                             "execution_id": previous["execution_id"],
                             "idempotency_key": previous["idempotency_key"],
+                            "arguments_sha256": previous["arguments_sha256"],
                             "provider_idempotency": bool(previous["provider_idempotency"])}
                 execution_id = str(uuid.uuid4())
                 db.execute(
@@ -615,6 +632,7 @@ class ConversationStore:
                 db.commit()
                 return {"created": True, "status": "started", "execution_id": execution_id,
                         "idempotency_key": idempotency_key,
+                        "arguments_sha256": arguments_sha256,
                         "provider_idempotency": provider_idempotency}
             except Exception:
                 db.rollback()
@@ -971,9 +989,10 @@ class ConversationStore:
                     (conversation_id, owner, lease_token.strip(), time.time()),
                 ).fetchone()
                 if lease is None:
-                    raise ConversationConflict(
-                        "tool recovery requires the active generation lease."
-                    )
+                    # A stale recovery worker must never mutate execution state.
+                    # Treat the fenced-out attempt as no work performed.
+                    db.rollback()
+                    return 0
                 db.execute(
                     """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
                        WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'""",
