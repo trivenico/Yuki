@@ -105,6 +105,16 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         self.assertEqual(timeout, 45)
         self.assertEqual(request.get_header("Authorization"), "Bearer test-secret")
 
+    def test_basic_generation_uses_the_injected_pinned_transport(self):
+        body = self.response(content="A safe answer", finish="stop")
+        self.provider._transport = FakeOpener(body, self.requests)
+        result = self.provider.generate("Say hello")
+        self.assertEqual(result, "A safe answer")
+        request, timeout = self.requests[0]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(timeout, 45)
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-secret")
+
     def test_text_only_response_is_supported(self):
         result = self.invoke_with(self.response(content="No tool needed", finish="stop"))
         self.assertEqual(result["tool_calls"], {"tool_calls": []})
