@@ -227,7 +227,14 @@ def validate_component_catalog(
             if path.is_absolute() or ".." in path.parts:
                 errors.append(f"{prefix}: unsafe repository path {relative!r}")
                 continue
-            if not (root / path).is_file():
+            candidate = root / path
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(root)
+            except (OSError, RuntimeError, ValueError):
+                errors.append(f"{prefix}: repository path escapes root or cannot be resolved: {relative}")
+                continue
+            if not resolved.is_file():
                 errors.append(f"{prefix}: repository file does not exist: {relative}")
 
     for item in entries:
