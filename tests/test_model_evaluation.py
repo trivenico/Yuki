@@ -1,5 +1,6 @@
 import json
 import unittest
+from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport
 from providers.model_evaluation import EvaluationError, HuggingFaceChatClient, evaluate_model, score_response, validate_cases
 
 class Response:
@@ -60,20 +61,25 @@ class ModelEvaluationTests(unittest.TestCase):
     def test_http_client_uses_fixed_endpoint_and_bounded_timeout(self):
         data = json.dumps({"choices":[{"message":{"content":"hello"}}]}).encode()
         opener = Opener(data)
-        client = HuggingFaceChatClient("hf_test_token", opener=opener)
+        client = HuggingFaceChatClient("hf_test_token", transport=opener)
         self.assertEqual(client.generate("org/model","hello"), "hello")
         self.assertEqual(opener.request.full_url, "https://router.huggingface.co/v1/chat/completions")
         self.assertNotIn("hf_test_token", opener.request.full_url)
         self.assertEqual(opener.request.get_header("Authorization"), "Bearer hf_test_token")
         self.assertEqual(opener.timeout, 20)
 
+    def test_default_transport_is_dns_pinned_to_inference_router(self):
+        client = HuggingFaceChatClient("hf_test_token")
+        self.assertIsInstance(client._transport, PinnedHTTPSProviderTransport)
+        self.assertEqual(client._transport.allowed_hosts, frozenset({"router.huggingface.co"}))
+
     def test_invalid_model_and_token(self):
         with self.assertRaises(ValueError): HuggingFaceChatClient("")
-        client = HuggingFaceChatClient("hf_test_token", opener=Opener(b"{}"))
+        client = HuggingFaceChatClient("hf_test_token", transport=Opener(b"{}"))
         with self.assertRaises(ValueError): client.generate("../bad","prompt")
 
     def test_malformed_response_fails_closed(self):
-        client = HuggingFaceChatClient("hf_test_token", opener=Opener(b"not-json"))
+        client = HuggingFaceChatClient("hf_test_token", transport=Opener(b"not-json"))
         with self.assertRaises(EvaluationError): client.generate("org/model","prompt")
 
 if __name__ == "__main__": unittest.main()

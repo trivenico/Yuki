@@ -35,16 +35,22 @@ class Response:
     def read(self, size=-1):
         return self.body[:size]
 
+    def close(self):
+        pass
 
 
 class FakeTransport:
-    def __init__(self, response):
-        self.response = response
+    def __init__(self, responses=None, error=None):
+        self.responses = list(responses or [])
+        self.error = error
         self.calls = []
 
     def open(self, request, timeout=None):
         self.calls.append((request, timeout))
-        return self.response
+        if self.error:
+            raise self.error
+        return Response(self.responses.pop(0))
+
 
 class HybridProviderTests(unittest.TestCase):
     def test_defaults_to_local_and_only_named_tasks_route_to_cloud(self):
@@ -74,32 +80,29 @@ class HybridProviderTests(unittest.TestCase):
             OllamaProvider("http://example.com:11434", "model")
 
     def test_ollama_parses_response_and_bounds_request(self):
-        provider = OllamaProvider(model="local-model")
-        with patch("urllib.request.urlopen", return_value=Response(
-            json.dumps({"response": "hello"}).encode()
-        )) as mocked:
-            self.assertEqual(provider.generate("hi"), "hello")
-        request = mocked.call_args.args[0]
+        transport = FakeTransport([json.dumps({"response": "hello"}).encode()])
+        provider = OllamaProvider(model="local-model", transport=transport)
+        self.assertEqual(provider.generate("hi"), "hello")
+        request, timeout = transport.calls[0]
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/generate")
         self.assertEqual(json.loads(request.data)["prompt"], "hi")
+        self.assertEqual(timeout, provider.timeout)
 
     def test_ollama_availability_requires_installed_model(self):
-        provider = OllamaProvider(model="local-model")
-        with patch("urllib.request.urlopen", return_value=Response(
-            json.dumps({"models": [{"name": "local-model:latest"}]}).encode()
-        )):
-            self.assertTrue(provider.is_available())
-        with patch("urllib.request.urlopen", return_value=Response(
+        provider = OllamaProvider(
+            model="local-model",
+            transport=FakeTransport([json.dumps({"models": [{"name": "local-model:latest"}]}).encode()]),
+        )
+        self.assertTrue(provider.is_available())
+        provider._transport = FakeTransport([
             json.dumps({"models": [{"name": "different-model:latest"}]}).encode()
-        )):
-            self.assertFalse(provider.is_available())
-        with patch("urllib.request.urlopen", side_effect=OSError("offline")):
-            self.assertFalse(provider.is_available())
+        ])
+        self.assertFalse(provider.is_available())
+        provider._transport = FakeTransport(error=OSError("offline"))
+        self.assertFalse(provider.is_available())
 
     def test_cloud_provider_uses_env_key_and_parses_response(self):
-        transport = FakeTransport(Response(
-            json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
-        ))
+        transport = FakeTransport([json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()])
         provider = OpenAICompatibleProvider("cloud-model", transport=transport)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
             self.assertTrue(provider.is_available())
