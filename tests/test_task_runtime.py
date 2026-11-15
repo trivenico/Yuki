@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -156,7 +157,7 @@ class TaskRuntimeTests(unittest.TestCase):
                 "CREATE TRIGGER reject_terminal_audit BEFORE INSERT ON task_events "
                 "WHEN NEW.kind='task.completed' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END"
             )
-        with self.assertRaises(Exception):
+        with self.assertRaises(sqlite3.IntegrityError):
             self.runtime.complete(
                 actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a",
