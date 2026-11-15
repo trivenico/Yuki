@@ -8,7 +8,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import ipaddress
 import re
-from threading import RLock
 from typing import Callable, Iterable
 
 
@@ -59,7 +58,9 @@ class NetworkFirewall:
         if not ports or len(ports) > 32 or any(type(port) is not int or not 1 <= port <= 65535 for port in ports):
             raise FirewallPolicyError("invalid_allowed_ports")
         protocols = tuple(allowed_protocols)
-        if not protocols or len(protocols) > 8 or any(p not in {"tcp"} for p in protocols):
+        if not protocols or len(protocols) > 8 or any(
+            not isinstance(protocol, str) or protocol != "tcp" for protocol in protocols
+        ):
             raise FirewallPolicyError("invalid_allowed_protocols")
         if audit is not None and not callable(audit):
             raise FirewallPolicyError("audit_must_be_callable")
@@ -67,7 +68,6 @@ class NetworkFirewall:
         self.allowed_ports = frozenset(ports)
         self.allowed_protocols = frozenset(protocols)
         self._audit = audit
-        self._lock = RLock()
 
     @staticmethod
     def _global_addresses(addresses: Iterable[str]) -> tuple[str, ...] | None:
@@ -103,7 +103,7 @@ class NetworkFirewall:
             reason = "host_not_allowlisted"
         elif type(port) is not int or port not in self.allowed_ports:
             reason = "port_not_allowlisted"
-        elif protocol not in self.allowed_protocols:
+        elif not isinstance(protocol, str) or protocol not in self.allowed_protocols:
             reason = "protocol_not_allowlisted"
         elif addresses is None:
             reason = "non_global_or_invalid_destination"
