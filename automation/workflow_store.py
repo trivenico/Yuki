@@ -136,6 +136,7 @@ class WorkflowRunStore:
                 "ON workflow_runs(state, lease_expires_at)"
             )
             db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_owner_created ON workflow_runs(owner_id, created_at)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_plan_state_created ON workflow_runs(plan_id, state, created_at)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
