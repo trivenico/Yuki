@@ -6,6 +6,8 @@ local bearer token available to Yuki.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 
 class OAuthDisconnectError(RuntimeError):
     """Stable, non-sensitive disconnect failure."""
@@ -15,6 +17,7 @@ class OAuthDisconnectService:
     def __init__(
         self, *, credential_vault, transport, provider_id: str,
         client_id: str, revocation_endpoint: str | None = None,
+        lifecycle_coordinator=None,
     ):
         if not callable(getattr(credential_vault, "get", None)) or not callable(
             getattr(credential_vault, "disconnect", None)
@@ -37,6 +40,7 @@ class OAuthDisconnectService:
         self._provider_id = provider_id
         self._client_id = client_id
         self._revocation_endpoint = revocation_endpoint
+        self._lifecycle_coordinator = lifecycle_coordinator
 
     @property
     def provider_id(self) -> str:
@@ -44,6 +48,18 @@ class OAuthDisconnectService:
         return self._provider_id
 
     def disconnect(self, *, owner_id: str, account_id: str) -> dict:
+        """Serialize local deletion and remote revocation across workers."""
+        coordinator = self._lifecycle_coordinator
+        lock = (
+            coordinator.coordinate(
+                owner_id=owner_id, provider_id=self._provider_id, account_id=account_id,
+            )
+            if coordinator is not None else nullcontext()
+        )
+        with lock:
+            return self._disconnect_unlocked(owner_id=owner_id, account_id=account_id)
+
+    def _disconnect_unlocked(self, *, owner_id: str, account_id: str) -> dict:
         try:
             credential = self._vault.get(
                 owner_id=owner_id, provider_id=self._provider_id, account_id=account_id,
