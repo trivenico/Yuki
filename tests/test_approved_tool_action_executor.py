@@ -102,6 +102,30 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
             self.executor.execute(pending.proposal_id, principal_id="owner-a")
         self.assertEqual(self.calls, [])
 
+    def test_approval_token_issue_failure_releases_pre_dispatch_claim(self):
+        original_issue = self.approvals.issue
+        calls = {"count": 0}
+
+        def fail_once(context, *, principal_id):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("approval storage unavailable")
+            return original_issue(context, principal_id=principal_id)
+
+        self.approvals.issue = fail_once
+        with self.assertRaisesRegex(RuntimeError, "approval storage unavailable"):
+            self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+
+        current = self.proposals.get(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(current.execution_state, "not_started")
+        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
+        self.assertEqual(self.calls, [])
+
+        retried = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(retried.state, "finished")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.calls), 1)
+
     def test_handler_exception_is_recorded_as_unknown_and_never_replayed(self):
         broken = GuardedToolRuntime(
             {"email.send": lambda raw: (_ for _ in ()).throw(RuntimeError("provider timeout"))},
