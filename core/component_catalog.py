@@ -279,3 +279,44 @@ def component_catalog_as_dicts() -> list[dict]:
 
 def component_catalog_json() -> str:
     return json.dumps(component_catalog_as_dicts(), ensure_ascii=False, indent=2)
+
+
+def component_dependency_order(
+    components: Iterable[ComponentContract] | None = None,
+) -> tuple[ComponentContract, ...]:
+    """Return components in stable dependency-first order.
+
+    Catalog declaration order is preserved among otherwise independent
+    components. Invalid references and cycles fail explicitly instead of
+    producing a partial integration plan.
+    """
+    entries = tuple(DEFAULT_COMPONENTS if components is None else components)
+    by_id: dict[str, ComponentContract] = {}
+    for item in entries:
+        if not isinstance(item, ComponentContract):
+            raise ValueError("catalog entries must be ComponentContract instances")
+        if item.component_id in by_id:
+            raise ValueError(f"duplicate component_id: {item.component_id}")
+        by_id[item.component_id] = item
+
+    ordered: list[ComponentContract] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(component_id: str) -> None:
+        if component_id not in by_id:
+            raise ValueError(f"unknown dependency: {component_id}")
+        if component_id in visiting:
+            raise ValueError(f"dependency cycle detected: {component_id}")
+        if component_id in visited:
+            return
+        visiting.add(component_id)
+        for dependency in by_id[component_id].depends_on:
+            visit(dependency)
+        visiting.remove(component_id)
+        visited.add(component_id)
+        ordered.append(by_id[component_id])
+
+    for item in entries:
+        visit(item.component_id)
+    return tuple(ordered)
