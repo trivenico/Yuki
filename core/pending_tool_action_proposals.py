@@ -305,7 +305,7 @@ class SQLitePendingToolActionProposalStore:
                 (state, proposal_id, principal_id)).rowcount
         return changed == 1
 
-    def release_recovered_pre_dispatch_claim(
+    def _release_recovered_pre_dispatch_claim(
         self, proposal_id: str, *, principal_id: str,
     ) -> bool:
         """Allow a retry only after the journal proves a fenced pre-dispatch claim."""
