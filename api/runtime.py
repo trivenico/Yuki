@@ -12,6 +12,7 @@ from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
+from api.security import APISecurityMiddleware
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.component_registry import ComponentRegistry
@@ -36,7 +37,7 @@ class ConversationRuntime:
 
     def __init__(self, app: Any, application: ConversationApplicationRuntime, component_registry: ComponentRegistry | None = None):
         self.app = app
-        self.web = YukiWebApplication(app)
+        self.web = APISecurityMiddleware(YukiWebApplication(app))
         self.application = application
         self.component_registry = component_registry
         self.store = application.store
