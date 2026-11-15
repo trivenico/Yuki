@@ -65,6 +65,7 @@ class GoogleOAuthProviderTests(unittest.TestCase):
             redirect_uri="https://yuki.example.com/oauth/callback/google",
             transaction_store=Store(), credential_vault=Vault(),
             pinned_transport=Transport(),
+            trusted_redirect_hosts=frozenset({"yuki.example.com"}),
             account_id_resolver=lambda claims: "google-" + "a" * 64,
         )
         from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
@@ -75,7 +76,7 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         self.assertTrue(callable(prepared.authorization_service.complete))
 
     def test_default_account_resolver_hashes_verified_subject_without_email(self):
-        prepared = self.build(account_id_resolver=object())
+        prepared = self.build(account_id_resolver=None)
         self.assertTrue(callable(prepared._account_id_resolver))
         account_id = prepared._account_id_resolver({
             "issuer": "https://accounts.google.com", "subject": "stable-subject",
@@ -102,7 +103,7 @@ class GoogleOAuthProviderTests(unittest.TestCase):
             with self.subTest(redirect=redirect), self.assertRaises(GoogleOAuthConfigurationError):
                 self.build(redirect_uri=redirect)
         with self.assertRaises(GoogleOAuthConfigurationError):
-            self.build(account_id_resolver=None)
+            self.build(account_id_resolver=object())
 
     def test_requires_explicit_trusted_callback_host_allowlist(self):
         with self.assertRaisesRegex(GoogleOAuthConfigurationError, "trusted_google_redirect_hosts"):
