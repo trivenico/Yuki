@@ -375,7 +375,9 @@ class AgentExecutionLoopTests(unittest.TestCase):
         deltas = []
         def clock():
             clock_calls.append(True)
-            return 0.0 if len(clock_calls) <= 3 else 0.2
+            # Let the first delta through, then expire the budget before the
+            # iterator is asked for its second event.
+            return 0.0 if not deltas else 0.2
         def stream_model(**kwargs):
             try:
                 yield {"type": "text_delta", "text": "first"}
