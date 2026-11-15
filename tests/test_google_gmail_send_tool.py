@@ -38,6 +38,11 @@ class GmailSendToolTests(unittest.TestCase):
             "owner-1", "gmail.send_email", self.arguments,
         )
 
+    def test_schema_argument_bounds_fit_structured_tool_protocol_budget(self):
+        schema = GmailSendTool.definition()["function"]["parameters"]["properties"]
+        self.assertEqual(schema["body"]["maxLength"], 4000)
+        self.assertEqual(schema["to"]["oneOf"][1]["maxItems"], 5)
+
     def test_direct_invocation_without_approval_context_is_denied(self):
         with self.assertRaises(PermissionError):
             self.tool(json.dumps(self.arguments))
