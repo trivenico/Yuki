@@ -54,6 +54,34 @@ class ToolActionJournalTests(unittest.TestCase):
         with self.assertRaises(ToolActionConflict):
             self.journal.reserve("action-1", "calendar.create", {"title": "Different"})
 
+    def test_authorization_claim_is_exclusive_and_releasable(self):
+        record = self.journal.reserve("approval-claim", "email.send", {"to": "a@example.com"})
+        claimed = self.journal.claim_execution("approval-claim", record.request_digest)
+        self.assertEqual(claimed.state, "authorizing")
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.claim_execution("approval-claim", record.request_digest)
+        released = self.journal.release_authorization_claim("approval-claim", claimed.lease_owner)
+        self.assertEqual(released.state, "prepared")
+        self.assertIsNone(released.lease_owner)
+        second = self.journal.claim_execution("approval-claim", record.request_digest)
+        executing = self.journal.begin_claimed_execution("approval-claim", second.lease_owner)
+        self.assertEqual(executing.state, "executing")
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.release_authorization_claim("approval-claim", second.lease_owner)
+
+    def test_expired_authorization_claim_recovers_to_prepared_not_unknown(self):
+        record = self.journal.reserve("approval-crash", "email.send", {"to": "a@example.com"})
+        self.journal.claim_execution("approval-crash", record.request_digest)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", "approval-crash"),
+            )
+            db.commit()
+        recovered = self.journal.recover_expired_execution("approval-crash")
+        self.assertEqual(recovered.state, "prepared")
+        self.assertIsNone(recovered.lease_owner)
+
     def test_execution_claim_is_single_use(self):
         record = self.journal.reserve("action-1", "email.send", {"to": "a@example.com"})
         started = self.journal.begin_execution("action-1", record.request_digest)
