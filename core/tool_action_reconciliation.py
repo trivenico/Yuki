@@ -124,5 +124,13 @@ class ToolActionReconciliationService:
             raise ValueError("journal action is not awaiting reconciliation")
         reconciled = self.reconcile(action=action, proposal=proposal)
         if reconciled.state == "succeeded":
-            self.proposals.finish_reconciliation(proposal_id, principal_id=principal_id)
+            finished = self.proposals.finish_reconciliation(
+                proposal_id, principal_id=principal_id,
+            )
+            if not finished:
+                current = self.proposals.get(proposal_id, principal_id=principal_id)
+                if current is None or current.execution_state != "finished":
+                    raise RuntimeError(
+                        "provider outcome is confirmed but proposal finalization needs recovery"
+                    )
         return reconciled
