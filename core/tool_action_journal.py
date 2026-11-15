@@ -213,7 +213,7 @@ class ToolActionJournal:
             """INSERT INTO tool_actions
                (action_id,idempotency_key,tool_name,request_digest,state,
                 created_at,updated_at,version)
-               VALUES (?,?,?,?, 'prepared',?,?,0)
+               VALUES (?,?,?,?, 'prepared',?,?,1)
                ON CONFLICT(idempotency_key) DO NOTHING""",
             (action_id, idempotency_key, tool_name, digest, now, now),
         )
