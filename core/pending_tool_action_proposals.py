@@ -69,7 +69,9 @@ class SQLitePendingToolActionProposalStore:
                         ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
-                    decided_at TEXT
+                    decided_at TEXT,
+                    execution_state TEXT NOT NULL DEFAULT 'not_started' CHECK(execution_state IN
+                        ('not_started','executing','finished','unknown','not_executed'))
                 )""")
                 columns = {
                     row[1] for row in db.execute(
