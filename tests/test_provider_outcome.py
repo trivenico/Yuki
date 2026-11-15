@@ -758,6 +758,7 @@ class ProviderOutcomeTests(unittest.TestCase):
                             owner_id="owner-1", conversation_id=conversation_id,
                             request_id=request_id,
                         )[0]["idempotency_key"],
+                        evidence_sha256=hex(index + 1)[2:] * 64,
                     )
 
                     class Adapter:
@@ -795,17 +796,12 @@ class ProviderOutcomeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = ConversationStore(Path(directory) / "evidence-binding.sqlite3")
             shared_key = "d" * 64
-            first_execution_id = None
-
             class Adapter:
                 provider_id = "mail.example"
 
                 def lookup_tool_outcome(self, execution):
-                    nonlocal first_execution_id
-                    if first_execution_id is None:
-                        first_execution_id = execution["execution_id"]
                     return ProviderOutcomeTests().evidence(
-                        execution_id=first_execution_id,
+                        execution_id=execution["execution_id"],
                         idempotency_key=shared_key,
                     )
 
@@ -1218,7 +1214,7 @@ class ProviderOutcomeTests(unittest.TestCase):
                 arguments_sha256=execution["arguments_sha256"],
                 evidence_sha256="e" * 64,
             )
-            with patch("core.conversation_store.time.time", side_effect=[100.0, 106.0, 106.0]):
+            with patch("core.conversation_store.time.time", side_effect=[100.0, 106.0, 106.0, 106.0, 106.0]):
                 store.acquire_provider_reconciliation_lease(
                     owner_id="owner-fence", conversation_id=conversation_id,
                     request_id=request_id, call_id="call-fence",
