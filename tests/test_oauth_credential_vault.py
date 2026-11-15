@@ -161,6 +161,76 @@ class OAuthCredentialVaultTests(unittest.TestCase):
             expected_version=1,
         ))
 
+    def test_disconnect_service_integrates_with_real_vault_and_revokes_once(self):
+        from core.oauth_disconnect_service import OAuthDisconnectService
+
+        class Transport:
+            def __init__(self):
+                self.calls = []
+            def request_form_status(self, endpoint, *, fields):
+                self.calls.append((endpoint, fields))
+                return 200
+
+        self.store()
+        transport = Transport()
+        service = OAuthDisconnectService(
+            credential_vault=self.vault, transport=transport,
+            provider_id="upwork", client_id="client",
+            revocation_endpoint="https://auth.example.com/revoke",
+        )
+        result = service.disconnect(owner_id="owner-a", account_id="acct-1")
+        self.assertTrue(result["disconnected"])
+        self.assertTrue(result["remote_revoked"])
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[0][1]["token"], "refresh.token-1")
+        self.assertIsNone(self.vault.get(
+            owner_id="owner-a", provider_id="upwork", account_id="acct-1"
+        ))
+        self.assertNotIn("refresh.token-1", repr(result))
+
+    def test_stale_disconnect_does_not_revoke_or_delete_new_vault_generation(self):
+        from core.oauth_disconnect_service import OAuthDisconnectService
+
+        class RefreshingVault(SQLiteOAuthCredentialVault):
+            def get(self, **kwargs):
+                stale = super().get(**kwargs)
+                if stale is not None and not getattr(self, "_rotated", False):
+                    self._rotated = True
+                    super().rotate(
+                        owner_id=kwargs["owner_id"], provider_id=kwargs["provider_id"],
+                        account_id=kwargs["account_id"], expected_version=stale.version,
+                        expected_refresh_token=stale.refresh_token,
+                        access_token="access.token-2", refresh_token="refresh.token-2",
+                        expires_at=3000, scopes=stale.scopes,
+                    )
+                return stale
+
+        vault = RefreshingVault(
+            self.path, cipher=self.cipher, hmac_key=b"h" * 32, clock=lambda: 1000
+        )
+        vault.store(
+            owner_id="owner-a", provider_id="upwork", account_id="acct-1",
+            access_token="access.token-1", refresh_token="refresh.token-1",
+            expires_at=2000, scopes=["profile:read"],
+        )
+        class Transport:
+            def __init__(self): self.calls = []
+            def request_form_status(self, endpoint, *, fields):
+                self.calls.append(fields)
+                return 200
+        transport = Transport()
+        service = OAuthDisconnectService(
+            credential_vault=vault, transport=transport,
+            provider_id="upwork", client_id="client",
+            revocation_endpoint="https://auth.example.com/revoke",
+        )
+        result = service.disconnect(owner_id="owner-a", account_id="acct-1")
+        self.assertFalse(result["disconnected"])
+        self.assertFalse(result["revocation_attempted"])
+        self.assertEqual(transport.calls, [])
+        current = vault.get(owner_id="owner-a", provider_id="upwork", account_id="acct-1")
+        self.assertEqual((current.version, current.refresh_token), (2, "refresh.token-2"))
+
     def test_rejects_expired_tokens_and_invalid_scopes(self):
         with self.assertRaisesRegex(OAuthCredentialError, "invalid_token_expiry"):
             self.vault.store(owner_id="owner-a", provider_id="upwork", account_id="acct-1",
