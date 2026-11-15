@@ -60,6 +60,10 @@ class ToolActionContextTests(unittest.TestCase):
         with self.assertRaises(ToolActionContextError):
             ToolActionContext.create("user-123", "email.send", {"bad": float("nan")})
 
+    def test_non_string_nested_object_keys_are_rejected(self):
+        with self.assertRaises(ToolActionContextError):
+            ToolActionContext.create("user-123", "email.send", {"nested": {1: "bad"}})
+
     def test_context_is_immutable(self):
         with self.assertRaises((AttributeError, TypeError)):
             self.context.principal_id = "attacker"
@@ -83,6 +87,16 @@ class ToolActionContextTests(unittest.TestCase):
         action = self.journal.get(self.context.idempotency_key)
         self.assertEqual(action.state, "succeeded")
         self.assertEqual(action.action_id, self.context.action_id)
+
+    def test_duplicate_json_keys_are_rejected_before_journal_reservation(self):
+        runtime = self._runtime(lambda _: "sent")
+        argument = '{"to":"person@example.com","to":"attacker@example.com","subject":"Hello"}'
+        result = runtime.invoke(
+            "email.send", argument,
+            action_context=self.context, principal_id="user-123",
+        )
+        self.assertIn("does not match", result)
+        self.assertIsNone(self.journal.get(self.context.idempotency_key))
 
     def test_confirmation_is_required_before_journal_reservation(self):
         runtime = self._runtime(lambda _: "sent", confirmation=True)
