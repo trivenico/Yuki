@@ -22,6 +22,23 @@ def _agent_loop():
 
 
 class ConversationApplicationRuntimeTests(unittest.TestCase):
+    def test_trusted_action_callbacks_are_injected_into_conversation_service(self):
+        action_factory = lambda principal, name, arguments: None
+        confirmation = lambda call: False
+        approval_factory = lambda principal, context, call: None
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "callbacks.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+                action_context_factory=action_factory,
+                confirmation_check=confirmation,
+                approval_id_factory=approval_factory,
+            )
+            self.assertIs(runtime.conversations.action_context_factory, action_factory)
+            self.assertIs(runtime.conversations.confirmation_check, confirmation)
+            self.assertIs(runtime.conversations.approval_id_factory, approval_factory)
+            runtime.close()
+
     def test_composes_service_and_shutdown_is_safe_to_repeat(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ConversationStore(Path(directory) / "conversations.sqlite3")
