@@ -75,7 +75,6 @@ def build_google_gmail_authorization_service(
     identity_verifier = OAuthProviderIdentityVerifier(
         transport=pinned_transport, userinfo_endpoint=GOOGLE_OIDC_USERINFO_URI,
         expected_subject=None, expected_issuer=GOOGLE_ISSUER,
-        expected_audience=client_id,
     )
     return OAuthAuthorizationService(
         transaction_store=transaction_store, credential_vault=credential_vault,
@@ -88,5 +87,6 @@ def build_google_gmail_authorization_service(
         include_resource_parameter=False,
         authorization_parameters=(
             ("access_type", "offline"), ("include_granted_scopes", "true"),
+            ("prompt", "consent"),
         ),
     )
