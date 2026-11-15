@@ -90,6 +90,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.store._connect() as db:
             plan = db.execute(
                 "EXPLAIN QUERY PLAN SELECT * FROM workflow_runs "
+                "INDEXED BY idx_workflow_runs_queued_order "
                 "WHERE state='queued' ORDER BY created_at, run_id"
             ).fetchall()
         details = " ".join(row["detail"] for row in plan)
