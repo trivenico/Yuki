@@ -50,6 +50,26 @@ Infrastructure: providers, persistence, runtime, diagnostics
 | Voice runtime | Speech input/output, wake-word and speaker primitives | Silent background recording or permission bypass |
 | Operator interface | Chat, task controls and approval presentation | Business rules or direct privileged actions |
 
+## Runtime registration and lifecycle
+
+`core/component_registry.py` binds a concrete runtime instance to an exact
+catalog contract. A runtime supplies explicit `start`, `close` and
+`health_check` hooks. The registry:
+
+- Rejects unknown, mismatched and duplicate registrations.
+- Requires dependencies of each registered runtime to be registered too.
+- Starts runtimes in stable dependency-first order.
+- Rolls back already-started runtimes if a later start hook fails.
+- Closes started runtimes in reverse order and continues cleanup if one close
+  hook fails, reporting the component IDs whose cleanup failed.
+- Exposes only explicitly registered instances through `resolve`.
+
+This is a lifecycle primitive, not automatic application wiring. The current
+API and CLI compositions remain the owners of their existing service instances;
+they should migrate to the registry only in a separately tested integration
+change. The registry does not instantiate components, load secrets, or grant
+permissions.
+
 ## Rules for adding or changing components
 
 1. Add or update a contract in `core/component_catalog.py` before expanding
