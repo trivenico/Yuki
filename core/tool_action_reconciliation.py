@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
 from core.tool_action_journal import ToolAction, ToolActionJournal
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 
 
 @dataclass(frozen=True)
@@ -67,13 +68,17 @@ class ToolActionReconciliationService:
     def __init__(
         self, journal: ToolActionJournal,
         registry: ToolActionReconciliationRegistry,
+        proposals: SQLitePendingToolActionProposalStore | None = None,
     ):
         if not isinstance(journal, ToolActionJournal):
             raise TypeError("journal must be a ToolActionJournal")
         if not isinstance(registry, ToolActionReconciliationRegistry):
             raise TypeError("registry must be a ToolActionReconciliationRegistry")
+        if proposals is not None and not isinstance(proposals, SQLitePendingToolActionProposalStore):
+            raise TypeError("proposals must be a SQLitePendingToolActionProposalStore")
         self.journal = journal
         self.registry = registry
+        self.proposals = proposals
 
     def reconcile(self, *, action: ToolAction, proposal: Any) -> ToolAction:
         if not isinstance(action, ToolAction) or action.state != "outcome_unknown":
@@ -104,3 +109,20 @@ class ToolActionReconciliationService:
             )
         # An inconclusive lookup must not mutate the durable action state.
         return action
+
+    def reconcile_proposal(self, proposal_id: str, *, principal_id: str) -> ToolAction:
+        """Reconcile one owner-scoped proposal; never dispatch or retry its tool."""
+        if self.proposals is None:
+            raise RuntimeError("proposal reconciliation is not configured")
+        proposal = self.proposals.get(proposal_id, principal_id=principal_id)
+        if proposal is None:
+            raise LookupError("proposal was not found")
+        if proposal.status != "approved" or proposal.execution_state != "unknown":
+            raise ValueError("proposal is not awaiting reconciliation")
+        action = self.journal.get(proposal.idempotency_key)
+        if action is None or action.state != "outcome_unknown":
+            raise ValueError("journal action is not awaiting reconciliation")
+        reconciled = self.reconcile(action=action, proposal=proposal)
+        if reconciled.state == "succeeded":
+            self.proposals.finish_reconciliation(proposal_id, principal_id=principal_id)
+        return reconciled
