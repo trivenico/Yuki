@@ -375,14 +375,38 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(self.invocations, [{"value": "safe"}])
         self.assertEqual(deltas, ["Tool completed"])
 
-    def test_invalid_stream_event_fails_closed(self):
+    def test_invalid_stream_event_closes_provider_iterator(self):
+        closed = []
+        def stream_model(**kwargs):
+            try:
+                yield {"type": "unknown"}
+            finally:
+                closed.append(True)
         loop = AgentExecutionLoop(
             lambda **kwargs: {"text": "fallback", "tool_calls": {"tool_calls": []}},
-            self.protocol,
-            stream_model=lambda **kwargs: iter([{"type": "unknown"}]),
+            self.protocol, stream_model=stream_model,
         )
         with self.assertRaises(AgentExecutionError):
             loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
+        self.assertEqual(closed, [True])
+
+    def test_stream_callback_failure_closes_provider_iterator(self):
+        closed = []
+        def stream_model(**kwargs):
+            try:
+                yield {"type": "text_delta", "text": "partial"}
+                yield {"type": "text_delta", "text": "unreachable"}
+            finally:
+                closed.append(True)
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "fallback", "tool_calls": {"tool_calls": []}},
+            self.protocol, stream_model=stream_model,
+        )
+        def broken_callback(_delta):
+            raise RuntimeError("client disconnected")
+        with self.assertRaises(AgentExecutionError):
+            loop.run("Hi", tools=[], on_text_delta=broken_callback)
+        self.assertEqual(closed, [True])
 
     def test_streamed_text_must_match_final_provider_text(self):
         def stream_model(**kwargs):
