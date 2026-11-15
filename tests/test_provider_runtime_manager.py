@@ -76,7 +76,7 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             config = {"provider": "openai"}
             manager = ProviderRuntimeManager(
                 config, adapter, Path(directory) / "selection.json",
-                environ={}, provider_factory=lambda cfg, environ: candidate,
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"}, provider_factory=lambda cfg, environ: candidate,
                 catalog_factory=_catalog,
             )
             manager.select("ollama")
@@ -98,7 +98,7 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             adapter = SimpleNamespace(provider=previous)
             manager = ProviderRuntimeManager(
                 {"provider": "openai"}, adapter, Path(directory) / "missing" / "selection.json",
-                environ={}, provider_factory=lambda cfg, environ: candidate,
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"}, provider_factory=lambda cfg, environ: candidate,
                 catalog_factory=_catalog,
             )
             manager._persist = lambda name: (_ for _ in ()).throw(OSError("disk unavailable"))
