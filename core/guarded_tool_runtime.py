@@ -220,7 +220,14 @@ class GuardedToolRuntime:
                 return "Tool blocked: action is already running or requires reconciliation."
 
         try:
-            result = str(self._tools[name](argument))
+            handler = self._tools[name]
+            action_handler = getattr(handler, "invoke_action", None)
+            if lease_owner is not None and callable(action_handler):
+                result = str(action_handler(
+                    argument, action_context=action_context, principal_id=principal_id,
+                ))
+            else:
+                result = str(handler(argument))
         except Exception:
             if lease_owner is not None:
                 try:
