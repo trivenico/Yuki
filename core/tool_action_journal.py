@@ -227,6 +227,10 @@ class ToolActionJournal:
             or row["action_id"] != action_id
         ):
             raise ToolActionConflict("idempotency key is already bound to a different action.")
+        if row["version"] < 1 or row["state"] != "prepared":
+            raise ToolActionConflict(
+                "existing action is not a safely reusable atomic pre-dispatch reservation."
+            )
         return self._record(row)
 
     def reserve(
