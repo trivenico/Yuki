@@ -90,10 +90,13 @@ class SQLiteToolActionApprovalStoreTests(unittest.TestCase):
             context = ToolActionContext.create("user-1", "email.send", {})
             token = store.issue(context, principal_id="user-1")
             import sqlite3
-            with sqlite3.connect(store.database_path) as db:
+            db = sqlite3.connect(store.database_path)
+            try:
                 persisted = db.execute(
                     "SELECT approval_id FROM tool_action_approvals"
                 ).fetchone()[0]
+            finally:
+                db.close()
             self.assertNotEqual(persisted, token)
             self.assertEqual(persisted, store._fingerprint(token))
 
