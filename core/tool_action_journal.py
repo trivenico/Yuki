@@ -201,6 +201,8 @@ class ToolActionJournal:
         """
         if not isinstance(db, sqlite3.Connection):
             raise TypeError("db must be a SQLite connection")
+        if not db.in_transaction:
+            raise RuntimeError("reserve_in_transaction requires an active caller-owned transaction")
         self._validate_key(idempotency_key)
         self._validate_tool(tool_name)
         _, raw = _json_bytes(request, _MAX_REQUEST_BYTES, "request")
