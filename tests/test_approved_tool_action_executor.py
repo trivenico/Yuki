@@ -265,9 +265,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertTrue(self.proposals.claim_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         ))
-        self.assertEqual(
-            self.journal.get(self.proposal.idempotency_key).version, 0,
-        )
+        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
         recovered = self.executor.recover_interrupted_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         )
