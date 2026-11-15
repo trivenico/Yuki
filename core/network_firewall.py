@@ -81,6 +81,8 @@ class NetworkFirewall:
             return None
         normalized = []
         for value in values:
+            if not isinstance(value, str) or not value or len(value) > 64:
+                return None
             try:
                 address = ipaddress.ip_address(value)
             except (ValueError, TypeError):
