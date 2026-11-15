@@ -15,20 +15,24 @@ class BrowserAutomationError(RuntimeError):
 class SafeBrowser:
     def __init__(self, *, allowed_hosts=(), timeout_ms=10000, headless=False,
                  resolver=None, firewall_policy=None):
-        if isinstance(allowed_hosts, (str, bytes)) or not allowed_hosts:
-            raise ValueError("an explicit browser host allow-list is required")
-        hosts = tuple(allowed_hosts)
+        if isinstance(allowed_hosts, (str, bytes)):
+            raise ValueError("browser host allow-list must be a collection")
+        hosts = tuple(allowed_hosts or ())
         normalized = tuple(host.lower().rstrip(".") if isinstance(host, str) else host for host in hosts)
         if len(normalized) > 100 or len(set(normalized)) != len(normalized):
             raise ValueError("invalid browser host allow-list")
-        self.firewall = firewall_policy or NetworkFirewall(allowed_hosts=normalized)
-        if not isinstance(self.firewall, NetworkFirewall):
-            raise TypeError("firewall_policy must be a NetworkFirewall")
         self.allowed_hosts = frozenset(normalized)
-        if not self.allowed_hosts.issubset(self.firewall.allowed_hosts):
-            raise ValueError("firewall policy must allow every browser host")
-        if 443 not in self.firewall.allowed_ports or "tcp" not in self.firewall.allowed_protocols:
-            raise ValueError("browser firewall must allow HTTPS over TCP port 443")
+        self.firewall = firewall_policy
+        if self.allowed_hosts:
+            self.firewall = self.firewall or NetworkFirewall(allowed_hosts=normalized)
+            if not isinstance(self.firewall, NetworkFirewall):
+                raise TypeError("firewall_policy must be a NetworkFirewall")
+            if not self.allowed_hosts.issubset(self.firewall.allowed_hosts):
+                raise ValueError("firewall policy must allow every browser host")
+            if 443 not in self.firewall.allowed_ports or "tcp" not in self.firewall.allowed_protocols:
+                raise ValueError("browser firewall must allow HTTPS over TCP port 443")
+        elif firewall_policy is not None:
+            raise ValueError("a firewall policy cannot be used without an explicit host allow-list")
         if isinstance(timeout_ms, bool) or type(timeout_ms) is not int or not 1000 <= timeout_ms <= 120000:
             raise ValueError("timeout_ms must be between 1000 and 120000")
         self.timeout_ms = timeout_ms
@@ -53,6 +57,8 @@ class SafeBrowser:
 
     def _resolve_authorized_hosts(self):
         """Resolve every permitted browser origin and pin Chromium to a vetted IP."""
+        if not self.allowed_hosts or self.firewall is None:
+            raise BrowserAutomationError("Browser network access is disabled until an explicit allow-list is configured.")
         rules = []
         for host in sorted(self.allowed_hosts):
             try:
