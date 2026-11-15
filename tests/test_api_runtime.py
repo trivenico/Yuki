@@ -258,7 +258,7 @@ class ConversationRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
             runtime = build_conversation_runtime(
-                {"storage_backend": "sqlite", "workspace": directory},
+                {"storage_backend": "sqlite", "workspace": directory, "provider": "mock"},
                 auth_service=auth, agent_loop=_loop(),
                 component_registry_factory=lambda auth_service, agent_loop, application:
                     build_core_component_registry(
@@ -266,6 +266,11 @@ class ConversationRuntimeTests(unittest.TestCase):
                         agent_loop=agent_loop, application_runtime=application,
                     ),
             )
+            self.assertEqual(
+                runtime.component_registry.resolve("configuration-runtime").get("provider"),
+                "mock",
+            )
+            self.assertTrue(runtime.component_registry.health()["configuration-runtime"])
             self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "verified")
             runtime.close()
             self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "unavailable")
