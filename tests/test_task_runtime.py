@@ -36,6 +36,19 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
 
+
+    def test_owner_identity_is_bound_to_task_idempotency_key(self):
+        first = self.store.create(
+            idempotency_key="owner-bound-key", workflow_name="owner-task",
+            definition=self.steps, owner_id="alice",
+        )
+        self.assertEqual(first.owner_id, "alice")
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="owner-bound-key", workflow_name="owner-task",
+                definition=self.steps, owner_id="bob",
+            )
+
     def test_task_listing_requires_separate_capability_and_is_bounded(self):
         first = self.create("list-first")
         second = self.create("list-second")
