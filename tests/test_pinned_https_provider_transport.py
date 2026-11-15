@@ -118,6 +118,11 @@ class PinnedHTTPSProviderTransportTests(unittest.TestCase):
                 firewall_policy=NetworkFirewall(allowed_hosts={"example.com"}),
             )
 
+    def test_rejects_multiple_trailing_dots_before_dns_or_connect(self):
+        with self.assertRaisesRegex(PinnedHTTPTransportError, "invalid_cloud_endpoint"):
+            self.transport.open(self.request("https://api.openai.com../v1"))
+        self.assertEqual(self.resolutions, [])
+
     def test_rejects_non_https_and_nonstandard_port(self):
         for url in ("http://api.openai.com/v1", "https://api.openai.com:444/v1"):
             with self.subTest(url=url), self.assertRaises(PinnedHTTPTransportError):
