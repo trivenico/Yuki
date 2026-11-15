@@ -61,7 +61,8 @@ class CoreComponentCompositionTests(unittest.TestCase):
                 registry.start_all()
             self.assertEqual(registry.started_components, ())
             self.assertEqual(provider.closed, 1)
-            self.assertEqual(registry.health(), {})
+            with self.assertRaisesRegex(RuntimeError, "registry is closed"):
+                registry.health()
 
     def test_invalid_provider_is_rejected_before_registry_is_returned(self):
         with tempfile.TemporaryDirectory() as directory:
