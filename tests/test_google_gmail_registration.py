@@ -8,15 +8,21 @@ from core.google_gmail_send_reconciliation import (
     GmailSendReconciliationAdapter, build_gmail_send_reconciliation_registration,
 )
 from core.tool_action_reconciliation import ToolActionReconciliationRegistry
+from core.google_gmail_send_client import GmailSendClient
+from core.google_gmail_readonly_client import GmailReadOnlyClient
 from core.tool_capabilities import ToolEffect
 
 
-class StubSendClient:
+class StubSendClient(GmailSendClient):
+    def __init__(self):
+        pass
     def send_email(self, **kwargs):
         return {}
 
 
-class StubReadClient:
+class StubReadClient(GmailReadOnlyClient):
+    def __init__(self):
+        pass
     def find_message_by_rfc822_message_id(self, **kwargs):
         return {"found": False}
 
