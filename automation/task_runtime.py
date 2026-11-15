@@ -239,8 +239,11 @@ class TaskRuntime:
             raise WorkflowTransitionError("only the current worker may complete a running task.")
         if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
             raise WorkflowConflict("expired lease cannot complete task.")
-        completed = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="succeeded", result=result)
+        completed = self.store.transition(
+            task_id, expected_version=expected_version,
+            to_state="succeeded", result=result,
+            expected_lease_owner=worker_id,
+        )
         self.store.append_task_event(task_id, kind="task.completed", actor_id=actor,
                                      payload={"state_version": completed.version},
                                      expected_version=completed.version)
@@ -258,8 +261,11 @@ class TaskRuntime:
             raise WorkflowTransitionError("only the current worker may fail a running task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
             raise ValueError("error_code must be a bounded identifier.")
-        failed = self.store.transition(task_id, expected_version=expected_version,
-                                       to_state="failed", error_code=error_code)
+        failed = self.store.transition(
+            task_id, expected_version=expected_version,
+            to_state="failed", error_code=error_code,
+            expected_lease_owner=worker_id,
+        )
         self.store.append_task_event(task_id, kind="task.failed", actor_id=actor,
                                      payload={"error_code": error_code, "state_version": failed.version},
                                      expected_version=failed.version)
