@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,12 +42,14 @@ class ToolActionJournalTests(unittest.TestCase):
         started = self.journal.begin_execution("action-1", record.request_digest)
         self.assertEqual(started.state, "executing")
         self.assertEqual(started.version, 1)
+        self.assertTrue(started.lease_owner)
+        self.assertTrue(started.lease_expires_at)
         with self.assertRaises(ToolActionTransitionError):
             self.journal.begin_execution("action-1", record.request_digest)
 
     def test_success_is_durable_and_same_key_never_dispatches_again(self):
         record, _ = self.reserve_and_start()
-        succeeded = self.journal.mark_succeeded(record.idempotency_key, {"provider_id": "m-1"})
+        succeeded = self.journal.mark_succeeded(record.idempotency_key, self.journal.get(record.idempotency_key).lease_owner, {"provider_id": "m-1"})
         self.assertEqual(succeeded.state, "succeeded")
         self.assertEqual(succeeded.result, {"provider_id": "m-1"})
         reopened = ToolActionJournal(self.path)
@@ -60,7 +63,7 @@ class ToolActionJournalTests(unittest.TestCase):
 
     def test_uncertain_outcome_blocks_automatic_replay_until_reconciled(self):
         record, _ = self.reserve_and_start()
-        unknown = self.journal.mark_outcome_unknown(record.idempotency_key)
+        unknown = self.journal.mark_outcome_unknown(record.idempotency_key, self.journal.get(record.idempotency_key).lease_owner)
         self.assertEqual(unknown.state, "outcome_unknown")
         with self.assertRaises(ToolActionTransitionError):
             self.journal.begin_execution(record.idempotency_key, record.request_digest)
@@ -80,11 +83,50 @@ class ToolActionJournalTests(unittest.TestCase):
 
     def test_proven_pre_dispatch_failure_is_terminal_not_executed(self):
         record, _ = self.reserve_and_start()
-        failed = self.journal.mark_not_executed(record.idempotency_key, "connection_not_opened")
+        failed = self.journal.mark_not_executed(record.idempotency_key, self.journal.get(record.idempotency_key).lease_owner, "connection_not_opened")
         self.assertEqual(failed.state, "not_executed")
         self.assertEqual(failed.error_code, "connection_not_opened")
         with self.assertRaises(ToolActionTransitionError):
-            self.journal.mark_succeeded(record.idempotency_key, {"ok": True})
+            self.journal.mark_succeeded(record.idempotency_key, started.lease_owner, {"ok": True})
+
+    def test_execution_lease_renews_and_fences_stale_owner(self):
+        record = self.journal.reserve("lease-1", "email.send", {"to": "a@example.com"})
+        started = self.journal.begin_execution("lease-1", record.request_digest)
+        renewed = self.journal.renew_execution("lease-1", started.lease_owner, lease_seconds=60)
+        self.assertEqual(renewed.state, "executing")
+        self.assertEqual(renewed.lease_owner, started.lease_owner)
+        self.assertGreaterEqual(renewed.version, started.version + 1)
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.mark_succeeded("lease-1", "wrong-owner", {"ok": True})
+        done = self.journal.mark_succeeded("lease-1", renewed.lease_owner, {"ok": True})
+        self.assertEqual(done.state, "succeeded")
+        self.assertIsNone(done.lease_owner)
+        self.assertIsNone(done.lease_expires_at)
+
+    def test_expired_execution_is_recovered_as_unknown_and_stale_worker_is_fenced(self):
+        record = self.journal.reserve("lease-expired", "email.send", {"to": "a@example.com"})
+        started = self.journal.begin_execution("lease-expired", record.request_digest)
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", "lease-expired"),
+            )
+        self.assertEqual(self.journal.recover_expired_executions(), 1)
+        recovered = self.journal.get("lease-expired")
+        self.assertEqual(recovered.state, "outcome_unknown")
+        self.assertEqual(recovered.error_code, "execution_lease_expired")
+        self.assertIsNone(recovered.lease_owner)
+        self.assertEqual(self.journal.recover_expired_executions(), 0)
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.mark_succeeded("lease-expired", started.lease_owner, {"ok": True})
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.renew_execution("lease-expired", started.lease_owner)
+
+    def test_execution_lease_bounds_are_validated(self):
+        record = self.journal.reserve("lease-bounds", "email.send", {})
+        for invalid in (True, 0, 4, 3601, 1.5):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.journal.begin_execution("lease-bounds", record.request_digest, lease_seconds=invalid)
 
     def test_invalid_identifiers_and_oversized_data_are_rejected(self):
         with self.assertRaises(ValueError):
