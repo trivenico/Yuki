@@ -92,10 +92,15 @@ class ComponentRegistry:
         return tuple(self._started)
 
     def health(self) -> dict[str, bool]:
-        return {
-            component_id: bool(runtime.health_check())
-            for component_id, runtime in self._runtimes.items()
-        }
+        results: dict[str, bool] = {}
+        for component_id, runtime in self._runtimes.items():
+            result = runtime.health_check()
+            if not isinstance(result, bool):
+                raise TypeError(
+                    f"component health check must return bool: {component_id}"
+                )
+            results[component_id] = result
+        return results
 
     def close(self) -> tuple[str, ...]:
         if self._closed:
