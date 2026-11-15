@@ -41,13 +41,17 @@ def _trusted_dns_host_set(value) -> frozenset[str]:
     """Validate deployment-owned callback hosts as exact DNS names only."""
     if not isinstance(value, (set, frozenset, tuple, list)) or not value:
         raise GoogleOAuthConfigurationError("trusted_google_redirect_hosts_required")
+    # Validate element types before hashing: malformed deployment input may
+    # contain lists/dicts, which must produce the stable configuration error.
+    if any(not isinstance(host, str) for host in value):
+        raise GoogleOAuthConfigurationError("invalid_trusted_google_redirect_hosts")
     if len(set(value)) != len(value):
         raise GoogleOAuthConfigurationError("invalid_trusted_google_redirect_hosts")
     validated = set()
     label_pattern = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     for host in value:
         if (
-            not isinstance(host, str) or not host or host != host.lower()
+            not host or host != host.lower()
             or len(host) > 253 or host.endswith(".") or "*" in host
             or any(ord(char) > 127 for char in host)
         ):
