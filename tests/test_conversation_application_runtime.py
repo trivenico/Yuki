@@ -41,31 +41,35 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
     def test_store_close_hook_is_invoked_exactly_once(self):
         calls = []
 
-        class Store:
+        class Store(ConversationStore):
             def close(self):
                 calls.append("closed")
 
-        runtime = build_conversation_application_runtime(
-            {}, agent_loop=_agent_loop(), store_factory=lambda config: Store(),
-        )
-        runtime.close()
-        runtime.close()
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "close-once.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+            )
+            runtime.close()
+            runtime.close()
         self.assertEqual(calls, ["closed"])
 
     def test_failing_store_close_hook_is_not_retried(self):
         calls = []
 
-        class Store:
+        class Store(ConversationStore):
             def close(self):
                 calls.append("close")
                 raise RuntimeError("close failed")
 
-        runtime = build_conversation_application_runtime(
-            {}, agent_loop=_agent_loop(), store_factory=lambda config: Store(),
-        )
-        with self.assertRaisesRegex(RuntimeError, "close failed"):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "close-failure.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+            )
+            with self.assertRaisesRegex(RuntimeError, "close failed"):
+                runtime.close()
             runtime.close()
-        runtime.close()
         self.assertEqual(calls, ["close"])
 
     def test_api_runtime_can_leave_owner_resolution_to_authenticated_surface(self):
