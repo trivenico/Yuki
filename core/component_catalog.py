@@ -171,7 +171,8 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
          "persisted task owner identity", "owner-scoped specialist runtime resolution",
          "approval-gated workflow steps"),
         ("tests/test_agent_coordinator.py", "tests/test_task_runtime.py",
-         "tests/test_workflow_engine.py", "tests/test_specialist_worker.py",\n         "tests/test_specialist_registry.py"),
+         "tests/test_workflow_engine.py", "tests/test_specialist_worker.py",
+         "tests/test_specialist_registry.py"),
         ("A production scheduler, distributed worker fleet and cancellation propagation remain incomplete.",),
     ),
     ComponentContract(
