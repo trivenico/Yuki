@@ -68,14 +68,6 @@ class AgentExecutionLoop:
             raise ValueError("max_duration_seconds must be between 0.1 and 3600.")
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
-        if action_context_factory is not None and not callable(action_context_factory):
-            raise TypeError("action_context_factory must be callable.")
-        if confirmation_check is not None and not callable(confirmation_check):
-            raise TypeError("confirmation_check must be callable.")
-        if principal_id is not None and (
-            not isinstance(principal_id, str) or not principal_id or len(principal_id) > 256
-        ):
-            raise ValueError("principal_id must be a bounded authenticated principal identifier.")
         if on_event is not None and not callable(on_event):
             raise TypeError("on_event must be callable.")
         if not callable(clock):
@@ -122,6 +114,14 @@ class AgentExecutionLoop:
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
+        if action_context_factory is not None and not callable(action_context_factory):
+            raise TypeError("action_context_factory must be callable.")
+        if confirmation_check is not None and not callable(confirmation_check):
+            raise TypeError("confirmation_check must be callable.")
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id or len(principal_id) > 256
+        ):
+            raise ValueError("principal_id must be a bounded authenticated principal identifier.")
         cancel_check = cancellation_requested or self.cancellation_requested
         if on_text_delta is not None and not callable(on_text_delta):
             raise TypeError("on_text_delta must be callable.")
