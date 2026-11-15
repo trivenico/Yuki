@@ -95,6 +95,11 @@ class OAuthAuthorizationService:
         self._authorization_scopes = tuple(dict.fromkeys((*self._scopes, *(("openid",) if oidc_verifier is not None else ()))))
         self._require_response_issuer = authorization_response_iss_parameter_supported
 
+    @property
+    def provider_id(self) -> str:
+        """Trusted provider identity used to bind host routing to this service."""
+        return self._provider_id
+
     def begin(self, *, owner_id: str, session_id: str) -> dict:
         """Create an owner/session-bound, short-lived S256 authorization request."""
         oidc_nonce = secrets.token_urlsafe(32) if self._oidc_verifier is not None else None
