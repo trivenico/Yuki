@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -224,6 +225,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
             lease_owner="worker-a", lease_seconds=1,
         )
         expired = self.store.mark_expired_running_as_interrupted(
+            actor_id="recovery-worker",
             now=datetime.now(timezone.utc) + timedelta(seconds=5)
         )
         self.assertEqual(len(expired), 1)
@@ -232,10 +234,41 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(expired[0].error_code, "lease_expired")
         self.assertIsNone(expired[0].lease_owner)
         self.assertEqual(self.store.get(run.run_id).state, "interrupted")
+        events = self.store.list_task_events(run.run_id)
+        self.assertEqual([event.kind for event in events], ["task.created", "task.interrupted"])
+        self.assertEqual(events[-1].actor_id, "recovery-worker")
+        self.assertFalse(events[-1].payload["automatic_replay"])
+
+    def test_expired_lease_recovery_rolls_back_when_audit_insert_fails(self):
+        run = self.create("recovery-audit-rollback")
+        running = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=1,
+        )
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_interrupted_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.interrupted'
+                BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.mark_expired_running_as_interrupted(
+                actor_id="recovery-worker",
+                now=datetime.now(timezone.utc) + timedelta(seconds=5),
+            )
+        current = self.store.get(run.run_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, running.version)
+        self.assertEqual(current.lease_owner, "worker-a")
+        self.assertEqual([event.kind for event in self.store.list_task_events(run.run_id)],
+                         ["task.created"])
 
     def test_lease_expiry_requires_timezone_aware_clock(self):
         with self.assertRaises(ValueError):
-            self.store.mark_expired_running_as_interrupted(now=datetime.now())
+            self.store.mark_expired_running_as_interrupted(
+                actor_id="recovery-worker", now=datetime.now()
+            )
 
     def test_definition_validation_happens_before_persistence(self):
         with self.assertRaises(ValueError):
