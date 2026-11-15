@@ -18,7 +18,9 @@ class SafeBrowser:
         if isinstance(allowed_hosts, (str, bytes)):
             raise ValueError("browser host allow-list must be a collection")
         hosts = tuple(allowed_hosts or ())
-        normalized = tuple(host.lower().rstrip(".") if isinstance(host, str) else host for host in hosts)
+        if any(not isinstance(host, str) or host.endswith("..") for host in hosts):
+            raise ValueError("invalid browser host allow-list")
+        normalized = tuple(host.lower().rstrip(".") for host in hosts)
         if len(normalized) > 100 or len(set(normalized)) != len(normalized):
             raise ValueError("invalid browser host allow-list")
         self.allowed_hosts = frozenset(normalized)
@@ -47,7 +49,10 @@ class SafeBrowser:
             port = parts.port
         except ValueError:
             raise BrowserAutomationError("URL is invalid.") from None
-        host = (parts.hostname or "").lower().rstrip(".")
+        raw_host = (parts.hostname or "").lower()
+        if raw_host.endswith(".."):
+            raise BrowserAutomationError("URL hostname is malformed.")
+        host = raw_host.rstrip(".")
         if (parts.scheme.lower() != "https" or not host or parts.username is not None
                 or parts.password is not None or port not in (None, 443) or parts.fragment):
             raise BrowserAutomationError("Only public HTTPS URLs on port 443 are accepted.")
