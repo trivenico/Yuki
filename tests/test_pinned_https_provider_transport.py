@@ -1,6 +1,4 @@
 import unittest
-from unittest.mock import Mock
-
 from core.pinned_https_provider_transport import (
     PinnedHTTPSProviderTransport,
     PinnedHTTPTransportError,
@@ -97,12 +95,18 @@ class PinnedHTTPSProviderTransportTests(unittest.TestCase):
         self.assertEqual(self.resolutions, [])
 
     def test_rejects_redirect_and_closes_connection(self):
-        self.transport._factory = lambda host, ip, **kwargs: FakeConnection(
-            host, ip, status=302, **kwargs
-        )
+        redirected = []
+
+        def factory(host, ip, **kwargs):
+            connection = FakeConnection(host, ip, status=302, **kwargs)
+            redirected.append(connection)
+            return connection
+
+        self.transport._factory = factory
         with self.assertRaises(PinnedHTTPTransportError):
             self.transport.open(self.request())
-        self.assertTrue(self.connections == [])
+        self.assertEqual(len(redirected), 1)
+        self.assertTrue(redirected[0].closed)
 
     def test_custom_firewall_must_allow_exact_provider_host(self):
         with self.assertRaises(ValueError):
