@@ -88,6 +88,32 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
             self.proposal.proposal_id, principal_id="owner-a",
         ).execution_state, "finished")
 
+    def test_proposal_claim_and_prepared_journal_reservation_are_atomic(self):
+        self.assertTrue(self.executor._claim_proposal_and_reserve_action(
+            self.proposal, principal_id="owner-a",
+        ))
+        proposal = self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        action = self.journal.get(self.proposal.idempotency_key)
+        self.assertEqual(proposal.execution_state, "executing")
+        self.assertEqual(action.state, "prepared")
+        self.assertEqual(action.version, 0)
+        self.assertEqual(action.action_id, self.proposal.action_id)
+
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "not_started")
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
+
+        result = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(result.state, "finished")
+        self.assertEqual(len(self.calls), 1)
+
     def test_execution_is_single_claim_and_cannot_be_replayed(self):
         self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
         with self.assertRaisesRegex(ValueError, "already claimed"):
@@ -142,7 +168,9 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
 
         current = self.proposals.get(self.proposal.proposal_id, principal_id="owner-a")
         self.assertEqual(current.execution_state, "not_started")
-        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
+        reserved = self.journal.get(self.proposal.idempotency_key)
+        self.assertEqual(reserved.state, "prepared")
+        self.assertEqual(reserved.version, 0)
         self.assertEqual(self.calls, [])
 
         retried = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
