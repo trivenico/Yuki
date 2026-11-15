@@ -109,6 +109,24 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(GoogleOAuthConfigurationError, "trusted_google_redirect_hosts"):
             self.build(trusted_redirect_hosts=())
 
+    def test_rejects_wildcard_ip_malformed_and_noncanonical_trusted_hosts(self):
+        for host in (
+            "*.yuki.example.com", "127.0.0.1", "::1", "yuki.example.com.",
+            "yuki_example.com", "-yuki.example.com", "yuki..example.com",
+            "Yuki.example.com", "yuki.example.com:443", "yukï.example.com",
+        ):
+            with self.subTest(host=host), self.assertRaises(GoogleOAuthConfigurationError):
+                self.build(trusted_redirect_hosts={host})
+        with self.assertRaises(GoogleOAuthConfigurationError):
+            self.build(trusted_redirect_hosts=["yuki.example.com", "yuki.example.com"])
+
+    def test_rejects_ip_literal_callback_even_if_host_is_allowlisted(self):
+        with self.assertRaises(GoogleOAuthConfigurationError):
+            self.build(
+                redirect_uri="https://127.0.0.1/oauth/callback/google",
+                trusted_redirect_hosts={"127.0.0.1"},
+            )
+
     def test_requires_every_google_oauth_and_oidc_host_on_pinned_transport(self):
         class Incomplete:
             allowed_hosts = frozenset({"accounts.google.com", "oauth2.googleapis.com"})
