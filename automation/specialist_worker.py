@@ -194,13 +194,15 @@ class SpecialistTaskWorker:
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
-        plan_id: str | None = None,
+        plan_id: str | None = None, stop_event: Event | None = None,
     ) -> tuple[TaskRecord, ...]:
-        """Execute a bounded batch using independent leased worker identities.
+        """Execute a bounded batch, optionally stopping new claims cooperatively.
 
         SQLite's atomic claim operation arbitrates across workers. A shared permit
         budget caps total claims, while each worker gets its own lease owner so
-        completion and failure checks remain tied to the actual claimant.
+        completion and failure checks remain tied to the actual claimant. When
+        stop_event is set, pool workers stop claiming additional tasks; already
+        claimed handlers are allowed to finish and persist their outcomes.
         """
         if type(max_workers) is not int or not 1 <= max_workers <= 16:
             raise ValueError("max_workers must be an integer from 1 to 16.")
@@ -212,6 +214,8 @@ class SpecialistTaskWorker:
         ):
             raise ValueError("plan_id must be bounded non-empty text when supplied.")
         plan_id = plan_id.strip() if plan_id is not None else None
+        if stop_event is not None and not isinstance(stop_event, Event):
+            raise ValueError("stop_event must be a threading.Event when supplied.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -229,7 +233,12 @@ class SpecialistTaskWorker:
                 owner_handler_factory=self.owner_handler_factory,
                 agent_ids=tuple(self.agent_ids),
             )
-            while permits.acquire(blocking=False):
+            while stop_event is None or not stop_event.is_set():
+                if not permits.acquire(blocking=False):
+                    return
+                if stop_event is not None and stop_event.is_set():
+                    permits.release()
+                    return
                 result = worker.run_once(plan_id=plan_id)
                 if result is None:
                     permits.release()
