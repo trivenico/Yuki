@@ -42,28 +42,42 @@ def build_local_conversation_runtime(
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
     provider = provider_factory(config)
-    model = ProviderAgentAdapter(provider)
-    tool_runtime = GuardedToolRuntime({}, _DenyAllLocalTools())
-    protocol = StructuredToolProtocol(tool_runtime)
-    max_turns = config.get("max_agent_steps", 8)
-    if type(max_turns) is not int or not 1 <= max_turns <= 100:
-        raise ValueError("max_agent_steps must be an integer from 1 to 100.")
-    agent_loop = AgentExecutionLoop(
-        model,
-        protocol,
-        stream_model=(
-            model.stream_model
-            if callable(getattr(provider, "generate_chat_stream", None)) else None
-        ),
-        max_model_turns=max_turns,
-    )
-    owner_id = (
-        owner_id_factory() if owner_id_factory is not None
-        else load_or_create_local_owner_id(config.get("workspace"))
-    )
-    if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
-        raise ValueError("local owner identity is invalid.")
-    return build_conversation_application_runtime(
-        config, agent_loop=agent_loop, owner_id=owner_id,
-        **({"store_factory": store_factory} if store_factory is not None else {}),
-    )
+    close_provider = getattr(provider, "close", None)
+    close_callbacks = (close_provider,) if callable(close_provider) else ()
+    ownership_transferred = False
+    try:
+        model = ProviderAgentAdapter(provider)
+        tool_runtime = GuardedToolRuntime({}, _DenyAllLocalTools())
+        protocol = StructuredToolProtocol(tool_runtime)
+        max_turns = config.get("max_agent_steps", 8)
+        if type(max_turns) is not int or not 1 <= max_turns <= 100:
+            raise ValueError("max_agent_steps must be an integer from 1 to 100.")
+        agent_loop = AgentExecutionLoop(
+            model,
+            protocol,
+            stream_model=(
+                model.stream_model
+                if callable(getattr(provider, "generate_chat_stream", None)) else None
+            ),
+            max_model_turns=max_turns,
+        )
+        owner_id = (
+            owner_id_factory() if owner_id_factory is not None
+            else load_or_create_local_owner_id(config.get("workspace"))
+        )
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("local owner identity is invalid.")
+        ownership_transferred = True
+        return build_conversation_application_runtime(
+            config, agent_loop=agent_loop, owner_id=owner_id,
+            close_callbacks=close_callbacks,
+            **({"store_factory": store_factory} if store_factory is not None else {}),
+        )
+    except Exception:
+        if not ownership_transferred:
+            for callback in close_callbacks:
+                try:
+                    callback()
+                except Exception:
+                    pass
+        raise
