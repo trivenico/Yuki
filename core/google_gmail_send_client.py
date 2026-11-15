@@ -13,7 +13,7 @@ from email.headerregistry import Address
 from email.message import EmailMessage
 from urllib.request import Request
 
-from core.oauth_provider_credentials import OAuthProviderCredentialResolver
+from core.oauth_provider_credentials import (\n    OAuthProviderCredentialError, OAuthProviderCredentialResolver,\n)
 from core.tool_action_journal import ToolAction
 
 _GMAIL_API = "https://gmail.googleapis.com"
@@ -110,11 +110,14 @@ class GmailSendClient:
         subject = self._text(subject, "subject", 998)
         body = self._text(body, "body", 900_000, allow_empty=True)
 
-        credential = self._credentials.resolve(
-            owner_id=owner_id, provider_id=self._provider_id,
-            account_id=account_id,
-            required_scopes=("https://www.googleapis.com/auth/gmail.send",),
-        )
+        try:
+            credential = self._credentials.resolve(
+                owner_id=owner_id, provider_id=self._provider_id,
+                account_id=account_id,
+                required_scopes=("https://www.googleapis.com/auth/gmail.send",),
+            )
+        except OAuthProviderCredentialError:
+            raise GmailSendError("gmail_account_or_scope_unavailable") from None
         message = EmailMessage(policy=policy.SMTP)
         message["To"] = ", ".join(recipients)
         message["Subject"] = subject
