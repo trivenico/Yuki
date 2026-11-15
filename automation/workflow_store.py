@@ -247,7 +247,7 @@ class WorkflowRunStore:
                 not isinstance(created_event_actor_id, str)
                 or not created_event_actor_id.strip()
                 or len(created_event_actor_id) > 200
-                or "\\x00" in created_event_actor_id
+                or "\x00" in created_event_actor_id
             ):
                 raise ValueError("created_event_actor_id must be non-empty bounded text.")
             if not isinstance(created_event_payload, dict):
