@@ -77,8 +77,7 @@ class ComponentRegistry:
                     f"{component_id} is missing runtime dependencies: {', '.join(sorted(missing))}"
                 )
         ordered = component_dependency_order(
-            self._runtimes[contract.component_id].contract
-            for contract in self._runtimes.values()
+            runtime.contract for runtime in self._runtimes.values()
         )
         try:
             for contract in ordered:
