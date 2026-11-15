@@ -144,5 +144,25 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         self.assertNotIn("secret", str(caught.exception))
 
 
+    def test_shared_lifecycle_coordinator_wraps_disconnect(self):
+        from contextlib import contextmanager
+        class Coordinator:
+            calls = []
+            @contextmanager
+            def coordinate(self, **identity):
+                self.calls.append(identity)
+                yield
+        coordinator = Coordinator()
+        vault = Vault(self.credential())
+        service = OAuthDisconnectService(
+            credential_vault=vault, transport=Transport(),
+            provider_id="provider", client_id="client",
+            lifecycle_coordinator=coordinator,
+        )
+        service.disconnect(owner_id="owner", account_id="account")
+        self.assertEqual(coordinator.calls, [{
+            "owner_id": "owner", "provider_id": "provider", "account_id": "account",
+        }])
+
 if __name__ == "__main__":
     unittest.main()
