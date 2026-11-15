@@ -101,6 +101,9 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
+    action_context_factory: Callable | None = None,
+    confirmation_check: Callable | None = None,
+    approval_id_factory: Callable | None = None,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
 ) -> ConversationRuntime:
@@ -115,6 +118,13 @@ def build_conversation_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
         raise TypeError("agent_loop_for_owner must be callable.")
+    for callback, name in (
+        (action_context_factory, "action_context_factory"),
+        (confirmation_check, "confirmation_check"),
+        (approval_id_factory, "approval_id_factory"),
+    ):
+        if callback is not None and not callable(callback):
+            raise TypeError(f"{name} must be callable.")
     if component_registry_factory is not None and not callable(component_registry_factory):
         raise TypeError("component_registry_factory must be callable.")
     if (device_pairing is None) != (inference_jobs is None):
@@ -161,6 +171,9 @@ def build_conversation_runtime(
 
     application = build_conversation_application_runtime(
         config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+        action_context_factory=action_context_factory,
+        confirmation_check=confirmation_check,
+        approval_id_factory=approval_id_factory,
     )
     try:
         app = YukiConversationAPI(
