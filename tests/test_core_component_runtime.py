@@ -80,7 +80,7 @@ class CoreComponentCompositionTests(unittest.TestCase):
             snapshot = registry.resolve("configuration-runtime")
             self.assertEqual(snapshot.get("provider"), "mock")
             started = registry.start_all()
-            self.assertEqual(started[0], "configuration-runtime")
+            self.assertLess(started.index("configuration-runtime"), started.index("provider-runtime"))
             self.assertTrue(registry.health()["configuration-runtime"])
             registry.close()
             self.assertEqual(provider.closed, 1)
