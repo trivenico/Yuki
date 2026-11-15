@@ -122,7 +122,7 @@ class SQLiteToolActionApprovalStore:
 
     def consume_and_begin_execution(
         self, approval_id: str, context: ToolActionContext, *,
-        principal_id: str, action_journal, idempotency_key: str, lease_owner: str,
+        principal_id: str, action_journal, idempotency_key: str, lease_owner: str | None,
     ):
         """Consume approval and promote its journal claim in one SQLite commit."""
         from core.tool_action_journal import ToolActionJournal, ToolActionTransitionError
