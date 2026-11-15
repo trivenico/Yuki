@@ -89,6 +89,29 @@ class ComponentCatalogTests(unittest.TestCase):
             errors = validate_component_catalog([contract], repository_root=root)
             self.assertTrue(any("escapes root" in error for error in errors))
 
+
+    def test_dependency_order_places_dependencies_before_dependents(self):
+        from core.component_catalog import component_dependency_order
+
+        ordered = component_dependency_order()
+        positions = {item.component_id: index for index, item in enumerate(ordered)}
+        for item in DEFAULT_COMPONENTS:
+            for dependency in item.depends_on:
+                self.assertLess(positions[dependency], positions[item.component_id])
+
+    def test_dependency_order_rejects_unknown_dependency_and_cycles(self):
+        from core.component_catalog import component_dependency_order
+
+        unknown = replace(DEFAULT_COMPONENTS[0], depends_on=("missing",))
+        with self.assertRaisesRegex(ValueError, "unknown dependency"):
+            component_dependency_order([unknown])
+
+        first = replace(DEFAULT_COMPONENTS[0], depends_on=("second",))
+        second = replace(DEFAULT_COMPONENTS[1], component_id="second",
+                         depends_on=("identity-access",))
+        with self.assertRaisesRegex(ValueError, "dependency cycle"):
+            component_dependency_order([first, second])
+
     def test_catalog_exports_json_safe_data(self):
         import json
         data = json.loads(component_catalog_json())
