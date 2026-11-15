@@ -552,7 +552,7 @@ class ConversationAPITests(unittest.TestCase):
     def test_recovery_endpoint_is_authenticated_and_owner_scoped(self):
         root = Path(self.tempdir.name)
         proposals = SQLitePendingToolActionProposalStore(str(root / "recover-proposals.sqlite"))
-        approvals = SQLiteToolActionApprovalStore(str(root / "recover-approvals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "recover-journal.sqlite"))
         journal = ToolActionJournal(str(root / "recover-journal.sqlite"))
 
         class AllowEmailPolicy:
