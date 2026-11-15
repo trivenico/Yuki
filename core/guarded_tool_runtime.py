@@ -171,7 +171,9 @@ class GuardedToolRuntime:
                 except ToolActionJournalError:
                     self._record(name, "journal_reconciliation_required")
             self._record(name, "failed")
-            return "The tool failed. Its external outcome may require reconciliation."
+            if lease_owner is not None:
+                return "The tool failed. Its external outcome may require reconciliation."
+            return "The tool failed. Check the input and try again."
         if len(result) > self._max_result_chars:
             result = result[: self._max_result_chars] + "… [truncated]"
         if lease_owner is not None:
