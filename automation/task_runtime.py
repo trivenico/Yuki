@@ -83,6 +83,15 @@ class TaskRuntime:
             return False
 
     @staticmethod
+    def _worker_id(worker_id: str) -> str:
+        if (
+            not isinstance(worker_id, str) or not worker_id.strip()
+            or len(worker_id) > 200 or "\\x00" in worker_id
+        ):
+            raise ValueError("worker_id must be non-empty bounded text.")
+        return worker_id.strip()
+
+    @staticmethod
     def _record(run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
@@ -233,7 +242,8 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
+        worker_id = self._worker_id(worker_id)
+        if run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may complete a running task.")
         if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
             raise WorkflowConflict("expired lease cannot complete task.")
@@ -255,6 +265,7 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
+        worker_id = self._worker_id(worker_id)
         if run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may fail a running task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
