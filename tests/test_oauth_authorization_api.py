@@ -32,6 +32,7 @@ class FakeRegistry(SQLiteOAuthConnectionRegistry):
 
 
 class FakeAuthorization:
+    provider_id = "provider"
     def __init__(self):
         self.begin_calls = []
         self.complete_calls = []
@@ -161,6 +162,24 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
         self.assertEqual(self.service.complete_calls[0]["owner_id"], "owner")
         self.assertEqual(self.service.complete_calls[0]["session_id"], "valid-session-token-1234567890")
         self.assertEqual(self.registry.records[0]["scopes"], ("read",))
+
+
+    def test_rejects_authorization_service_for_different_provider(self):
+        class WrongProvider(FakeAuthorization):
+            provider_id = "another-provider"
+        wrong = WrongProvider()
+        self.app = AuthenticatedOAuthAuthorizationAPI(
+            lambda *_: None, FakeAuth(), self.registry,
+            lambda provider: wrong,
+        )
+        status, body = self.request(
+            "POST", "/v1/integrations/oauth/providers/provider/authorize",
+            "valid-session-token-1234567890",
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"], "provider_service_mismatch")
+        self.assertEqual(wrong.begin_calls, [])
+        self.assertEqual(wrong.complete_calls, [])
 
     def test_invalid_session_cannot_start_authorization(self):
         status, _ = self.request(
