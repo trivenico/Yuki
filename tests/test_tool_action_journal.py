@@ -168,6 +168,21 @@ class ToolActionJournalTests(unittest.TestCase):
         with self.assertRaises(ToolActionTransitionError):
             self.journal.renew_execution("lease-expired", started.lease_owner)
 
+    def test_bulk_recovery_counts_authorization_and_execution_claims(self):
+        auth_record = self.journal.reserve("bulk-auth", "email.send", {"to": "a@example.com"})
+        self.journal.claim_execution("bulk-auth", auth_record.request_digest)
+        execution_record = self.journal.reserve("bulk-exec", "email.send", {"to": "b@example.com"})
+        self.journal.begin_execution("bulk-exec", execution_record.request_digest)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key IN (?, ?)",
+                ("2000-01-01T00:00:00+00:00", "bulk-auth", "bulk-exec"),
+            )
+            db.commit()
+        self.assertEqual(self.journal.recover_expired_executions(), 2)
+        self.assertEqual(self.journal.get("bulk-auth").state, "prepared")
+        self.assertEqual(self.journal.get("bulk-exec").state, "outcome_unknown")
+
     def test_existing_journal_schema_is_upgraded_with_lease_columns(self):
         # setUp initializes the current schema; use a separate database to
         # accurately model a pre-lease database created by an older release.
