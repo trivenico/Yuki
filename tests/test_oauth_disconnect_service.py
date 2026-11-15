@@ -34,9 +34,37 @@ class Transport:
 class OAuthDisconnectServiceTests(unittest.TestCase):
     def credential(self):
         return SimpleNamespace(
+            owner_id="owner", provider_id="provider", account_id="account",
             access_token="secret-access-token",
             refresh_token="secret-refresh-token", version=7,
         )
+
+    def test_rejects_credential_returned_for_another_owner(self):
+        vault, transport = Vault(self.credential()), Transport()
+        vault.credential.owner_id = "different-owner"
+        service = OAuthDisconnectService(
+            credential_vault=vault, transport=transport,
+            provider_id="provider", client_id="client",
+            revocation_endpoint="https://auth.example.com/revoke",
+        )
+        with self.assertRaisesRegex(OAuthDisconnectError, "credential_context_mismatch"):
+            service.disconnect(owner_id="owner", account_id="account")
+        self.assertFalse(vault.deleted)
+        self.assertEqual(transport.calls, [])
+
+    def test_rejects_empty_revocation_token_material(self):
+        credential = self.credential()
+        credential.refresh_token = ""
+        vault, transport = Vault(credential), Transport()
+        service = OAuthDisconnectService(
+            credential_vault=vault, transport=transport,
+            provider_id="provider", client_id="client",
+            revocation_endpoint="https://auth.example.com/revoke",
+        )
+        with self.assertRaisesRegex(OAuthDisconnectError, "credential_material_invalid"):
+            service.disconnect(owner_id="owner", account_id="account")
+        self.assertFalse(vault.deleted)
+        self.assertEqual(transport.calls, [])
 
     def test_deletes_exact_local_generation_before_remote_revocation(self):
         vault, transport = Vault(self.credential()), Transport()
