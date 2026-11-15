@@ -88,11 +88,12 @@ class TaskRuntime:
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
                           run.lease_owner, run.lease_expires_at)
 
-    def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]]) -> TaskRecord:
+    def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]], owner_id: str | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
+        owner = self._actor(owner_id) if owner_id is not None else actor
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps, owner_id=actor)
+        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps, owner_id=owner)
         existing = self.store.list_task_events(run.run_id, limit=1)
         if not existing:
             self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
