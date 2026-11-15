@@ -1,4 +1,5 @@
 import unittest
+import threading
 from dataclasses import replace
 
 from core.component_catalog import DEFAULT_COMPONENTS
@@ -235,6 +236,75 @@ class ComponentRegistryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "registry is closed"):
             registry.resolve("identity-access")
+
+
+    def test_registration_waits_for_startup_and_is_rejected_after_freeze(self):
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+        registry = ComponentRegistry()
+        contract = self.contracts["identity-access"]
+        runtime = ComponentRuntime(
+            contract=contract, instance=object(),
+            start=lambda: (entered.set(), release.wait(2)),
+            close=lambda: None, health_check=lambda: True,
+        )
+        registry.register(runtime)
+        starter = threading.Thread(target=registry.start_all)
+        starter.start()
+        self.assertTrue(entered.wait(1))
+
+        attempted = threading.Event()
+        def register_during_startup():
+            attempted.set()
+            try:
+                registry.register(self.runtime("configuration-runtime", []))
+            except Exception as exc:
+                errors.append(exc)
+
+        registrar = threading.Thread(target=register_during_startup)
+        registrar.start()
+        self.assertTrue(attempted.wait(1))
+        self.assertTrue(registrar.is_alive(), "registration should wait for startup lock")
+        release.set()
+        starter.join(2)
+        registrar.join(2)
+
+        self.assertFalse(starter.is_alive())
+        self.assertFalse(registrar.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], RuntimeError)
+        self.assertIn("registration is frozen", str(errors[0]))
+
+    def test_close_waits_for_health_probe_before_teardown(self):
+        probe_entered = threading.Event()
+        release_probe = threading.Event()
+        events = []
+        registry = ComponentRegistry()
+        contract = self.contracts["identity-access"]
+        registry.register(ComponentRuntime(
+            contract=contract, instance=object(), start=lambda: None,
+            close=lambda: events.append("closed"),
+            health_check=lambda: (
+                probe_entered.set(), release_probe.wait(2), True
+            )[-1],
+        ))
+        registry.start_all()
+        prober = threading.Thread(target=registry.health)
+        prober.start()
+        self.assertTrue(probe_entered.wait(1))
+
+        closer = threading.Thread(target=registry.close)
+        closer.start()
+        self.assertTrue(closer.is_alive(), "close should wait for in-flight health probe")
+        self.assertEqual(events, [])
+        release_probe.set()
+        prober.join(2)
+        closer.join(2)
+
+        self.assertFalse(prober.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(events, ["closed"])
 
     def test_close_failure_does_not_prevent_remaining_cleanup(self):
         events = []
