@@ -122,6 +122,28 @@ class ToolActionJournalTests(unittest.TestCase):
         with self.assertRaises(ToolActionTransitionError):
             self.journal.renew_execution("lease-expired", started.lease_owner)
 
+    def test_existing_journal_schema_is_upgraded_with_lease_columns(self):
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                """CREATE TABLE tool_actions (
+                    action_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL, request_digest TEXT NOT NULL,
+                    state TEXT NOT NULL, result_json TEXT, error_code TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
+            db.execute(
+                """INSERT INTO tool_actions
+                   (action_id,idempotency_key,tool_name,request_digest,state,created_at,updated_at)
+                   VALUES ('legacy-id','legacy-key','email.send',?,'prepared','2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00')""",
+                ("a" * 64,),
+            )
+        upgraded = ToolActionJournal(self.path).get("legacy-key")
+        self.assertEqual(upgraded.state, "prepared")
+        self.assertIsNone(upgraded.lease_owner)
+        self.assertIsNone(upgraded.lease_expires_at)
+
     def test_execution_lease_bounds_are_validated(self):
         record = self.journal.reserve("lease-bounds", "email.send", {})
         for invalid in (True, 0, 4, 3601, 1.5):
