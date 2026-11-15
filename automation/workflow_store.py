@@ -310,10 +310,16 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
-            ).fetchall()
+            claim_sql = "SELECT * FROM workflow_runs WHERE state='queued'"
+            claim_params: list[Any] = []
+            if workflow_prefixes is not None:
+                predicates = []
+                for prefix in workflow_prefixes:
+                    predicates.append("substr(workflow_name, 1, ?) = ?")
+                    claim_params.extend((len(prefix), prefix))
+                claim_sql += " AND (" + " OR ".join(predicates) + ")"
+            claim_sql += " ORDER BY created_at, run_id LIMIT 100"
+            rows = db.execute(claim_sql, claim_params).fetchall()
             row = next((
                 candidate for candidate in rows
                 if (workflow_prefixes is None or any(candidate["workflow_name"].startswith(prefix) for prefix in workflow_prefixes))
