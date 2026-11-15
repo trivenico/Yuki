@@ -5,6 +5,7 @@ retains the parent policy as a live authorization check for every invocation.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Callable, Iterable
 
 from core.delegated_tool_policy import DelegatedToolPolicy
@@ -53,12 +54,12 @@ class DelegatedAgentRuntime:
         if not isinstance(loop, AgentExecutionLoop):
             raise TypeError("loop must be an AgentExecutionLoop")
         self._loop = loop
-        self._tool_definitions = tuple(dict(item) for item in tool_definitions)
+        self._tool_definitions = tuple(deepcopy(item) for item in tool_definitions)
 
     @property
     def tool_definitions(self):
         """Return detached definitions so callers cannot widen the runtime."""
-        return tuple(dict(item) for item in self._tool_definitions)
+        return tuple(deepcopy(item) for item in self._tool_definitions)
 
     def run(self, user_text: str, **kwargs):
         """Execute with only the specialist's pre-authorized tool definitions."""
@@ -66,7 +67,7 @@ class DelegatedAgentRuntime:
             raise TypeError("specialist tool definitions are fixed at construction")
         return self._loop.run(
             user_text,
-            tools=[dict(item) for item in self._tool_definitions],
+            tools=[deepcopy(item) for item in self._tool_definitions],
             **kwargs,
         )
 
