@@ -246,23 +246,35 @@ def validate_component_catalog(
             errors.append(f"{prefix}: duplicate component_id")
         by_id[item.component_id] = item
 
-        for relative in item.entrypoints + item.test_evidence:
-            path = Path(relative)
-            if path.is_absolute() or ".." in path.parts:
-                errors.append(f"{prefix}: unsafe repository path {relative!r}")
+        path_collections = (item.entrypoints, item.test_evidence)
+        for collection in path_collections:
+            if not isinstance(collection, tuple):
                 continue
-            candidate = root / path
-            try:
-                resolved = candidate.resolve(strict=True)
-                resolved.relative_to(root)
-            except (OSError, RuntimeError, ValueError):
-                errors.append(f"{prefix}: repository path escapes root or cannot be resolved: {relative}")
-                continue
-            if not resolved.is_file():
-                errors.append(f"{prefix}: repository file does not exist: {relative}")
+            for relative in collection:
+                if not isinstance(relative, str) or not relative.strip():
+                    continue
+                path = Path(relative)
+                if path.is_absolute() or ".." in path.parts:
+                    errors.append(f"{prefix}: unsafe repository path {relative!r}")
+                    continue
+                candidate = root / path
+                try:
+                    resolved = candidate.resolve(strict=True)
+                    resolved.relative_to(root)
+                except (OSError, RuntimeError, ValueError):
+                    errors.append(f"{prefix}: repository path escapes root or cannot be resolved: {relative}")
+                    continue
+                if not resolved.is_file():
+                    errors.append(f"{prefix}: repository file does not exist: {relative}")
 
     for item in entries:
+        if not isinstance(item, ComponentContract) or not isinstance(item.component_id, str):
+            continue
+        if not isinstance(item.depends_on, tuple):
+            continue
         for dependency in item.depends_on:
+            if not isinstance(dependency, str) or not dependency:
+                continue
             if dependency not in by_id:
                 errors.append(f"{item.component_id}: unknown dependency {dependency}")
 
