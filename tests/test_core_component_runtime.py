@@ -5,6 +5,8 @@ from pathlib import Path
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.core_component_runtime import build_core_component_registry
+from core.conversation_application_runtime import build_conversation_application_runtime
+from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -61,6 +63,53 @@ class CoreComponentCompositionTests(unittest.TestCase):
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
             with self.assertRaisesRegex(TypeError, "provider"):
                 build_core_component_registry(auth_service=auth, provider=object(), agent_loop=self._loop())
+
+    def test_full_graph_starts_and_application_owner_closes_shared_conversations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            provider = FakeProvider()
+            loop = self._loop()
+            store = ConversationStore(Path(directory) / "conversations.sqlite3")
+            application = build_conversation_application_runtime(
+                {}, agent_loop=loop, store_factory=lambda config: store,
+            )
+            registry = build_core_component_registry(
+                auth_service=auth, provider=provider, agent_loop=loop,
+                application_runtime=application,
+            )
+            started = registry.start_all()
+            self.assertEqual(set(started), {
+                "identity-access", "provider-runtime", "agent-execution",
+                "durable-conversations", "application-composition",
+            })
+            self.assertTrue(all(registry.health().values()))
+            self.assertIs(registry.resolve("durable-conversations"), application.conversations)
+            self.assertIs(registry.resolve("application-composition"), application)
+            self.assertEqual(registry.close(), ())
+            self.assertTrue(application._closed)
+            self.assertEqual(provider.closed, 1)
+            with self.assertRaisesRegex(RuntimeError, "service is closed"):
+                application.conversations.list(owner_id="closed-owner")
+
+    def test_durable_storage_probe_failure_rolls_back_full_graph(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            provider = FakeProvider()
+            loop = self._loop()
+            store = ConversationStore(Path(directory) / "unhealthy.sqlite3")
+            application = build_conversation_application_runtime(
+                {}, agent_loop=loop, store_factory=lambda config: store,
+            )
+            store.health_check = lambda: False
+            registry = build_core_component_registry(
+                auth_service=auth, provider=provider, agent_loop=loop,
+                application_runtime=application,
+            )
+            with self.assertRaisesRegex(RuntimeError, "startup failed: durable-conversations"):
+                registry.start_all()
+            self.assertEqual(registry.started_components, ())
+            self.assertEqual(provider.closed, 1)
+            self.assertTrue(application._closed)
 
 
 if __name__ == "__main__":
