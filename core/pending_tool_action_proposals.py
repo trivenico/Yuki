@@ -204,16 +204,18 @@ class SQLitePendingToolActionProposalStore:
                     WHERE proposal_id = ? AND principal_id = ?
                       AND status = 'pending' AND expires_at <= ?""",
                     (now, proposal_id, principal_id, now))
-                db.execute("""UPDATE pending_tool_action_proposals
+                changed = db.execute("""UPDATE pending_tool_action_proposals
                     SET status = ?, decided_at = ?
                     WHERE proposal_id = ? AND principal_id = ?
                       AND status = 'pending' AND expires_at > ?""",
-                    (decision, now, proposal_id, principal_id, now))
-                row = db.execute(
-                    f"SELECT {self._select_columns()} FROM pending_tool_action_proposals "
-                    "WHERE proposal_id = ? AND principal_id = ?",
-                    (proposal_id, principal_id),
-                ).fetchone()
+                    (decision, now, proposal_id, principal_id, now)).rowcount
+                row = None
+                if changed == 1:
+                    row = db.execute(
+                        f"SELECT {self._select_columns()} FROM pending_tool_action_proposals "
+                        "WHERE proposal_id = ? AND principal_id = ?",
+                        (proposal_id, principal_id),
+                    ).fetchone()
                 db.execute("COMMIT")
             except Exception:
                 db.execute("ROLLBACK")
