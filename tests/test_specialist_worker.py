@@ -75,6 +75,23 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
 
+    def test_worker_plan_scope_leaves_other_plans_queued(self):
+        plan_a = self.coordinator.submit(
+            actor_id="alice", idempotency_key="plan-scope-a",
+            subtasks=[SubtaskSpec("task-a", "Task A", ("coding",), requires_approval=False)],
+        )
+        plan_b = self.coordinator.submit(
+            actor_id="alice", idempotency_key="plan-scope-b",
+            subtasks=[SubtaskSpec("task-b", "Task B", ("coding",), requires_approval=False)],
+        )
+        plan_a = self.coordinator.advance(actor_id="alice", plan_id=plan_a.plan_id)
+        plan_b = self.coordinator.advance(actor_id="alice", plan_id=plan_b.plan_id)
+        worker = self.worker({"code-review": lambda text: "done: " + text})
+        result = worker.run_once(plan_id=plan_a.plan_id)
+        self.assertEqual(result.task_id, plan_a.subtasks[0].task_id)
+        self.assertEqual(self.store.get(plan_b.subtasks[0].task_id).state, "queued")
+        self.assertEqual(self.store.get(result.task_id).plan_id, plan_a.plan_id)
+
     def test_worker_does_not_claim_unrelated_queued_workflows(self):
         unrelated = []
         for index in range(101):
