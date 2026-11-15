@@ -14,6 +14,7 @@ from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.component_registry import ComponentRegistry
+from core.configuration_component_runtime import build_configuration_component_runtime
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -182,6 +183,19 @@ def build_conversation_runtime(
             component_registry = component_registry_factory(auth_service, agent_loop, application)
             if not isinstance(component_registry, ComponentRegistry):
                 raise TypeError("component_registry_factory must return a ComponentRegistry.")
+            # The API composition root owns the supplied configuration snapshot.
+            # Preserve legacy partial test/embedding configs, but register the
+            # configuration component whenever the validated runtime config is complete.
+            if (
+                isinstance(config.get("workspace"), str)
+                and isinstance(config.get("provider"), str)
+            ):
+                try:
+                    component_registry.resolve("configuration-runtime")
+                except LookupError:
+                    component_registry.register(
+                        build_configuration_component_runtime(config)
+                    )
             expected_instances = {
                 "identity-access": auth_service,
                 "agent-execution": agent_loop,
