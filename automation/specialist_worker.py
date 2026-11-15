@@ -255,7 +255,7 @@ class SpecialistTaskWorker:
                 handler = self.owner_handler_factory(claimed.owner_id, agent_id)
             except Exception:
                 handler = None
-        if handler is None:
+        if not callable(handler):
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
