@@ -2,6 +2,7 @@
 import unittest
 
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
 class Policy:
@@ -76,6 +77,34 @@ class GuardedToolRuntimeTests(unittest.TestCase):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), max_argument_chars=value)
             with self.subTest(result_limit=value), self.assertRaises(ValueError):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), max_result_chars=value)
+
+    def test_capability_catalog_is_enforced_before_policy_and_handler(self):
+        calls = []
+        policy = Policy()
+        runtime = GuardedToolRuntime(
+            {"read": lambda argument: calls.append(argument) or "ok"},
+            policy,
+            capabilities=ToolCapabilityCatalog({
+                "read": ToolCapability(ToolEffect.READ_ONLY),
+            }),
+        )
+        self.assertEqual(runtime.invoke("read", "{}"), "ok")
+        self.assertEqual(calls, ["{}"])
+        self.assertEqual(policy.allowed, True)
+
+    def test_capability_catalog_must_cover_exact_registered_tool_set(self):
+        with self.assertRaises(ValueError):
+            GuardedToolRuntime(
+                {"send_email": lambda _: "sent"},
+                Policy(),
+                capabilities=ToolCapabilityCatalog({
+                    "read_email": ToolCapability(ToolEffect.READ_ONLY),
+                }),
+            )
+
+    def test_capability_catalog_type_is_validated(self):
+        with self.assertRaises(TypeError):
+            GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), capabilities={})
 
     def test_audit_failure_does_not_change_authorization_or_result(self):
         runtime = GuardedToolRuntime(
