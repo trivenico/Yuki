@@ -7,6 +7,8 @@ an opaque owner-scoped account ID.
 """
 from __future__ import annotations
 
+import ipaddress
+import re
 from urllib.parse import urlsplit
 
 from core.google_oauth_identity import (
@@ -35,6 +37,34 @@ GOOGLE_GMAIL_SCOPES = (
 )
 
 
+def _trusted_dns_host_set(value) -> frozenset[str]:
+    """Validate deployment-owned callback hosts as exact DNS names only."""
+    if not isinstance(value, (set, frozenset, tuple, list)) or not value:
+        raise GoogleOAuthConfigurationError("trusted_google_redirect_hosts_required")
+    if len(set(value)) != len(value):
+        raise GoogleOAuthConfigurationError("invalid_trusted_google_redirect_hosts")
+    validated = set()
+    label_pattern = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    for host in value:
+        if (
+            not isinstance(host, str) or not host or host != host.lower()
+            or len(host) > 253 or host.endswith(".") or "*" in host
+            or any(ord(char) > 127 for char in host)
+        ):
+            raise GoogleOAuthConfigurationError("invalid_trusted_google_redirect_hosts")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            raise GoogleOAuthConfigurationError("invalid_trusted_google_redirect_hosts")
+        labels = host.split(".")
+        if any(not label_pattern.fullmatch(label) for label in labels):
+            raise GoogleOAuthConfigurationError("invalid_trusted_google_redirect_hosts")
+        validated.add(host)
+    return frozenset(validated)
+
+
 class GoogleOAuthConfigurationError(ValueError):
     """Stable Google OAuth configuration validation failure."""
 
@@ -49,8 +79,7 @@ def build_google_gmail_authorization_service(
         raise GoogleOAuthConfigurationError("invalid_google_client_id")
     if not isinstance(redirect_uri, str) or len(redirect_uri) > 2048:
         raise GoogleOAuthConfigurationError("invalid_google_redirect_uri")
-    if (not isinstance(trusted_redirect_hosts, (set, frozenset, tuple, list)) or not trusted_redirect_hosts or any(not isinstance(host, str) or not host or host != host.lower() for host in trusted_redirect_hosts)):
-        raise GoogleOAuthConfigurationError("trusted_google_redirect_hosts_required")
+    trusted_hosts = _trusted_dns_host_set(trusted_redirect_hosts)
     try:
         callback = urlsplit(redirect_uri)
         port = callback.port
@@ -61,7 +90,7 @@ def build_google_gmail_authorization_service(
         or callback.username is not None or callback.password is not None
         or port not in (None, 443) or callback.query or callback.fragment
         or callback.path != "/oauth/callback/google"
-        or callback.hostname.lower() not in trusted_redirect_hosts
+        or callback.hostname.lower() not in trusted_hosts
     ):
         raise GoogleOAuthConfigurationError("invalid_google_redirect_uri")
     if not set(GOOGLE_HOSTS).issubset(getattr(pinned_transport, "allowed_hosts", ())):
