@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
-from core.tool_action_context import ToolActionContext
 
 
 class ConversationService:
