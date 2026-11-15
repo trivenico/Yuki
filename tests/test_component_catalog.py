@@ -65,6 +65,30 @@ class ComponentCatalogTests(unittest.TestCase):
         )
         self.assertTrue(any("unsafe repository path" in error for error in errors))
 
+    def test_symlinked_entrypoint_cannot_escape_repository_root(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent) / "repository"
+            root.mkdir()
+            outside = Path(parent) / "outside.py"
+            outside.write_text("# outside repository", encoding="utf-8")
+            link = root / "entrypoint.py"
+            try:
+                link.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are unavailable on this platform")
+            evidence = root / "test_evidence.py"
+            evidence.write_text("# test evidence", encoding="utf-8")
+            contract = ComponentContract(
+                component_id="symlink-check", name="Symlink check",
+                layer="domain", status="experimental", purpose="Path containment",
+                entrypoints=("entrypoint.py",), depends_on=(),
+                public_contract=("path containment",),
+                test_evidence=("test_evidence.py",),
+            )
+            errors = validate_component_catalog([contract], repository_root=root)
+            self.assertTrue(any("escapes root" in error for error in errors))
+
     def test_catalog_exports_json_safe_data(self):
         import json
         data = json.loads(component_catalog_json())
