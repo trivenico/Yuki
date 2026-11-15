@@ -238,7 +238,10 @@ class SpecialistTaskWorker:
 
     def run_once(self) -> TaskRecord | None:
         """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        prefixes = tuple("agent-" + agent_id + "-" for agent_id in self.agent_ids) or None
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id, workflow_prefixes=prefixes,
+        )
         if claimed is None:
             return None
 
