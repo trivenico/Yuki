@@ -33,6 +33,7 @@ class OAuthAuthorizationService:
         issuer: str, resource: str, scopes, identity_verifier,
         authorization_response_iss_parameter_supported: bool = False,
         oidc_verifier=None, account_id_resolver=None,
+        authorization_parameters=(), include_resource_parameter=True,
     ):
         required = {
             "provider_id": provider_id,
@@ -65,6 +66,12 @@ class OAuthAuthorizationService:
             raise TypeError("a trusted provider identity verifier is required")
         if not isinstance(scopes, (list, tuple)) or not scopes:
             raise ValueError("at least one OAuth scope is required")
+        if type(include_resource_parameter) is not bool:
+            raise ValueError("resource parameter capability must be boolean")
+        if not isinstance(authorization_parameters, (tuple, list)):
+            raise ValueError("authorization_parameters must be a sequence")
+        self._authorization_parameters = tuple(authorization_parameters)
+        self._include_resource_parameter = include_resource_parameter
         if type(authorization_response_iss_parameter_supported) is not bool:
             raise ValueError("authorization response issuer capability must be boolean")
         self._transactions = transaction_store
@@ -97,8 +104,9 @@ class OAuthAuthorizationService:
             client_id=self._client_id,
             redirect_uri=self._redirect_uri,
             scopes=self._authorization_scopes,
-            resource=self._resource,
+            resource=self._resource if self._include_resource_parameter else None,
             oidc_nonce=oidc_nonce,
+            extra_parameters=self._authorization_parameters,
         )
         try:
             expires_at = self._transactions.create(
