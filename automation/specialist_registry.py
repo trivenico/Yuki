@@ -140,6 +140,8 @@ class SpecialistRegistry:
         expected = {item.agent_id for item in self.enabled()}
         if set(runtime_bindings) != expected:
             raise ValueError("runtime bindings must exactly match enabled specialists")
+        if not expected:
+            return {}
         configs = {}
         for item in self.enabled():
             binding = runtime_bindings[item.agent_id]
