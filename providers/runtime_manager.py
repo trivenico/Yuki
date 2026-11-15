@@ -65,7 +65,20 @@ class ProviderRuntimeManager:
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
             previous = self.adapter.provider
-            self._persist(name)
+            try:
+                self._persist(name)
+            except Exception:
+                # Candidate construction may allocate resources even when the
+                # durable selection write fails. Retire it without disturbing
+                # the still-active provider.
+                if candidate is not previous:
+                    close_candidate = getattr(candidate, "close", None)
+                    if callable(close_candidate):
+                        try:
+                            close_candidate()
+                        except Exception:
+                            pass
+                raise
             self.adapter.provider = candidate
             self.config["provider"] = name
             # Provider adapters may own HTTP clients, subprocesses or other
