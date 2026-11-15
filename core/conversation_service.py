@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
+from core.tool_action_context import ToolActionContext
 
 
 class ConversationService:
@@ -22,7 +23,8 @@ class ConversationService:
 
     def __init__(
         self, store: ConversationStore, agent_loop: AgentExecutionLoop,
-        *, agent_loop_for_owner=None,
+        *, agent_loop_for_owner=None, action_context_factory=None,
+        confirmation_check=None, approval_id_factory=None,
     ):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
@@ -30,6 +32,16 @@ class ConversationService:
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
         if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
             raise TypeError("agent_loop_for_owner must be callable.")
+        for callback, name in (
+            (action_context_factory, "action_context_factory"),
+            (confirmation_check, "confirmation_check"),
+            (approval_id_factory, "approval_id_factory"),
+        ):
+            if callback is not None and not callable(callback):
+                raise TypeError(f"{name} must be callable.")
+        self.action_context_factory = action_context_factory
+        self.confirmation_check = confirmation_check
+        self.approval_id_factory = approval_id_factory
         self.store = store
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
@@ -227,6 +239,9 @@ class ConversationService:
                     user_text, principal_id=owner_id,
                     on_text_delta=on_text_delta,
                     cancellation_requested=cancellation_requested,
+                    action_context_factory=self.action_context_factory,
+                    confirmation_check=self.confirmation_check,
+                    approval_id_factory=self.approval_id_factory,
                     **kwargs,
                 )
                 status = result.status
