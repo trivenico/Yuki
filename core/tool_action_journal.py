@@ -325,8 +325,8 @@ class ToolActionJournal:
     ) -> ToolAction:
         self._validate_key(idempotency_key)
         result_json = None
-        if new_state == "succeeded":
-            result_json, _ = _json_bytes(result, _MAX_RESULT_BYTES, "result")
+        if new_state == "succeeded" or (new_state == "not_executed" and result is not None):
+            result_json, _ = _json_bytes(result, _MAX_RESULT_BYTES, "result/evidence")
         if error_code is not None and (
             not isinstance(error_code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code)
         ):
@@ -386,8 +386,11 @@ class ToolActionJournal:
             idempotency_key, "outcome_unknown", "succeeded", result=result,
         )
 
-    def reconcile_not_executed(self, idempotency_key: str, error_code: str) -> ToolAction:
-        """Resolve an uncertain action only after proving the side effect did not occur."""
+    def reconcile_not_executed(
+        self, idempotency_key: str, error_code: str, *, evidence: Any = None,
+    ) -> ToolAction:
+        """Resolve an uncertain action only after proving non-execution; persist evidence."""
         return self._transition(
-            idempotency_key, "outcome_unknown", "not_executed", error_code=error_code,
+            idempotency_key, "outcome_unknown", "not_executed",
+            error_code=error_code, result=evidence,
         )
