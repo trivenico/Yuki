@@ -19,6 +19,12 @@ from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.google_gmail_runtime import build_gmail_tool_runtime_bundle
+from core.google_gmail_send_client import GmailSendClient
+from core.google_gmail_readonly_client import GmailReadOnlyClient
+from core.tool_action_journal import ToolActionJournal
+from core.tool_capabilities import ToolCapabilityCatalog
+from core.google_gmail_send_tool import GMAIL_SEND_TOOL_NAME
 
 
 class _NoApprovals:
@@ -33,7 +39,76 @@ def _loop():
     return AgentExecutionLoop(model, protocol)
 
 
+
+class _GmailSendClient(GmailSendClient):
+    def send_email(self, **kwargs):
+        raise AssertionError("API composition test must not send email")
+
+
+class _GmailReadClient(GmailReadOnlyClient):
+    def find_message_by_rfc822_message_id(self, **kwargs):
+        return {"found": False}
+
+
+class _GmailPolicy:
+    def authorize_tool(self, name):
+        return name == GMAIL_SEND_TOOL_NAME
+
+
 class ConversationRuntimeTests(unittest.TestCase):
+    def test_runtime_composes_gmail_bundle_into_authenticated_api_and_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
+            proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
+            bundle = build_gmail_tool_runtime_bundle(
+                existing_tools={}, existing_capabilities=ToolCapabilityCatalog({}),
+                existing_tool_definitions=(), policy=_GmailPolicy(),
+                action_journal=ToolActionJournal(str(root / "journal.sqlite")),
+                approval_store=approvals, proposals=proposals,
+                send_client=_GmailSendClient(), readonly_client=_GmailReadClient(),
+                message_id_domain="mail.example.com",
+            )
+            agent = AgentExecutionLoop(
+                lambda **kwargs: {"text": "ready", "tool_calls": {"tool_calls": []}},
+                bundle.tool_protocol,
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=agent, gmail_runtime_bundle=bundle,
+            )
+            self.assertIs(runtime.app.tool_action_approvals, approvals)
+            self.assertIs(runtime.app.pending_tool_action_proposals, proposals)
+            self.assertIs(runtime.app.approved_tool_action_executor.guarded_runtime,
+                          bundle.guarded_runtime)
+            self.assertIs(runtime.app.tool_action_reconciler, bundle.reconciliation_service)
+            definitions = runtime.app.tools_for_user("gmail-owner")
+            self.assertEqual([item["function"]["name"] for item in definitions],
+                             [GMAIL_SEND_TOOL_NAME])
+            self.assertIs(runtime.application.conversations.agent_loop.tool_protocol,
+                          bundle.tool_protocol)
+            runtime.close()
+
+    def test_runtime_rejects_gmail_bundle_with_different_agent_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            bundle = build_gmail_tool_runtime_bundle(
+                existing_tools={}, existing_capabilities=ToolCapabilityCatalog({}),
+                existing_tool_definitions=(), policy=_GmailPolicy(),
+                action_journal=ToolActionJournal(str(root / "journal.sqlite")),
+                approval_store=SQLiteToolActionApprovalStore(str(root / "approvals.sqlite")),
+                proposals=SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite")),
+                send_client=_GmailSendClient(), readonly_client=_GmailReadClient(),
+                message_id_domain="mail.example.com",
+            )
+            with self.assertRaisesRegex(ValueError, "exact structured tool protocol"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), gmail_runtime_bundle=bundle,
+                )
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
