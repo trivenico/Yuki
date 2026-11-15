@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import re
 import secrets
 import sqlite3
@@ -143,7 +142,7 @@ class ToolActionJournal:
         """Create a prepared action or return the same-key, same-payload record."""
         self._validate_key(idempotency_key)
         self._validate_tool(tool_name)
-        encoded, raw = _json_bytes(request, _MAX_REQUEST_BYTES, "request")
+        _, raw = _json_bytes(request, _MAX_REQUEST_BYTES, "request")
         digest = hashlib.sha256(raw).hexdigest()
         now = _now()
         with self._connect() as db:
