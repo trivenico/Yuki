@@ -104,6 +104,7 @@ def build_conversation_runtime(
     evaluation_service: EvaluationService | None = None,
     tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
     pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
+    pending_proposal_factory: Callable | None = None,
     action_context_factory: Callable | None = None,
     confirmation_check: Callable | None = None,
     approval_id_factory: Callable | None = None,
@@ -125,6 +126,7 @@ def build_conversation_runtime(
         (action_context_factory, "action_context_factory"),
         (confirmation_check, "confirmation_check"),
         (approval_id_factory, "approval_id_factory"),
+        (pending_proposal_factory, "pending_proposal_factory"),
     ):
         if callback is not None and not callable(callback):
             raise TypeError(f"{name} must be callable.")
@@ -179,6 +181,22 @@ def build_conversation_runtime(
     # When durable approvals are configured, provide safe default host adapters.
     # The confirmation decision remains an explicit embedding/UI responsibility;
     # AgentExecutionLoop defaults it to False when no checker is supplied.
+    if pending_tool_action_proposals is not None:
+        if action_context_factory is None:
+            action_context_factory = (
+                lambda principal_id, tool_name, arguments:
+                ToolActionContext.create(principal_id, tool_name, arguments)
+                if principal_id is not None else None
+            )
+        if pending_proposal_factory is None:
+            def pending_proposal_factory(principal_id, action_context, call):
+                if principal_id is None or action_context is None:
+                    raise ValueError("authenticated proposal identity is required")
+                proposal = pending_tool_action_proposals.create(
+                    action_context, call.arguments, principal_id=principal_id,
+                )
+                return proposal.proposal_id
+
     if tool_action_approvals is not None:
         if action_context_factory is None:
             action_context_factory = (
@@ -199,6 +217,7 @@ def build_conversation_runtime(
         action_context_factory=action_context_factory,
         confirmation_check=confirmation_check,
         approval_id_factory=approval_id_factory,
+        pending_proposal_factory=pending_proposal_factory,
     )
     try:
         app = YukiConversationAPI(
