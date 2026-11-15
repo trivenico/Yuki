@@ -52,6 +52,31 @@ class OAuthDisconnectService:
         ):
             raise OAuthDisconnectError("credential_generation_invalid")
 
+        # Remove the exact local credential generation first. This prevents
+        # a stale disconnect from remotely revoking a refresh token that may
+        # still be shared by a concurrently refreshed credential generation.
+        try:
+            if credential is None:
+                disconnected = True  # Idempotent cleanup of stale registry metadata.
+            else:
+                disconnected = self._vault.disconnect(
+                    owner_id=owner_id, provider_id=self._provider_id,
+                    account_id=account_id, expected_version=expected_version,
+                )
+        except Exception:
+            raise OAuthDisconnectError("local_credential_disconnect_failed") from None
+
+        if not disconnected:
+            # The credential changed after lookup. Do not revoke the old token:
+            # the provider may have retained it as the current refresh token.
+            return {
+                "provider_id": self._provider_id,
+                "account_id": account_id,
+                "disconnected": False,
+                "revocation_attempted": False,
+                "remote_revoked": False,
+            }
+
         remote_revoked = False
         revocation_attempted = False
         if credential is not None and self._revocation_endpoint is not None:
@@ -67,20 +92,9 @@ class OAuthDisconnectService:
                 )
                 remote_revoked = True
             except Exception:
-                # Do not retry an ambiguous revocation request. Local deletion
-                # below is still mandatory and does not depend on remote success.
+                # Local credentials are already removed. Never retry an
+                # ambiguous remote revocation request.
                 remote_revoked = False
-
-        try:
-            # Fence deletion to the exact credential generation whose token
-            # was selected for revocation. A concurrent reconnect/refresh must
-            # never be deleted by this older disconnect request.
-            disconnected = self._vault.disconnect(
-                owner_id=owner_id, provider_id=self._provider_id,
-                account_id=account_id, expected_version=expected_version,
-            )
-        except Exception:
-            raise OAuthDisconnectError("local_credential_disconnect_failed") from None
 
         return {
             "provider_id": self._provider_id,
