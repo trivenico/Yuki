@@ -97,7 +97,7 @@ class ComponentRegistryTests(unittest.TestCase):
         registry.register(self.runtime("provider-runtime", events))
         self.assertEqual(
             registry.start_all(),
-            ("identity-access", "provider-runtime", "agent-execution"),
+            ("provider-runtime", "identity-access", "agent-execution"),
         )
 
     def test_starts_dependencies_before_dependents_and_closes_in_reverse(self):
