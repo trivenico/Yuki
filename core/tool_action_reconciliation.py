@@ -117,11 +117,18 @@ class ToolActionReconciliationService:
         proposal = self.proposals.get(proposal_id, principal_id=principal_id)
         if proposal is None:
             raise LookupError("proposal was not found")
-        if proposal.status != "approved" or proposal.execution_state != "unknown":
+        if proposal.status != "approved" or proposal.execution_state not in {"unknown", "not_executed"}:
             raise ValueError("proposal is not awaiting reconciliation")
         action = self.journal.get(proposal.idempotency_key)
         if action is None:
             raise ValueError("journal action is not awaiting reconciliation")
+        # A provider-confirmed non-execution is terminal and non-replayable.
+        # Repeated reconciliation requests return the durable result without
+        # invoking the provider adapter or attempting another state change.
+        if proposal.execution_state == "not_executed":
+            if action.state != "not_executed":
+                raise ValueError("proposal and journal terminal states do not match")
+            return action
         # The journal and proposal store are separate durable transactions. If
         # provider success committed but proposal finalization was interrupted,
         # repair the proposal from the authoritative journal without querying or
