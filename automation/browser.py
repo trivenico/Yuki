@@ -44,6 +44,8 @@ class SafeBrowser:
     def _validate(self, url):
         if not isinstance(url, str) or not 1 <= len(url) <= 2048:
             raise BrowserAutomationError("URL must be a bounded string.")
+        if url != url.strip() or any(ord(char) < 0x20 or ord(char) == 0x7f for char in url):
+            raise BrowserAutomationError("URL contains surrounding whitespace or control characters.")
         try:
             parts = urlsplit(url)
             port = parts.port
