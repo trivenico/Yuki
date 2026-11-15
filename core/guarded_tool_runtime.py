@@ -129,19 +129,6 @@ class GuardedToolRuntime:
                 except (TypeError, ValueError, ToolActionContextError):
                     self._record(name, "action_context_mismatch")
                     return "Tool blocked: trusted action context does not match the request."
-                if capability.requires_user_confirmation:
-                    if self._approval_store is None or not isinstance(approval_id, str):
-                        self._record(name, "confirmation_required")
-                        return "Tool blocked: a durable, action-bound approval is required."
-                    try:
-                        approved = self._approval_store.consume(
-                            approval_id, action_context, principal_id=principal_id,
-                        )
-                    except (ToolActionApprovalError, TypeError, ValueError):
-                        approved = False
-                    if not approved:
-                        self._record(name, "approval_invalid_or_consumed")
-                        return "Tool blocked: approval is invalid, expired, or already used."
 
         try:
             authorized = self._policy.authorize_tool(name)
@@ -150,6 +137,27 @@ class GuardedToolRuntime:
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
+
+        # Consume only after the current authorization policy allows the action.
+        # The approval is still bound to the exact immutable context and is single-use.
+        if (
+            capability is not None
+            and capability.effect is ToolEffect.SIDE_EFFECTING
+            and self._require_action_context
+            and capability.requires_user_confirmation
+        ):
+            if self._approval_store is None or not isinstance(approval_id, str):
+                self._record(name, "confirmation_required")
+                return "Tool blocked: a durable, action-bound approval is required."
+            try:
+                approved = self._approval_store.consume(
+                    approval_id, action_context, principal_id=principal_id,
+                )
+            except (ToolActionApprovalError, TypeError, ValueError):
+                approved = False
+            if not approved:
+                self._record(name, "approval_invalid_or_consumed")
+                return "Tool blocked: approval is invalid, expired, or already used."
 
         lease_owner = None
         if (
