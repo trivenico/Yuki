@@ -23,6 +23,11 @@ class ConversationApplicationRuntime:
     close_callbacks: tuple[Callable[[], None], ...] = ()
     _closed: bool = False
 
+    @property
+    def closed(self) -> bool:
+        """Whether application shutdown has begun, including failed cleanup."""
+        return self._closed
+
     def close(self) -> None:
         """Close persistence exactly once; safe for repeated shutdown paths."""
         if self._closed:
