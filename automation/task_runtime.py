@@ -175,7 +175,7 @@ class TaskRuntime:
             raise ValueError("message must be non-empty bounded text.")
         if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
             raise ValueError("percent must be an integer from 0 to 100.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
                                      payload={"message": message.strip(), "percent": percent},
@@ -216,7 +216,7 @@ class TaskRuntime:
             metadata = {}
         if not isinstance(metadata, dict):
             raise ValueError("metadata must be an object.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
                                      payload={"artifact_type": artifact_type, "reference": reference.strip(),
