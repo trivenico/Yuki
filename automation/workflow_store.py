@@ -35,6 +35,12 @@ _STATES = frozenset({
     "cancelled", "interrupted",
 })
 _TERMINAL = frozenset({"succeeded", "cancelled", "interrupted"})
+_TERMINAL_EVENT_KINDS = frozenset({
+    "succeeded": "task.completed",
+    "failed": "task.failed",
+    "cancelled": "task.cancelled",
+    "interrupted": "task.interrupted",
+}.values())
 _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled"}),
     "running": frozenset({"waiting_approval", "succeeded", "failed", "cancelled", "interrupted"}),
@@ -448,6 +454,9 @@ class WorkflowRunStore:
         lease_owner: str | None = None,
         lease_seconds: int = 60,
         expected_lease_owner: str | None = None,
+        terminal_event_kind: str | None = None,
+        terminal_event_actor_id: str | None = None,
+        terminal_event_payload: dict[str, Any] | None = None,
     ) -> WorkflowRun:
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
@@ -467,6 +476,28 @@ class WorkflowRunStore:
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in error_code)
         ):
             raise ValueError("error_code must be a bounded machine-readable code.")
+        event_args = (terminal_event_kind, terminal_event_actor_id, terminal_event_payload)
+        if any(value is not None for value in event_args):
+            expected_event = {
+                "succeeded": "task.completed",
+                "failed": "task.failed",
+                "cancelled": "task.cancelled",
+                "interrupted": "task.interrupted",
+            }.get(to_state)
+            if (
+                terminal_event_kind not in _TERMINAL_EVENT_KINDS
+                or terminal_event_kind != expected_event
+                or not isinstance(terminal_event_actor_id, str)
+                or not terminal_event_actor_id.strip()
+                or len(terminal_event_actor_id) > 200
+                or "\x00" in terminal_event_actor_id
+                or not isinstance(terminal_event_payload, dict)
+            ):
+                raise ValueError("terminal event must match the target state and include a valid actor and payload.")
+            terminal_event_actor_id = terminal_event_actor_id.strip()
+            terminal_event_json = _bounded_json(terminal_event_payload, 8 * 1024, "task event payload")
+        else:
+            terminal_event_json = None
         result_json = None if result is None else _bounded_json(result, _MAX_RESULT_BYTES, "result")
         if to_state == "running":
             if not isinstance(lease_owner, str) or not lease_owner.strip() or len(lease_owner) > 200:
@@ -523,6 +554,17 @@ class WorkflowRunStore:
                 if expected_lease_owner is not None:
                     raise WorkflowConflict("worker lease is no longer active.")
                 raise WorkflowConflict("workflow run changed concurrently.")
+            if terminal_event_json is not None:
+                sequence = db.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (run_id, sequence, terminal_event_kind, terminal_event_actor_id,
+                     terminal_event_json, now),
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())

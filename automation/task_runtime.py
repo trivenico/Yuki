@@ -243,10 +243,10 @@ class TaskRuntime:
             task_id, expected_version=expected_version,
             to_state="succeeded", result=result,
             expected_lease_owner=worker_id,
+            terminal_event_kind="task.completed",
+            terminal_event_actor_id=actor,
+            terminal_event_payload={"state_version": expected_version + 1},
         )
-        self.store.append_task_event(task_id, kind="task.completed", actor_id=actor,
-                                     payload={"state_version": completed.version},
-                                     expected_version=completed.version)
         return self._record(self.store.get(task_id))
 
     def fail(self, *, actor_id: str, task_id: str, expected_version: int,
@@ -265,10 +265,12 @@ class TaskRuntime:
             task_id, expected_version=expected_version,
             to_state="failed", error_code=error_code,
             expected_lease_owner=worker_id,
+            terminal_event_kind="task.failed",
+            terminal_event_actor_id=actor,
+            terminal_event_payload={
+                "error_code": error_code, "state_version": expected_version + 1,
+            },
         )
-        self.store.append_task_event(task_id, kind="task.failed", actor_id=actor,
-                                     payload={"error_code": error_code, "state_version": failed.version},
-                                     expected_version=failed.version)
         return self._record(self.store.get(task_id))
 
 
@@ -340,9 +342,11 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        cancelled = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="cancelled", error_code="cancelled")
-        self.store.append_task_event(task_id, kind="task.cancelled", actor_id=actor,
-                                     payload={"state_version": cancelled.version},
-                                     expected_version=cancelled.version)
+        cancelled = self.store.transition(
+            task_id, expected_version=expected_version,
+            to_state="cancelled", error_code="cancelled",
+            terminal_event_kind="task.cancelled",
+            terminal_event_actor_id=actor,
+            terminal_event_payload={"state_version": expected_version + 1},
+        )
         return self._record(self.store.get(task_id))
