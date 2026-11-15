@@ -1,11 +1,42 @@
 import unittest
+from unittest.mock import patch
 
-from core.readiness import build_readiness_report
+from core.readiness import _probe_ollama, build_readiness_report
 from core.component_catalog import DEFAULT_COMPONENTS
 from core.component_registry import ComponentRegistry, ComponentRuntime
 
 
 class RuntimeReadinessTests(unittest.TestCase):
+    def test_ollama_probe_requires_literal_loopback_ip(self):
+        calls = []
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            raise AssertionError("network probe should not run")
+        for endpoint in ("http://localhost:11434", "http://ollama:11434", "http://192.0.2.10:11434"):
+            with self.subTest(endpoint=endpoint):
+                result = _probe_ollama(endpoint, opener=opener)
+                self.assertEqual(result.status, "unavailable")
+        self.assertEqual(calls, [])
+
+    def test_ollama_probe_disables_environment_proxies(self):
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, _): return b"{}"
+        class Opener:
+            def open(self, request, timeout):
+                self.request = request
+                self.timeout = timeout
+                return Response()
+        opener = Opener()
+        with patch("core.readiness.build_opener", return_value=opener) as build:
+            result = _probe_ollama("http://127.0.0.1:11434", timeout=1.5)
+        self.assertEqual(result.status, "verified")
+        self.assertEqual(opener.timeout, 1.5)
+        proxy_handler = build.call_args.args[0]
+        self.assertEqual(proxy_handler.proxies, {})
+
     def test_report_contains_platform_and_capability_states(self):
         report = build_readiness_report(
             environ={"YUKI_OLLAMA_MODEL": "example-model"},
