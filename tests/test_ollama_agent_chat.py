@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from providers.ollama import OllamaProvider
 
@@ -213,6 +214,45 @@ class OllamaAgentChatTests(unittest.TestCase):
         self.provider._transport = fake
         self.assertTrue(self.provider.is_available())
         self.assertEqual(self.requests[0][0].full_url, "http://127.0.0.1:11434/api/tags")
+
+
+    def test_loopback_transport_connects_to_literal_ip_and_rejects_redirects(self):
+        from providers.ollama import _LoopbackHTTPTransport
+        from urllib.request import Request
+
+        class Response:
+            status = 302
+            reason = "Found"
+            headers = {}
+            def close(self): pass
+
+        class Connection:
+            def __init__(self, host, port, timeout):
+                self.host, self.port, self.timeout = host, port, timeout
+                self.closed = False
+            def request(self, *args, **kwargs): pass
+            def getresponse(self): return Response()
+            def close(self): self.closed = True
+
+        created = []
+        def factory(host, port, timeout):
+            connection = Connection(host, port, timeout)
+            created.append(connection)
+            return connection
+
+        transport = _LoopbackHTTPTransport("localhost", 11434)
+        with patch("providers.ollama.http.client.HTTPConnection", side_effect=factory):
+            with self.assertRaisesRegex(PinnedHTTPTransportError, "redirect"):
+                transport.open(Request("http://localhost:11434/api/tags"))
+        self.assertEqual(created[0].host, "127.0.0.1")
+        self.assertTrue(created[0].closed)
+
+    def test_loopback_transport_rejects_request_host_escape(self):
+        from providers.ollama import _LoopbackHTTPTransport
+        from urllib.request import Request
+        transport = _LoopbackHTTPTransport("127.0.0.1", 11434)
+        with self.assertRaises(PinnedHTTPTransportError):
+            transport.open(Request("http://127.0.0.2:11434/api/tags"))
 
 if __name__ == "__main__":
     unittest.main()
