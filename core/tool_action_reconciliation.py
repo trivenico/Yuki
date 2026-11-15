@@ -134,6 +134,14 @@ class ToolActionReconciliationService:
             if not finished and (current is None or current.execution_state != "finished"):
                 raise RuntimeError("confirmed journal success could not finalize its proposal")
             return action
+        if action.state == "not_executed":
+            finished = self.proposals.finish_not_executed_reconciliation(
+                proposal_id, principal_id=principal_id,
+            )
+            current = self.proposals.get(proposal_id, principal_id=principal_id)
+            if not finished and (current is None or current.execution_state != "not_executed"):
+                raise RuntimeError("confirmed non-execution could not finalize its proposal")
+            return action
         if action.state != "outcome_unknown":
             raise ValueError("journal action is not awaiting reconciliation")
         reconciled = self.reconcile(action=action, proposal=proposal)
@@ -146,5 +154,15 @@ class ToolActionReconciliationService:
                 if current is None or current.execution_state != "finished":
                     raise RuntimeError(
                         "provider outcome is confirmed but proposal finalization needs recovery"
+                    )
+        elif reconciled.state == "not_executed":
+            finished = self.proposals.finish_not_executed_reconciliation(
+                proposal_id, principal_id=principal_id,
+            )
+            if not finished:
+                current = self.proposals.get(proposal_id, principal_id=principal_id)
+                if current is None or current.execution_state != "not_executed":
+                    raise RuntimeError(
+                        "provider non-execution is confirmed but proposal finalization needs recovery"
                     )
         return reconciled
