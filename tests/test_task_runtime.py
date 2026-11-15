@@ -31,6 +31,7 @@ class TaskRuntimeTests(unittest.TestCase):
         first = self.create()
         second = self.create()
         self.assertEqual(first.task_id, second.task_id)
+        self.assertEqual(first.owner_id, "alice")
         events = self.runtime.events(actor_id="alice", task_id=first.task_id)
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
