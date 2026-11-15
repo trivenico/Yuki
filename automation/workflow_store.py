@@ -83,6 +83,7 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    owner_id: str | None = None
 
 
 class WorkflowRunStore:
@@ -114,11 +115,12 @@ class WorkflowRunStore:
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
-                    approved_session_hash TEXT
+                    approved_session_hash TEXT,
+                    owner_id TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "owner_id"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -129,6 +131,7 @@ class WorkflowRunStore:
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_lease "
                 "ON workflow_runs(state, lease_expires_at)"
             )
+            db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_owner_created ON workflow_runs(owner_id, created_at)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,9 +207,10 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            owner_id=row["owner_id"] if "owner_id" in row.keys() else None,
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], owner_id: str | None = None) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -215,11 +219,14 @@ class WorkflowRunStore:
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or "\x00" in owner_id):
+            raise ValueError("owner_id must be non-empty bounded text when supplied.")
+        owner = owner_id.strip() if owner_id is not None else None
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
         digest = hashlib.sha256(
-            (name + "\n" + definition_json).encode("utf-8")
+            ((owner or "") + "\n" + name + "\n" + definition_json).encode("utf-8")
         ).hexdigest()
         now = _now()
         with self._connect() as db:
@@ -237,9 +244,9 @@ class WorkflowRunStore:
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now))
+                    definition_json, state, created_at, updated_at, owner_id
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, owner))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
