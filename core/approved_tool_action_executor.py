@@ -74,7 +74,12 @@ class ApprovedToolActionExecutor:
                 proposal_id, principal_id=principal_id, outcome_unknown=True,
             )
             raise
-        self.proposals.finish_execution(proposal_id, principal_id=principal_id)
+        journal = getattr(self.guarded_runtime, "_action_journal", None)
+        action = journal.get(proposal.idempotency_key) if journal is not None else None
+        unknown = action is not None and action.state == "outcome_unknown"
+        self.proposals.finish_execution(
+            proposal_id, principal_id=principal_id, outcome_unknown=unknown,
+        )
         return ApprovedToolActionExecution(
-            proposal_id=proposal_id, state="finished", result=result,
+            proposal_id=proposal_id, state="unknown" if unknown else "finished", result=result,
         )
