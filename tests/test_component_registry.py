@@ -81,7 +81,8 @@ class ComponentRegistryTests(unittest.TestCase):
         registry.register(broken)
         registry.register(self.runtime("configuration-runtime", events))
         registry.start_all()
-        self.assertEqual(registry.close(), ("configuration-runtime", "identity-access"))
+        self.assertEqual(registry.close(), ("identity-access",))
+        self.assertEqual(events, [("start", "identity-access"), ("start", "configuration-runtime"), ("close", "configuration-runtime")])
         self.assertTrue(registry.close() == ())
 
 
