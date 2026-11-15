@@ -102,6 +102,25 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
             self.executor.execute(pending.proposal_id, principal_id="owner-a")
         self.assertEqual(self.calls, [])
 
+    def test_pre_dispatch_release_refuses_when_journal_dispatch_may_have_started(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        reserved = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send", self.arguments,
+            action_id=self.proposal.action_id,
+        )
+        running = self.journal.begin_execution(
+            self.proposal.idempotency_key, reserved.request_digest,
+        )
+        self.assertFalse(self.executor._release_pre_dispatch_claim(
+            self.proposal, principal_id="owner-a",
+        ))
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "executing")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "executing")
+
     def test_approval_token_issue_failure_releases_pre_dispatch_claim(self):
         original_issue = self.approvals.issue
         calls = {"count": 0}
