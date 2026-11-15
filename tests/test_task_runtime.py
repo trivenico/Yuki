@@ -13,7 +13,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:lease:renew"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -166,6 +166,43 @@ class TaskRuntimeTests(unittest.TestCase):
         current = self.store.get(task.task_id)
         self.assertEqual(current.state, "running")
         self.assertEqual(current.version, claimed.version)
+        self.assertEqual(
+            [event.kind for event in self.runtime.events(actor_id="alice", task_id=task.task_id)],
+            ["task.created"],
+        )
+
+    def test_lease_renewal_is_journaled_and_versioned(self):
+        task = self.create("lease-renewal-audit")
+        claimed = self.claim(task)
+        renewed = self.runtime.renew_lease(
+            actor_id="alice", task_id=task.task_id,
+            worker_id="worker-a", expected_version=claimed.version,
+            lease_seconds=120,
+        )
+        self.assertEqual(renewed.version, claimed.version + 1)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(events[-1].kind, "task.lease_renewed")
+        self.assertEqual(events[-1].payload["worker_id"], "worker-a")
+        self.assertEqual(events[-1].payload["lease_expires_at"], renewed.lease_expires_at)
+
+    def test_lease_renewal_and_audit_roll_back_together(self):
+        task = self.create("lease-renewal-atomic")
+        claimed = self.claim(task)
+        before = self.store.get(task.task_id)
+        with self.store._connect() as db:
+            db.execute(
+                "CREATE TRIGGER reject_lease_audit BEFORE INSERT ON task_events "
+                "WHEN NEW.kind='task.lease_renewed' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END"
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id,
+                worker_id="worker-a", expected_version=claimed.version,
+                lease_seconds=120,
+            )
+        after = self.store.get(task.task_id)
+        self.assertEqual(after.version, before.version)
+        self.assertEqual(after.lease_expires_at, before.lease_expires_at)
         self.assertEqual(
             [event.kind for event in self.runtime.events(actor_id="alice", task_id=task.task_id)],
             ["task.created"],
