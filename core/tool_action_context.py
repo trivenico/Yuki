@@ -14,7 +14,7 @@ import secrets
 from typing import Any, Mapping
 
 
-_PRINCIPAL = re.compile(r"^[^\\x00-\\x1f\\x7f]{1,256}$")
+_PRINCIPAL = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
 _TOOL = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 
 
