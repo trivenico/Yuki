@@ -111,6 +111,12 @@ class ConversationServiceTests(unittest.TestCase):
             expected_version=0, tools=[],
         )
         self.assertEqual(result["status"], "completed")
+        followup = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Follow-up", request_id="owner-loop-followup",
+            expected_version=2, tools=[],
+        )
+        self.assertEqual(followup["status"], "completed")
         self.assertEqual(selected, ["owner-a"])
         service.close()
         service.close()
