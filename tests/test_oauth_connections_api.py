@@ -31,6 +31,7 @@ class FakeRegistry:
 
 
 class FakeDisconnect:
+    provider_id = "provider"
     def __init__(self, result=None):
         self.result = result or {"disconnected": True, "revocation_attempted": True, "remote_revoked": False}
         self.calls = []
@@ -129,6 +130,23 @@ class OAuthConnectionAPITests(unittest.TestCase):
         current = self.registry.records[("owner", "provider", "account")]
         self.assertEqual(current.connected_at, 200)
         self.assertEqual(current.scopes, ("read", "write"))
+
+
+    def test_rejects_disconnect_service_for_different_provider(self):
+        class WrongProvider(FakeDisconnect):
+            provider_id = "another-provider"
+        wrong = WrongProvider()
+        self.app = AuthenticatedOAuthConnectionAPI(
+            lambda *_: None, FakeAuth(), self.registry,
+            lambda provider: wrong,
+        )
+        status, body = self.request(
+            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session-token-123"
+        )
+        self.assertEqual(status, 502)
+        self.assertEqual(body["error"], "disconnect_failed")
+        self.assertEqual(wrong.calls, [])
+        self.assertIn(("owner", "provider", "account"), self.registry.records)
 
     def test_failed_disconnect_keeps_registry_entry(self):
         self.disconnect.result = {"disconnected": False}
