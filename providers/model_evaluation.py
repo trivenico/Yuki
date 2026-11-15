@@ -13,6 +13,7 @@ import urllib.request
 from urllib.parse import quote
 
 from providers.evaluation_stats import compute_stats
+from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport, PinnedHTTPTransportError
 
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
 _ALLOWED_HOST = "router.huggingface.co"
@@ -24,12 +25,6 @@ _MAX_TERMS = 20
 
 class EvaluationError(RuntimeError):
     """A safe, user-facing evaluation error without upstream response details."""
-
-
-class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    """Never forward a bearer token or benchmark prompt to a redirected host."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
 
 
 def validate_cases(cases, *, max_cases=5):
@@ -77,14 +72,16 @@ def score_response(response, expected_terms):
 class HuggingFaceChatClient:
     """Small HTTP client for a single explicitly named model on HF Inference Router."""
 
-    def __init__(self, token, *, timeout=20, opener=None):
+    def __init__(self, token, *, timeout=20, transport=None):
         if not isinstance(token, str) or not token.strip() or len(token) > 4096 or any(c in token for c in "\r\n"):
             raise ValueError("Set a valid HF_TOKEN environment variable.")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 30:
             raise ValueError("timeout must be between 1 and 30 seconds")
         self._token = token.strip()
         self.timeout = timeout
-        self._opener = opener or urllib.request.build_opener(_RejectRedirects())
+        if transport is not None and not callable(getattr(transport, "open", None)):
+            raise TypeError("transport must provide an open(request, timeout=...) method")
+        self._transport = transport or PinnedHTTPSProviderTransport(allowed_hosts={_ALLOWED_HOST}, timeout=timeout)
 
     def generate(self, model_id, prompt):
         if not isinstance(model_id, str) or not _MODEL_ID.fullmatch(model_id):
@@ -105,9 +102,9 @@ class HuggingFaceChatClient:
             method="POST",
         )
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise EvaluationError("Inference request failed; check model access, quota and connectivity.") from exc
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise EvaluationError("Inference response exceeded the 1 MB limit.")
