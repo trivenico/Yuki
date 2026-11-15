@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolCapabilityError
+
 
 class GuardedToolRuntime:
     def __init__(
@@ -13,6 +15,7 @@ class GuardedToolRuntime:
         audit: Callable[[str, str], None] | None = None,
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
+        capabilities: ToolCapabilityCatalog | None = None,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -31,7 +34,13 @@ class GuardedToolRuntime:
             raise TypeError("policy must provide authorize_tool(name)")
         if audit is not None and not callable(audit):
             raise TypeError("audit must be callable when provided")
+        if capabilities is not None:
+            if not isinstance(capabilities, ToolCapabilityCatalog):
+                raise TypeError("capabilities must be a ToolCapabilityCatalog")
+            if set(capabilities.names()) != set(tools):
+                raise ValueError("capability catalog must classify every registered tool exactly once")
         self._tools = dict(tools)
+        self._capabilities = capabilities
         self._policy = policy
         self._audit = audit
         self._max_argument_chars = max_argument_chars
@@ -55,6 +64,12 @@ class GuardedToolRuntime:
         if name not in self._tools:
             self._record(name, "not_found")
             return "Unknown tool."
+        if self._capabilities is not None:
+            try:
+                self._capabilities.resolve(name)
+            except ToolCapabilityError:
+                self._record(name, "capability_denied")
+                return "Tool blocked: capability metadata is missing."
         try:
             authorized = self._policy.authorize_tool(name)
         except Exception:
