@@ -414,7 +414,7 @@ class ConversationAPITests(unittest.TestCase):
     def test_approved_proposal_executes_only_through_authenticated_endpoint(self):
         root = Path(self.tempdir.name)
         proposals = SQLitePendingToolActionProposalStore(str(root / "api-proposals.sqlite"))
-        approvals = SQLiteToolActionApprovalStore(str(root / "api-approvals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "api-journal.sqlite"))
         journal = ToolActionJournal(str(root / "api-journal.sqlite"))
         calls = []
 
@@ -483,7 +483,7 @@ class ConversationAPITests(unittest.TestCase):
     def test_reconciliation_endpoint_is_authenticated_and_persists_provider_result(self):
         root = Path(self.tempdir.name)
         proposals = SQLitePendingToolActionProposalStore(str(root / "reconcile-proposals.sqlite"))
-        approvals = SQLiteToolActionApprovalStore(str(root / "reconcile-approvals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "reconcile-journal.sqlite"))
         journal = ToolActionJournal(str(root / "reconcile-journal.sqlite"))
         arguments = {"to": "recipient@example.com", "subject": "Verify"}
         context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
