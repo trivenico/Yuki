@@ -252,9 +252,6 @@ class WorkflowRunStore:
                 raise ValueError("created_event_actor_id must be non-empty bounded text.")
             if not isinstance(created_event_payload, dict):
                 raise ValueError("created_event_payload must be an object.")
-            from automation.task_runtime import _EVENT_KINDS
-            if "task.created" not in _EVENT_KINDS:
-                raise ValueError("task.created event is not supported.")
             event_actor = created_event_actor_id.strip()
             event_payload_json = _bounded_json(
                 created_event_payload, 8 * 1024, "task event payload",
