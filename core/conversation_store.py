@@ -421,6 +421,22 @@ class ConversationStore:
             ).fetchone()
         return row is not None
 
+    def get_message_by_idempotency_key(
+        self, *, owner_id: str, conversation_id: str, idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """Return one owner-scoped message by its durable idempotency key."""
+        owner = self._owner(owner_id)
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200:
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT m.* FROM conversation_messages AS m
+                   JOIN conversations AS c ON c.conversation_id=m.conversation_id
+                   WHERE m.conversation_id=? AND c.owner_id=? AND m.idempotency_key=?""",
+                (conversation_id, owner, idempotency_key.strip()),
+            ).fetchone()
+        return self._message(row) if row is not None else None
+
     def list_messages(
         self, *, owner_id: str, conversation_id: str, limit: int = 100,
         after_sequence: int | None = None,
