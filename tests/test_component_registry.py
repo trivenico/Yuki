@@ -217,6 +217,25 @@ class ComponentRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not registered"):
             registry.register(replace(self.runtime("identity-access", events), contract=unknown))
 
+    def test_resolve_and_health_reject_use_after_close(self):
+        registry = ComponentRegistry()
+        registry.register(self.runtime("identity-access", []))
+        registry.start_all()
+        registry.close()
+
+        with self.assertRaisesRegex(RuntimeError, "registry is closed"):
+            registry.resolve("identity-access")
+        with self.assertRaisesRegex(RuntimeError, "registry is closed"):
+            registry.health()
+
+    def test_resolve_rejects_closed_registry_even_for_registered_inactive_runtime(self):
+        registry = ComponentRegistry()
+        registry.register(self.runtime("identity-access", []))
+        registry.close()
+
+        with self.assertRaisesRegex(RuntimeError, "registry is closed"):
+            registry.resolve("identity-access")
+
     def test_close_failure_does_not_prevent_remaining_cleanup(self):
         events = []
         registry = ComponentRegistry()
