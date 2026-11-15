@@ -36,9 +36,9 @@ runtime = build_conversation_runtime(
 )
 ```
 
-The host still supplies the authenticated services and trusted callbacks; the example is wiring guidance, not an automatically running deployment.
+The host still supplies the authenticated services and trusted callbacks; the example is wiring guidance, not an automatically running deployment. When passing `gmail_runtime_bundle` to `build_conversation_runtime`, the host must also provide `tools_for_user`. That callback must publish the Gmail schema only for the authenticated owner with an eligible connected Google account; the API composition deliberately refuses to publish it globally by default.
 
-The host still owns authenticated identity, UI confirmation, policy decisions, persistence paths, OAuth callback routing, and lifecycle shutdown. This factory does not read environment variables, create OAuth secrets, connect an account, or send email during startup.
+The host still owns authenticated identity, owner-scoped tool visibility, UI confirmation, policy decisions, persistence paths, OAuth callback routing, and lifecycle shutdown. This factory does not read environment variables, create OAuth secrets, connect an account, or send email during startup.
 
 ## Safety properties
 
