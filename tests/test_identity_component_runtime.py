@@ -31,15 +31,14 @@ class IdentityAccessComponentRuntimeTests(unittest.TestCase):
         self.assertFalse(runtime.health_check())
 
     def test_unavailable_database_fails_startup(self):
-        runtime = build_identity_access_component_runtime(self.auth)
-        registry = ComponentRegistry()
-        registry.register(runtime)
         with patch.object(self.auth, "health_check", return_value=False):
+            runtime = build_identity_access_component_runtime(self.auth)
+            registry = ComponentRegistry()
+            registry.register(runtime)
             with self.assertRaisesRegex(RuntimeError, "component startup failed: identity-access") as raised:
                 registry.start_all()
             self.assertIn("identity/access storage", str(raised.exception.__cause__))
         self.assertEqual(registry.started_components, ())
-
     def test_health_probe_requires_strict_boolean(self):
         with patch.object(self.auth, "health_check", return_value=1):
             runtime = build_identity_access_component_runtime(self.auth)
