@@ -46,6 +46,7 @@ class ComponentRegistry:
             raise ValueError("component contract IDs must be unique")
         self._runtimes: dict[str, ComponentRuntime] = {}
         self._started: list[str] = []
+        self._startup_cleanup_errors: tuple[str, ...] = ()
         self._closed = False
 
     def register(self, runtime: ComponentRuntime) -> None:
@@ -56,6 +57,8 @@ class ComponentRegistry:
         if not isinstance(runtime.contract, ComponentContract):
             raise TypeError("runtime contract must be a ComponentContract")
         component_id = runtime.contract.component_id
+        if not isinstance(component_id, str) or not component_id:
+            raise ValueError("runtime contract must have a non-empty string component ID")
         expected = self._contracts.get(component_id)
         if expected is None or expected != runtime.contract:
             raise ValueError(f"runtime contract is not registered: {component_id}")
@@ -96,8 +99,14 @@ class ComponentRegistry:
                 self._started.append(component_id)
                 self._runtimes[component_id].start()
         except Exception as exc:
-            self.close()
-            raise RuntimeError(f"component startup failed: {component_id}") from exc
+            self._startup_cleanup_errors = self.close()
+            detail = (
+                f"; cleanup failed for: {', '.join(self._startup_cleanup_errors)}"
+                if self._startup_cleanup_errors else ""
+            )
+            raise RuntimeError(
+                f"component startup failed: {component_id}{detail}"
+            ) from exc
         return tuple(self._started)
 
     def health(self) -> dict[str, bool]:
@@ -123,6 +132,11 @@ class ComponentRegistry:
             except Exception:
                 errors.append(component_id)
         return tuple(errors)
+
+    @property
+    def startup_cleanup_errors(self) -> tuple[str, ...]:
+        """Return component IDs whose rollback cleanup failed during startup."""
+        return self._startup_cleanup_errors
 
     @property
     def started_components(self) -> tuple[str, ...]:
