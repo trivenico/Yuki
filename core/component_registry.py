@@ -34,6 +34,13 @@ class ComponentRegistry:
         contracts: Iterable[ComponentContract] = DEFAULT_COMPONENTS,
     ) -> None:
         contract_items = tuple(contracts)
+        if any(not isinstance(item, ComponentContract) for item in contract_items):
+            raise TypeError("contracts must contain only ComponentContract instances")
+        if any(
+            not isinstance(item.component_id, str) or not item.component_id
+            for item in contract_items
+        ):
+            raise ValueError("component contracts must have non-empty string IDs")
         self._contracts = {item.component_id: item for item in contract_items}
         if len(self._contracts) != len(contract_items):
             raise ValueError("component contract IDs must be unique")
@@ -46,6 +53,8 @@ class ComponentRegistry:
             raise RuntimeError("component registry is closed")
         if not isinstance(runtime, ComponentRuntime):
             raise TypeError("runtime must be a ComponentRuntime")
+        if not isinstance(runtime.contract, ComponentContract):
+            raise TypeError("runtime contract must be a ComponentContract")
         component_id = runtime.contract.component_id
         expected = self._contracts.get(component_id)
         if expected is None or expected != runtime.contract:
