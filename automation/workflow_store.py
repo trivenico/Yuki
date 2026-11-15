@@ -50,6 +50,7 @@ _TRANSITIONS = {
     "cancelled": frozenset(),
     "interrupted": frozenset(),
 }
+_TASK_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.lease_renewed"})
 _MAX_DEFINITION_BYTES = 32 * 1024
 _MAX_RESULT_BYTES = 16 * 1024
 _MAX_KEY_CHARS = 200
@@ -69,6 +70,17 @@ def _bounded_json(value: Any, limit: int, field: str) -> str:
     if len(encoded.encode("utf-8")) > limit:
         raise ValueError(f"{field} exceeds the {limit}-byte limit.")
     return encoded
+
+
+@dataclass(frozen=True)
+class TaskEvent:
+    event_id: int
+    task_id: str
+    sequence: int
+    kind: str
+    actor_id: str
+    payload: dict[str, Any]
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -711,8 +723,7 @@ class WorkflowRunStore:
             raise ValueError("expected_lease_owner must be bounded non-empty text.")
         if expected_lease_owner is not None and kind not in {"task.progress", "task.artifact"}:
             raise ValueError("lease ownership is only valid for worker progress and artifact events.")
-        from automation.task_runtime import TaskEvent, _EVENT_KINDS
-        if kind not in _EVENT_KINDS:
+        if kind not in _TASK_EVENT_KINDS:
             raise ValueError("Unknown task event kind.")
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
@@ -773,7 +784,6 @@ class WorkflowRunStore:
                              json.loads(payload_json), now)
 
     def list_task_events(self, task_id: str, *, after_sequence: int = 0, limit: int = 100):
-        from automation.task_runtime import TaskEvent
         if not isinstance(task_id, str) or not task_id:
             raise ValueError("task_id must be non-empty text.")
         if type(after_sequence) is not int or after_sequence < 0:
