@@ -52,29 +52,42 @@ class SQLitePendingToolActionProposalStore:
         self.database_path = prepare_private_sqlite_path(database_path)
         self.ttl_seconds = ttl_seconds
         with self._connect() as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS pending_tool_action_proposals (
-                proposal_id TEXT PRIMARY KEY,
-                principal_id TEXT NOT NULL,
-                action_id TEXT NOT NULL UNIQUE,
-                idempotency_key TEXT NOT NULL UNIQUE,
-                tool_name TEXT NOT NULL,
-                request_digest TEXT NOT NULL,
-                arguments_json TEXT NOT NULL,
-                status TEXT NOT NULL CHECK(status IN
-                    ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                decided_at TEXT
-            )""")
-            columns = {row[1] for row in db.execute("PRAGMA table_info(pending_tool_action_proposals)")}
-            if "execution_state" not in columns:
-                db.execute("""ALTER TABLE pending_tool_action_proposals
-                    ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'not_started'
-                    CHECK(execution_state IN ('not_started','executing','finished','unknown'))""")
-            db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_owner_status
-                ON pending_tool_action_proposals(principal_id, status, created_at)""")
-            db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_expiry
-                ON pending_tool_action_proposals(status, expires_at)""")
+            # Keep table creation, legacy-column migration, and index creation
+            # crash-atomic. A partially applied schema could otherwise make
+            # later startups observe an incompatible proposal state machine.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("""CREATE TABLE IF NOT EXISTS pending_tool_action_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    principal_id TEXT NOT NULL,
+                    action_id TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT
+                )""")
+                columns = {
+                    row[1] for row in db.execute(
+                        "PRAGMA table_info(pending_tool_action_proposals)"
+                    )
+                }
+                if "execution_state" not in columns:
+                    db.execute("""ALTER TABLE pending_tool_action_proposals
+                        ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'not_started'
+                        CHECK(execution_state IN ('not_started','executing','finished','unknown'))""")
+                db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_owner_status
+                    ON pending_tool_action_proposals(principal_id, status, created_at)""")
+                db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_expiry
+                    ON pending_tool_action_proposals(status, expires_at)""")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
 
     @contextmanager
     def _connect(self):
