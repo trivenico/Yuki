@@ -2,6 +2,7 @@ import json
 import unittest
 
 from core.agent_execution_loop import AgentExecutionError, AgentExecutionLoop
+from core.delegated_tool_policy import DelegatedToolPolicy
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -43,6 +44,52 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual((result.model_turns, result.tool_calls), (2, 1))
         self.assertEqual(self.invocations, [{"value": "hello"}])
         self.assertEqual(len(observed), 2)
+
+    def test_parent_permission_revocation_is_enforced_between_tool_dispatches(self):
+        class ParentPolicy:
+            def __init__(self):
+                self.allowed = {"echo"}
+                self.decisions = []
+
+            def authorize_tool(self, name):
+                self.decisions.append(name)
+                return name in self.allowed
+
+        parent = ParentPolicy()
+        executions = []
+        audit = []
+        policy = DelegatedToolPolicy(parent, {"echo"})
+
+        def echo(argument):
+            executions.append(argument)
+            parent.allowed.clear()
+            return "first action completed"
+
+        runtime = GuardedToolRuntime(
+            {"echo": echo}, policy,
+            audit=lambda action, outcome: audit.append((action, outcome)),
+        )
+        protocol = StructuredToolProtocol(runtime)
+        turn = {"count": 0}
+
+        def model(**kwargs):
+            turn["count"] += 1
+            if turn["count"] <= 2:
+                return {"text": "", "tool_calls": {"tool_calls": [{
+                    "id": "call_" + str(turn["count"]), "name": "echo",
+                    "arguments": {"value": "attempt-" + str(turn["count"])},
+                }]}}
+            return {"text": "Stopped safely", "tool_calls": {"tool_calls": []}}
+
+        result = AgentExecutionLoop(model, protocol, max_model_turns=3).run(
+            "Perform two actions", tools=self.tools
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.text, "Stopped safely")
+        self.assertEqual(executions, ['{"value":"attempt-1"}'])
+        self.assertEqual(parent.decisions, ["echo", "echo"])
+        self.assertEqual(audit, [("tool:echo", "completed"), ("tool:echo", "denied")])
 
     def test_persisted_history_is_preserved_before_current_user_message(self):
         observed = []
