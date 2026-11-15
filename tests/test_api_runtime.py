@@ -8,6 +8,7 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.core_component_runtime import build_core_component_registry
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry

@@ -13,6 +13,7 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.component_registry import ComponentRegistry
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -29,10 +30,11 @@ from evaluation.service import EvaluationService
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(self, app: Any, application: ConversationApplicationRuntime, component_registry: ComponentRegistry | None = None):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
+        self.component_registry = component_registry
         self.store = application.store
         self._closed = False
 
@@ -61,7 +63,12 @@ class ConversationRuntime:
         # also fences repeated cleanup, and this keeps the ASGI owner idempotent
         # even when an underlying close hook raises.
         self._closed = True
-        self.application.close()
+        if self.component_registry is None:
+            self.application.close()
+            return
+        failures = self.component_registry.close()
+        if failures:
+            raise RuntimeError("component shutdown failed: " + ", ".join(failures))
 
 
 def build_conversation_runtime(
@@ -83,6 +90,7 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -95,6 +103,8 @@ def build_conversation_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
         raise TypeError("agent_loop_for_owner must be callable.")
+    if component_registry_factory is not None and not callable(component_registry_factory):
+        raise TypeError("component_registry_factory must be callable.")
     if (device_pairing is None) != (inference_jobs is None):
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
@@ -162,7 +172,26 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, application)
+        component_registry = None
+        if component_registry_factory is not None:
+            component_registry = component_registry_factory(auth_service, agent_loop, application)
+            if not isinstance(component_registry, ComponentRegistry):
+                raise TypeError("component_registry_factory must return a ComponentRegistry.")
+            expected_instances = {
+                "identity-access": auth_service,
+                "agent-execution": agent_loop,
+                "durable-conversations": application.conversations,
+                "application-composition": application,
+            }
+            for component_id, expected in expected_instances.items():
+                if component_registry.resolve(component_id) is not expected:
+                    raise ValueError(
+                        f"component registry instance mismatch: {component_id}"
+                    )
+            component_registry.start_all()
+        return ConversationRuntime(app, application, component_registry)
     except Exception:
+        if "component_registry" in locals() and isinstance(component_registry, ComponentRegistry):
+            component_registry.close()
         application.close()
         raise
