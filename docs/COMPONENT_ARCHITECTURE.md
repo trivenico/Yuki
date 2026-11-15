@@ -118,3 +118,21 @@ edited away to make readiness look better.
 ### Conversation shutdown boundary
 
 The shared application runtime closes the conversation service first. Its service lock drains an active reply before shutdown proceeds, then rejects new create/list/history/reply operations. The runtime next closes its persistence store and attempts every explicitly owned external cleanup callback, even if an earlier hook raises. The service fence and runtime close are idempotent; this does not yet coordinate unrelated component processes or distributed workers.
+
+
+### Concrete provider component lifecycle adapter
+
+`build_provider_component_runtime(provider)` binds an already-constructed
+provider instance to the canonical `provider-runtime` contract. It requires an
+explicit boolean `is_available()` probe, checks readiness during startup, and
+uses the same probe for live health. A provider that is unavailable or returns
+a non-boolean readiness value cannot be marked started. Shutdown calls the
+provider's own `close()` only when that resource-release method exists; it
+does not fabricate cleanup work for stateless adapters. The adapter fences
+health after shutdown and makes cleanup idempotent, including when a provider
+close hook raises.
+
+This is the first concrete registry adapter, not yet the application-wide
+registry composition. Provider construction, authenticated identity, agent
+loop construction and conversation-store ownership remain with their existing
+composers until each is migrated with equivalent lifecycle tests.
