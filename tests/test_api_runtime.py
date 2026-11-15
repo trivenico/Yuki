@@ -46,7 +46,44 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(runtime._closed)
 
-    def test_runtime_close_is_not_retried_when_application_cleanup_fails(self):\n        application = Mock()\n        application.store = object()\n        application.close.side_effect = RuntimeError("cleanup failed")\n        runtime = ConversationRuntime(lambda scope, receive, send: None, application)\n\n        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):\n            runtime.close()\n        runtime.close()\n\n        self.assertTrue(runtime._closed)\n        application.close.assert_called_once_with()\n\n    def test_runtime_wires_authenticated_owner_execution_factory(self):
+    def test_runtime_close_is_not_retried_when_application_cleanup_fails(self):
+        application = Mock()
+        application.store = object()
+        application.close.side_effect = RuntimeError("cleanup failed")
+        runtime = ConversationRuntime(lambda scope, receive, send: None, application)
+
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            runtime.close()
+        runtime.close()
+
+        self.assertTrue(runtime._closed)
+        application.close.assert_called_once_with()
+
+    def test_runtime_rejects_http_dispatch_after_shutdown(self):
+        application = Mock()
+        application.store = object()
+        runtime = ConversationRuntime(lambda scope, receive, send: None, application)
+        runtime.close()
+        dispatched = []
+
+        async def web(scope, receive, send):
+            dispatched.append(scope)
+
+        runtime.web = web
+
+        import asyncio
+        async def invoke():
+            async def receive():
+                return {"type": "http.request"}
+            async def send(message):
+                return None
+            await runtime({"type": "http"}, receive, send)
+
+        with self.assertRaisesRegex(RuntimeError, "runtime is closed"):
+            asyncio.run(invoke())
+        self.assertEqual(dispatched, [])
+
+    def test_runtime_wires_authenticated_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
             factory = lambda owner_id: _loop()
