@@ -100,6 +100,7 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
 ) -> ConversationRuntime:
