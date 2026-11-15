@@ -145,6 +145,17 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
         ("The composition layer does not itself provide network authentication or deployment.",),
     ),
     ComponentContract(
+        "network-firewall", "Outbound network firewall", "security", "experimental",
+        "Applies default-deny outbound host, port, protocol and resolved-address policy before supported transports connect.",
+        ("core/network_firewall.py", "core/network_firewall_component_runtime.py",
+         "core/mcp_pinned_transport.py"),
+        ("identity-access",),
+        ("exact hostname allow-list", "default-deny destination policy",
+         "public-address-only DNS pinning", "audit failure denies access"),
+        ("tests/test_network_firewall.py", "tests/test_mcp_pinned_transport.py"),
+        ("Application-layer egress control only; inbound filtering, host firewall rules, process isolation and deployment hardening remain separate controls.",),
+    ),
+    ComponentContract(
         "guarded-actions", "Guarded tools and approval boundary", "security", "experimental",
         "Applies action policy and approval requirements before consequential tool effects.",
         ("core/action_approvals.py", "core/guarded_tool_runtime.py",
