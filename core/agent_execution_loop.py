@@ -321,18 +321,24 @@ class AgentExecutionLoop:
                         action_context_factory(principal_id, call.name, call.arguments)
                         if action_context_factory is not None else None
                     )
+                    requires_confirmation = self.tool_protocol.requires_user_confirmation(call.name)
+                    # Ask the host for confirmation only for tools whose trusted
+                    # capability metadata requires it. Read-only tools must never
+                    # trigger approval UI or mint approval credentials.
                     user_confirmed = (
-                        confirmation_check(call) if confirmation_check is not None else False
+                        confirmation_check(call)
+                        if requires_confirmation and confirmation_check is not None
+                        else False
                     )
                     if type(user_confirmed) is not bool:
                         raise TypeError("confirmation_check must return a boolean.")
                     # Never mint an approval token unless the trusted host explicitly
-                    # reports approval for this exact proposed call.
+                    # reports approval for this exact confirmation-required call.
                     approval_id = (
                         approval_id_factory(principal_id, action_context, call)
-                        if user_confirmed is True and action_context is not None and approval_id_factory is not None else None
+                        if requires_confirmation and user_confirmed is True
+                        and action_context is not None and approval_id_factory is not None else None
                     )
-                    requires_confirmation = self.tool_protocol.requires_user_confirmation(call.name)
                     if (
                         requires_confirmation and user_confirmed is not True
                         and pending_proposal_factory is not None
