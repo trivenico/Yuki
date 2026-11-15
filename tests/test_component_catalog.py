@@ -28,6 +28,7 @@ class ComponentCatalogTests(unittest.TestCase):
             "identity-access", "provider-runtime", "agent-execution",
             "durable-conversations", "application-composition", "guarded-actions",
             "durable-workflows", "memory", "business-integrations", "conversation-api",
+            "mcp-integrations", "voice-runtime", "operator-interface",
         }.issubset(ids))
         for item in DEFAULT_COMPONENTS:
             self.assertTrue(set(item.depends_on).issubset(ids))
