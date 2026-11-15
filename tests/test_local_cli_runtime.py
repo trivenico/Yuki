@@ -106,7 +106,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
                 self.assertEqual(provider.close_calls, 1)
-                self.assertTrue(runtime.application._closed)
+                self.assertTrue(runtime.application.closed)
 
             reopened = ConversationStore(store_path)
             try:
