@@ -19,6 +19,22 @@ class ComponentRegistryTests(unittest.TestCase):
             health_check=lambda: True,
         )
 
+    def test_constructor_rejects_malformed_contract_catalog(self):
+        with self.assertRaisesRegex(TypeError, "ComponentContract"):
+            ComponentRegistry(contracts=(object(),))
+        malformed = replace(self.contracts["identity-access"], component_id="")
+        with self.assertRaisesRegex(ValueError, "non-empty string IDs"):
+            ComponentRegistry(contracts=(malformed,))
+
+    def test_registration_rejects_runtime_with_malformed_contract(self):
+        events = []
+        registry = ComponentRegistry()
+        malformed = replace(
+            self.runtime("identity-access", events), contract=object()
+        )
+        with self.assertRaisesRegex(TypeError, "runtime contract"):
+            registry.register(malformed)
+
     def test_starts_dependencies_before_dependents_and_closes_in_reverse(self):
         events = []
         registry = ComponentRegistry()
