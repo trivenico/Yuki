@@ -92,12 +92,19 @@ class ConversationServiceTests(unittest.TestCase):
             self.send(text="Stale", request="request-2", version=0)
         self.assertEqual(len(self.observed), 1)
 
-    def test_owner_specific_agent_loop_factory_receives_authenticated_owner(self):
+    def test_owner_specific_agent_loop_is_cached_and_closed_on_service_shutdown(self):
         selected = []
-        service = ConversationService(
-            self.store, self.loop,
-            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or self.loop,
-        )
+        closed = []
+        def factory(owner_id):
+            selected.append(owner_id)
+            loop = AgentExecutionLoop(
+                lambda **kwargs: {"text": "owner answer", "tool_calls": {"tool_calls": []}},
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            )
+            loop.close = lambda: closed.append(owner_id)
+            return loop
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
         result = service.reply(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
             user_text="Owner-specific execution", request_id="owner-loop-request",
@@ -105,7 +112,21 @@ class ConversationServiceTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "completed")
         self.assertEqual(selected, ["owner-a"])
+        service.close()
+        service.close()
+        self.assertEqual(closed, ["owner-a"])
 
+    def test_owner_factory_cannot_share_default_or_another_owners_loop(self):
+        service = ConversationService(
+            self.store, self.loop, agent_loop_for_owner=lambda owner_id: self.loop,
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Invalid shared loop", request_id="invalid-shared-loop",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "failed")
+        service.close()
     def test_owner_specific_agent_loop_factory_must_return_agent_loop(self):
         service = ConversationService(
             self.store, self.loop, agent_loop_for_owner=lambda owner_id: object(),
