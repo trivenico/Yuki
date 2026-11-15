@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
