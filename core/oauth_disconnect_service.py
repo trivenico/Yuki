@@ -46,11 +46,30 @@ class OAuthDisconnectService:
         except Exception:
             raise OAuthDisconnectError("credential_lookup_failed") from None
 
+        if credential is not None and (
+            getattr(credential, "owner_id", None) != owner_id
+            or getattr(credential, "provider_id", None) != self._provider_id
+            or getattr(credential, "account_id", None) != account_id
+        ):
+            raise OAuthDisconnectError("credential_context_mismatch")
+
         expected_version = credential.version if credential is not None else None
         if expected_version is not None and (
             type(expected_version) is not int or expected_version < 1
         ):
             raise OAuthDisconnectError("credential_generation_invalid")
+        if credential is not None and (
+            not isinstance(getattr(credential, "access_token", None), str)
+            or not credential.access_token
+            or (
+                credential.refresh_token is not None
+                and (
+                    not isinstance(credential.refresh_token, str)
+                    or not credential.refresh_token
+                )
+            )
+        ):
+            raise OAuthDisconnectError("credential_material_invalid")
 
         # Remove the exact local credential generation first. This prevents
         # a stale disconnect from remotely revoking a refresh token that may
