@@ -126,7 +126,10 @@ class APISecurityMiddleware:
                 *self._SECURITY_HEADERS,
             ]
             await send({"type": "http.response.start", "status": 429, "headers": headers})
-            await send({"type": "http.response.body", "body": body})
+            await send({
+                "type": "http.response.body",
+                "body": b"" if scope.get("method", "GET").upper() == "HEAD" else body,
+            })
             return
 
         async def send_with_security_headers(message):
