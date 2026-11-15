@@ -17,6 +17,10 @@ from core.tool_action_context import ToolActionContext
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.approved_tool_action_executor import ApprovedToolActionExecutor
 from core.tool_action_journal import ToolActionJournal
+from core.tool_action_reconciliation import (
+    ProviderReconciliationResult, ToolActionReconciliationRegistry,
+    ToolActionReconciliationService,
+)
 from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
@@ -475,6 +479,75 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(len(calls), 1)
 
+
+    def test_reconciliation_endpoint_is_authenticated_and_persists_provider_result(self):
+        root = Path(self.tempdir.name)
+        proposals = SQLitePendingToolActionProposalStore(str(root / "reconcile-proposals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "reconcile-approvals.sqlite"))
+        journal = ToolActionJournal(str(root / "reconcile-journal.sqlite"))
+        arguments = {"to": "recipient@example.com", "subject": "Verify"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = proposals.create(context, arguments, principal_id=self.user.user_id)
+        proposals.decide(proposal.proposal_id, principal_id=self.user.user_id, decision="approved")
+        proposals.claim_execution(proposal.proposal_id, principal_id=self.user.user_id)
+        proposals.finish_execution(
+            proposal.proposal_id, principal_id=self.user.user_id, outcome_unknown=True,
+        )
+        record = journal.reserve(
+            context.idempotency_key, "email.send", arguments, action_id=context.action_id,
+        )
+        started = journal.begin_execution(record.idempotency_key, record.request_digest)
+        journal.mark_outcome_unknown(
+            record.idempotency_key, started.lease_owner, "provider_timeout",
+        )
+
+        class ReadOnlyProvider:
+            def __init__(self):
+                self.calls = 0
+            def reconcile(self, *, action, proposal):
+                self.calls += 1
+                self.asserted = (action, proposal)
+                return ProviderReconciliationResult(
+                    "succeeded", "gmail-message:verified-123",
+                    {"provider_status": "SENT"},
+                )
+
+        provider = ReadOnlyProvider()
+        reconciler = ToolActionReconciliationService(
+            journal, ToolActionReconciliationRegistry({"email.send": provider}),
+            proposals=proposals,
+        )
+        self.app.pending_tool_action_proposals = proposals
+        self.app.tool_action_reconciler = reconciler
+
+        url = f"/v1/tool-action-proposals/{proposal.proposal_id}/reconcile"
+        status, _, _ = self.request("POST", url)
+        self.assertEqual(status, 401)
+        status, data, _ = self.request("POST", url, token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["state"], "succeeded")
+        self.assertEqual(data["result"]["evidence_reference"], "gmail-message:verified-123")
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(proposals.get(
+            proposal.proposal_id, principal_id=self.user.user_id,
+        ).execution_state, "finished")
+        self.assertEqual(journal.get(context.idempotency_key).state, "succeeded")
+
+        status, _, _ = self.request("POST", url, token=self.issued.token)
+        self.assertEqual(status, 409)
+        self.assertEqual(provider.calls, 1)
+
+    def test_reconciliation_endpoint_fails_closed_when_not_configured(self):
+        proposals = SQLitePendingToolActionProposalStore(
+            str(Path(self.tempdir.name) / "unconfigured-reconcile.sqlite"),
+        )
+        self.app.pending_tool_action_proposals = proposals
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + "a" * 32 + "/reconcile",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(data["error"], "proposal_reconciliation_unavailable")
 
     def test_recovery_endpoint_is_authenticated_and_owner_scoped(self):
         root = Path(self.tempdir.name)
