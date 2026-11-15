@@ -41,6 +41,31 @@ class OAuthPKCEPrimitiveTests(unittest.TestCase):
         self.assertEqual(params["code_challenge"], [expected])
         self.assertEqual(params["resource"], ["https://mcp.example.com/mcp"])
 
+    def test_resource_parameter_can_be_omitted_for_standard_oauth_providers(self):
+        request = self._request(resource=None)
+        params = parse_qs(urlsplit(request.authorization_url).query)
+        self.assertNotIn("resource", params)
+
+    def test_trusted_provider_parameters_are_added_without_overriding_core_fields(self):
+        request = self._request(
+            resource=None,
+            extra_parameters=(("access_type", "offline"), ("include_granted_scopes", "true")),
+        )
+        params = parse_qs(urlsplit(request.authorization_url).query)
+        self.assertEqual(params["access_type"], ["offline"])
+        self.assertEqual(params["include_granted_scopes"], ["true"])
+        self.assertNotIn("resource", params)
+
+    def test_rejects_duplicate_or_reserved_provider_parameters(self):
+        for extra in (
+            (("state", "attacker"),),
+            (("access_type", "offline"), ("access_type", "online")),
+            (("bad key", "value"),),
+            (("access_type", "contains spaces"),),
+        ):
+            with self.subTest(extra=extra), self.assertRaises(OAuthAuthorizationError):
+                self._request(extra_parameters=extra)
+
     def test_oidc_nonce_is_included_only_when_configured(self):
         nonce = "random-oidc-nonce-value-123456"
         request = self._request(oidc_nonce=nonce)
