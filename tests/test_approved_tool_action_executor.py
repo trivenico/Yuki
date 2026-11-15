@@ -22,7 +22,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         self.proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
-        self.approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
+        self.approvals = SQLiteToolActionApprovalStore(str(root / "journal.sqlite"))
         self.journal = ToolActionJournal(str(root / "journal.sqlite"))
         self.calls = []
         self.runtime = GuardedToolRuntime(
