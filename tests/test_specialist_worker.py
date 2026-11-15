@@ -57,10 +57,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         return plan.subtasks[0].task_id
 
-    def worker(self, handlers):
+    def worker(self, handlers, owner_handler_factory=None):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
-            handlers=handlers,
+            handlers=handlers, owner_handler_factory=owner_handler_factory,
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
@@ -87,6 +87,32 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = self.worker({"code-review": lambda _: "approved result"}).run_once()
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
+
+
+    def test_owner_scoped_handler_factory_receives_persisted_task_owner(self):
+        task_id = self.create_task()
+        resolved = []
+        def factory(owner_id, agent_id):
+            resolved.append((owner_id, agent_id))
+            return lambda request: f"{owner_id}:{request}"
+        result = self.worker({}, owner_handler_factory=factory).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(result.result["output"], "alice:Propose a safe patch")
+        self.assertEqual(resolved, [("alice", "code-review")])
+
+    def test_owner_scoped_worker_fails_closed_for_legacy_task_without_owner(self):
+        self.store.create(
+            idempotency_key="legacy-ownerless-task",
+            workflow_name="agent-code-review-legacy",
+            definition=[{"name": "review", "action": "emit", "argument": "inspect",
+                         "requires_approval": False}],
+        )
+        result = self.worker(
+            {}, owner_handler_factory=lambda owner, agent: lambda request: "unsafe",
+        ).run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "missing_task_owner")
 
     def test_cancellation_during_handler_prevents_late_completion(self):
         task_id = self.create_task()
