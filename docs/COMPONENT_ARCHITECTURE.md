@@ -70,6 +70,13 @@ they should migrate to the registry only in a separately tested integration
 change. The registry does not instantiate components, load secrets, or grant
 permissions.
 
+`build_readiness_report(component_registry=...)` can optionally report
+registered runtime health. It reports `unconfigured` when no registry is
+provided, `unavailable` when no components are started, a health probe
+fails, or any started component is unhealthy, and `verified` only when
+every started component returns an explicit boolean healthy result. This is
+diagnostic evidence, not a replacement for end-to-end service checks.
+
 ## Rules for adding or changing components
 
 1. Add or update a contract in `core/component_catalog.py` before expanding
