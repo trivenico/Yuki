@@ -65,7 +65,8 @@ class BrowserFirewallTests(unittest.TestCase):
             allowed_hosts=("example.com",),
             resolver=self.resolver_for({"example.com": ["93.184.216.34"]}),
         )
-        for url in ("https://attacker.example/", "http://example.com/",
+        for url in (" https://example.com/", "https://example.com/ ",
+                    "https://attacker.example/", "http://example.com/",
                     "https://example.com:8443/", "https://user@example.com/"):
             with self.subTest(url=url), self.assertRaises(BrowserAutomationError):
                 browser._validate(url)
