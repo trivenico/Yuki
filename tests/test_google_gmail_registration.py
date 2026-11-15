@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 
 from core.google_gmail_runtime import build_gmail_tool_runtime_bundle
+from core.structured_tool_protocol import StructuredToolProtocol
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_journal import ToolActionJournal
@@ -81,6 +82,8 @@ class GmailRegistrationTests(unittest.TestCase):
             self.assertEqual(result.state, "finished")
             self.assertEqual(len(send_client.calls), 1)
             self.assertEqual(bundle.tool_definitions[0]["function"]["name"], GMAIL_SEND_TOOL_NAME)
+            self.assertIsInstance(bundle.tool_protocol, StructuredToolProtocol)
+            self.assertIs(bundle.tool_protocol._runtime, bundle.guarded_runtime)
             self.assertIsNotNone(bundle.reconciliation_service.registry.resolve(GMAIL_SEND_TOOL_NAME))
 
     def test_reconciliation_registration_uses_exact_same_tool_name(self):
