@@ -75,7 +75,7 @@ class PinnedHTTPSProviderTransport:
             raise ValueError("an explicit cloud host allow-list is required")
         hosts = set()
         for host in allowed_hosts:
-            if not isinstance(host, str) or not host or host != host.strip():
+            if not isinstance(host, str) or not host or host != host.strip() or host.endswith(".."):
                 raise ValueError("invalid cloud host allow-list")
             normalized = host.lower().rstrip(".")
             try:
@@ -114,7 +114,10 @@ class PinnedHTTPSProviderTransport:
             port = parts.port
         except ValueError:
             raise PinnedHTTPTransportError("invalid_cloud_endpoint") from None
-        host = (parts.hostname or "").lower().rstrip(".")
+        raw_host = (parts.hostname or "").lower()
+        if raw_host.endswith(".."):
+            raise PinnedHTTPTransportError("invalid_cloud_endpoint")
+        host = raw_host.rstrip(".")
         if (parts.scheme.lower() != "https" or not host or parts.username is not None
                 or parts.password is not None or port not in (None, 443)
                 or parts.fragment or host not in self.allowed_hosts):

@@ -65,7 +65,9 @@ class BrowserFirewallTests(unittest.TestCase):
             allowed_hosts=("example.com",),
             resolver=self.resolver_for({"example.com": ["93.184.216.34"]}),
         )
-        for url in ("https://attacker.example/", "http://example.com/",
+        for url in (" https://example.com/", "https://example.com/ ",
+                    "\nhttps://example.com/", "https://example.com/\t",
+                    "https://attacker.example/", "http://example.com/",
                     "https://example.com:8443/", "https://user@example.com/"):
             with self.subTest(url=url), self.assertRaises(BrowserAutomationError):
                 browser._validate(url)
@@ -76,6 +78,19 @@ class BrowserFirewallTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             SafeBrowser(allowed_hosts=("example.com",), firewall_policy=restrictive)
+
+
+    def test_rejects_multiple_trailing_dots_in_allowlist(self):
+        with self.assertRaisesRegex(ValueError, "invalid browser host allow-list"):
+            SafeBrowser(allowed_hosts=("example.com..",))
+
+    def test_rejects_multiple_trailing_dots_in_url_before_dns(self):
+        browser = SafeBrowser(
+            allowed_hosts=("example.com",),
+            resolver=lambda *args, **kwargs: self.fail("must not resolve malformed hostname"),
+        )
+        with self.assertRaisesRegex(BrowserAutomationError, "malformed"):
+            browser._validate("https://example.com../")
 
 
 if __name__ == "__main__":

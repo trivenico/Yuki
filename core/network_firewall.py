@@ -48,6 +48,8 @@ class NetworkFirewall:
         for host in hosts:
             if not isinstance(host, str) or host != host.strip():
                 raise FirewallPolicyError("invalid_allowed_host")
+            if host.endswith(".."):
+                raise FirewallPolicyError("invalid_allowed_host")
             candidate = host.lower().rstrip(".")
             try:
                 ipaddress.ip_address(candidate)
@@ -103,7 +105,7 @@ class NetworkFirewall:
     def authorize(self, *, host: str, port: int, protocol: str = "tcp",
                   resolved_addresses: Iterable[str]) -> FirewallDecision:
         """Authorize a destination only after checking every DNS answer."""
-        normalized_host = host.lower().rstrip(".") if isinstance(host, str) else ""
+        normalized_host = host.lower().rstrip(".") if isinstance(host, str) and not host.endswith("..") else ""
         addresses = self._global_addresses(resolved_addresses)
         if not _HOST.fullmatch(normalized_host):
             reason = "invalid_host"
