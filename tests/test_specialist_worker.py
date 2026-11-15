@@ -76,17 +76,19 @@ class SpecialistWorkerTests(unittest.TestCase):
                          "task.completed")
 
     def test_worker_does_not_claim_unrelated_queued_workflows(self):
-        unrelated = self.store.create(
-            idempotency_key="unrelated-general-workflow",
-            workflow_name="daily-business-report",
-            definition=[{"name": "report", "action": "emit", "argument": "unrelated",
-                         "requires_approval": False}],
-        )
+        unrelated = []
+        for index in range(101):
+            unrelated.append(self.store.create(
+                idempotency_key=f"unrelated-general-workflow-{index}",
+                workflow_name=f"daily-business-report-{index}",
+                definition=[{"name": "report", "action": "emit", "argument": "unrelated",
+                             "requires_approval": False}],
+            ))
         specialist_task = self.create_task()
         result = self.worker({"code-review": lambda text: "reviewed: " + text}).run_once()
         self.assertEqual(result.task_id, specialist_task)
         self.assertEqual(result.state, "succeeded")
-        self.assertEqual(self.store.get(unrelated.run_id).state, "queued")
+        self.assertTrue(all(self.store.get(task.run_id).state == "queued" for task in unrelated))
 
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
