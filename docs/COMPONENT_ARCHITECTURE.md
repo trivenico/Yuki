@@ -65,7 +65,7 @@ catalog contract. A runtime supplies explicit `start`, `close` and
 - Preserves rollback cleanup failures in `startup_cleanup_errors` and in
   the sanitized startup exception without disclosing underlying exception text.
 - Rejects malformed contract IDs before using them as registry keys.
-- Exposes only explicitly registered instances through `resolve`.
+- Exposes only explicitly registered instances through `resolve`; resolving instances or probing health after registry shutdown raises a clear lifecycle error.
 - Runs health probes only for started runtimes; registration alone does not
   make an inactive component part of live readiness.
 - Rejects registrations without a concrete runtime instance; lifecycle hooks
