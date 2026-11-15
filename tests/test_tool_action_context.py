@@ -1,8 +1,11 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.tool_action_context import ToolActionContext, ToolActionContextError
+from core.tool_action_journal import ToolActionJournal
 from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
@@ -13,8 +16,26 @@ class Policy:
 
 class ToolActionContextTests(unittest.TestCase):
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.journal = ToolActionJournal(str(Path(self.temp_dir.name) / "actions.sqlite3"))
         self.request = {"to": "person@example.com", "subject": "Hello"}
         self.context = ToolActionContext.create("user-123", "email.send", self.request)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _runtime(self, handler, *, confirmation=False):
+        return GuardedToolRuntime(
+            {"email.send": handler},
+            Policy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=confirmation,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=self.journal,
+        )
 
     def test_context_binds_principal_tool_and_canonical_request(self):
         self.context.verify("user-123", "email.send", {"subject": "Hello", "to": "person@example.com"})
@@ -43,16 +64,9 @@ class ToolActionContextTests(unittest.TestCase):
         with self.assertRaises((AttributeError, TypeError)):
             self.context.principal_id = "attacker"
 
-    def test_strict_runtime_requires_matching_context_for_side_effects(self):
+    def test_side_effect_is_reserved_executed_and_replayed_without_duplicate_handler_call(self):
         calls = []
-        runtime = GuardedToolRuntime(
-            {"email.send": lambda argument: calls.append(argument) or "sent"},
-            Policy(),
-            capabilities=ToolCapabilityCatalog({
-                "email.send": ToolCapability(ToolEffect.SIDE_EFFECTING),
-            }),
-            require_action_context=True,
-        )
+        runtime = self._runtime(lambda argument: calls.append(argument) or "sent")
         argument = json.dumps(self.request, separators=(",", ":"))
         self.assertIn("required", runtime.invoke("email.send", argument))
         self.assertIn(
@@ -62,14 +76,34 @@ class ToolActionContextTests(unittest.TestCase):
                 action_context=self.context, principal_id="another-user",
             ),
         )
-        self.assertEqual(
-            runtime.invoke(
-                "email.send", argument,
-                action_context=self.context, principal_id="user-123",
-            ),
-            "sent",
-        )
+        kwargs = {"action_context": self.context, "principal_id": "user-123"}
+        self.assertEqual(runtime.invoke("email.send", argument, **kwargs), "sent")
+        self.assertEqual(runtime.invoke("email.send", argument, **kwargs), "sent")
         self.assertEqual(len(calls), 1)
+        action = self.journal.get(self.context.idempotency_key)
+        self.assertEqual(action.state, "succeeded")
+        self.assertEqual(action.action_id, self.context.action_id)
+
+    def test_confirmation_is_required_before_journal_reservation(self):
+        runtime = self._runtime(lambda _: "sent", confirmation=True)
+        argument = json.dumps(self.request, separators=(",", ":"))
+        kwargs = {"action_context": self.context, "principal_id": "user-123"}
+        self.assertIn("confirmation", runtime.invoke("email.send", argument, **kwargs))
+        self.assertIsNone(self.journal.get(self.context.idempotency_key))
+        self.assertEqual(runtime.invoke("email.send", argument, user_confirmed=True, **kwargs), "sent")
+
+    def test_handler_failure_marks_outcome_unknown_and_prevents_replay(self):
+        calls = []
+        def fail(_):
+            calls.append("called")
+            raise RuntimeError("provider timeout")
+        runtime = self._runtime(fail)
+        argument = json.dumps(self.request, separators=(",", ":"))
+        kwargs = {"action_context": self.context, "principal_id": "user-123"}
+        self.assertIn("reconciliation", runtime.invoke("email.send", argument, **kwargs))
+        self.assertIn("reconciliation", runtime.invoke("email.send", argument, **kwargs))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.journal.get(self.context.idempotency_key).state, "outcome_unknown")
 
     def test_read_only_tools_do_not_require_action_context(self):
         runtime = GuardedToolRuntime(
@@ -78,13 +112,21 @@ class ToolActionContextTests(unittest.TestCase):
             capabilities=ToolCapabilityCatalog({
                 "email.list": ToolCapability(ToolEffect.READ_ONLY),
             }),
-            require_action_context=True,
+            require_action_context=False,
         )
         self.assertEqual(runtime.invoke("email.list", "{}"), "[]")
 
-    def test_strict_mode_requires_capability_catalog(self):
+    def test_strict_mode_requires_catalog_and_journal(self):
         with self.assertRaises(ValueError):
             GuardedToolRuntime({"email.send": lambda _: "sent"}, Policy(), require_action_context=True)
+        with self.assertRaises(ValueError):
+            GuardedToolRuntime(
+                {"email.send": lambda _: "sent"}, Policy(),
+                capabilities=ToolCapabilityCatalog({
+                    "email.send": ToolCapability(ToolEffect.SIDE_EFFECTING),
+                }),
+                require_action_context=True,
+            )
 
 
 if __name__ == "__main__":
