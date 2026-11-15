@@ -87,6 +87,16 @@ class GmailReadOnlyClientTests(unittest.TestCase):
         self.assertFalse(result["found"])
         self.assertIsNone(result["message"])
 
+    def test_truncated_search_results_are_not_accepted_as_unique(self):
+        self.transport.responses = [
+            {"messages": [{"id": "gmail_123"}], "nextPageToken": "next-page"},
+        ]
+        with self.assertRaisesRegex(GmailReadOnlyError, "ambiguous"):
+            self.client.find_message_by_rfc822_message_id(
+                owner_id="owner-1", account_id="acct-1", message_id=self.message_id,
+            )
+        self.assertEqual(len(self.transport.requests), 1)
+
     def test_invalid_message_id_is_rejected_before_network(self):
         with self.assertRaisesRegex(GmailReadOnlyError, "invalid_message_id"):
             self.client.find_message_by_rfc822_message_id(
