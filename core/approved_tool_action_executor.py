@@ -7,6 +7,7 @@ single-use token, and delegates authorization/journaling to GuardedToolRuntime.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
@@ -42,6 +43,8 @@ class ApprovedToolActionExecutor:
             raise LookupError("approved proposal was not found")
         if proposal.status != "approved":
             raise ValueError("proposal has not been approved")
+        if datetime.now(timezone.utc) >= datetime.fromisoformat(proposal.expires_at):
+            raise ValueError("approved proposal has expired")
         context = ToolActionContext(
             action_id=proposal.action_id,
             idempotency_key=proposal.idempotency_key,
