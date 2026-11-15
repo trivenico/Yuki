@@ -406,7 +406,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
             sent = []
             runtime = GuardedToolRuntime(
                 {"email.send": lambda raw: sent.append(raw) or "sent"},
-                AllowPolicy(),
+                type("EmailPolicy", (), {"authorize_tool": lambda self, name: name == "email.send"})(),
                 capabilities=ToolCapabilityCatalog({
                     "email.send": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
                 }),
