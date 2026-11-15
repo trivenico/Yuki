@@ -219,7 +219,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 owner_id_factory=lambda: "local-test-owner-identity-000000000000",
             )
             try:
-                self.assertEqual(seen["provider_config"]["provider"], "mock")
+                self.assertEqual(seen["provider_config"]["provider"], "mutated-by-provider")
                 self.assertEqual(seen["store_config"]["provider"], "mock")
                 self.assertEqual(seen["store_config"]["mcp_servers"][0]["allowed_tools"], ["search"])
                 self.assertEqual(config["provider"], "mock")
