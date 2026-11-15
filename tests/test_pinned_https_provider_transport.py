@@ -111,6 +111,34 @@ class PinnedHTTPSProviderTransportTests(unittest.TestCase):
         self.assertEqual(len(redirected), 1)
         self.assertTrue(redirected[0].closed)
 
+    def test_rejects_oversized_response_and_closes_connection(self):
+        class LargeResponse(FakeResponse):
+            def read(self, amount=-1):
+                return b"x" * amount
+            def readline(self, amount=-1):
+                return b"x" * amount
+
+        connection = FakeConnection("api.openai.com", "8.8.8.8", timeout=45,
+                                     context=self.transport._ssl_context)
+        connection.getresponse = lambda: LargeResponse()
+        self.transport._factory = lambda *args, **kwargs: connection
+        with self.assertRaisesRegex(PinnedHTTPTransportError, "cloud_response_too_large"):
+            self.transport.open(self.request()).read()
+        self.assertTrue(connection.closed)
+
+    def test_bounds_streaming_response_lines(self):
+        class LargeResponse(FakeResponse):
+            def readline(self, amount=-1):
+                return b"x" * amount
+
+        connection = FakeConnection("api.openai.com", "8.8.8.8", timeout=45,
+                                     context=self.transport._ssl_context)
+        connection.getresponse = lambda: LargeResponse()
+        self.transport._factory = lambda *args, **kwargs: connection
+        with self.assertRaisesRegex(PinnedHTTPTransportError, "cloud_response_too_large"):
+            self.transport.open(self.request()).readline()
+        self.assertTrue(connection.closed)
+
     def test_custom_firewall_must_allow_exact_provider_host(self):
         with self.assertRaises(ValueError):
             PinnedHTTPSProviderTransport(

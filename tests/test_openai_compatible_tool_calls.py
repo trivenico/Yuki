@@ -1,6 +1,5 @@
 import json
 import unittest
-from unittest.mock import patch
 
 from providers.openai_compatible import OpenAICompatibleProvider
 
@@ -17,6 +16,9 @@ class FakeResponse:
 
     def read(self, limit):
         return self.body[:limit]
+
+    def close(self):
+        pass
 
 
 class FakeOpener:
@@ -35,6 +37,7 @@ class FakeStreamResponse:
         self.lines = [line if isinstance(line, bytes) else line.encode() for line in lines]
     def __enter__(self): return self
     def __exit__(self, *args): return False
+    def close(self): pass
     def readline(self, limit):
         if not self.lines: return b""
         line = self.lines.pop(0)
@@ -81,9 +84,8 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         }]}
 
     def invoke_with(self, body):
-        opener = FakeOpener(body, self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
-            return self.provider.generate_with_tools("Find the value", self.tools)
+        self.provider._transport = FakeOpener(body, self.requests)
+        return self.provider.generate_with_tools("Find the value", self.tools)
 
     def test_native_call_is_normalized_to_yuki_envelope(self):
         body = self.response([{
@@ -100,6 +102,16 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         payload = json.loads(request.data)
         self.assertEqual(payload["tool_choice"], "auto")
         self.assertEqual(payload["tools"][0]["function"]["name"], "lookup")
+        self.assertEqual(timeout, 45)
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-secret")
+
+    def test_basic_generation_uses_the_injected_pinned_transport(self):
+        body = self.response(content="A safe answer", finish="stop")
+        self.provider._transport = FakeOpener(body, self.requests)
+        result = self.provider.generate("Say hello")
+        self.assertEqual(result, "A safe answer")
+        request, timeout = self.requests[0]
+        self.assertEqual(request.get_method(), "POST")
         self.assertEqual(timeout, 45)
         self.assertEqual(request.get_header("Authorization"), "Bearer test-secret")
 
@@ -132,13 +144,13 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             "function": {"name": "lookup", "arguments": '{"key":"from-chat"}'},
         }], content="")
         opener = FakeOpener(body, self.requests)
+        self.provider._transport = opener
         messages = [
             {"role": "system", "content": "You are Yuki"},
             {"role": "user", "content": "Find it"},
             {"role": "assistant", "content": "I will look it up"},
         ]
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
-            result = self.provider.generate_chat(messages=messages, tools=self.tools)
+        result = self.provider.generate_chat(messages=messages, tools=self.tools)
         payload = json.loads(self.requests[0][0].data)
         self.assertEqual(payload["messages"], messages)
         self.assertEqual(result["tool_calls"]["tool_calls"][0]["arguments"], {"key": "from-chat"})
@@ -168,6 +180,19 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
                 self.provider.generate_with_tools("prompt", tools)
         self.assertEqual(self.requests, [])
 
+    def test_provider_defaults_to_dns_pinned_transport_for_exact_endpoint_host(self):
+        from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport
+        provider = OpenAICompatibleProvider(
+            "test-model", base_url="https://api.deepseek.com/v1",
+            environ={"OPENAI_API_KEY": "test-secret"},
+        )
+        self.assertIsInstance(provider._transport, PinnedHTTPSProviderTransport)
+        self.assertEqual(provider._transport.allowed_hosts, frozenset({"api.deepseek.com"}))
+
+    def test_injected_transport_must_expose_open(self):
+        with self.assertRaises(TypeError):
+            OpenAICompatibleProvider("test-model", transport=object())
+
     def test_missing_credentials_fail_before_network(self):
         provider = OpenAICompatibleProvider("test-model", environ={})
         with self.assertRaises(RuntimeError):
@@ -184,8 +209,8 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         ]
         lines = [("data: " + json.dumps(item) + "\n\n") for item in chunks] + ["data: [DONE]\n\n"]
         opener = FakeStreamOpener(lines, self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
-            events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Hi"}], tools=self.tools))
+        self.provider._transport = opener
+        events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Hi"}], tools=self.tools))
         self.assertEqual(events[:2], [{"type": "text_delta", "text": "Hello "}, {"type": "text_delta", "text": "Yuki"}])
         self.assertEqual(events[-1]["response"]["text"], "Hello Yuki")
         self.assertTrue(json.loads(self.requests[0][0].data)["stream"])
@@ -198,8 +223,8 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         ]
         lines = [("data: " + json.dumps(item) + "\n") for item in chunks] + ["data: [DONE]\n"]
         opener = FakeStreamOpener(lines, self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
-            events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
+        self.provider._transport = opener
+        events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
         self.assertEqual(events[-1]["response"]["tool_calls"]["tool_calls"], [
             {"id": "call_stream", "name": "lookup", "arguments": {"key": "value"}}
         ])
@@ -209,9 +234,9 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             {"index": 0, "id": "bad", "function": {"name": "unadvertised", "arguments": "{}"}}
         ]}, "finish_reason": "tool_calls"}]}
         opener = FakeStreamOpener(["data: " + json.dumps(chunk) + "\n", "data: [DONE]\n"], self.requests)
-        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
-            with self.assertRaises(RuntimeError):
-                list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
+        self.provider._transport = opener
+        with self.assertRaises(RuntimeError):
+            list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
 
 if __name__ == "__main__":
     unittest.main()
