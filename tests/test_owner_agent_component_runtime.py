@@ -1,6 +1,5 @@
 import unittest
 
-from core.agent_execution_loop import AgentExecutionLoop
 from core.component_catalog import DEFAULT_COMPONENTS
 from core.component_registry import ComponentRegistry, ComponentRuntime
 from core.owner_agent_component_runtime import build_owner_agent_execution_component_runtime
