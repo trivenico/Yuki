@@ -42,6 +42,7 @@ class ConversationService:
         self.action_context_factory = action_context_factory
         self.confirmation_check = confirmation_check
         self.approval_id_factory = approval_id_factory
+        self.pending_proposal_factory = pending_proposal_factory
         self.store = store
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
