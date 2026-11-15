@@ -218,7 +218,6 @@ class OllamaProvider:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
         )
-                return None
         try:
             with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
@@ -312,7 +311,6 @@ class OllamaProvider:
             headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
             method="POST",
         )
-                return None
         text_parts = []
         text_size = 0
         normalized_calls = []
