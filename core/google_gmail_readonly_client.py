@@ -101,19 +101,37 @@ class GmailReadOnlyClient:
             )
             if detail.get("id") != gmail_id:
                 raise GmailReadOnlyError("gmail_message_identity_mismatch")
-            headers = detail.get("payload", {}).get("headers", [])
+            payload = detail.get("payload")
+            if not isinstance(payload, dict):
+                raise GmailReadOnlyError("invalid_gmail_message_metadata")
+            headers = payload.get("headers", [])
             if not isinstance(headers, list) or len(headers) > 100:
                 raise GmailReadOnlyError("invalid_gmail_message_metadata")
-            found = [
-                header.get("value") for header in headers
-                if isinstance(header, dict) and header.get("name", "").lower() == "message-id"
-            ]
+            found = []
+            for header in headers:
+                if not isinstance(header, dict):
+                    raise GmailReadOnlyError("invalid_gmail_message_metadata")
+                name = header.get("name")
+                value = header.get("value")
+                if not isinstance(name, str) or not isinstance(value, str):
+                    raise GmailReadOnlyError("invalid_gmail_message_metadata")
+                if name.lower() == "message-id":
+                    found.append(value)
+            thread_id = detail.get("threadId")
+            if thread_id is not None and (
+                not isinstance(thread_id, str) or not _GMAIL_ID.fullmatch(thread_id)
+            ):
+                raise GmailReadOnlyError("invalid_gmail_message_metadata")
+            label_ids = detail.get("labelIds", [])
+            if (not isinstance(label_ids, list) or len(label_ids) > 100
+                    or any(not isinstance(label, str) or len(label) > 128 for label in label_ids)):
+                raise GmailReadOnlyError("invalid_gmail_message_metadata")
             if len(found) == 1 and found[0] == message_id:
                 matches.append({
                     "provider_message_id": gmail_id,
-                    "thread_id": detail.get("threadId"),
+                    "thread_id": thread_id,
                     "message_id": message_id,
-                    "label_ids": detail.get("labelIds", []),
+                    "label_ids": label_ids,
                 })
         if len(matches) > 1:
             raise GmailReadOnlyError("ambiguous_gmail_message_match")
