@@ -6,6 +6,7 @@ contracts to runtime instances without claiming every catalog entry is active.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from typing import Callable, Iterable
 
 from core.component_catalog import (
@@ -49,8 +50,15 @@ class ComponentRegistry:
         self._startup_attempted = False
         self._startup_cleanup_errors: tuple[str, ...] = ()
         self._closed = False
+        # Lifecycle operations are serialized so registration cannot race startup,
+        # and health probes cannot overlap resource teardown.
+        self._lock = threading.RLock()
 
     def register(self, runtime: ComponentRuntime) -> None:
+        with self._lock:
+            self._register(runtime)
+
+    def _register(self, runtime: ComponentRuntime) -> None:
         if self._closed:
             raise RuntimeError("component registry is closed")
         if self._startup_attempted:
@@ -76,6 +84,10 @@ class ComponentRegistry:
         self._runtimes[component_id] = runtime
 
     def resolve(self, component_id: str) -> object:
+        with self._lock:
+            return self._resolve(component_id)
+
+    def _resolve(self, component_id: str) -> object:
         if self._closed:
             raise RuntimeError("component registry is closed")
         try:
@@ -84,6 +96,10 @@ class ComponentRegistry:
             raise LookupError(f"component runtime unavailable: {component_id}") from exc
 
     def start_all(self) -> tuple[str, ...]:
+        with self._lock:
+            return self._start_all()
+
+    def _start_all(self) -> tuple[str, ...]:
         if self._closed:
             raise RuntimeError("component registry is closed")
         if self._startup_attempted:
@@ -120,7 +136,11 @@ class ComponentRegistry:
         return tuple(self._started)
 
     def health(self) -> dict[str, bool]:
-        """Probe only started runtimes; registered-but-inactive services are not live."""
+        """Probe started runtimes without racing their shutdown."""
+        with self._lock:
+            return self._health()
+
+    def _health(self) -> dict[str, bool]:
         if self._closed:
             raise RuntimeError("component registry is closed")
         results: dict[str, bool] = {}
@@ -135,6 +155,10 @@ class ComponentRegistry:
         return results
 
     def close(self) -> tuple[str, ...]:
+        with self._lock:
+            return self._close()
+
+    def _close(self) -> tuple[str, ...]:
         if self._closed:
             return ()
         self._closed = True
@@ -150,8 +174,10 @@ class ComponentRegistry:
     @property
     def startup_cleanup_errors(self) -> tuple[str, ...]:
         """Return component IDs whose rollback cleanup failed during startup."""
-        return self._startup_cleanup_errors
+        with self._lock:
+            return self._startup_cleanup_errors
 
     @property
     def started_components(self) -> tuple[str, ...]:
-        return tuple(self._started)
+        with self._lock:
+            return tuple(self._started)
