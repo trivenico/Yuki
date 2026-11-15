@@ -35,6 +35,12 @@ _STATES = frozenset({
     "cancelled", "interrupted",
 })
 _TERMINAL = frozenset({"succeeded", "cancelled", "interrupted"})
+_TERMINAL_EVENT_KINDS = frozenset({
+    "succeeded": "task.completed",
+    "failed": "task.failed",
+    "cancelled": "task.cancelled",
+    "interrupted": "task.interrupted",
+}.values())
 _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled"}),
     "running": frozenset({"waiting_approval", "succeeded", "failed", "cancelled", "interrupted"}),
@@ -472,7 +478,6 @@ class WorkflowRunStore:
             raise ValueError("error_code must be a bounded machine-readable code.")
         event_args = (terminal_event_kind, terminal_event_actor_id, terminal_event_payload)
         if any(value is not None for value in event_args):
-            from automation.task_runtime import _EVENT_KINDS
             expected_event = {
                 "succeeded": "task.completed",
                 "failed": "task.failed",
@@ -480,7 +485,7 @@ class WorkflowRunStore:
                 "interrupted": "task.interrupted",
             }.get(to_state)
             if (
-                terminal_event_kind not in _EVENT_KINDS
+                terminal_event_kind not in _TERMINAL_EVENT_KINDS
                 or terminal_event_kind != expected_event
                 or not isinstance(terminal_event_actor_id, str)
                 or not terminal_event_actor_id.strip()
