@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.tool_action_journal import ToolActionJournal
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.tool_action_context import ToolActionContext
 from core.tool_action_reconciliation import (
     ProviderReconciliationResult,
     ToolActionReconciliationRegistry,
@@ -93,6 +95,70 @@ class ToolActionReconciliationTests(unittest.TestCase):
         )
         with self.assertRaises(LookupError):
             missing.reconcile(action=self.action, proposal=self.proposal)
+
+    def test_owner_scoped_proposal_reconciliation_marks_confirmed_success_finished(self):
+        proposals = SQLitePendingToolActionProposalStore(
+            str(Path(self.temp.name) / "proposals.sqlite"),
+        )
+        context = ToolActionContext(
+            action_id=self.action.action_id,
+            idempotency_key=self.action.idempotency_key,
+            principal_id="owner-a",
+            tool_name=self.action.tool_name,
+            request_digest=self.action.request_digest,
+        )
+        proposal = proposals.create(
+            context, self.proposal.arguments, principal_id="owner-a",
+        )
+        proposals.decide(proposal.proposal_id, principal_id="owner-a", decision="approved")
+        proposals.claim_execution(proposal.proposal_id, principal_id="owner-a")
+        proposals.finish_execution(
+            proposal.proposal_id, principal_id="owner-a", outcome_unknown=True,
+        )
+        adapter = FakeProvider(ProviderReconciliationResult(
+            "succeeded", "provider-message:confirmed", {"status": "sent"},
+        ))
+        service = ToolActionReconciliationService(
+            self.journal, ToolActionReconciliationRegistry({"email.send": adapter}),
+            proposals=proposals,
+        )
+        with self.assertRaises(LookupError):
+            service.reconcile_proposal(proposal.proposal_id, principal_id="owner-b")
+        result = service.reconcile_proposal(proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(proposals.get(
+            proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "finished")
+        self.assertEqual(adapter.calls, 1)
+
+    def test_provider_confirmed_non_execution_does_not_make_proposal_replayable(self):
+        proposals = SQLitePendingToolActionProposalStore(
+            str(Path(self.temp.name) / "proposals.sqlite"),
+        )
+        context = ToolActionContext(
+            action_id=self.action.action_id,
+            idempotency_key=self.action.idempotency_key,
+            principal_id="owner-a",
+            tool_name=self.action.tool_name,
+            request_digest=self.action.request_digest,
+        )
+        proposal = proposals.create(context, self.proposal.arguments, principal_id="owner-a")
+        proposals.decide(proposal.proposal_id, principal_id="owner-a", decision="approved")
+        proposals.claim_execution(proposal.proposal_id, principal_id="owner-a")
+        proposals.finish_execution(proposal.proposal_id, principal_id="owner-a", outcome_unknown=True)
+        adapter = FakeProvider(ProviderReconciliationResult(
+            "not_executed", "provider-query:confirmed-absent",
+        ))
+        service = ToolActionReconciliationService(
+            self.journal, ToolActionReconciliationRegistry({"email.send": adapter}),
+            proposals=proposals,
+        )
+        service.reconcile_proposal(proposal.proposal_id, principal_id="owner-a")
+        current = proposals.get(proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(current.execution_state, "unknown")
+        with self.assertRaisesRegex(ValueError, "not awaiting reconciliation"):
+            service.reconcile_proposal(proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(adapter.calls, 1)
 
     def test_validates_provider_evidence_contract(self):
         for outcome, evidence in (("success", "ref"), ("unknown", ""), ("unknown", "x" * 513)):
