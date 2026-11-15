@@ -66,6 +66,7 @@ class BrowserFirewallTests(unittest.TestCase):
             resolver=self.resolver_for({"example.com": ["93.184.216.34"]}),
         )
         for url in (" https://example.com/", "https://example.com/ ",
+                    "\nhttps://example.com/", "https://example.com/\t",
                     "https://attacker.example/", "http://example.com/",
                     "https://example.com:8443/", "https://user@example.com/"):
             with self.subTest(url=url), self.assertRaises(BrowserAutomationError):
