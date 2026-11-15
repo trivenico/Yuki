@@ -79,7 +79,7 @@ class ModelEvaluationTests(unittest.TestCase):
         with self.assertRaises(ValueError): client.generate("../bad","prompt")
 
     def test_malformed_response_fails_closed(self):
-        client = HuggingFaceChatClient("hf_test_token", opener=Opener(b"not-json"))
+        client = HuggingFaceChatClient("hf_test_token", transport=Opener(b"not-json"))
         with self.assertRaises(EvaluationError): client.generate("org/model","prompt")
 
 if __name__ == "__main__": unittest.main()
