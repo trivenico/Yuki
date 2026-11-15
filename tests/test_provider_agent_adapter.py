@@ -43,6 +43,16 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             with self.subTest(messages=messages), self.assertRaises(ValueError):
                 adapter(messages=messages, tools=[])
 
+    def test_stream_validation_rejects_unhashable_roles_and_tool_choice(self):
+        adapter = ProviderAgentAdapter(FakeChatProvider())
+        invalid_inputs = (
+            ([{"role": [], "content": "x"}], [], "auto"),
+            ([{"role": "user", "content": "x"}], [], []),
+        )
+        for messages, tools, tool_choice in invalid_inputs:
+            with self.subTest(messages=messages, tool_choice=tool_choice), self.assertRaises(ValueError):
+                adapter.stream_model(messages=messages, tools=tools, tool_choice=tool_choice)
+
     def test_enforces_transcript_and_tool_bounds(self):
         adapter = ProviderAgentAdapter(FakeChatProvider())
         with self.assertRaises(ValueError):
