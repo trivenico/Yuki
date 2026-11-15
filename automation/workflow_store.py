@@ -301,7 +301,7 @@ class WorkflowRunStore:
         if workflow_prefixes is not None:
             if (not isinstance(workflow_prefixes, tuple) or not workflow_prefixes
                 or len(workflow_prefixes) > 100
-                or any(not isinstance(prefix, str) or not prefix or len(prefix) > 200 or "\\x00" in prefix for prefix in workflow_prefixes)):
+                or any(not isinstance(prefix, str) or not prefix or len(prefix) > 200 or "\x00" in prefix for prefix in workflow_prefixes)):
                 raise ValueError("workflow_prefixes must be a bounded tuple of non-empty prefixes.")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
