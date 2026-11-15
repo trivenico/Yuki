@@ -34,7 +34,7 @@ class NetworkFirewallTests(unittest.TestCase):
         ).allowed)
 
     def test_denies_missing_or_malformed_dns_answers(self):
-        for addresses in ((), ("not-an-ip",),):
+        for addresses in ((), ("not-an-ip",), (123456789,)):
             with self.subTest(addresses=addresses):
                 self.assertFalse(self.firewall.authorize(
                     host="api.example.com", port=443, resolved_addresses=addresses,
