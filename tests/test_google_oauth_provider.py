@@ -50,8 +50,12 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         self.assertEqual(params["scope"], [" ".join((*GOOGLE_GMAIL_SCOPES, "openid"))])
         self.assertEqual(params["access_type"], ["offline"])
         self.assertEqual(params["include_granted_scopes"], ["true"])
+        self.assertEqual(params["prompt"], ["consent"])
         self.assertNotIn("resource", params)
         self.assertEqual(result["expires_at"], 1234)
+        self.assertIsNone(service._oidc_verifier._subject)
+        self.assertIsNone(service._identity_verifier._subject)
+        self.assertIsNone(service._identity_verifier._audience)
 
     def test_requests_only_send_and_readonly_gmail_scopes(self):
         self.assertEqual(set(GOOGLE_GMAIL_SCOPES), {
