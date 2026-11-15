@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+from contextlib import closing
 import unittest
 from pathlib import Path
 
@@ -106,11 +107,12 @@ class ToolActionJournalTests(unittest.TestCase):
     def test_expired_execution_is_recovered_as_unknown_and_stale_worker_is_fenced(self):
         record = self.journal.reserve("lease-expired", "email.send", {"to": "a@example.com"})
         started = self.journal.begin_execution("lease-expired", record.request_digest)
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             db.execute(
                 "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
                 ("2000-01-01T00:00:00+00:00", "lease-expired"),
             )
+            db.commit()
         self.assertEqual(self.journal.recover_expired_executions(), 1)
         recovered = self.journal.get("lease-expired")
         self.assertEqual(recovered.state, "outcome_unknown")
@@ -126,7 +128,7 @@ class ToolActionJournalTests(unittest.TestCase):
         # setUp initializes the current schema; use a separate database to
         # accurately model a pre-lease database created by an older release.
         legacy_path = str(Path(self.temp_dir.name) / "legacy-actions.sqlite3")
-        with sqlite3.connect(legacy_path) as db:
+        with closing(sqlite3.connect(legacy_path)) as db:
             db.execute(
                 """CREATE TABLE tool_actions (
                     action_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE,
@@ -142,6 +144,7 @@ class ToolActionJournalTests(unittest.TestCase):
                    VALUES ('legacy-id','legacy-key','email.send',?,'prepared','2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00')""",
                 ("a" * 64,),
             )
+            db.commit()
         upgraded = ToolActionJournal(legacy_path).get("legacy-key")
         self.assertEqual(upgraded.state, "prepared")
         self.assertIsNone(upgraded.lease_owner)
