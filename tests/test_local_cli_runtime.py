@@ -194,6 +194,42 @@ class LocalCliRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
 
+    def test_runtime_composition_uses_detached_configuration_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            config = {
+                "max_agent_steps": 3, "workspace": directory, "provider": "mock",
+                "storage_backend": "sqlite",
+                "mcp_servers": [{"name": "docs", "allowed_tools": ["search"]}],
+            }
+            seen = {}
+
+            def provider_factory(provider_config):
+                seen["provider_config"] = provider_config
+                provider_config["provider"] = "mutated-by-provider"
+                provider_config["mcp_servers"][0]["allowed_tools"].append("delete")
+                return provider
+
+            def store_factory(runtime_config):
+                seen["store_config"] = runtime_config
+                return ConversationStore(Path(directory) / "conversations.sqlite3")
+
+            runtime = build_local_conversation_runtime(
+                config, provider_factory=provider_factory, store_factory=store_factory,
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+            )
+            try:
+                self.assertEqual(seen["provider_config"]["provider"], "mutated-by-provider")
+                self.assertEqual(seen["store_config"]["provider"], "mock")
+                self.assertEqual(seen["store_config"]["mcp_servers"][0]["allowed_tools"], ["search"])
+                self.assertEqual(config["provider"], "mock")
+                self.assertEqual(config["mcp_servers"][0]["allowed_tools"], ["search"])
+                snapshot = runtime.component_registry.resolve("configuration-runtime")
+                self.assertEqual(snapshot.get("provider"), "mock")
+                self.assertEqual(snapshot.get("mcp_servers")[0]["allowed_tools"], ("search",))
+            finally:
+                runtime.close()
+
     def test_runtime_readiness_reflects_started_components_and_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
             provider = FakeProvider()

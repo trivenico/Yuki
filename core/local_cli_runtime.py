@@ -6,11 +6,13 @@ grant the terminal an implicit ability to execute tools.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from threading import RLock
 from typing import Any, Callable
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.core_component_runtime import build_local_core_component_registry
+from core.configuration_component_runtime import build_configuration_component_runtime
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -21,6 +23,17 @@ from core.readiness import ReadinessReport, build_readiness_report
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
+
+
+def _materialize_snapshot_value(value: Any) -> Any:
+    """Create an isolated mutable adapter value from immutable snapshot data."""
+    if isinstance(value, Mapping):
+        return {key: _materialize_snapshot_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_materialize_snapshot_value(item) for item in value]
+    if isinstance(value, frozenset):
+        return {_materialize_snapshot_value(item) for item in value}
+    return value
 
 
 class _DenyAllLocalTools:
@@ -86,7 +99,23 @@ def build_local_conversation_runtime(
     """Build the installed CLI's persistent chat service with fail-closed tools."""
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
-    provider = provider_factory(config)
+    # Freeze complete configuration before constructing dependent runtimes.
+    configuration_runtime = None
+    if (
+        isinstance(config.get("workspace"), str)
+        and config.get("workspace", "").strip()
+        and isinstance(config.get("provider"), str)
+        and config.get("provider", "").strip()
+    ):
+        configuration_runtime = build_configuration_component_runtime(config)
+        snapshot_values = configuration_runtime.instance.values
+        provider_config = _materialize_snapshot_value(snapshot_values)
+        runtime_config = _materialize_snapshot_value(snapshot_values)
+    else:
+        provider_config = dict(config)
+        runtime_config = dict(config)
+
+    provider = provider_factory(provider_config)
     owned_provider = _OwnedProvider(provider)
     application = None
     registry = None
@@ -94,7 +123,7 @@ def build_local_conversation_runtime(
         model = ProviderAgentAdapter(provider)
         tool_runtime = GuardedToolRuntime({}, _DenyAllLocalTools())
         protocol = StructuredToolProtocol(tool_runtime)
-        max_turns = config.get("max_agent_steps", 8)
+        max_turns = runtime_config.get("max_agent_steps", 8)
         if type(max_turns) is not int or not 1 <= max_turns <= 100:
             raise ValueError("max_agent_steps must be an integer from 1 to 100.")
         agent_loop = AgentExecutionLoop(
@@ -108,21 +137,18 @@ def build_local_conversation_runtime(
         )
         owner_id = (
             owner_id_factory() if owner_id_factory is not None
-            else load_or_create_local_owner_id(config.get("workspace"))
+            else load_or_create_local_owner_id(runtime_config.get("workspace"))
         )
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
             raise ValueError("local owner identity is invalid.")
         application = build_conversation_application_runtime(
-            config, agent_loop=agent_loop, owner_id=owner_id,
+            runtime_config, agent_loop=agent_loop, owner_id=owner_id,
             **({"store_factory": store_factory} if store_factory is not None else {}),
         )
         registry = build_local_core_component_registry(
             owner_id=owner_id, provider=owned_provider,
             agent_loop=agent_loop, application_runtime=application,
-            config=(
-                config if isinstance(config.get("workspace"), str)
-                and isinstance(config.get("provider"), str) else None
-            ),
+            config=runtime_config if configuration_runtime is not None else None,
         )
         registry.start_all()
         return LocalConversationRuntime(application, registry)
