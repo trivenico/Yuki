@@ -140,6 +140,12 @@ class TaskRuntimeTests(unittest.TestCase):
     def test_progress_and_artifacts_require_the_active_worker_lease(self):
         task = self.create("lease-fenced-events")
         claimed = self.claim(task)
+        with self.assertRaises(ValueError):
+            self.store.append_task_event(
+                task.task_id, kind="task.progress", actor_id="alice",
+                payload={"message": "bypass", "percent": None},
+                expected_version=claimed.version,
+            )
         with self.assertRaises(WorkflowConflict):
             self.runtime.record_progress(
                 actor_id="alice", task_id=task.task_id,
