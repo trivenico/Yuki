@@ -252,6 +252,34 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(self.store.list_interrupted_generations(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
         ), [])
+    def test_shutdown_attempts_every_cached_owner_loop_if_one_close_fails(self):
+        created = []
+        closed = []
+        def factory(owner_id):
+            loop = AgentExecutionLoop(
+                lambda **kwargs: {"text": owner_id, "tool_calls": {"tool_calls": []}},
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            )
+            def close():
+                closed.append(owner_id)
+                if owner_id == "owner-a":
+                    raise RuntimeError("owner loop cleanup failed")
+            loop.close = close
+            created.append(loop)
+            return loop
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        for owner_id, request_id in (("owner-a", "owner-a-request"), ("owner-b", "owner-b-request")):
+            conversation = self.store.create_conversation(owner_id=owner_id)
+            result = service.reply(
+                owner_id=owner_id, conversation_id=conversation["conversation_id"],
+                user_text="Hello", request_id=request_id, expected_version=0, tools=[],
+            )
+            self.assertEqual(result["status"], "completed")
+        with self.assertRaisesRegex(RuntimeError, "owner loop cleanup failed"):
+            service.close()
+        service.close()
+        self.assertEqual(closed, ["owner-a", "owner-b"])
 
 if __name__ == "__main__":
     unittest.main()
