@@ -79,6 +79,31 @@ class ConversationServiceTests(unittest.TestCase):
             self.send(text="Stale", request="request-2", version=0)
         self.assertEqual(len(self.observed), 1)
 
+    def test_owner_specific_agent_loop_factory_receives_authenticated_owner(self):
+        selected = []
+        service = ConversationService(
+            self.store, self.loop,
+            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or self.loop,
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Owner-specific execution", request_id="owner-loop-request",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(selected, ["owner-a"])
+
+    def test_owner_specific_agent_loop_factory_must_return_agent_loop(self):
+        service = ConversationService(
+            self.store, self.loop, agent_loop_for_owner=lambda owner_id: object(),
+        )
+        with self.assertRaisesRegex(TypeError, "must return an AgentExecutionLoop"):
+            service.reply(
+                owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+                user_text="Invalid owner loop", request_id="invalid-owner-loop",
+                expected_version=0, tools=[],
+            )
+
     def test_owner_isolation_is_enforced_by_service(self):
         with self.assertRaises(ConversationNotFound):
             self.send(owner="owner-b")
