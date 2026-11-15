@@ -50,8 +50,10 @@ class ProviderComponentRuntimeTests(unittest.TestCase):
 
         registry = ComponentRegistry()
         registry.register(build_provider_component_runtime(InvalidProvider()))
-        with self.assertRaisesRegex(TypeError, "must return bool"):
+        with self.assertRaisesRegex(RuntimeError, "startup failed") as raised:
             registry.start_all()
+        self.assertIsInstance(raised.exception.__cause__, TypeError)
+        self.assertIn("must return bool", str(raised.exception.__cause__))
 
     def test_provider_without_close_hook_is_supported(self):
         class StatelessProvider:
