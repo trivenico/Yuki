@@ -245,16 +245,19 @@ class SpecialistTaskWorker:
         agent_id = self._agent_id(claimed.workflow_name, self.agent_ids)
         handler = self.handlers.get(agent_id)
         if self.owner_handler_factory is not None:
-            if not isinstance(claimed.owner_id, str) or not claimed.owner_id.strip():
+            if not agent_id:
+                handler = None
+            elif not isinstance(claimed.owner_id, str) or not claimed.owner_id.strip():
                 return self.runtime.fail(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
                     expected_version=claimed.version, worker_id=self.worker_id,
                     error_code="missing_task_owner",
                 )
-            try:
-                handler = self.owner_handler_factory(claimed.owner_id, agent_id)
-            except Exception:
-                handler = None
+            else:
+                try:
+                    handler = self.owner_handler_factory(claimed.owner_id, agent_id)
+                except Exception:
+                    handler = None
         if not callable(handler):
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
