@@ -110,6 +110,34 @@ class ApprovedToolActionExecutor:
             proposal.proposal_id, principal_id=principal_id,
         )
 
+    def _claim_proposal_and_reserve_action(self, proposal, *, principal_id: str) -> bool:
+        """Atomically claim the proposal and persist its prepared journal row."""
+        journal = self.guarded_runtime._action_journal
+        now = self.proposals._now().isoformat()
+        with self.proposals._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                changed = db.execute(
+                    """UPDATE pending_tool_action_proposals
+                       SET execution_state='executing'
+                       WHERE proposal_id=? AND principal_id=?
+                         AND status='approved' AND execution_state='not_started'
+                         AND expires_at>?""",
+                    (proposal.proposal_id, principal_id, now),
+                ).rowcount
+                if changed != 1:
+                    db.execute("ROLLBACK")
+                    return False
+                journal.reserve_in_transaction(
+                    db, proposal.idempotency_key, proposal.tool_name,
+                    proposal.arguments, action_id=proposal.action_id,
+                )
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+        return True
+
     def execute(self, proposal_id: str, *, principal_id: str) -> ApprovedToolActionExecution:
         """Execute only the exact owner-approved proposal; never accept replacement args."""
         proposal = self.proposals.get(proposal_id, principal_id=principal_id)
@@ -129,7 +157,9 @@ class ApprovedToolActionExecutor:
             request_digest=proposal.request_digest,
         )
         context.verify(principal_id, proposal.tool_name, proposal.arguments)
-        if not self.proposals.claim_execution(proposal_id, principal_id=principal_id):
+        if not self._claim_proposal_and_reserve_action(
+            proposal, principal_id=principal_id,
+        ):
             raise ValueError("proposal execution was already claimed or is not approved")
         try:
             approval_id = self.approvals.issue(context, principal_id=principal_id)
