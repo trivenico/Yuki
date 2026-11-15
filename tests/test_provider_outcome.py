@@ -1253,6 +1253,105 @@ class ProviderOutcomeTests(unittest.TestCase):
             self.assertEqual(len(ledger), 1)
             self.assertEqual(ledger[0]["provider"], "mail.example")
 
+    def test_process_crash_after_provider_lookup_repeats_read_only_lookup_without_replaying_tool(self):
+        import multiprocessing
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.conversation_store import ConversationStore
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "provider-lookup-before-persist-crash.sqlite3"
+            store = ConversationStore(database)
+            conversation = store.create_conversation(owner_id="owner-reconcile-crash")
+            conversation_id = conversation["conversation_id"]
+            request_id = "provider-lookup-before-persist-crash"
+            store.append_message(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                role="user", content="Check the uncertain provider action",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            generation_token = "generation-reconcile-crash"
+            store.acquire_generation_lease(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                lease_token=generation_token, ttl_seconds=60,
+            )
+            try:
+                execution = store.begin_tool_execution(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-reconcile-crash",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=generation_token,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=generation_token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    lease_token=generation_token,
+                )
+
+            parent, child = context.Pipe(duplex=False)
+            lookup_events = context.Queue()
+            worker = context.Process(
+                target=_multiprocess_reconcile_and_crash_before_evidence,
+                args=(str(database), conversation_id, request_id, child, lookup_events),
+            )
+            worker.start()
+            child.close()
+            self.assertEqual(parent.recv(), "provider-lookup-returned")
+            parent.close()
+            worker.join(timeout=15)
+            self.assertEqual(worker.exitcode, 0)
+            self.assertEqual(lookup_events.get(timeout=5), "lookup")
+            self.assertEqual(store.list_provider_outcome_evidence(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-reconcile-crash",
+            ), [])
+
+            replacement_lookups = []
+
+            class ReplacementAdapter:
+                provider_id = "mail.example"
+
+                def lookup_tool_outcome(self, identity):
+                    replacement_lookups.append(identity["execution_id"])
+                    return ProviderOutcomeTests().evidence(
+                        execution_id=identity["execution_id"],
+                        idempotency_key=identity["idempotency_key"],
+                        arguments_sha256=identity["arguments_sha256"],
+                        evidence_sha256="e" * 64,
+                    )
+
+            reconciler = ProviderOutcomeReconciler(
+                store, ProviderOutcomeRegistry({"send_email": ReplacementAdapter()}),
+                lease_ttl_seconds=5, lease_renew_interval_seconds=1,
+            )
+            with patch("core.conversation_store.time.time", return_value=106.0):
+                result = reconciler.reconcile(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-reconcile-crash",
+                )
+            self.assertEqual(result["evidence_sha256"], "e" * 64)
+            self.assertEqual(replacement_lookups, [execution["execution_id"]])
+            self.assertEqual(execution["status"], "started")
+            ledger = store.list_provider_outcome_evidence(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-reconcile-crash",
+            )
+            self.assertEqual(len(ledger), 1)
+            self.assertEqual(ledger[0]["execution_id"], execution["execution_id"])
+            self.assertEqual(ledger[0]["evidence_sha256"], "e" * 64)
+            self.assertEqual(store.list_tool_executions(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                request_id=request_id,
+            )[0]["status"], "uncertain")
+
     def test_reconciliation_heartbeat_keeps_slow_provider_lookup_claimed(self):
         import tempfile
         import threading
@@ -1296,6 +1395,8 @@ class ProviderOutcomeTests(unittest.TestCase):
             lookup_started = threading.Event()
             finish_lookup = threading.Event()
             renewal_observed = threading.Event()
+            original_renew = store.renew_provider_reconciliation_lease
+
             def observe_renewal(**kwargs):
                 result = original_renew(**kwargs)
                 renewal_observed.set()
@@ -1400,7 +1501,6 @@ class ProviderOutcomeTests(unittest.TestCase):
             lookup_started = threading.Event()
             finish_lookup = threading.Event()
             renewal_failed = threading.Event()
-            original_renew = store.renew_provider_reconciliation_lease
 
             def fail_renewal(**kwargs):
                 renewal_failed.set()
