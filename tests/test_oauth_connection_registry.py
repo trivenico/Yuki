@@ -47,11 +47,12 @@ class OAuthConnectionRegistryTests(unittest.TestCase):
             owner_id="owner", provider_id="google", account_id="account",
             scopes=("gmail.send",),
         )
-        now[0] = 200
+        now[0] = 100  # Same wall-clock second: generation must still advance.
         replacement = registry.register(
             owner_id="owner", provider_id="google", account_id="account",
             scopes=("gmail.send", "gmail.readonly"),
         )
+        self.assertEqual(replacement.connected_at, original.connected_at + 1)
         self.assertFalse(registry.remove(
             owner_id="owner", provider_id="google", account_id="account",
             expected_connected_at=original.connected_at,
