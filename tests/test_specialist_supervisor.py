@@ -96,6 +96,30 @@ class SpecialistSupervisorTests(unittest.TestCase):
         self.assertFalse(resumed.awaiting_approval)
         self.assertEqual(resumed.validated_outputs["sensitive"], "facts for prepare sensitive action")
 
+
+    def test_supervisor_never_claims_unrelated_queued_tasks(self):
+        unrelated = self.runtime.enqueue(
+            actor_id="alice",
+            idempotency_key="unrelated-queued-task",
+            name="agent-research-unrelated",
+            steps=[{
+                "name": "unrelated", "action": "emit", "argument": "do not execute",
+                "requires_approval": False,
+            }],
+        )
+        report = self.supervisor.run(
+            actor_id="alice",
+            idempotency_key="supervisor-isolated-plan",
+            subtasks=[
+                SubtaskSpec("only-this-plan", "collect plan sources", ("research",),
+                            requires_approval=False),
+            ],
+        )
+        self.assertTrue(report.complete)
+        self.assertEqual(self.store.get(unrelated.task_id).state, "queued")
+        self.assertEqual(len(report.worker_results), 1)
+        self.assertEqual(report.worker_results[0].task_id, report.plan.subtasks[0].task_id)
+
     def test_supervisor_requires_shared_runtime_and_bounded_budgets(self):
         other_store = WorkflowRunStore(str(Path(self.tmp.name) / "other.sqlite3"))
         other_runtime = TaskRuntime(other_store, authorize=lambda *_: True)
