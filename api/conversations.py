@@ -383,6 +383,7 @@ class YukiConversationAPI:
             "created_at": proposal.created_at,
             "expires_at": proposal.expires_at,
             "decided_at": proposal.decided_at,
+            "execution_state": proposal.execution_state,
         }
 
     async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools):
