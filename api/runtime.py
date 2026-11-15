@@ -1,6 +1,7 @@
 """Composable ASGI runtime for authenticated Yuki conversations."""
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, Callable
 
 from api.conversations import YukiConversationAPI
@@ -39,6 +40,7 @@ class ConversationRuntime:
         self.component_registry = component_registry
         self.store = application.store
         self._closed = False
+        self._close_lock = RLock()
 
     async def __call__(self, scope, receive, send):
         if self._closed:
@@ -63,18 +65,19 @@ class ConversationRuntime:
 
     def close(self) -> None:
         """Close backend resources once during graceful application shutdown."""
-        if self._closed:
-            return
-        # Mark the wrapper closed before delegating. The application runtime
-        # also fences repeated cleanup, and this keeps the ASGI owner idempotent
-        # even when an underlying close hook raises.
-        self._closed = True
-        if self.component_registry is None:
-            self.application.close()
-            return
-        failures = self.component_registry.close()
-        if failures:
-            raise RuntimeError("component shutdown failed: " + ", ".join(failures))
+        with self._close_lock:
+            if self._closed:
+                return
+            # Serialize concurrent callers until resource teardown has finished.
+            # Keep the closed fence set even if a cleanup hook raises: cleanup
+            # is not retried implicitly against potentially partially closed resources.
+            self._closed = True
+            if self.component_registry is None:
+                self.application.close()
+                return
+            failures = self.component_registry.close()
+            if failures:
+                raise RuntimeError("component shutdown failed: " + ", ".join(failures))
 
 
 def build_conversation_runtime(
