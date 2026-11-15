@@ -23,17 +23,19 @@ class ComponentRegistryTests(unittest.TestCase):
         events = []
         registry = ComponentRegistry()
         registry.register(self.runtime("identity-access", events))
+        registry.register(self.runtime("provider-runtime", events))
         registry.register(self.runtime("agent-execution", events))
         started = registry.start_all()
-        self.assertEqual(started, ("identity-access", "agent-execution"))
+        self.assertEqual(started, ("identity-access", "provider-runtime", "agent-execution"))
         self.assertEqual(registry.resolve("identity-access").__class__, object)
         self.assertEqual(registry.health(), {
-            "identity-access": True, "agent-execution": True
+            "identity-access": True, "provider-runtime": True, "agent-execution": True
         })
         self.assertEqual(registry.close(), ())
         self.assertEqual(events, [
-            ("start", "identity-access"), ("start", "agent-execution"),
-            ("close", "agent-execution"), ("close", "identity-access"),
+            ("start", "identity-access"), ("start", "provider-runtime"),
+            ("start", "agent-execution"), ("close", "agent-execution"),
+            ("close", "provider-runtime"), ("close", "identity-access"),
         ])
         self.assertEqual(registry.close(), ())
 
@@ -49,13 +51,15 @@ class ComponentRegistryTests(unittest.TestCase):
         events = []
         registry = ComponentRegistry()
         registry.register(self.runtime("identity-access", events))
+        registry.register(self.runtime("provider-runtime", events))
         dependent = self.runtime("agent-execution", events)
         failing = replace(dependent, start=lambda: (_ for _ in ()).throw(ValueError("boom")))
         registry.register(failing)
         with self.assertRaisesRegex(RuntimeError, "startup failed"):
             registry.start_all()
         self.assertEqual(events, [
-            ("start", "identity-access"), ("close", "identity-access")
+            ("start", "identity-access"), ("start", "provider-runtime"),
+            ("close", "provider-runtime"), ("close", "identity-access")
         ])
         self.assertEqual(registry.started_components, ())
 
@@ -75,8 +79,9 @@ class ComponentRegistryTests(unittest.TestCase):
         base = self.runtime("identity-access", events)
         broken = replace(base, close=lambda: (_ for _ in ()).throw(OSError("cleanup")))
         registry.register(broken)
+        registry.register(self.runtime("configuration-runtime", events))
         registry.start_all()
-        self.assertEqual(registry.close(), ("identity-access",))
+        self.assertEqual(registry.close(), ("configuration-runtime", "identity-access"))
         self.assertTrue(registry.close() == ())
 
 
