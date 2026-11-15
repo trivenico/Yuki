@@ -76,6 +76,8 @@ class ComponentRegistry:
         self._runtimes[component_id] = runtime
 
     def resolve(self, component_id: str) -> object:
+        if self._closed:
+            raise RuntimeError("component registry is closed")
         try:
             return self._runtimes[component_id].instance
         except KeyError as exc:
@@ -119,6 +121,8 @@ class ComponentRegistry:
 
     def health(self) -> dict[str, bool]:
         """Probe only started runtimes; registered-but-inactive services are not live."""
+        if self._closed:
+            raise RuntimeError("component registry is closed")
         results: dict[str, bool] = {}
         for component_id in self._started:
             runtime = self._runtimes[component_id]
