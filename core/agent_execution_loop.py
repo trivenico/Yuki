@@ -321,9 +321,13 @@ class AgentExecutionLoop:
                     user_confirmed = (
                         confirmation_check(call) if confirmation_check is not None else False
                     )
+                    if type(user_confirmed) is not bool:
+                        raise TypeError("confirmation_check must return a boolean.")
+                    # Never mint an approval token unless the trusted host explicitly
+                    # reports approval for this exact proposed call.
                     approval_id = (
                         approval_id_factory(principal_id, action_context, call)
-                        if approval_id_factory is not None else None
+                        if user_confirmed is True and approval_id_factory is not None else None
                     )
                     result = self.tool_protocol.dispatch_call(
                         call, principal_id=principal_id,
