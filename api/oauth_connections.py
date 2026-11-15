@@ -62,6 +62,8 @@ class AuthenticatedOAuthConnectionAPI:
                 return await self._respond(send, 404, {"error": "connection_not_found"})
             try:
                 service = self._disconnect_for_provider(provider_id)
+                if getattr(service, "provider_id", None) != provider_id:
+                    raise ValueError("disconnect service provider identity mismatch")
                 result = await asyncio.to_thread(
                     service.disconnect, owner_id=user.user_id, account_id=account_id
                 )
