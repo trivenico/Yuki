@@ -74,7 +74,7 @@ class ToolActionJournalTests(unittest.TestCase):
 
     def test_uncertain_outcome_can_be_reconciled_as_success(self):
         record, _ = self.reserve_and_start()
-        self.journal.mark_outcome_unknown(record.idempotency_key)
+        self.journal.mark_outcome_unknown(record.idempotency_key, self.journal.get(record.idempotency_key).lease_owner)
         resolved = self.journal.reconcile_succeeded(
             record.idempotency_key, {"provider_id": "accepted-9"},
         )
@@ -135,8 +135,10 @@ class ToolActionJournalTests(unittest.TestCase):
             self.journal.reserve("valid", "../send", {})
         with self.assertRaises(ValueError):
             self.journal.reserve("valid", "email.send", {"payload": "x" * 33000})
+        record = self.journal.reserve("oversized-result", "email.send", {})
+        started = self.journal.begin_execution("oversized-result", record.request_digest)
         with self.assertRaises(ValueError):
-            self.journal.mark_succeeded("missing", {"payload": "x" * 17000})
+            self.journal.mark_succeeded("oversized-result", started.lease_owner, {"payload": "x" * 17000})
 
 
 if __name__ == "__main__":
