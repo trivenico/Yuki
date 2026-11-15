@@ -123,6 +123,7 @@ class SpecialistRegistry:
                 action=item.action,
                 permissions=frozenset(item.action_permissions),
                 enabled=item.enabled,
+                requires_approval=item.requires_approval,
             )
             for item in self._definitions.values()
         )
@@ -145,11 +146,15 @@ class SpecialistRegistry:
             if not isinstance(binding, Mapping):
                 raise TypeError("each runtime binding must be a mapping")
             required = {"model", "tools", "tool_definitions", "parent_policy"}
-            optional = {"stream_model", "audit"}
+            optional = {"stream_model", "audit", "provider_name"}
             if not required.issubset(binding) or set(binding).difference(required | optional):
                 raise ValueError("runtime binding contains missing or unsupported fields")
+            if item.provider_preferences:
+                provider_name = binding.get("provider_name")
+                if not isinstance(provider_name, str) or provider_name.strip().lower() not in item.provider_preferences:
+                    raise ValueError("runtime provider is outside the specialist provider preferences")
             configs[item.agent_id] = {
-                **dict(binding),
+                **{key: value for key, value in binding.items() if key != "provider_name"},
                 "allowed_tools": item.allowed_tools,
                 "loop_options": {
                     "max_model_turns": item.budget.max_model_turns,
