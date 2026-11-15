@@ -10,6 +10,7 @@ from core.durable_conversations_component_runtime import build_durable_conversat
 from core.component_registry import ComponentRegistry
 from core.identity_component_runtime import build_identity_access_component_runtime
 from core.local_identity_component_runtime import build_local_identity_access_component_runtime
+from core.owner_agent_component_runtime import build_owner_agent_execution_component_runtime
 from providers.component_runtime import build_provider_component_runtime
 
 
@@ -37,6 +38,9 @@ def build_core_component_registry(
     for runtime in runtimes:
         registry.register(runtime)
     if application_runtime is not None:
+        owner_factory = application_runtime.conversations.agent_loop_for_owner
+        if owner_factory is not None:
+            registry.register(build_owner_agent_execution_component_runtime(owner_factory))
         registry.register(build_durable_conversations_component_runtime(application_runtime))
         registry.register(build_application_composition_component_runtime(application_runtime))
     return registry
@@ -57,6 +61,13 @@ def build_local_core_component_registry(
         build_local_identity_access_component_runtime(owner_id),
         build_provider_component_runtime(provider),
         build_agent_execution_component_runtime(agent_loop),
+    )
+    for runtime in runtimes:
+        registry.register(runtime)
+    owner_factory = application_runtime.conversations.agent_loop_for_owner
+    if owner_factory is not None:
+        registry.register(build_owner_agent_execution_component_runtime(owner_factory))
+    runtimes = (
         build_durable_conversations_component_runtime(application_runtime),
         build_application_composition_component_runtime(application_runtime),
     )
