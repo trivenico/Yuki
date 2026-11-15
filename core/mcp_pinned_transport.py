@@ -80,19 +80,23 @@ class PinnedMCPHTTPTransport:
     def _resolve(self, host):
         try:
             records = self._resolver(host, 443, type=socket.SOCK_STREAM)
-        except OSError:
+            addresses = set()
+            for record in records:
+                try:
+                    ip = ipaddress.ip_address(record[4][0])
+                except (ValueError, IndexError, TypeError):
+                    raise MCPPinnedTransportError("mcp_resolution_failed") from None
+                if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+                    ip = ip.ipv4_mapped
+                if not ip.is_global:
+                    raise MCPPinnedTransportError("mcp_destination_blocked")
+                addresses.add(str(ip))
+                if len(addresses) > 32:
+                    raise MCPPinnedTransportError("mcp_resolution_failed")
+        except MCPPinnedTransportError:
+            raise
+        except (OSError, ValueError, TypeError):
             raise MCPPinnedTransportError("mcp_resolution_failed") from None
-        addresses = set()
-        for record in records:
-            try:
-                ip = ipaddress.ip_address(record[4][0])
-            except (ValueError, IndexError, TypeError):
-                raise MCPPinnedTransportError("mcp_resolution_failed") from None
-            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-                ip = ip.ipv4_mapped
-            if not ip.is_global:
-                raise MCPPinnedTransportError("mcp_destination_blocked")
-            addresses.add(str(ip))
         if not addresses:
             raise MCPPinnedTransportError("mcp_resolution_failed")
         return sorted(addresses)[0]
