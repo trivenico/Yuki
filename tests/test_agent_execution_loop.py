@@ -521,3 +521,25 @@ class AgentExecutionLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    def test_confirmation_callback_is_not_invoked_for_read_only_tool(self):
+        confirmation_calls = []
+        approval_calls = []
+        result = AgentExecutionLoop(
+            lambda **kwargs: {
+                "text": "Read complete",
+                "tool_calls": {"tool_calls": [{
+                    "id": "read_1", "name": "echo", "arguments": {"value": "safe"}
+                }]},
+            },
+            self.protocol,
+        ).run(
+            "Read safely",
+            tools=self.tools,
+            principal_id="owner-1",
+            confirmation_check=lambda call: confirmation_calls.append(call) or True,
+            approval_id_factory=lambda *args: approval_calls.append(args) or "approval-token",
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(confirmation_calls, [])
+        self.assertEqual(approval_calls, [])
+        self.assertEqual(self.invocations, [{"value": "safe"}])
