@@ -57,6 +57,11 @@ class ToolCapability:
 class ToolCapabilityCatalog:
     """Immutable, host-defined mapping of tool names to security capabilities."""
 
+    __slots__ = ("_capabilities",)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("ToolCapabilityCatalog is immutable.")
+
     def __init__(self, capabilities: Mapping[str, ToolCapability]):
         if not isinstance(capabilities, Mapping):
             raise TypeError("capabilities must be a mapping.")
@@ -67,7 +72,7 @@ class ToolCapabilityCatalog:
             if not isinstance(capability, ToolCapability):
                 raise ToolCapabilityError("every tool must have explicit ToolCapability metadata.")
             normalized[name] = capability
-        self._capabilities = MappingProxyType(normalized)
+        object.__setattr__(self, "_capabilities", MappingProxyType(normalized))
 
     def resolve(self, tool_name: str) -> ToolCapability:
         """Return host-authored metadata; unknown tools are denied by omission."""
