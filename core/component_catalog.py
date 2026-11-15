@@ -75,6 +75,15 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
         ("Hosted HTTP authentication middleware, MFA and account recovery are not complete.",),
     ),
     ComponentContract(
+        "configuration-runtime", "Centralized runtime configuration", "infrastructure", "experimental",
+        "Loads bounded YAML settings and environment overrides for portable storage, providers and integrations.",
+        ("core/config.py", "core/default_config.yaml", "core/portable_paths.py"),
+        (), ("validated configuration schema", "safe environment overrides",
+             "portable config and workspace resolution", "explicit integration allowlists"),
+        ("tests/test_config.py", "tests/test_portable_paths.py"),
+        ("Configuration validation does not replace secret rotation, deployment policy or runtime health checks.",),
+    ),
+    ComponentContract(
         "provider-runtime", "Model provider runtime", "infrastructure", "experimental",
         "Constructs configured model adapters and exposes provider/model selection.",
         ("providers/factory.py", "providers/runtime_manager.py"),
