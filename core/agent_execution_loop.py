@@ -327,7 +327,7 @@ class AgentExecutionLoop:
                     # reports approval for this exact proposed call.
                     approval_id = (
                         approval_id_factory(principal_id, action_context, call)
-                        if user_confirmed is True and approval_id_factory is not None else None
+                        if user_confirmed is True and action_context is not None and approval_id_factory is not None else None
                     )
                     result = self.tool_protocol.dispatch_call(
                         call, principal_id=principal_id,
