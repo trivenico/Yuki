@@ -135,6 +135,25 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         status, body = self.request("GET", "/v1/devices", token=paired["device_token"])
         self.assertEqual((status, body["error"]), (401, "authentication_required"))
 
+
+    def test_oversized_inference_body_returns_413(self):
+        async def run():
+            events = [
+                {"type": "http.request", "body": b"x" * 70_001, "more_body": False}
+            ]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            await self.app({
+                "type": "http", "method": "POST", "path": "/v1/devices/pair",
+                "headers": [], "query_string": b"",
+            }, receive, send)
+            return sent[0]["status"], json.loads(sent[1]["body"])
+        status, body = asyncio.run(run())
+        self.assertEqual((status, body), (413, {"error": "request_body_too_large"}))
+
     def test_unrelated_routes_are_delegated(self):
         status, body = self.request("GET", "/healthz")
         self.assertEqual((status, body["delegated"]), (200, True))

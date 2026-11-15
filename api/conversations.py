@@ -14,6 +14,7 @@ import threading
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
+from core.request_body import RequestBodyTooLarge, read_json_object
 from core.conversation_service import ConversationService
 from core.conversation_store import (
     ConversationConflict,
@@ -257,6 +258,8 @@ class YukiConversationAPI:
             return await self._respond(send, 404, {"error": "not_found"})
         except ConversationConflict:
             return await self._respond(send, 409, {"error": "conversation_conflict"})
+        except RequestBodyTooLarge:
+            return await self._respond(send, 413, {"error": "request_body_too_large"})
         except (ValueError, ConversationError):
             return await self._respond(send, 400, {"error": "invalid_request"})
         except Exception:
@@ -367,25 +370,7 @@ class YukiConversationAPI:
 
     @staticmethod
     async def _body(receive):
-        chunks = bytearray()
-        while True:
-            event = await receive()
-            if event["type"] == "http.disconnect":
-                raise ValueError("client disconnected")
-            if event["type"] != "http.request":
-                continue
-            chunks.extend(event.get("body", b""))
-            if len(chunks) > _MAX_BODY_BYTES:
-                raise ValueError("request body too large")
-            if not event.get("more_body", False):
-                break
-        try:
-            value = json.loads(chunks.decode("utf-8") or "{}")
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ValueError("invalid JSON") from None
-        if not isinstance(value, dict):
-            raise ValueError("JSON body must be an object")
-        return value
+        return await read_json_object(receive, max_bytes=_MAX_BODY_BYTES)
 
     @staticmethod
     def _query(scope):

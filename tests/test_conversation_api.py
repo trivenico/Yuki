@@ -239,7 +239,7 @@ class ConversationAPITests(unittest.TestCase):
                 receive, send,
             )
             return sent[0]["status"]
-        self.assertEqual(asyncio.run(run()), 400)
+        self.assertEqual(asyncio.run(run()), 413)
 
 
     def test_authenticated_stream_endpoint_emits_sse_and_persists_reply(self):
