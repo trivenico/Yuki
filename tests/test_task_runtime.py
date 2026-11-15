@@ -375,6 +375,10 @@ class TaskRuntimeTests(unittest.TestCase):
         again = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                           expected_version=failed.version)
         self.assertEqual(again.task_id, retried.task_id)
+        events_after_retry = self.runtime.events(
+            actor_id="alice", task_id=retried.task_id,
+        )
+        self.assertEqual([event.kind for event in events_after_retry], ["task.created"])
 
     def test_retry_creation_and_audit_event_roll_back_together(self):
         task = self.create("retry-atomic-source")
