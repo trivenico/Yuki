@@ -50,15 +50,25 @@ class ComponentContract:
             errors.append("at least one public contract is required")
         if self.status == "implemented" and not self.test_evidence:
             errors.append("implemented components require test evidence")
-        fields = (
-            self.entrypoints + self.depends_on + self.public_contract
-            + self.test_evidence + self.limitations
+        collection_names = (
+            "entrypoints", "depends_on", "public_contract", "test_evidence", "limitations"
         )
-        if any(not isinstance(value, str) or not value.strip() for value in fields):
-            errors.append("contract collections must contain non-empty strings")
-        if len(set(self.entrypoints)) != len(self.entrypoints):
+        valid_collections: dict[str, tuple[str, ...]] = {}
+        for name in collection_names:
+            value = getattr(self, name)
+            if not isinstance(value, tuple):
+                errors.append(f"{name} must be a tuple")
+                continue
+            valid_values = tuple(
+                item for item in value
+                if isinstance(item, str) and bool(item.strip())
+            )
+            if len(valid_values) != len(value):
+                errors.append(f"{name} must contain only non-empty strings")
+            valid_collections[name] = valid_values
+        if len(set(valid_collections.get("entrypoints", ()))) != len(valid_collections.get("entrypoints", ())):
             errors.append("duplicate entrypoint")
-        if len(set(self.depends_on)) != len(self.depends_on):
+        if len(set(valid_collections.get("depends_on", ()))) != len(valid_collections.get("depends_on", ())):
             errors.append("duplicate dependency")
         return errors
 
@@ -224,9 +234,14 @@ def validate_component_catalog(
     by_id: dict[str, ComponentContract] = {}
 
     for item in entries:
-        prefix = item.component_id or "<missing-id>"
+        if not isinstance(item, ComponentContract):
+            errors.append("catalog entries must be ComponentContract instances")
+            continue
+        prefix = item.component_id if isinstance(item.component_id, str) and item.component_id else "<missing-id>"
         for error in item.validate():
             errors.append(f"{prefix}: {error}")
+        if not isinstance(item.component_id, str) or not item.component_id:
+            continue
         if item.component_id in by_id:
             errors.append(f"{prefix}: duplicate component_id")
         by_id[item.component_id] = item
