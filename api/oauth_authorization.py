@@ -93,6 +93,8 @@ class AuthenticatedOAuthAuthorizationAPI:
             service = self._service_for_provider(provider_id)
             if service is None:
                 return await self._respond(send, 404, {"error": "provider_not_configured"})
+            if getattr(service, "provider_id", None) != provider_id:
+                return await self._respond(send, 503, {"error": "provider_service_mismatch"})
             if action == "authorize":
                 payload = await self._body(receive)
                 if payload:
