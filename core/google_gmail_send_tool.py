@@ -10,6 +10,7 @@ import json
 from core.google_gmail_send_client import GmailSendClient
 from core.tool_action_context import ToolActionContext
 from core.tool_action_journal import ToolAction
+from core.tool_capabilities import ToolCapability, ToolEffect
 
 GMAIL_SEND_TOOL_NAME = "gmail.send_email"
 
@@ -100,3 +101,24 @@ class GmailSendTool:
             body=payload["body"],
         )
         return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+
+
+def gmail_send_tool_capability() -> ToolCapability:
+    """Host-authored classification for the guarded tool registry."""
+    return ToolCapability(
+        ToolEffect.SIDE_EFFECTING,
+        requires_user_confirmation=True,
+        provider_idempotency=False,
+        supports_reconciliation=True,
+    )
+
+
+def build_gmail_send_tool_registration(client: GmailSendClient):
+    """Return the exact handler, model schema, and capability metadata to register."""
+    handler = GmailSendTool(client)
+    return {
+        "name": GMAIL_SEND_TOOL_NAME,
+        "handler": handler,
+        "definition": handler.definition(),
+        "capability": gmail_send_tool_capability(),
+    }
