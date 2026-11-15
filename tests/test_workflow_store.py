@@ -86,6 +86,23 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 definition=self.definition, plan_id="plan-1",
             )
 
+    def test_claim_skips_more_than_one_hundred_unapproved_tasks(self):
+        for index in range(101):
+            self.store.create(
+                idempotency_key=f"approval-backlog-{index}",
+                workflow_name="approval-gated",
+                definition=self.definition,
+            )
+        runnable = self.store.create(
+            idempotency_key="runnable-after-approval-backlog",
+            workflow_name="unblocked",
+            definition=[{"name": "work", "action": "emit", "argument": "run", "requires_approval": False}],
+        )
+        claimed = self.store.claim_next(worker_id="worker-after-backlog")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, runnable.run_id)
+        self.assertEqual(claimed.state, "running")
+
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)
