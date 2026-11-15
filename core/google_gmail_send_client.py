@@ -13,7 +13,9 @@ from email.headerregistry import Address
 from email.message import EmailMessage
 from urllib.request import Request
 
-from core.oauth_provider_credentials import (\n    OAuthProviderCredentialError, OAuthProviderCredentialResolver,\n)
+from core.oauth_provider_credentials import (
+    OAuthProviderCredentialError, OAuthProviderCredentialResolver,
+)
 from core.tool_action_journal import ToolAction
 
 _GMAIL_API = "https://gmail.googleapis.com"
