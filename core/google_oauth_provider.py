@@ -76,7 +76,7 @@ class GoogleOAuthConfigurationError(ValueError):
 def build_google_gmail_authorization_service(
     *, client_id: str, redirect_uri: str, transaction_store,
     credential_vault, pinned_transport, trusted_redirect_hosts, account_id_resolver=None,
-    clock=None, jwks_cache=None,
+    clock=None, jwks_cache=None, lifecycle_coordinator=None,
 ) -> OAuthAuthorizationService:
     """Build Google authorization-code + PKCE with cryptographic OIDC binding."""
     if not isinstance(client_id, str) or not client_id.strip() or len(client_id) > 512:
@@ -126,6 +126,7 @@ def build_google_gmail_authorization_service(
         scopes=GOOGLE_GMAIL_SCOPES, identity_verifier=identity_verifier,
         oidc_verifier=oidc_verifier, account_id_resolver=account_id_resolver,
         include_resource_parameter=False,
+        lifecycle_coordinator=lifecycle_coordinator,
         authorization_parameters=(
             ("access_type", "offline"), ("include_granted_scopes", "true"),
             ("prompt", "consent"),
