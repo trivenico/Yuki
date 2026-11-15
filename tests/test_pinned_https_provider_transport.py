@@ -23,6 +23,9 @@ class FakeResponse:
     def readline(self, amount=-1):
         return self.read(amount)
 
+    def close(self):
+        pass
+
 
 class FakeConnection:
     def __init__(self, host, ip, *, timeout, context, status=200):
