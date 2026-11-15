@@ -135,6 +135,28 @@ class LocalCliRuntimeTests(unittest.TestCase):
             self.assertEqual(provider.close_calls, 1)
             store.close.assert_called_once_with()
 
+    def test_complete_configuration_is_bound_into_component_graph(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            runtime = build_local_conversation_runtime(
+                {
+                    "max_agent_steps": 3,
+                    "workspace": directory,
+                    "provider": "mock",
+                    "storage_backend": "sqlite",
+                },
+                provider_factory=lambda config: provider,
+                store_factory=lambda config: ConversationStore(Path(directory) / "conversations.sqlite3"),
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+            )
+            try:
+                self.assertIn("configuration-runtime", runtime.component_registry.started_components)
+                snapshot = runtime.component_registry.resolve("configuration-runtime")
+                self.assertEqual(snapshot.get("workspace"), directory)
+                self.assertTrue(runtime.component_registry.health()["configuration-runtime"])
+            finally:
+                runtime.close()
+
     def test_runtime_readiness_reflects_started_components_and_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
             provider = FakeProvider()
