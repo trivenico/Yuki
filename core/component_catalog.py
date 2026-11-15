@@ -321,6 +321,13 @@ def component_dependency_order(
     for item in entries:
         if not isinstance(item, ComponentContract):
             raise ValueError("catalog entries must be ComponentContract instances")
+        if not isinstance(item.component_id, str) or not item.component_id:
+            raise ValueError("component_id must be a non-empty string")
+        if not isinstance(item.depends_on, tuple) or any(
+            not isinstance(dependency, str) or not dependency
+            for dependency in item.depends_on
+        ):
+            raise ValueError(f"invalid dependency collection: {item.component_id}")
         if item.component_id in by_id:
             raise ValueError(f"duplicate component_id: {item.component_id}")
         by_id[item.component_id] = item
