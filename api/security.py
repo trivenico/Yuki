@@ -107,6 +107,10 @@ class APISecurityMiddleware:
         self.app = app
         self.limiter = limiter or FixedWindowRateLimiter()
 
+    def close(self) -> None:
+        """Release process-local limiter state during runtime shutdown."""
+        self.limiter.close()
+
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
