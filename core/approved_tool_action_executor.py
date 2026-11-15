@@ -118,9 +118,18 @@ class ApprovedToolActionExecutor:
         try:
             approval_id = self.approvals.issue(context, principal_id=principal_id)
         except Exception:
-            self.proposals.finish_execution(
-                proposal_id, principal_id=principal_id, outcome_unknown=True,
+            # Token issuance is a pre-dispatch operation. Its SQLite transaction
+            # rolls back on failure, so no provider side effect can have begun.
+            # Release the proposal claim instead of incorrectly parking it in
+            # outcome_unknown, which requires provider reconciliation.
+            released = self.proposals.release_recovered_pre_dispatch_claim(
+                proposal_id, principal_id=principal_id,
             )
+            if not released:
+                raise RuntimeError(
+                    "approval issuance failed and the pre-dispatch proposal claim "
+                    "could not be safely released"
+                )
             raise
         try:
             argument = json.dumps(
