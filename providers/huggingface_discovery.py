@@ -12,6 +12,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport, PinnedHTTPTransportError
+
 HUB_API = "https://huggingface.co/api/models"
 _ALLOWED_TASKS = frozenset({
     "text-generation", "text2text-generation", "conversational",
@@ -24,12 +26,6 @@ _MAX_RESPONSE_BYTES = 1_500_000
 
 class DiscoveryError(RuntimeError):
     """Raised when the Hub response is invalid or discovery cannot complete."""
-
-
-class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    """Keep optional bearer credentials and requests on the fixed Hub endpoint."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
 
 
 def _bounded_int(value, default=0):
@@ -79,14 +75,16 @@ def normalize_model(item):
 class HuggingFaceDiscovery:
     """Discover public Hub model metadata with an allow-listed HTTPS endpoint."""
 
-    def __init__(self, *, timeout=10, max_results=20, opener=None):
+    def __init__(self, *, timeout=10, max_results=20, transport=None):
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 30:
             raise ValueError("timeout must be between 1 and 30 seconds")
         if isinstance(max_results, bool) or not isinstance(max_results, int) or not 1 <= max_results <= 100:
             raise ValueError("max_results must be between 1 and 100")
         self.timeout = timeout
         self.max_results = max_results
-        self._opener = opener or urllib.request.build_opener(_RejectRedirects())
+        if transport is not None and not callable(getattr(transport, "open", None)):
+            raise TypeError("transport must provide an open(request, timeout=...) method")
+        self._transport = transport or PinnedHTTPSProviderTransport(allowed_hosts={"huggingface.co"}, timeout=timeout)
 
     def discover(self, *, task="text-generation", sort="downloads", token=None):
         if task not in _ALLOWED_TASKS:
@@ -105,9 +103,9 @@ class HuggingFaceDiscovery:
             headers["Authorization"] = "Bearer " + token
         request = urllib.request.Request(url, headers=headers, method="GET")
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise DiscoveryError("Hugging Face Hub metadata request failed") from exc
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise DiscoveryError("Hugging Face Hub response exceeded the size limit")
