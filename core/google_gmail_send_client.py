@@ -86,7 +86,8 @@ class GmailSendClient:
             raise GmailSendError("invalid_gmail_" + label)
         if not allow_empty and not value.strip():
             raise GmailSendError("invalid_gmail_" + label)
-        if any(ord(char) == 0 or ord(char) == 127 for char in value):
+        if (any(ord(char) == 0 or ord(char) == 127 for char in value)
+                or (label == "subject" and any(ord(char) < 32 for char in value))):
             raise GmailSendError("invalid_gmail_" + label)
         return value
 
