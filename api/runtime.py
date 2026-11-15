@@ -37,6 +37,8 @@ class ConversationRuntime:
         self._closed = False
 
     async def __call__(self, scope, receive, send):
+        if self._closed:
+            raise RuntimeError("conversation runtime is closed")
         if scope.get("type") == "http":
             await self.web(scope, receive, send)
             return
