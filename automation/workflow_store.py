@@ -581,16 +581,26 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def mark_expired_running_as_interrupted(self, *, now: datetime | None = None, limit: int = 50) -> list[WorkflowRun]:
-        """Mark expired leases interrupted; never automatically replay side effects."""
+    def mark_expired_running_as_interrupted(
+        self, *, actor_id: str, now: datetime | None = None, limit: int = 50,
+    ) -> list[WorkflowRun]:
+        """Atomically interrupt expired leases and journal each recovery."""
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        actor_id = actor_id.strip()
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         current_time = now or datetime.now(timezone.utc)
         if current_time.tzinfo is None:
             raise ValueError("now must be timezone-aware.")
         cutoff = current_time.astimezone(timezone.utc).isoformat()
+        payload_json = _bounded_json(
+            {"state": "interrupted", "error_code": "lease_expired", "automatic_replay": False},
+            8 * 1024, "task event payload",
+        )
         changed: list[WorkflowRun] = []
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             rows = db.execute("""
                 SELECT * FROM workflow_runs
                 WHERE state='running' AND lease_expires_at IS NOT NULL
@@ -602,8 +612,18 @@ class WorkflowRunStore:
                     UPDATE workflow_runs SET state='interrupted', error_code='lease_expired',
                         updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
                     WHERE run_id=? AND version=? AND state='running'
-                """, (cutoff, row["run_id"], row["version"]))
+                        AND lease_expires_at IS NOT NULL AND lease_expires_at < ?
+                """, (cutoff, row["run_id"], row["version"], cutoff))
                 if updated.rowcount == 1:
+                    sequence = db.execute(
+                        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                        (row["run_id"],),
+                    ).fetchone()[0]
+                    db.execute(
+                        "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                        "VALUES (?, ?, 'task.interrupted', ?, ?, ?)",
+                        (row["run_id"], sequence, actor_id, payload_json, cutoff),
+                    )
                     changed_row = db.execute(
                         "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
                     ).fetchone()
