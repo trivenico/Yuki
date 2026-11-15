@@ -447,6 +447,7 @@ class WorkflowRunStore:
         error_code: str | None = None,
         lease_owner: str | None = None,
         lease_seconds: int = 60,
+        expected_lease_owner: str | None = None,
     ) -> WorkflowRun:
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
@@ -454,6 +455,13 @@ class WorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if expected_lease_owner is not None and (
+            not isinstance(expected_lease_owner, str)
+            or not expected_lease_owner.strip()
+            or len(expected_lease_owner) > 200
+            or "\\x00" in expected_lease_owner
+        ):
+            raise ValueError("expected_lease_owner must be bounded non-empty text.")
         if error_code is not None and (
             not isinstance(error_code, str) or not error_code or len(error_code) > 100
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in error_code)
@@ -486,16 +494,34 @@ class WorkflowRunStore:
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             attempts = current.attempts + (1 if to_state == "running" else 0)
-            updated = db.execute("""
-                UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
-                    updated_at=?, version=version+1, attempts=?, lease_owner=?,
-                    lease_expires_at=?
-                WHERE run_id=? AND version=?
-            """, (
-                to_state, result_json, error_code, now, attempts, lease_owner,
-                lease_expires, run_id, expected_version
-            ))
+            if expected_lease_owner is None:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
+                        updated_at=?, version=version+1, attempts=?, lease_owner=?,
+                        lease_expires_at=?
+                    WHERE run_id=? AND version=?
+                """, (
+                    to_state, result_json, error_code, now, attempts, lease_owner,
+                    lease_expires, run_id, expected_version
+                ))
+            else:
+                # Enforce worker ownership and lease validity in the same SQL
+                # statement as the terminal transition; a preflight read alone
+                # would leave a lease-expiry race before the write.
+                updated = db.execute("""
+                    UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
+                        updated_at=?, version=version+1, attempts=?, lease_owner=?,
+                        lease_expires_at=?
+                    WHERE run_id=? AND version=? AND state='running'
+                        AND lease_owner=? AND lease_expires_at>?
+                """, (
+                    to_state, result_json, error_code, now, attempts, lease_owner,
+                    lease_expires, run_id, expected_version,
+                    expected_lease_owner.strip(), now,
+                ))
             if updated.rowcount != 1:
+                if expected_lease_owner is not None:
+                    raise WorkflowConflict("worker lease is no longer active.")
                 raise WorkflowConflict("workflow run changed concurrently.")
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
