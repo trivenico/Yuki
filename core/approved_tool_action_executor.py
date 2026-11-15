@@ -67,10 +67,22 @@ class ApprovedToolActionExecutor:
         # Recover only this proposal's action; an owner must not trigger
         # maintenance transitions for another user's unrelated executions.
         action = journal.recover_expired_execution(proposal.idempotency_key)
-        if action is None or action.state in {"prepared", "executing"}:
-            # A prepared action can still be moving into its dispatch lease.
-            # Keep the proposal claimed until a durable terminal/unknown state
-            # proves what happened.
+        if action is None or action.state == "executing":
+            # No journal row means the worker may still be between proposal
+            # claim and reservation. An active execution lease is also live.
+            return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
+        if action.state == "prepared":
+            # Version 2+ proves an authorizing claim was acquired and then
+            # fenced/released back to prepared. No dispatch lease ever began,
+            # so the proposal claim can be made available for a safe retry.
+            if action.version >= 2:
+                released = self.proposals.release_recovered_pre_dispatch_claim(
+                    proposal_id, principal_id=principal_id,
+                )
+                if released:
+                    return ApprovedToolActionExecution(
+                        proposal_id, state="not_started", result=None,
+                    )
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         recovered_state = "finished" if action.state == "succeeded" else "unknown"
         self.proposals.recover_execution_state(
