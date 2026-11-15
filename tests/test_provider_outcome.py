@@ -83,6 +83,53 @@ def _multiprocess_reconcile_and_crash_before_evidence(database_path, conversatio
     )
     os._exit(2)
 
+
+def _multiprocess_reconcile_after_crash(database_path, conversation_id, request_id, barrier, connection, lookup_count, lookup_lock, lookup_release):
+    import core.conversation_store as store_module
+    from core.conversation_store import ConversationConflict, ConversationStore
+    from core.provider_outcome import (
+        ProviderOutcome, ProviderOutcomeEvidence, ProviderOutcomeReconciler,
+        ProviderOutcomeRegistry,
+    )
+    store_module.time.time = lambda: 106.0
+    store = ConversationStore(database_path)
+
+    class Adapter:
+        provider_id = "mail.example"
+        def lookup_tool_outcome(self, identity):
+            with lookup_lock:
+                lookup_count.value += 1
+            connection.send(("lookup-started", None))
+            if not lookup_release.wait(timeout=15):
+                raise TimeoutError("parent did not release the serialized provider lookup")
+            return ProviderOutcomeEvidence(
+                provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+                idempotency_key=identity["idempotency_key"],
+                arguments_sha256=identity["arguments_sha256"],
+                evidence_sha256="f" * 64,
+                observed_at=datetime.now(timezone.utc).isoformat(),
+                execution_id=identity["execution_id"],
+            )
+
+    reconciler = ProviderOutcomeReconciler(
+        store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+        lease_ttl_seconds=5, lease_renew_interval_seconds=1,
+    )
+    try:
+        barrier.wait(timeout=15)
+        result = reconciler.reconcile(
+            owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+            request_id=request_id, call_id="call-reconcile-crash",
+        )
+    except ConversationConflict:
+        connection.send(("lost", None))
+    except Exception as exc:
+        connection.send(("error", repr(exc)))
+    else:
+        connection.send(("won", result["evidence_sha256"]))
+    finally:
+        connection.close()
+
 class ProviderOutcomeTests(unittest.TestCase):
     def setUp(self):
         self.execution = {
@@ -1387,6 +1434,105 @@ class ProviderOutcomeTests(unittest.TestCase):
             self.assertEqual(len(ledger), 1)
             self.assertEqual(ledger[0]["execution_id"], execution["execution_id"])
             self.assertEqual(ledger[0]["evidence_sha256"], "e" * 64)
+            self.assertEqual(store.list_tool_executions(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                request_id=request_id,
+            )[0]["status"], "uncertain")
+
+
+    def test_concurrent_replacement_processes_allow_only_one_post_crash_observation(self):
+        import multiprocessing
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.conversation_store import ConversationStore
+
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "concurrent-provider-recovery.sqlite3"
+            store = ConversationStore(database)
+            conversation = store.create_conversation(owner_id="owner-reconcile-crash")
+            conversation_id = conversation["conversation_id"]
+            request_id = "concurrent-provider-recovery"
+            store.append_message(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                role="user", content="Recover provider status",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            generation_token = "generation-concurrent-recovery"
+            store.acquire_generation_lease(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                lease_token=generation_token, ttl_seconds=60,
+            )
+            try:
+                execution = store.begin_tool_execution(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-reconcile-crash",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=generation_token,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=generation_token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    lease_token=generation_token,
+                )
+
+            with patch("core.conversation_store.time.time", return_value=100.0):
+                store.acquire_provider_reconciliation_lease(
+                    owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-reconcile-crash",
+                    lease_token="crashed-worker", ttl_seconds=5,
+                )
+
+            barrier = context.Barrier(2)
+            lookup_count = context.Value("i", 0)
+            lookup_lock = context.Lock()
+            lookup_release = context.Event()
+            workers, parents = [], []
+            for _ in range(2):
+                parent, child = context.Pipe(duplex=False)
+                parents.append(parent)
+                worker = context.Process(
+                    target=_multiprocess_reconcile_after_crash,
+                    args=(str(database), conversation_id, request_id, barrier,
+                          child, lookup_count, lookup_lock, lookup_release),
+                )
+                workers.append(worker)
+                worker.start()
+                child.close()
+
+            initial = [parent.recv() for parent in parents]
+            self.assertEqual(sorted(message[0] for message in initial),
+                             ["lookup-started", "lost"])
+            # Keep the winner's lease live until the competing process has
+            # definitively attempted its claim; otherwise it could acquire the
+            # lease after a fast winner releases it and perform a second lookup.
+            lookup_release.set()
+            outcomes = []
+            for parent, message in zip(parents, initial):
+                if message[0] == "lookup-started":
+                    outcomes.append(parent.recv())
+                else:
+                    outcomes.append(message)
+                parent.close()
+            for worker in workers:
+                worker.join(timeout=20)
+                self.assertEqual(worker.exitcode, 0)
+
+            self.assertEqual(sorted(outcome[0] for outcome in outcomes), ["lost", "won"])
+            self.assertEqual(lookup_count.value, 1)
+            ledger = store.list_provider_outcome_evidence(
+                owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-reconcile-crash",
+            )
+            self.assertEqual(len(ledger), 1)
+            self.assertEqual(ledger[0]["execution_id"], execution["execution_id"])
+            self.assertEqual(ledger[0]["evidence_sha256"], "f" * 64)
             self.assertEqual(store.list_tool_executions(
                 owner_id="owner-reconcile-crash", conversation_id=conversation_id,
                 request_id=request_id,

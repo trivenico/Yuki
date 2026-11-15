@@ -1334,15 +1334,14 @@ class ConversationServiceTests(unittest.TestCase):
                     tools=[],
                 )
                 self.assertTrue(entered_recovery.wait(timeout=2))
-                try:
-                    with self.store._connect() as db:
-                        db.execute(
-                            """UPDATE conversation_generation_leases
-                               SET lease_token=?, expires_at=?
-                               WHERE owner_id=? AND conversation_id=?""",
-                            ("replacement-during-recovery", 9999999999,
-                             "owner-a", self.conversation["conversation_id"]),
-                        )
+                with self.store._connect() as db:
+                    db.execute(
+                        """UPDATE conversation_generation_leases
+                           SET lease_token=?, expires_at=?
+                           WHERE owner_id=? AND conversation_id=?""",
+                        ("replacement-during-recovery", 9999999999,
+                         "owner-a", self.conversation["conversation_id"]),
+                    )
                 try:
                     self.assertTrue(renewal_rejected.wait(timeout=2))
                 finally:
