@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from core.agent_component_runtime import build_agent_execution_component_runtime
+from core.configuration_component_runtime import build_configuration_component_runtime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.application_component_runtime import build_application_composition_component_runtime
 from core.conversation_application_runtime import ConversationApplicationRuntime
@@ -12,7 +13,7 @@ from core.local_identity_component_runtime import build_local_identity_access_co
 from providers.component_runtime import build_provider_component_runtime
 
 
-def build_core_component_registry(*, auth_service, provider, agent_loop: AgentExecutionLoop, application_runtime: ConversationApplicationRuntime | None = None) -> ComponentRegistry:
+def build_core_component_registry(*, auth_service, provider, agent_loop: AgentExecutionLoop, application_runtime: ConversationApplicationRuntime | None = None, config: dict | None = None) -> ComponentRegistry:
     """Register identity, provider and agent runtimes without starting them.
 
     Registration is separate from startup so callers can inspect or extend
@@ -31,7 +32,7 @@ def build_core_component_registry(*, auth_service, provider, agent_loop: AgentEx
         registry.register(build_application_composition_component_runtime(application_runtime))
     return registry
 
-def build_local_core_component_registry(*, owner_id: str, provider, agent_loop: AgentExecutionLoop, application_runtime: ConversationApplicationRuntime) -> ComponentRegistry:
+def build_local_core_component_registry(*, owner_id: str, provider, agent_loop: AgentExecutionLoop, application_runtime: ConversationApplicationRuntime, config: dict | None = None) -> ComponentRegistry:
     """Compose the local-only CLI graph with a non-network owner identity."""
     registry = ComponentRegistry()
     runtimes = (
