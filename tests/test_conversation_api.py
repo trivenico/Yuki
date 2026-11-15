@@ -475,5 +475,54 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(len(calls), 1)
 
+
+    def test_recovery_endpoint_is_authenticated_and_owner_scoped(self):
+        root = Path(self.tempdir.name)
+        proposals = SQLitePendingToolActionProposalStore(str(root / "recover-proposals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "recover-approvals.sqlite"))
+        journal = ToolActionJournal(str(root / "recover-journal.sqlite"))
+
+        class AllowEmailPolicy:
+            def authorize_tool(self, name):
+                return True
+
+        guarded = GuardedToolRuntime(
+            {"email.send": lambda raw: "sent"},
+            AllowEmailPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=journal,
+            approval_store=approvals,
+        )
+        executor = ApprovedToolActionExecutor(proposals, approvals, guarded)
+        self.app.pending_tool_action_proposals = proposals
+        self.app.tool_action_approvals = approvals
+        self.app.approved_tool_action_executor = executor
+        arguments = {"to": "recipient@example.com"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = proposals.create(context, arguments, principal_id=self.user.user_id)
+        proposals.decide(proposal.proposal_id, principal_id=self.user.user_id, decision="approved")
+        self.assertTrue(proposals.claim_execution(proposal.proposal_id, principal_id=self.user.user_id))
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/recover",
+        )
+        self.assertEqual(status, 401)
+
+        status, data, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/recover",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["execution_state"], "unknown")
+        self.assertEqual(data["result"], None)
+        self.assertEqual(proposals.get(
+            proposal.proposal_id, principal_id=self.user.user_id,
+        ).execution_state, "unknown")
+
 if __name__ == "__main__":
     unittest.main()
