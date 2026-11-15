@@ -30,6 +30,7 @@ from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
+from core.tool_action_context import ToolActionContext
 
 
 class ConversationRuntime:
@@ -168,6 +169,24 @@ def build_conversation_runtime(
         raise TypeError("oauth_provider_catalog must be callable")
     if oauth_provider_catalog is not None and oauth_authorization_service_for_provider is None:
         raise ValueError("OAuth provider catalog requires authorization service configuration")
+
+    # When durable approvals are configured, provide safe default host adapters.
+    # The confirmation decision remains an explicit embedding/UI responsibility;
+    # AgentExecutionLoop defaults it to False when no checker is supplied.
+    if tool_action_approvals is not None:
+        if action_context_factory is None:
+            action_context_factory = (
+                lambda principal_id, tool_name, arguments:
+                ToolActionContext.create(principal_id, tool_name, arguments)
+                if principal_id is not None else None
+            )
+        if approval_id_factory is None:
+            def approval_id_factory(principal_id, action_context, call):
+                if principal_id is None or action_context is None:
+                    return None
+                return tool_action_approvals.issue(
+                    action_context, principal_id=principal_id,
+                )
 
     application = build_conversation_application_runtime(
         config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
