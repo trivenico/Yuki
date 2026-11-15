@@ -78,7 +78,7 @@ class HuggingFaceDiscoveryTests(unittest.TestCase):
 
     def test_token_is_never_added_to_url(self):
         opener = _Opener(b"[]")
-        HuggingFaceDiscovery(opener=opener).discover(token="hf_test_token")
+        HuggingFaceDiscovery(transport=opener).discover(token="hf_test_token")
         self.assertNotIn("hf_test_token", opener.request.full_url)
         self.assertEqual(opener.request.get_header("Authorization"), "Bearer hf_test_token")
 
@@ -89,7 +89,7 @@ class HuggingFaceDiscoveryTests(unittest.TestCase):
     @patch("providers.huggingface_discovery.datetime")
     def test_discovery_timestamp_is_utc(self, mock_datetime):
         mock_datetime.now.return_value.isoformat.return_value = "2026-10-22T00:00:00+00:00"
-        result = HuggingFaceDiscovery(opener=_Opener(b"[]")).discover()
+        result = HuggingFaceDiscovery(transport=_Opener(b"[]")).discover()
         self.assertIn("+00:00", result["queried_at"])
 
 
