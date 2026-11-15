@@ -483,6 +483,8 @@ class WorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if kind in {"task.progress", "task.artifact"} and expected_lease_owner is None:
+            raise ValueError("worker progress and artifact events require an active lease owner.")
         if expected_lease_owner is not None and (
             not isinstance(expected_lease_owner, str)
             or not expected_lease_owner.strip()
