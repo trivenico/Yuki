@@ -16,24 +16,34 @@ from core.structured_tool_protocol import StructuredToolProtocol
 
 
 
-def _multiprocess_claim_generation_lease(database_path, conversation_id, token, barrier, results):
+def _multiprocess_claim_generation_lease(
+    database_path, conversation_id, token, barrier, results, release_event,
+):
     store = ConversationStore(database_path)
+    acquired = False
     try:
         barrier.wait(timeout=10)
         store.acquire_generation_lease(
             owner_id="owner-a", conversation_id=conversation_id,
             lease_token=token, ttl_seconds=60,
         )
+        acquired = True
+        results.put(("acquired", token))
+        # Keep the winning lease alive until the parent has observed both
+        # competing claims; otherwise the winner may release before the loser
+        # reaches SQLite, making this a scheduling test rather than a fencing test.
+        if not release_event.wait(timeout=20):
+            raise RuntimeError("parent did not release the winning lease")
     except ConversationConflict:
         results.put(("conflict", token))
     except Exception as exc:
         results.put(("error", repr(exc)))
-    else:
-        results.put(("acquired", token))
-        store.release_generation_lease(
-            owner_id="owner-a", conversation_id=conversation_id,
-            lease_token=token,
-        )
+    finally:
+        if acquired:
+            store.release_generation_lease(
+                owner_id="owner-a", conversation_id=conversation_id,
+                lease_token=token,
+            )
 
 
 def _multiprocess_mark_uncertain_then_crash(database_path, conversation_id, request_id, connection):
@@ -1477,10 +1487,11 @@ class ConversationServiceTests(unittest.TestCase):
         context = multiprocessing.get_context("spawn")
         barrier = context.Barrier(2)
         results = context.Queue()
+        release_event = context.Event()
         workers = [
             context.Process(
                 target=_multiprocess_claim_generation_lease,
-                args=(str(database_path), conversation_id, token, barrier, results),
+                args=(str(database_path), conversation_id, token, barrier, results, release_event),
             )
             for token in ("process-worker-a", "process-worker-b")
         ]
@@ -1489,11 +1500,13 @@ class ConversationServiceTests(unittest.TestCase):
             worker.start()
         try:
             outcomes = [results.get(timeout=20) for _ in workers]
+            release_event.set()
             for worker in workers:
                 worker.join(timeout=20)
                 self.assertFalse(worker.is_alive(), "lease worker process did not exit")
                 self.assertEqual(worker.exitcode, 0)
         finally:
+            release_event.set()
             for worker in workers:
                 if worker.is_alive():
                     worker.terminate()
