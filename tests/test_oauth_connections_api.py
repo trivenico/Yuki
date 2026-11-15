@@ -20,8 +20,14 @@ class FakeRegistry:
         return list(self.records.values()) if owner_id == "owner" else []
     def get(self, *, owner_id, provider_id, account_id):
         return self.records.get((owner_id, provider_id, account_id))
-    def remove(self, *, owner_id, provider_id, account_id):
-        return self.records.pop((owner_id, provider_id, account_id), None) is not None
+    def remove(self, *, owner_id, provider_id, account_id, expected_connected_at=None):
+        key = (owner_id, provider_id, account_id)
+        record = self.records.get(key)
+        if record is None or (expected_connected_at is not None and
+                              record.connected_at != expected_connected_at):
+            return False
+        self.records.pop(key, None)
+        return True
 
 
 class FakeDisconnect:
@@ -82,6 +88,24 @@ class OAuthConnectionAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(self.disconnect.calls, [])
+
+    def test_reconnect_during_disconnect_is_not_removed_as_stale_metadata(self):
+        original = self.registry.records[("owner", "provider", "account")]
+        def reconnect_after_credential_delete(**kwargs):
+            self.registry.records[("owner", "provider", "account")] = SimpleNamespace(
+                provider_id="provider", account_id="account", scopes=("read", "write"),
+                connected_at=200,
+            )
+            return {"disconnected": True, "revocation_attempted": True, "remote_revoked": True}
+        self.disconnect.disconnect = reconnect_after_credential_delete
+        status, body = self.request(
+            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session"
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["disconnected"])
+        current = self.registry.records[("owner", "provider", "account")]
+        self.assertEqual(current.connected_at, 200)
+        self.assertEqual(current.scopes, ("read", "write"))
 
     def test_failed_disconnect_keeps_registry_entry(self):
         self.disconnect.result = {"disconnected": False}
