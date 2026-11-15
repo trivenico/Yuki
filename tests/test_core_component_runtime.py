@@ -104,7 +104,8 @@ class CoreComponentCompositionTests(unittest.TestCase):
             self.assertLess(started.index("agent-execution"), started.index("owner-agent-execution"))
             self.assertTrue(registry.health()["owner-agent-execution"])
             registry.close()
-            self.assertFalse(registry.health() if registry.started_components else False)
+            self.assertTrue(application.closed)
+            self.assertEqual(provider.closed, 1)
 
     def test_invalid_provider_is_rejected_before_registry_is_returned(self):
         with tempfile.TemporaryDirectory() as directory:
