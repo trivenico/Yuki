@@ -307,6 +307,19 @@ def build_delegated_specialist_handlers(
         options.setdefault("max_model_turns", 4)
         options.setdefault("max_tool_calls", 8)
         options.setdefault("max_duration_seconds", 45)
+        budget_caps = {
+            "max_model_turns": 8,
+            "max_tool_calls": 20,
+            "max_duration_seconds": 120,
+            "max_transcript_chars": 80_000,
+        }
+        for name, maximum in budget_caps.items():
+            if name in options and (
+                isinstance(options[name], bool)
+                or not isinstance(options[name], (int, float))
+                or options[name] > maximum
+            ):
+                raise ValueError(f"{name} exceeds the delegated specialist budget")
         runtime = build_delegated_agent_runtime(
             model=config["model"],
             tools=config["tools"],
@@ -319,7 +332,7 @@ def build_delegated_specialist_handlers(
         )
 
         def handle(request: str, *, _runtime=runtime) -> str:
-            if not isinstance(request, str) or not request.strip() or len(request) > _MAX_INPUT_CHARS or "\\x00" in request:
+            if not isinstance(request, str) or not request.strip() or len(request) > _MAX_INPUT_CHARS or "\x00" in request:
                 raise ValueError("specialist input must be bounded non-empty text")
             result = _runtime.run(request)
             if result.status != "completed" or not isinstance(result.text, str) or not result.text.strip():
