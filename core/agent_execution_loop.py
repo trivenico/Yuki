@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from core.structured_tool_protocol import StructuredToolProtocol
+from core.structured_tool_protocol import StructuredToolProtocol, StructuredToolResult
 from core.tool_action_context import ToolActionContext
 
 
@@ -112,6 +112,7 @@ class AgentExecutionLoop:
         action_context_factory: Callable[[str | None, str, Mapping[str, Any]], ToolActionContext | None] | None = None,
         confirmation_check: Callable[[Any], bool] | None = None,
         approval_id_factory: Callable[[str | None, ToolActionContext | None, Any], str | None] | None = None,
+        pending_proposal_factory: Callable[[str | None, ToolActionContext, Any], str] | None = None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
@@ -121,6 +122,8 @@ class AgentExecutionLoop:
             raise TypeError("confirmation_check must be callable.")
         if approval_id_factory is not None and not callable(approval_id_factory):
             raise TypeError("approval_id_factory must be callable.")
+        if pending_proposal_factory is not None and not callable(pending_proposal_factory):
+            raise TypeError("pending_proposal_factory must be callable.")
         if principal_id is not None and (
             not isinstance(principal_id, str) or not principal_id or len(principal_id) > 256
         ):
@@ -329,11 +332,26 @@ class AgentExecutionLoop:
                         approval_id_factory(principal_id, action_context, call)
                         if user_confirmed is True and action_context is not None and approval_id_factory is not None else None
                     )
-                    result = self.tool_protocol.dispatch_call(
-                        call, principal_id=principal_id,
-                        action_context=action_context, user_confirmed=user_confirmed,
-                        approval_id=approval_id,
-                    )
+                    requires_confirmation = self.tool_protocol.requires_user_confirmation(call.name)
+                    if (
+                        requires_confirmation and user_confirmed is not True
+                        and pending_proposal_factory is not None
+                    ):
+                        if action_context is None or principal_id is None:
+                            raise AgentExecutionError("pending confirmation requires trusted action identity.")
+                        proposal_id = pending_proposal_factory(principal_id, action_context, call)
+                        if not isinstance(proposal_id, str) or not proposal_id:
+                            raise AgentExecutionError("pending proposal could not be persisted.")
+                        result = StructuredToolResult(
+                            call.call_id, call.name,
+                            "Awaiting explicit user approval. Proposal ID: " + proposal_id,
+                        )
+                    else:
+                        result = self.tool_protocol.dispatch_call(
+                            call, principal_id=principal_id,
+                            action_context=action_context, user_confirmed=user_confirmed,
+                            approval_id=approval_id,
+                        )
                 except Exception as exc:
                     self._event("agent.tool_dispatch_failed", error_type=type(exc).__name__)
                     raise AgentExecutionError("guarded tool dispatch failed.") from exc
