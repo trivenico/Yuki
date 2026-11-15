@@ -1,8 +1,17 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.google_gmail_send_tool import GmailSendTool
 from core.tool_action_context import ToolActionContext
+from core.tool_action_approvals import SQLiteToolActionApprovalStore
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.tool_action_journal import ToolActionJournal
+from core.approved_tool_action_executor import ApprovedToolActionExecutor
+from core.guarded_tool_runtime import GuardedToolRuntime
+from core.tool_capabilities import ToolCapabilityCatalog
+from core.google_gmail_send_tool import gmail_send_tool_capability
 from core.google_gmail_send_client import GmailSendClient
 
 
@@ -59,6 +68,40 @@ class GmailSendToolTests(unittest.TestCase):
             self.context.verify("owner-1", "gmail.send_email", changed)
         self.assertEqual(self.client.calls, [])
 
+    def test_only_approved_proposal_reaches_action_aware_handler_and_journal(self):
+        class AllowPolicy:
+            def authorize_tool(self, name):
+                return name == "gmail.send_email"
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
+            approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
+            journal = ToolActionJournal(str(root / "journal.sqlite"))
+            runtime = GuardedToolRuntime(
+                {"gmail.send_email": self.tool}, AllowPolicy(),
+                capabilities=ToolCapabilityCatalog({
+                    "gmail.send_email": gmail_send_tool_capability(),
+                }),
+                require_action_context=True, action_journal=journal,
+                approval_store=approvals,
+            )
+            executor = ApprovedToolActionExecutor(proposals, approvals, runtime)
+            context = ToolActionContext.create("owner-1", "gmail.send_email", self.arguments)
+            proposal = proposals.create(context, self.arguments, principal_id="owner-1")
+            with self.assertRaisesRegex(ValueError, "not been approved"):
+                executor.execute(proposal.proposal_id, principal_id="owner-1")
+            self.assertEqual(self.client.calls, [])
+            proposals.decide(proposal.proposal_id, principal_id="owner-1", decision="approved")
+            result = executor.execute(proposal.proposal_id, principal_id="owner-1")
+            self.assertEqual(result.state, "finished")
+            self.assertEqual(len(self.client.calls), 1)
+            action = journal.get(context.idempotency_key)
+            self.assertEqual(action.state, "succeeded")
+            self.assertEqual(action.action_id, context.action_id)
+            with self.assertRaisesRegex(ValueError, "already claimed"):
+                executor.execute(proposal.proposal_id, principal_id="owner-1")
+            self.assertEqual(len(self.client.calls), 1)
     def test_model_schema_is_strict_and_requires_every_argument(self):
         schema = self.tool.definition()["function"]
         self.assertEqual(schema["name"], "gmail.send_email")
