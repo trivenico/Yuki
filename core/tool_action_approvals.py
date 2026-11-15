@@ -136,7 +136,8 @@ class SQLiteToolActionApprovalStore:
             )
         if (not isinstance(approval_id, str) or not approval_id or len(approval_id) > 128
                 or not isinstance(idempotency_key, str) or not idempotency_key
-                or not isinstance(lease_owner, str) or not lease_owner):
+                or (lease_owner is not None and
+                    (not isinstance(lease_owner, str) or not lease_owner))):
             return None
 
         now = datetime.now(timezone.utc).isoformat()
@@ -180,8 +181,22 @@ class SQLiteToolActionApprovalStore:
                 ).fetchone()
                 if (action is None or action["action_id"] != context.action_id
                         or action["tool_name"] != context.tool_name
-                        or action["request_digest"] != context.request_digest
-                        or action["state"] != "authorizing"
+                        or action["request_digest"] != context.request_digest):
+                    raise ToolActionTransitionError(
+                        "action journal record does not match the approved request"
+                    )
+
+                if action["state"] == "succeeded":
+                    db.execute("DELETE FROM tool_action_approvals WHERE approval_id=?",
+                               (fingerprint,))
+                    self._audit(db, principal_id=principal_id,
+                        action_id=context.action_id, tool_name=context.tool_name,
+                        token_fingerprint=fingerprint, outcome="consumed",
+                        occurred_at=now)
+                    db.execute("COMMIT")
+                    return ToolActionJournal._record(action)
+
+                if (action["state"] != "authorizing" or lease_owner is None
                         or action["lease_owner"] != lease_owner
                         or action["lease_expires_at"] is None
                         or action["lease_expires_at"] <= now):
