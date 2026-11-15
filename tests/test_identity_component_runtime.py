@@ -35,8 +35,9 @@ class IdentityAccessComponentRuntimeTests(unittest.TestCase):
         registry = ComponentRegistry()
         registry.register(runtime)
         with patch.object(self.auth, "health_check", return_value=False):
-            with self.assertRaisesRegex(RuntimeError, "identity/access storage"):
+            with self.assertRaisesRegex(RuntimeError, "component startup failed: identity-access") as raised:
                 registry.start_all()
+            self.assertIn("identity/access storage", str(raised.exception.__cause__))
         self.assertEqual(registry.started_components, ())
 
     def test_health_probe_requires_strict_boolean(self):
