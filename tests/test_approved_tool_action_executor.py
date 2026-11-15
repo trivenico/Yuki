@@ -174,11 +174,15 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.journal.begin_execution(
             self.proposal.idempotency_key, reserved.request_digest,
         )
-        with sqlite3.connect(self.journal.database_path) as db:
+        db = sqlite3.connect(self.journal.database_path)
+        try:
             db.execute(
                 "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
                 ("2000-01-01T00:00:00+00:00", self.proposal.idempotency_key),
             )
+            db.commit()
+        finally:
+            db.close()
         recovered = self.executor.recover_interrupted_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         )
