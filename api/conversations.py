@@ -17,6 +17,7 @@ from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
 from api.request_body import RequestBodyTooLarge, read_json_object
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -39,6 +40,7 @@ class YukiConversationAPI:
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
+        pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -60,6 +62,11 @@ class YukiConversationAPI:
         ):
             raise TypeError("tool_action_approvals must be a SQLiteToolActionApprovalStore")
         self.tool_action_approvals = tool_action_approvals
+        if pending_tool_action_proposals is not None and not isinstance(
+            pending_tool_action_proposals, SQLitePendingToolActionProposalStore
+        ):
+            raise TypeError("pending_tool_action_proposals must be a SQLitePendingToolActionProposalStore")
+        self.pending_tool_action_proposals = pending_tool_action_proposals
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -100,6 +107,68 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            if path == "/v1/tool-action-proposals" and method == "GET":
+                if self.pending_tool_action_proposals is None:
+                    return await self._respond(send, 503, {"error": "proposal_management_unavailable"})
+                query = self._query(scope)
+                if set(query) - {"limit"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    limit = int(query.get("limit", "50"))
+                    proposals = await asyncio.to_thread(
+                        self.pending_tool_action_proposals.list_pending,
+                        principal_id=user.user_id, limit=limit,
+                    )
+                except (TypeError, ValueError):
+                    return await self._respond(send, 400, {"error": "invalid_limit"})
+                return await self._respond(send, 200, {
+                    "proposals": [self._proposal_view(item) for item in proposals]
+                })
+
+            proposal_match = re.fullmatch(
+                r"/v1/tool-action-proposals/([A-Za-z0-9_-]{1,128})(?:/(approve|reject))?", path,
+            )
+            if proposal_match and method in {"GET", "POST"}:
+                if self.pending_tool_action_proposals is None:
+                    return await self._respond(send, 503, {"error": "proposal_management_unavailable"})
+                proposal_id, operation = proposal_match.groups()
+                if method == "GET" and operation is not None:
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                if method == "POST" and operation is None:
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                if method == "GET":
+                    proposal = await asyncio.to_thread(
+                        self.pending_tool_action_proposals.get,
+                        proposal_id, principal_id=user.user_id,
+                    )
+                    if proposal is None:
+                        return await self._respond(send, 404, {"error": "not_found"})
+                    return await self._respond(send, 200, {
+                        "proposal": self._proposal_view(proposal)
+                    })
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                existing = await asyncio.to_thread(
+                    self.pending_tool_action_proposals.get,
+                    proposal_id, principal_id=user.user_id,
+                )
+                if existing is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                if existing.status != "pending":
+                    return await self._respond(send, 409, {"error": "proposal_not_pending"})
+                decided = await asyncio.to_thread(
+                    self.pending_tool_action_proposals.decide,
+                    proposal_id, principal_id=user.user_id,
+                    decision="approved" if operation == "approve" else "rejected",
+                )
+                if decided is None:
+                    return await self._respond(send, 409, {"error": "proposal_not_pending"})
+                return await self._respond(send, 200, {
+                    "proposal": self._proposal_view(decided),
+                    "execution": "not_started",
+                })
 
             if path == "/v1/tool-approvals/audit" and method == "GET":
                 if self.tool_action_approvals is None:
@@ -300,6 +369,21 @@ class YukiConversationAPI:
         except Exception:
             # Never leak credentials, provider output, SQL, or internal traces.
             return await self._respond(send, 500, {"error": "internal_error"})
+
+    @staticmethod
+    def _proposal_view(proposal):
+        """Project safe proposal fields; never expose bearer approval tokens."""
+        return {
+            "proposal_id": proposal.proposal_id,
+            "action_id": proposal.action_id,
+            "tool_name": proposal.tool_name,
+            "arguments": proposal.arguments,
+            "request_digest": proposal.request_digest,
+            "status": proposal.status,
+            "created_at": proposal.created_at,
+            "expires_at": proposal.expires_at,
+            "decided_at": proposal.decided_at,
+        }
 
     async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools):
         """Run synchronous generation off-loop and emit bounded SSE events."""
