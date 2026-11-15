@@ -14,6 +14,7 @@ from core.google_oauth_identity import (
 )
 from core.oauth_authorization_service import OAuthAuthorizationService
 from core.oauth_provider_identity import OAuthProviderIdentityVerifier
+from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from core.oidc_id_token import OIDCIdentityTokenVerifier
 
 GOOGLE_PROVIDER_ID = "google"
@@ -89,4 +90,18 @@ def build_google_gmail_authorization_service(
             ("access_type", "offline"), ("include_granted_scopes", "true"),
             ("prompt", "consent"),
         ),
+    )
+
+def prepare_google_gmail_provider(**configuration) -> PreparedOAuthProvider:
+    """Return Google OAuth in the same immutable shape consumed by the host registry."""
+    service = build_google_gmail_authorization_service(**configuration)
+    return PreparedOAuthProvider(
+        provider_id=GOOGLE_PROVIDER_ID,
+        issuer=GOOGLE_ISSUER,
+        resource=GOOGLE_RESOURCE,
+        client_id=configuration["client_id"],
+        registration_method="pre-registered",
+        redirect_uri=configuration["redirect_uri"],
+        scopes=tuple((*GOOGLE_GMAIL_SCOPES, "openid")),
+        authorization_service=service,
     )
