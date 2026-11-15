@@ -131,13 +131,10 @@ def build_conversation_runtime(
             raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
         if agent_loop.tool_protocol is not gmail_runtime_bundle.tool_protocol:
             raise ValueError("agent_loop must use the Gmail bundle's exact structured tool protocol.")
-        if tools_for_user is not None:
-            raise ValueError("tools_for_user must be omitted when gmail_runtime_bundle supplies tool definitions.")
         if tool_action_approvals is not None or pending_tool_action_proposals is not None:
             raise ValueError("Gmail bundle owns the durable approval and proposal stores.")
         if approved_tool_action_executor is not None or tool_action_reconciler is not None:
             raise ValueError("Gmail bundle owns the approved executor and reconciliation service.")
-        tools_for_user = lambda _owner: [dict(item) for item in gmail_runtime_bundle.tool_definitions]
         tool_action_approvals = gmail_runtime_bundle.approval_store
         pending_tool_action_proposals = gmail_runtime_bundle.proposals
         approved_tool_action_executor = ApprovedToolActionExecutor(
