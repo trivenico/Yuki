@@ -41,10 +41,6 @@ class _OwnedProvider:
     def is_available(self):
         return self._provider.is_available()
 
-    def readiness_report(self) -> ReadinessReport:
-        """Return local capability diagnostics including live component health."""
-        return build_readiness_report(component_registry=self.component_registry)
-
     def close(self):
         if self._closed:
             return
@@ -63,6 +59,10 @@ class LocalConversationRuntime:
 
     def __getattr__(self, name):
         return getattr(self.application, name)
+
+    def readiness_report(self) -> ReadinessReport:
+        """Return local capability diagnostics including live component health."""
+        return build_readiness_report(component_registry=self.component_registry)
 
     def close(self):
         if self._closed:
