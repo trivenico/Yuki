@@ -150,6 +150,57 @@ class GmailSendClientTests(unittest.TestCase):
             )
         self.assertEqual(len(transport.requests), 1)
 
+    def test_refreshes_exact_account_before_sending(self):
+        class Refresh:
+            provider_id = "google"
+            def __init__(self):
+                self.calls = []
+            def refresh_if_needed(self, **kwargs):
+                self.calls.append(kwargs)
+                return {"refreshed": True}
+        refresh = Refresh()
+        resolver = self.client._credentials
+        client = GmailSendClient(
+            credential_resolver=resolver, transport=self.transport,
+            message_id_domain="actions.example.com", refresh_service=refresh,
+        )
+        client.send_email(
+            owner_id="owner-1", account_id="acct-1", action=action(),
+            to="person@example.com", subject="Hello", body="Body",
+        )
+        self.assertEqual(refresh.calls, [{
+            "owner_id": "owner-1", "account_id": "acct-1",
+        }])
+        self.assertEqual(len(self.transport.requests), 1)
+
+    def test_refresh_failure_blocks_gmail_send(self):
+        class Refresh:
+            provider_id = "google"
+            def refresh_if_needed(self, **kwargs):
+                raise RuntimeError("sensitive provider response")
+        client = GmailSendClient(
+            credential_resolver=self.client._credentials, transport=self.transport,
+            message_id_domain="actions.example.com", refresh_service=Refresh(),
+        )
+        with self.assertRaisesRegex(GmailSendError, "account_or_scope_unavailable") as caught:
+            client.send_email(
+                owner_id="owner-1", account_id="acct-1", action=action(),
+                to="person@example.com", subject="Hello", body="Body",
+            )
+        self.assertNotIn("sensitive provider response", str(caught.exception))
+        self.assertEqual(self.transport.requests, [])
+
+    def test_rejects_refresh_service_for_another_provider(self):
+        class Refresh:
+            provider_id = "microsoft"
+            def refresh_if_needed(self, **kwargs):
+                raise AssertionError("must not be called")
+        with self.assertRaisesRegex(TypeError, "matching trusted OAuth refresh"):
+            GmailSendClient(
+                credential_resolver=self.client._credentials, transport=self.transport,
+                message_id_domain="actions.example.com", refresh_service=Refresh(),
+            )
+
     def test_unexpected_account_is_rejected_before_network(self):
         with self.assertRaises(GmailSendError):
             self.client.send_email(
