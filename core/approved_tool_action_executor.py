@@ -83,10 +83,14 @@ class ApprovedToolActionExecutor:
             raise
         journal = getattr(self.guarded_runtime, "_action_journal", None)
         action = journal.get(proposal.idempotency_key) if journal is not None else None
-        unknown = action is not None and action.state == "outcome_unknown"
+        # A textual tool response is not proof of success. Only a durable
+        # succeeded journal record confirms that the side effect completed.
+        succeeded = action is not None and action.state == "succeeded"
         self.proposals.finish_execution(
-            proposal_id, principal_id=principal_id, outcome_unknown=unknown,
+            proposal_id, principal_id=principal_id, outcome_unknown=not succeeded,
         )
         return ApprovedToolActionExecution(
-            proposal_id=proposal_id, state="unknown" if unknown else "finished", result=result,
+            proposal_id=proposal_id,
+            state="finished" if succeeded else "unknown",
+            result=result,
         )
