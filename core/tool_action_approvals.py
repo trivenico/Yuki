@@ -146,6 +146,19 @@ class SQLiteToolActionApprovalStore:
             db.row_factory = sqlite3.Row
             db.execute("BEGIN IMMEDIATE")
             try:
+                action = db.execute(
+                    "SELECT * FROM tool_actions WHERE idempotency_key=?",
+                    (idempotency_key,),
+                ).fetchone()                if action is not None and action["state"] == "succeeded":
+                    if (action["action_id"] != context.action_id
+                            or action["tool_name"] != context.tool_name
+                            or action["request_digest"] != context.request_digest):
+                        raise ToolActionTransitionError(
+                            "completed action does not match the approved request"
+                        )
+                    db.execute("COMMIT")
+                    return ToolActionJournal._record(action)
+
                 approval = db.execute("""SELECT principal_id, action_id, tool_name,
                     request_digest, expires_at FROM tool_action_approvals
                     WHERE approval_id = ?""", (fingerprint,)).fetchone()
@@ -175,10 +188,7 @@ class SQLiteToolActionApprovalStore:
                     db.execute("COMMIT")
                     return None
 
-                action = db.execute(
-                    "SELECT * FROM tool_actions WHERE idempotency_key=?",
-                    (idempotency_key,),
-                ).fetchone()
+
                 if (action is None or action["action_id"] != context.action_id
                         or action["tool_name"] != context.tool_name
                         or action["request_digest"] != context.request_digest):
