@@ -61,6 +61,53 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             self.assertEqual(config["provider"], "openai")
             self.assertFalse((Path(directory) / "selection.json").exists())
 
+    def test_switch_closes_previous_provider_after_new_provider_is_active(self):
+        class ManagedProvider:
+            def __init__(self, name):
+                self.name = name
+                self.closed = 0
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            previous = ManagedProvider("previous")
+            candidate = ManagedProvider("candidate")
+            adapter = SimpleNamespace(provider=previous)
+            config = {"provider": "openai"}
+            manager = ProviderRuntimeManager(
+                config, adapter, Path(directory) / "selection.json",
+                environ={}, provider_factory=lambda cfg, environ: candidate,
+                catalog_factory=_catalog,
+            )
+            manager.select("ollama")
+            self.assertIs(adapter.provider, candidate)
+            self.assertEqual(config["provider"], "ollama")
+            self.assertEqual(previous.closed, 1)
+            self.assertEqual(candidate.closed, 0)
+
+    def test_failed_persistence_does_not_close_or_replace_active_provider(self):
+        class ManagedProvider:
+            def __init__(self):
+                self.closed = 0
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            previous = ManagedProvider()
+            candidate = ManagedProvider()
+            adapter = SimpleNamespace(provider=previous)
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, adapter, Path(directory) / "missing" / "selection.json",
+                environ={}, provider_factory=lambda cfg, environ: candidate,
+                catalog_factory=_catalog,
+            )
+            manager._persist = lambda name: (_ for _ in ()).throw(OSError("disk unavailable"))
+            with self.assertRaises(OSError):
+                manager.select("ollama")
+            self.assertIs(adapter.provider, previous)
+            self.assertEqual(previous.closed, 0)
+            self.assertEqual(candidate.closed, 0)
+
     def test_corrupt_persisted_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "provider-selection.json"
