@@ -61,6 +61,8 @@ class PreparedOAuthProviderRegistry:
                 getattr(service, "complete", None)
             ):
                 raise TypeError("prepared provider authorization service is invalid")
+            if getattr(service, "provider_id", None) != provider_id:
+                raise ValueError("authorization service provider identity does not match registry key")
             services[provider_id] = service
             catalog.append({
                 "provider_id": provider_id,
