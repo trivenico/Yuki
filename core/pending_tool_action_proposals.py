@@ -248,6 +248,22 @@ class SQLitePendingToolActionProposalStore:
                 raise
         return changed == 1
 
+    def recover_execution_state(
+        self, proposal_id: str, *, principal_id: str, state: str,
+    ) -> bool:
+        """Finalize a stranded execution claim from authoritative journal state."""
+        if not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("authenticated principal is required.")
+        if state not in {"finished", "unknown"}:
+            raise ValueError("recovered state must be finished or unknown.")
+        with self._connect() as db:
+            changed = db.execute("""UPDATE pending_tool_action_proposals
+                SET execution_state = ?
+                WHERE proposal_id = ? AND principal_id = ?
+                  AND status = 'approved' AND execution_state = 'executing'""",
+                (state, proposal_id, principal_id)).rowcount
+        return changed == 1
+
     def finish_execution(self, proposal_id: str, *, principal_id: str,
                          outcome_unknown: bool = False) -> bool:
         """Record a terminal dispatch state; executing proposals are never replayed."""
