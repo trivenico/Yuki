@@ -38,6 +38,7 @@ class SpecialistAgent:
     action: str
     permissions: frozenset[str] = frozenset()
     enabled: bool = True
+    requires_approval: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,21 +142,26 @@ class SpecialistAgentCoordinator:
                     action TEXT NOT NULL,
                     permissions_json TEXT NOT NULL,
                     enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+                    requires_approval INTEGER NOT NULL DEFAULT 0 CHECK(requires_approval IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             """)
+            agent_columns = {row["name"] for row in db.execute("PRAGMA table_info(specialist_agents)")}
+            if "requires_approval" not in agent_columns:
+                db.execute("ALTER TABLE specialist_agents ADD COLUMN requires_approval INTEGER NOT NULL DEFAULT 0")
             now = datetime.now(timezone.utc).isoformat()
             for agent in agent_map.values():
                 db.execute("""
                     INSERT OR IGNORE INTO specialist_agents(
                         agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        enabled, requires_approval, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     agent.agent_id, agent.name,
                     json.dumps(sorted(agent.capabilities)), agent.action,
-                    json.dumps(sorted(agent.permissions)), int(agent.enabled), now, now,
+                    json.dumps(sorted(agent.permissions)), int(agent.enabled),
+                    int(agent.requires_approval), now, now,
                 ))
         self._refresh_agent_registry()
 
@@ -190,8 +196,8 @@ class SpecialistAgentCoordinator:
             or any(not isinstance(item, str) or not _PERMISSION.fullmatch(item) for item in agent.permissions)
         ):
             raise ValueError("permissions must contain at most 32 bounded identifiers.")
-        if type(agent.enabled) is not bool:
-            raise ValueError("enabled must be a boolean.")
+        if type(agent.enabled) is not bool or type(agent.requires_approval) is not bool:
+            raise ValueError("enabled and requires_approval must be booleans.")
 
     def _allowed(self, actor_id: str, action: str, resource_id: str) -> bool:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
@@ -292,10 +298,13 @@ class SpecialistAgentCoordinator:
                 action=row["action"],
                 permissions=frozenset(permissions),
                 enabled=bool(row["enabled"]),
+                requires_approval=bool(row["requires_approval"]) if "requires_approval" in row.keys() else False,
             )
             SpecialistAgentCoordinator._validate_agent(agent)
             if row["enabled"] not in (0, 1):
                 raise ValueError("enabled state must be 0 or 1")
+            if "requires_approval" in row.keys() and row["requires_approval"] not in (0, 1):
+                raise ValueError("requires_approval state must be 0 or 1")
             return agent
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
@@ -324,12 +333,12 @@ class SpecialistAgentCoordinator:
                     db.execute("""
                         INSERT INTO specialist_agents(
                             agent_id, name, capabilities_json, action, permissions_json,
-                            enabled, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            enabled, requires_approval, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
                         agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                        now, now,
+                        int(agent.requires_approval), now, now,
                     ))
             except sqlite3.IntegrityError as exc:
                 raise AgentPlanError("agent ID is already registered.") from exc
@@ -520,7 +529,7 @@ class SpecialistAgentCoordinator:
                 steps=[{
                     "name": row["subtask_id"], "action": agent.action,
                     "argument": argument,
-                    "requires_approval": bool(row["requires_approval"]),
+                    "requires_approval": bool(row["requires_approval"]) or agent.requires_approval,
                 }],
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
