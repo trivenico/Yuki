@@ -38,6 +38,40 @@ class ApprovedToolActionExecutor:
         self.approvals = approvals
         self.guarded_runtime = guarded_runtime
 
+    def recover_interrupted_execution(
+        self, proposal_id: str, *, principal_id: str,
+    ) -> ApprovedToolActionExecution:
+        """Reconcile a stranded proposal claim without ever redispatching its tool."""
+        proposal = self.proposals.get(proposal_id, principal_id=principal_id)
+        if proposal is None:
+            raise LookupError("approved proposal was not found")
+        if proposal.execution_state != "executing":
+            return ApprovedToolActionExecution(
+                proposal_id=proposal_id,
+                state=proposal.execution_state,
+                result=None,
+            )
+        journal = getattr(self.guarded_runtime, "_action_journal", None)
+        if journal is None:
+            self.proposals.recover_execution_state(
+                proposal_id, principal_id=principal_id, state="unknown",
+            )
+            return ApprovedToolActionExecution(proposal_id, state="unknown", result=None)
+        # Expired leases are fenced by the journal. Live leases remain executing.
+        journal.recover_expired_executions()
+        action = journal.get(proposal.idempotency_key)
+        if action is not None and action.state == "executing":
+            return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
+        recovered_state = "finished" if action is not None and action.state == "succeeded" else "unknown"
+        self.proposals.recover_execution_state(
+            proposal_id, principal_id=principal_id, state=recovered_state,
+        )
+        return ApprovedToolActionExecution(
+            proposal_id=proposal_id,
+            state=recovered_state,
+            result=str(action.result) if recovered_state == "finished" else None,
+        )
+
     def execute(self, proposal_id: str, *, principal_id: str) -> ApprovedToolActionExecution:
         """Execute only the exact owner-approved proposal; never accept replacement args."""
         proposal = self.proposals.get(proposal_id, principal_id=principal_id)
