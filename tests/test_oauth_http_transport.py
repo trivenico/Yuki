@@ -95,6 +95,32 @@ class PinnedOAuthHTTPTransportTests(unittest.TestCase):
             with self.subTest(addresses=addresses), self.assertRaises(OAuthHTTPError):
                 transport.request_json("GET", "https://oauth.example.com/metadata")
 
+    def test_firewall_audit_failure_fails_closed_before_connect(self):
+        from core.network_firewall import NetworkFirewall
+
+        policy = NetworkFirewall(
+            allowed_hosts={"oauth.example.com"},
+            audit=lambda decision: (_ for _ in ()).throw(RuntimeError("audit offline")),
+        )
+        transport = PinnedOAuthHTTPTransport(
+            allowed_hosts={"oauth.example.com"},
+            resolver=lambda host, port, type: [record("93.184.216.34")],
+            connection_factory=lambda *args, **kwargs: self.fail("must not connect"),
+            firewall_policy=policy,
+        )
+        with self.assertRaisesRegex(OAuthHTTPError, "oauth_endpoint_address_blocked"):
+            transport.request_json("GET", "https://oauth.example.com/token")
+
+    def test_rejects_too_many_dns_answers_before_connect(self):
+        addresses = [f"93.184.216.{index}" for index in range(1, 34)]
+        transport = PinnedOAuthHTTPTransport(
+            allowed_hosts={"oauth.example.com"},
+            resolver=lambda *args, **kwargs: [record(address) for address in addresses],
+            connection_factory=lambda *args, **kwargs: self.fail("must not connect"),
+        )
+        with self.assertRaises(OAuthHTTPError):
+            transport.request_json("GET", "https://oauth.example.com/token")
+
     def test_rejects_empty_or_failed_dns(self):
         for resolver in (lambda *a, **k: [], lambda *a, **k: (_ for _ in ()).throw(OSError())):
             transport = PinnedOAuthHTTPTransport(
