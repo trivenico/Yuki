@@ -189,6 +189,28 @@ class TaskRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(self.store.get(task.task_id).version, claimed.version)
 
+    def test_terminal_updates_reject_malformed_worker_ids(self):
+        task = self.create("invalid-terminal-worker-id")
+        claimed = self.claim(task)
+        for invalid_worker_id in ("", "   ", "worker\\x00a", "w" * 201, None, 123):
+            with self.subTest(worker_id=invalid_worker_id):
+                with self.assertRaises(ValueError):
+                    self.runtime.complete(
+                        actor_id="alice", task_id=task.task_id,
+                        expected_version=claimed.version, worker_id=invalid_worker_id,
+                        result={"ok": True},
+                    )
+                with self.assertRaises(ValueError):
+                    self.runtime.fail(
+                        actor_id="alice", task_id=task.task_id,
+                        expected_version=claimed.version, worker_id=invalid_worker_id,
+                        error_code="provider_error",
+                    )
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, claimed.version)
+        self.assertEqual(current.lease_owner, "worker-a")
+
     def test_only_current_worker_can_complete(self):
         task = self.create()
         claimed = self.claim(task)
