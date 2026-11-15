@@ -68,6 +68,7 @@ def build_conversation_application_runtime(
     action_context_factory: Callable | None = None,
     confirmation_check: Callable | None = None,
     approval_id_factory: Callable | None = None,
+    pending_proposal_factory: Callable | None = None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -87,6 +88,7 @@ def build_conversation_application_runtime(
         (action_context_factory, "action_context_factory"),
         (confirmation_check, "confirmation_check"),
         (approval_id_factory, "approval_id_factory"),
+        (pending_proposal_factory, "pending_proposal_factory"),
     ):
         if callback is not None and not callable(callback):
             raise TypeError(f"{name} must be callable.")
@@ -113,6 +115,7 @@ def build_conversation_application_runtime(
             action_context_factory=action_context_factory,
             confirmation_check=confirmation_check,
             approval_id_factory=approval_id_factory,
+            pending_proposal_factory=pending_proposal_factory,
         )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,

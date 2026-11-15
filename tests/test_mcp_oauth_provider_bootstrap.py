@@ -98,6 +98,19 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider-specific"):
             config(redirect_uri="https://yuki.example.com/oauth/callback")
 
+    def test_host_allowlists_reject_wildcards_ip_literals_and_noncanonical_names(self):
+        for host in (
+            "*.example.com", "127.0.0.1", "::1", "auth.example.com.",
+            "AUTH.example.com", "auth_example.com", "-auth.example.com",
+            "auth..example.com", "auth.example.com:443", "authé.example.com",
+        ):
+            with self.subTest(host=host), self.assertRaisesRegex(ValueError, "invalid host"):
+                config(allowed_authorization_hosts=(host,))
+
+    def test_host_allowlists_reject_duplicate_entries(self):
+        with self.assertRaisesRegex(ValueError, "duplicate host"):
+            config(allowed_metadata_hosts=("api.example.com", "api.example.com"))
+
     def test_cimd_does_not_post_registration(self):
         def response(method, url, **kwargs):
             if "oauth-protected-resource" in url:

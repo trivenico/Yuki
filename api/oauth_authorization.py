@@ -93,6 +93,8 @@ class AuthenticatedOAuthAuthorizationAPI:
             service = self._service_for_provider(provider_id)
             if service is None:
                 return await self._respond(send, 404, {"error": "provider_not_configured"})
+            if getattr(service, "provider_id", None) != provider_id:
+                return await self._respond(send, 503, {"error": "provider_service_mismatch"})
             if action == "authorize":
                 payload = await self._body(receive)
                 if payload:
@@ -165,7 +167,9 @@ class AuthenticatedOAuthAuthorizationAPI:
             return None
         raw = values[0].decode("latin-1")
         scheme, separator, token = raw.partition(" ")
-        if not separator or scheme.lower() != "bearer" or not 20 <= len(token) <= 256:
+        if (not separator or scheme.lower() != "bearer"
+                or not 20 <= len(token) <= 256 or token.strip() != token
+                or any(char.isspace() for char in token)):
             return None
         return token
 

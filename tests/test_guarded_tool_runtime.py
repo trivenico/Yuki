@@ -92,6 +92,33 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(calls, ["{}"])
         self.assertEqual(policy.allowed, True)
 
+    def test_confirmation_capability_classification_is_independent_of_policy(self):
+        class DenyPolicy:
+            def authorize_tool(self, name):
+                return False
+
+        runtime = GuardedToolRuntime(
+            {"send": lambda raw: "sent"},
+            DenyPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+        )
+        self.assertFalse(runtime.requires_user_confirmation("send"))
+        self.assertTrue(runtime.requires_confirmation_by_capability("send"))
+
+    def test_confirmation_classification_requires_capability_and_current_policy(self):
+        catalog = ToolCapabilityCatalog({
+            "send": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
+        })
+        allowed = GuardedToolRuntime({"send": lambda _: "sent"}, Policy(), capabilities=catalog)
+        denied = GuardedToolRuntime({"send": lambda _: "sent"}, Policy(False), capabilities=catalog)
+        self.assertTrue(allowed.requires_user_confirmation("send"))
+        self.assertFalse(denied.requires_user_confirmation("send"))
+        self.assertFalse(self.runtime.requires_user_confirmation("echo"))
+
     def test_capability_catalog_must_cover_exact_registered_tool_set(self):
         with self.assertRaises(ValueError):
             GuardedToolRuntime(

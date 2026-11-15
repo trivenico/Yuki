@@ -62,6 +62,8 @@ class AuthenticatedOAuthConnectionAPI:
                 return await self._respond(send, 404, {"error": "connection_not_found"})
             try:
                 service = self._disconnect_for_provider(provider_id)
+                if getattr(service, "provider_id", None) != provider_id:
+                    raise ValueError("disconnect service provider identity mismatch")
                 result = await asyncio.to_thread(
                     service.disconnect, owner_id=user.user_id, account_id=account_id
                 )
@@ -72,6 +74,7 @@ class AuthenticatedOAuthConnectionAPI:
             await asyncio.to_thread(
                 self.registry.remove, owner_id=user.user_id,
                 provider_id=provider_id, account_id=account_id,
+                expected_connected_at=record.connected_at,
             )
             return await self._respond(send, 200, {
                 "disconnected": True,
@@ -82,13 +85,19 @@ class AuthenticatedOAuthConnectionAPI:
             return await self._respond(send, 400, {"error": "invalid_request"})
 
     async def _user(self, scope):
-        headers = {
-            key.lower(): value for key, value in scope.get("headers", [])
-            if isinstance(key, bytes) and isinstance(value, bytes)
-        }
-        raw = headers.get(b"authorization", b"").decode("latin-1")
+        authorization_values = [
+            value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and key.lower() == b"authorization"
+            and isinstance(value, bytes)
+        ]
+        # Reject duplicate credentials rather than silently selecting one.
+        if len(authorization_values) != 1:
+            return None
+        raw = authorization_values[0].decode("latin-1")
         scheme, separator, token = raw.partition(" ")
-        if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
+        if (not separator or scheme.lower() != "bearer"
+                or not 20 <= len(token) <= 256 or token.strip() != token
+                or any(char.isspace() for char in token)):
             return None
         return await asyncio.to_thread(self.auth.resolve_session, token)
 

@@ -88,6 +88,10 @@ class StructuredToolProtocol:
             raise TypeError("runtime must be a GuardedToolRuntime.")
         self._runtime = runtime
 
+    def requires_user_confirmation(self, tool_name: str) -> bool:
+        """Expose only the runtime's trusted confirmation classification."""
+        return self._runtime.requires_user_confirmation(tool_name)
+
     def dispatch_call(
         self, call: StructuredToolCall, *,
         principal_id: str | None = None,

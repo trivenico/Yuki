@@ -72,11 +72,13 @@ class ConversationServiceTests(unittest.TestCase):
         action_factory = lambda principal, name, arguments: None
         confirmation = lambda call: False
         approval_factory = lambda principal, context, call: None
+        pending_factory = lambda context, arguments, principal: "proposal-id"
         service = ConversationService(
             self.store, self.loop,
             action_context_factory=action_factory,
             confirmation_check=confirmation,
             approval_id_factory=approval_factory,
+            pending_proposal_factory=pending_factory,
         )
         captured = {}
         original_run = self.loop.run
@@ -95,6 +97,7 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIs(captured["action_context_factory"], action_factory)
         self.assertIs(captured["confirmation_check"], confirmation)
         self.assertIs(captured["approval_id_factory"], approval_factory)
+        self.assertIs(captured["pending_proposal_factory"], pending_factory)
 
     def test_invalid_host_approval_callbacks_are_rejected(self):
         for name in ("action_context_factory", "confirmation_check", "approval_id_factory"):

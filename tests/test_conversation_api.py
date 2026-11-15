@@ -14,6 +14,14 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.approved_tool_action_executor import ApprovedToolActionExecutor
+from core.tool_action_journal import ToolActionJournal
+from core.tool_action_reconciliation import (
+    ProviderReconciliationResult, ToolActionReconciliationRegistry,
+    ToolActionReconciliationService,
+)
+from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
 class _NoApprovals:
@@ -87,6 +95,70 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(data["revoked"])
         self.assertFalse(store.consume(token, context, principal_id=self.user.user_id))
+
+    def test_pending_proposals_require_authentication_and_support_owner_decisions(self):
+        store = SQLitePendingToolActionProposalStore(
+            str(Path(self.tempdir.name) / "pending-proposals.sqlite"),
+        )
+        self.app.pending_tool_action_proposals = store
+        arguments = {"to": "person@example.com", "subject": "Review"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = store.create(context, arguments, principal_id=self.user.user_id)
+
+        status, data, _ = self.request("GET", "/v1/tool-action-proposals")
+        self.assertEqual(status, 401)
+        status, data, _ = self.request(
+            "GET", "/v1/tool-action-proposals", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposals"][0]["proposal_id"], proposal.proposal_id)
+        self.assertEqual(data["proposals"][0]["arguments"], arguments)
+
+        status, data, _ = self.request(
+            "GET", "/v1/tool-action-proposals/" + proposal.proposal_id,
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposal"]["status"], "pending")
+
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + proposal.proposal_id + "/approve",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposal"]["status"], "approved")
+        self.assertEqual(data["execution"], "not_started")
+        self.assertNotIn("approval_token", data)
+
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + proposal.proposal_id + "/reject",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(data["error"], "proposal_not_pending")
+
+    def test_pending_proposal_rejection_is_terminal(self):
+        store = SQLitePendingToolActionProposalStore(
+            str(Path(self.tempdir.name) / "pending-rejections.sqlite"),
+        )
+        self.app.pending_tool_action_proposals = store
+        arguments = {"event_id": "event-123"}
+        context = ToolActionContext.create(self.user.user_id, "calendar.delete", arguments)
+        proposal = store.create(context, arguments, principal_id=self.user.user_id)
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + proposal.proposal_id + "/reject",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposal"]["status"], "rejected")
+        self.assertEqual(store.list_pending(principal_id=self.user.user_id), ())
+
+    def test_pending_proposal_api_is_unavailable_when_not_configured(self):
+        status, data, _ = self.request(
+            "GET", "/v1/tool-action-proposals", token=self.issued.token,
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(data["error"], "proposal_management_unavailable")
 
     def test_approval_management_returns_unavailable_when_not_configured(self):
         status, data, _ = self.request(
@@ -337,6 +409,193 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_approved_proposal_executes_only_through_authenticated_endpoint(self):
+        root = Path(self.tempdir.name)
+        proposals = SQLitePendingToolActionProposalStore(str(root / "api-proposals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "api-approvals.sqlite"))
+        journal = ToolActionJournal(str(root / "api-journal.sqlite"))
+        calls = []
+
+        class AllowEmailPolicy:
+            def authorize_tool(self, name):
+                return name == "email.send"
+
+        guarded = GuardedToolRuntime(
+            {"email.send": lambda raw: calls.append(json.loads(raw)) or "sent"},
+            AllowEmailPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=journal,
+            approval_store=approvals,
+        )
+        executor = ApprovedToolActionExecutor(proposals, approvals, guarded)
+        self.app.pending_tool_action_proposals = proposals
+        self.app.tool_action_approvals = approvals
+        self.app.approved_tool_action_executor = executor
+        arguments = {"to": "recipient@example.com", "subject": "Approved"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = proposals.create(context, arguments, principal_id=self.user.user_id)
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(calls, [])
+
+        status, data, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/approve",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["execution"], "not_started")
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(calls, [])
+
+        status, data, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["execution_state"], "finished")
+        self.assertEqual(data["result"], "sent")
+        self.assertEqual(calls, [arguments])
+        self.assertEqual(journal.get(proposal.idempotency_key).state, "succeeded")
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(len(calls), 1)
+
+
+    def test_reconciliation_endpoint_is_authenticated_and_persists_provider_result(self):
+        root = Path(self.tempdir.name)
+        proposals = SQLitePendingToolActionProposalStore(str(root / "reconcile-proposals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "reconcile-approvals.sqlite"))
+        journal = ToolActionJournal(str(root / "reconcile-journal.sqlite"))
+        arguments = {"to": "recipient@example.com", "subject": "Verify"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = proposals.create(context, arguments, principal_id=self.user.user_id)
+        proposals.decide(proposal.proposal_id, principal_id=self.user.user_id, decision="approved")
+        proposals.claim_execution(proposal.proposal_id, principal_id=self.user.user_id)
+        proposals.finish_execution(
+            proposal.proposal_id, principal_id=self.user.user_id, outcome_unknown=True,
+        )
+        record = journal.reserve(
+            context.idempotency_key, "email.send", arguments, action_id=context.action_id,
+        )
+        started = journal.begin_execution(record.idempotency_key, record.request_digest)
+        journal.mark_outcome_unknown(
+            record.idempotency_key, started.lease_owner, "provider_timeout",
+        )
+
+        class ReadOnlyProvider:
+            def __init__(self):
+                self.calls = 0
+            def reconcile(self, *, action, proposal):
+                self.calls += 1
+                self.asserted = (action, proposal)
+                return ProviderReconciliationResult(
+                    "succeeded", "gmail-message:verified-123",
+                    {"provider_status": "SENT"},
+                )
+
+        provider = ReadOnlyProvider()
+        reconciler = ToolActionReconciliationService(
+            journal, ToolActionReconciliationRegistry({"email.send": provider}),
+            proposals=proposals,
+        )
+        self.app.pending_tool_action_proposals = proposals
+        self.app.tool_action_reconciler = reconciler
+
+        url = f"/v1/tool-action-proposals/{proposal.proposal_id}/reconcile"
+        status, _, _ = self.request("POST", url)
+        self.assertEqual(status, 401)
+        status, data, _ = self.request("POST", url, token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["state"], "succeeded")
+        self.assertEqual(data["result"]["evidence_reference"], "gmail-message:verified-123")
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(proposals.get(
+            proposal.proposal_id, principal_id=self.user.user_id,
+        ).execution_state, "finished")
+        self.assertEqual(journal.get(context.idempotency_key).state, "succeeded")
+
+        status, _, _ = self.request("POST", url, token=self.issued.token)
+        self.assertEqual(status, 409)
+        self.assertEqual(provider.calls, 1)
+
+    def test_reconciliation_endpoint_fails_closed_when_not_configured(self):
+        proposals = SQLitePendingToolActionProposalStore(
+            str(Path(self.tempdir.name) / "unconfigured-reconcile.sqlite"),
+        )
+        self.app.pending_tool_action_proposals = proposals
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + "a" * 32 + "/reconcile",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(data["error"], "proposal_reconciliation_unavailable")
+
+    def test_recovery_endpoint_is_authenticated_and_owner_scoped(self):
+        root = Path(self.tempdir.name)
+        proposals = SQLitePendingToolActionProposalStore(str(root / "recover-proposals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "recover-approvals.sqlite"))
+        journal = ToolActionJournal(str(root / "recover-journal.sqlite"))
+
+        class AllowEmailPolicy:
+            def authorize_tool(self, name):
+                return True
+
+        guarded = GuardedToolRuntime(
+            {"email.send": lambda raw: "sent"},
+            AllowEmailPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=journal,
+            approval_store=approvals,
+        )
+        executor = ApprovedToolActionExecutor(proposals, approvals, guarded)
+        self.app.pending_tool_action_proposals = proposals
+        self.app.tool_action_approvals = approvals
+        self.app.approved_tool_action_executor = executor
+        arguments = {"to": "recipient@example.com"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = proposals.create(context, arguments, principal_id=self.user.user_id)
+        proposals.decide(proposal.proposal_id, principal_id=self.user.user_id, decision="approved")
+        self.assertTrue(proposals.claim_execution(proposal.proposal_id, principal_id=self.user.user_id))
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/recover",
+        )
+        self.assertEqual(status, 401)
+
+        status, data, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/recover",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["execution_state"], "executing")
+        self.assertEqual(data["result"], None)
+        self.assertEqual(proposals.get(
+            proposal.proposal_id, principal_id=self.user.user_id,
+        ).execution_state, "executing")
 
 if __name__ == "__main__":
     unittest.main()

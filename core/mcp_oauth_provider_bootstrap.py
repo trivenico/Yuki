@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import re
 from urllib.parse import urlsplit
 
@@ -33,13 +34,26 @@ def _hosts(values, label, required=True):
     if not isinstance(values, (tuple, list, set, frozenset)):
         raise ValueError(f"{label} must be a host collection")
     result = set()
+    label_pattern = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     for value in values:
-        if not isinstance(value, str) or not value or value != value.strip():
+        if (
+            not isinstance(value, str) or not value or value != value.strip()
+            or value != value.lower() or value.endswith(".")
+            or len(value) > 253 or "*" in value
+        ):
             raise ValueError(f"{label} contains an invalid host")
-        host = value.lower().rstrip(".")
-        if "/" in host or ":" in host or "@" in host:
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
+            pass
+        else:
             raise ValueError(f"{label} contains an invalid host")
-        result.add(host)
+        labels = value.split(".")
+        if any(not label_pattern.fullmatch(part) for part in labels):
+            raise ValueError(f"{label} contains an invalid host")
+        if value in result:
+            raise ValueError(f"{label} contains a duplicate host")
+        result.add(value)
     if required and not result:
         raise ValueError(f"{label} must not be empty")
     return tuple(sorted(result))

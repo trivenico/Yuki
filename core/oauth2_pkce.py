@@ -72,8 +72,9 @@ def create_pkce_authorization_request(
     client_id: str,
     redirect_uri: str,
     scopes,
-    resource: str,
+    resource: str | None,
     oidc_nonce: str | None = None,
+    extra_parameters=(),
 ) -> PKCEAuthorizationRequest:
     """Build a bounded S256 authorization request for a reviewed OAuth server."""
     endpoint = _https_url(
@@ -98,7 +99,7 @@ def create_pkce_authorization_request(
     if callback_parts.query:
         raise OAuthAuthorizationError("redirect_uri_query_not_allowed")
 
-    resource_uri = _https_url(resource, label="resource")
+    resource_uri = None if resource is None else _https_url(resource, label="resource")
     if not isinstance(scopes, (list, tuple)) or not 1 <= len(scopes) <= 32:
         raise OAuthAuthorizationError("invalid_scopes")
     normalized_scopes = []
@@ -127,8 +128,22 @@ def create_pkce_authorization_request(
         ("state", state),
         ("code_challenge", challenge),
         ("code_challenge_method", "S256"),
-        ("resource", resource_uri),
     ]
+    if resource_uri is not None:
+        params.append(("resource", resource_uri))
+    if not isinstance(extra_parameters, (tuple, list)) or len(extra_parameters) > 16:
+        raise OAuthAuthorizationError("invalid_extra_authorization_parameters")
+    reserved = {key for key, _ in params} | {"nonce"}
+    seen_extra = set()
+    for item in extra_parameters:
+        if (not isinstance(item, (tuple, list)) or len(item) != 2
+                or not isinstance(item[0], str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", item[0])
+                or item[0] in reserved or item[0] in seen_extra
+                or not isinstance(item[1], str) or not item[1] or len(item[1]) > 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in item[1])):
+            raise OAuthAuthorizationError("invalid_extra_authorization_parameters")
+        seen_extra.add(item[0])
+        params.append((item[0], item[1]))
     if oidc_nonce is not None:
         params.append(("nonce", oidc_nonce))
     authorization_url = urlunsplit((

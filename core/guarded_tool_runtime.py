@@ -94,6 +94,41 @@ class GuardedToolRuntime:
                 # Telemetry failure must not bypass or broaden authorization.
                 pass
 
+    def requires_user_confirmation(self, name: str) -> bool:
+        """Return whether a registered tool is a confirmation-gated side effect."""
+        if self._capabilities is None:
+            return False
+        try:
+            capability = self._capabilities.resolve(name)
+        except ToolCapabilityError:
+            return False
+        if not (
+            capability.effect is ToolEffect.SIDE_EFFECTING
+            and capability.requires_user_confirmation
+        ):
+            return False
+        try:
+            return self._policy.authorize_tool(name) is True
+        except Exception:
+            return False
+
+    def requires_confirmation_by_capability(self, name: str) -> bool:
+        """Classify the host capability independently of the current user policy.
+
+        Executors use this to validate that an already-approved proposal still
+        requires confirmation. Actual authorization remains enforced by invoke().
+        """
+        if self._capabilities is None:
+            return False
+        try:
+            capability = self._capabilities.resolve(name)
+        except ToolCapabilityError:
+            return False
+        return (
+            capability.effect is ToolEffect.SIDE_EFFECTING
+            and capability.requires_user_confirmation
+        )
+
     def invoke(
         self, name: str, argument: str = "", *,
         action_context: ToolActionContext | None = None,
@@ -185,7 +220,14 @@ class GuardedToolRuntime:
                 return "Tool blocked: action is already running or requires reconciliation."
 
         try:
-            result = str(self._tools[name](argument))
+            handler = self._tools[name]
+            action_handler = getattr(handler, "invoke_action", None)
+            if lease_owner is not None and callable(action_handler):
+                result = str(action_handler(
+                    argument, action_context=action_context, principal_id=principal_id,
+                ))
+            else:
+                result = str(handler(argument))
         except Exception:
             if lease_owner is not None:
                 try:

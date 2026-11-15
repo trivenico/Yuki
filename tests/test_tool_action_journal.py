@@ -24,6 +24,22 @@ class ToolActionJournalTests(unittest.TestCase):
         started = self.journal.begin_execution(key, record.request_digest)
         return record, started
 
+
+    def test_scoped_recovery_fences_only_the_requested_expired_execution(self):
+        expired, _ = self.reserve_and_start("action-expired")
+        live, _ = self.reserve_and_start("action-live")
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", "action-expired"),
+            )
+            db.commit()
+
+        recovered = self.journal.recover_expired_execution("action-expired")
+        self.assertEqual(recovered.state, "outcome_unknown")
+        self.assertEqual(recovered.error_code, "execution_lease_expired")
+        self.assertEqual(self.journal.get("action-live").state, "executing")
+
     def test_reserve_is_idempotent_for_same_key_and_payload(self):
         first = self.journal.reserve("action-1", "calendar.create", {"title": "Review"})
         second = self.journal.reserve("action-1", "calendar.create", {"title": "Review"})

@@ -273,6 +273,31 @@ class ToolActionJournal:
                 raise
         return self._record(updated)
 
+    def recover_expired_execution(self, idempotency_key: str) -> ToolAction | None:
+        """Fence one expired execution lease and return its durable current state."""
+        self._validate_key(idempotency_key)
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute(
+                    """UPDATE tool_actions
+                       SET state='outcome_unknown',error_code='execution_lease_expired',
+                           lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
+                       WHERE idempotency_key=? AND state='executing'
+                         AND lease_expires_at IS NOT NULL AND lease_expires_at<=?""",
+                    (now, idempotency_key, now),
+                )
+                row = db.execute(
+                    "SELECT * FROM tool_actions WHERE idempotency_key=?",
+                    (idempotency_key,),
+                ).fetchone()
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return self._record(row) if row is not None else None
+
     def recover_expired_executions(self) -> int:
         """Fence expired workers and mark their external outcome as unknown."""
         now = _now()
@@ -300,8 +325,8 @@ class ToolActionJournal:
     ) -> ToolAction:
         self._validate_key(idempotency_key)
         result_json = None
-        if new_state == "succeeded":
-            result_json, _ = _json_bytes(result, _MAX_RESULT_BYTES, "result")
+        if new_state == "succeeded" or (new_state == "not_executed" and result is not None):
+            result_json, _ = _json_bytes(result, _MAX_RESULT_BYTES, "result/evidence")
         if error_code is not None and (
             not isinstance(error_code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code)
         ):
@@ -361,8 +386,11 @@ class ToolActionJournal:
             idempotency_key, "outcome_unknown", "succeeded", result=result,
         )
 
-    def reconcile_not_executed(self, idempotency_key: str, error_code: str) -> ToolAction:
-        """Resolve an uncertain action only after proving the side effect did not occur."""
+    def reconcile_not_executed(
+        self, idempotency_key: str, error_code: str, *, evidence: Any = None,
+    ) -> ToolAction:
+        """Resolve an uncertain action only after proving non-execution; persist evidence."""
         return self._transition(
-            idempotency_key, "outcome_unknown", "not_executed", error_code=error_code,
+            idempotency_key, "outcome_unknown", "not_executed",
+            error_code=error_code, result=evidence,
         )

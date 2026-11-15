@@ -8,6 +8,7 @@ from core.oauth_provider_registry import (
 
 
 class Service:
+    provider_id = "sample"
     def begin(self, **kwargs): return {}
     def complete(self, **kwargs): return {}
 
@@ -50,6 +51,26 @@ class ProviderRegistryTests(unittest.TestCase):
             PreparedOAuthProviderRegistry(
                 {"other": prepared("sample")},
                 {"other": OAuthProviderPresentation("Sample")},
+            )
+
+
+    def test_rejects_service_whose_provider_identity_differs_from_registry_key(self):
+        class WrongService(Service):
+            provider_id = "other"
+        wrong = PreparedOAuthProvider(
+            provider_id="sample",
+            issuer="https://auth.example.com",
+            resource="https://api.example.com/mcp",
+            client_id="public-client-id",
+            registration_method="dynamic_client_registration",
+            redirect_uri="https://yuki.example.com/oauth/callback/sample",
+            scopes=("jobs.read",),
+            authorization_service=WrongService(),
+        )
+        with self.assertRaisesRegex(ValueError, "service provider identity"):
+            PreparedOAuthProviderRegistry(
+                {"sample": wrong},
+                {"sample": OAuthProviderPresentation("Sample")},
             )
 
     def test_every_provider_requires_presentation(self):

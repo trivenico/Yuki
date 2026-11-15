@@ -31,6 +31,10 @@ from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.approved_tool_action_executor import ApprovedToolActionExecutor
+from core.tool_action_reconciliation import ToolActionReconciliationService
+from core.google_gmail_runtime import GmailToolRuntimeBundle
 
 
 class ConversationRuntime:
@@ -102,6 +106,11 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
+    pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
+    approved_tool_action_executor: ApprovedToolActionExecutor | None = None,
+    tool_action_reconciler: ToolActionReconciliationService | None = None,
+    gmail_runtime_bundle: GmailToolRuntimeBundle | None = None,
+    pending_proposal_factory: Callable | None = None,
     action_context_factory: Callable | None = None,
     confirmation_check: Callable | None = None,
     approval_id_factory: Callable | None = None,
@@ -117,12 +126,32 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if gmail_runtime_bundle is not None:
+        if not isinstance(gmail_runtime_bundle, GmailToolRuntimeBundle):
+            raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
+        if agent_loop.tool_protocol is not gmail_runtime_bundle.tool_protocol:
+            raise ValueError("agent_loop must use the Gmail bundle's exact structured tool protocol.")
+        if tools_for_user is None:
+            raise ValueError("Gmail composition requires an owner-scoped tools_for_user callback.")
+        if tool_action_approvals is not None or pending_tool_action_proposals is not None:
+            raise ValueError("Gmail bundle owns the durable approval and proposal stores.")
+        if approved_tool_action_executor is not None or tool_action_reconciler is not None:
+            raise ValueError("Gmail bundle owns the approved executor and reconciliation service.")
+        tool_action_approvals = gmail_runtime_bundle.approval_store
+        pending_tool_action_proposals = gmail_runtime_bundle.proposals
+        approved_tool_action_executor = ApprovedToolActionExecutor(
+            gmail_runtime_bundle.proposals,
+            gmail_runtime_bundle.approval_store,
+            gmail_runtime_bundle.guarded_runtime,
+        )
+        tool_action_reconciler = gmail_runtime_bundle.reconciliation_service
     if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
         raise TypeError("agent_loop_for_owner must be callable.")
     for callback, name in (
         (action_context_factory, "action_context_factory"),
         (confirmation_check, "confirmation_check"),
         (approval_id_factory, "approval_id_factory"),
+        (pending_proposal_factory, "pending_proposal_factory"),
     ):
         if callback is not None and not callable(callback):
             raise TypeError(f"{name} must be callable.")
@@ -157,6 +186,22 @@ def build_conversation_runtime(
         tool_action_approvals, SQLiteToolActionApprovalStore
     ):
         raise TypeError("tool_action_approvals must be a SQLiteToolActionApprovalStore")
+    if pending_tool_action_proposals is not None and not isinstance(
+        pending_tool_action_proposals, SQLitePendingToolActionProposalStore
+    ):
+        raise TypeError("pending_tool_action_proposals must be a SQLitePendingToolActionProposalStore")
+    if approved_tool_action_executor is not None:
+        if not isinstance(approved_tool_action_executor, ApprovedToolActionExecutor):
+            raise TypeError("approved_tool_action_executor must be an ApprovedToolActionExecutor")
+        if pending_tool_action_proposals is None or approved_tool_action_executor.proposals is not pending_tool_action_proposals:
+            raise ValueError("executor must use the configured pending proposal store")
+        if tool_action_approvals is None or approved_tool_action_executor.approvals is not tool_action_approvals:
+            raise ValueError("executor must use the configured approval store")
+    if tool_action_reconciler is not None:
+        if not isinstance(tool_action_reconciler, ToolActionReconciliationService):
+            raise TypeError("tool_action_reconciler must be a ToolActionReconciliationService")
+        if pending_tool_action_proposals is None or tool_action_reconciler.proposals is not pending_tool_action_proposals:
+            raise ValueError("reconciler must use the configured pending proposal store")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -173,6 +218,22 @@ def build_conversation_runtime(
     # When durable approvals are configured, provide safe default host adapters.
     # The confirmation decision remains an explicit embedding/UI responsibility;
     # AgentExecutionLoop defaults it to False when no checker is supplied.
+    if pending_tool_action_proposals is not None:
+        if action_context_factory is None:
+            action_context_factory = (
+                lambda principal_id, tool_name, arguments:
+                ToolActionContext.create(principal_id, tool_name, arguments)
+                if principal_id is not None else None
+            )
+        if pending_proposal_factory is None:
+            def pending_proposal_factory(principal_id, action_context, call):
+                if principal_id is None or action_context is None:
+                    raise ValueError("authenticated proposal identity is required")
+                proposal = pending_tool_action_proposals.create(
+                    action_context, call.arguments, principal_id=principal_id,
+                )
+                return proposal.proposal_id
+
     if tool_action_approvals is not None:
         if action_context_factory is None:
             action_context_factory = (
@@ -193,12 +254,16 @@ def build_conversation_runtime(
         action_context_factory=action_context_factory,
         confirmation_check=confirmation_check,
         approval_id_factory=approval_id_factory,
+        pending_proposal_factory=pending_proposal_factory,
     )
     try:
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
             tool_action_approvals=tool_action_approvals,
+            pending_tool_action_proposals=pending_tool_action_proposals,
+            approved_tool_action_executor=approved_tool_action_executor,
+            tool_action_reconciler=tool_action_reconciler,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)

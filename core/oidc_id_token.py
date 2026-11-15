@@ -68,7 +68,7 @@ class OIDCIdentityTokenVerifier:
 
     def __init__(
         self, *, transport, jwks_uri: str, issuer: str, client_id: str,
-        expected_subject: str, clock: Callable[[], float] = time.time,
+        expected_subject: str | None, clock: Callable[[], float] = time.time,
         clock_skew_seconds: int = 60, maximum_token_age_seconds: int = 86_400,
         jwks_cache: OIDCJWKSCache | None = None,
     ):
@@ -76,10 +76,15 @@ class OIDCIdentityTokenVerifier:
             raise TypeError("a pinned OAuth JSON transport is required")
         for name, value, maximum in (
             ("jwks_uri", jwks_uri, 2048), ("issuer", issuer, 2048),
-            ("client_id", client_id, 512), ("expected_subject", expected_subject, 512),
+            ("client_id", client_id, 512),
         ):
             if not isinstance(value, str) or not value or len(value) > maximum:
                 raise ValueError("trusted OIDC configuration is incomplete")
+        if expected_subject is not None and (
+            not isinstance(expected_subject, str) or not expected_subject
+            or len(expected_subject) > 255
+        ):
+            raise ValueError("expected_subject is invalid")
         if type(clock_skew_seconds) is not int or not 0 <= clock_skew_seconds <= 300:
             raise ValueError("clock skew must be between 0 and 300 seconds")
         if type(maximum_token_age_seconds) is not int or not 1 <= maximum_token_age_seconds <= 604800:
@@ -223,7 +228,10 @@ class OIDCIdentityTokenVerifier:
         audiences = [audience] if isinstance(audience, str) else audience
         if issuer != self._issuer:
             raise OIDCIdentityTokenError("oidc_issuer_mismatch")
-        if subject != self._subject:
+        if (not isinstance(subject, str) or not 1 <= len(subject) <= 255
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in subject)):
+            raise OIDCIdentityTokenError("oidc_subject_invalid")
+        if self._subject is not None and subject != self._subject:
             raise OIDCIdentityTokenError("oidc_subject_mismatch")
         if (not isinstance(audiences, list) or not audiences
                 or not all(isinstance(item, str) and item for item in audiences)
@@ -263,4 +271,4 @@ class OIDCIdentityTokenVerifier:
                 claims["at_hash"], expected_hash
             ):
                 raise OIDCIdentityTokenError("oidc_access_token_hash_mismatch")
-        return {"issuer": self._issuer, "subject": self._subject, "audience": self._client_id}
+        return {"issuer": self._issuer, "subject": subject, "audience": self._client_id}

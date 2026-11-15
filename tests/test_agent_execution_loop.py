@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 
 from core.agent_execution_loop import AgentExecutionError, AgentExecutionLoop
@@ -8,6 +9,7 @@ from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_context import ToolActionContext
 from core.tool_action_journal import ToolActionJournal
 from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 
 
 class AllowPolicy:
@@ -29,6 +31,51 @@ class AgentExecutionLoopTests(unittest.TestCase):
                          "parameters": {"type": "object", "properties": {
                              "value": {"type": "string"}}, "required": ["value"]}},
         }]
+
+    def test_confirmation_required_tool_creates_persisted_proposal_without_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            executed = []
+            store = SQLitePendingToolActionProposalStore(directory + "/proposals.sqlite")
+            catalog = ToolCapabilityCatalog({
+                "email.send": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
+            })
+            class AllowEmailPolicy:
+                def authorize_tool(self, name):
+                    return name == "email.send"
+
+            runtime = GuardedToolRuntime(
+                {"email.send": lambda raw: executed.append(raw) or "sent"},
+                AllowEmailPolicy(), capabilities=catalog,
+            )
+            protocol = StructuredToolProtocol(runtime)
+            arguments = {"to": "person@example.com", "body": "Hello"}
+            turn = {"count": 0}
+
+            def model(**kwargs):
+                turn["count"] += 1
+                if turn["count"] == 1:
+                    return {"text": "", "tool_calls": {"tool_calls": [{
+                        "id": "send_1", "name": "email.send", "arguments": arguments,
+                    }]}}
+                return {"text": "The email is awaiting your approval.", "tool_calls": {"tool_calls": []}}
+
+            def context_factory(principal_id, tool_name, request):
+                return ToolActionContext.create(principal_id, tool_name, request)
+
+            def proposal_factory(principal_id, context, call):
+                return store.create(context, call.arguments, principal_id=principal_id).proposal_id
+
+            result = AgentExecutionLoop(model, protocol).run(
+                "Send the email", tools=[], principal_id="owner-1",
+                action_context_factory=context_factory,
+                pending_proposal_factory=proposal_factory,
+            )
+            proposals = store.list_pending(principal_id="owner-1")
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(len(proposals), 1)
+            self.assertEqual(proposals[0].tool_name, "email.send")
+            self.assertEqual(proposals[0].arguments, arguments)
+            self.assertEqual(executed, [])
 
     def test_tool_result_is_returned_to_model_before_final_answer(self):
         observed = []

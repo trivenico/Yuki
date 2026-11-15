@@ -23,7 +23,7 @@ class ConversationService:
     def __init__(
         self, store: ConversationStore, agent_loop: AgentExecutionLoop,
         *, agent_loop_for_owner=None, action_context_factory=None,
-        confirmation_check=None, approval_id_factory=None,
+        confirmation_check=None, approval_id_factory=None, pending_proposal_factory=None,
     ):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
@@ -35,12 +35,14 @@ class ConversationService:
             (action_context_factory, "action_context_factory"),
             (confirmation_check, "confirmation_check"),
             (approval_id_factory, "approval_id_factory"),
+            (pending_proposal_factory, "pending_proposal_factory"),
         ):
             if callback is not None and not callable(callback):
                 raise TypeError(f"{name} must be callable.")
         self.action_context_factory = action_context_factory
         self.confirmation_check = confirmation_check
         self.approval_id_factory = approval_id_factory
+        self.pending_proposal_factory = pending_proposal_factory
         self.store = store
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
@@ -241,6 +243,7 @@ class ConversationService:
                     action_context_factory=self.action_context_factory,
                     confirmation_check=self.confirmation_check,
                     approval_id_factory=self.approval_id_factory,
+                    pending_proposal_factory=self.pending_proposal_factory,
                     **kwargs,
                 )
                 status = result.status

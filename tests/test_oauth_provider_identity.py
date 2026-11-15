@@ -51,5 +51,28 @@ class OAuthProviderIdentityVerifierTests(unittest.TestCase):
             verifier.verify(access_token="opaque-token")
         self.assertNotIn("secret token", str(caught.exception))
 
+    def test_dynamic_subject_mode_returns_verified_userinfo_subject(self):
+        transport = Transport({"sub": "google-subject-987", "iss": "https://accounts.google.com"})
+        verifier = OAuthProviderIdentityVerifier(
+            transport=transport,
+            userinfo_endpoint="https://openidconnect.googleapis.com/v1/userinfo",
+            expected_subject=None,
+            expected_issuer="https://accounts.google.com",
+        )
+        result = verifier.verify(access_token="opaque-token")
+        self.assertEqual(result["subject"], "google-subject-987")
+        self.assertEqual(result["issuer"], "https://accounts.google.com")
+
+    def test_dynamic_subject_mode_rejects_missing_or_malformed_subject(self):
+        for profile in ({}, {"sub": ""}, {"sub": "bad subject"}):
+            verifier = OAuthProviderIdentityVerifier(
+                transport=Transport(profile),
+                userinfo_endpoint="https://openidconnect.googleapis.com/v1/userinfo",
+                expected_subject=None,
+                expected_issuer="https://accounts.google.com",
+            )
+            with self.subTest(profile=profile), self.assertRaises(OAuthProviderIdentityError):
+                verifier.verify(access_token="opaque-token")
+
 if __name__ == "__main__":
     unittest.main()

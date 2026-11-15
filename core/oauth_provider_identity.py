@@ -13,18 +13,22 @@ class OAuthProviderIdentityError(RuntimeError):
 class OAuthProviderIdentityVerifier:
     def __init__(
         self, *, transport, userinfo_endpoint: str,
-        expected_subject: str, expected_issuer: str,
+        expected_subject: str | None, expected_issuer: str,
         expected_audience: str | None = None,
     ):
         if not callable(getattr(transport, "request_json", None)):
             raise TypeError("a pinned OAuth JSON transport is required")
         for label, value in {
             "userinfo_endpoint": userinfo_endpoint,
-            "expected_subject": expected_subject,
             "expected_issuer": expected_issuer,
         }.items():
             if not isinstance(value, str) or not value.strip() or len(value) > 2048:
                 raise ValueError("trusted provider identity configuration is incomplete")
+        if expected_subject is not None and (
+            not isinstance(expected_subject, str) or not expected_subject
+            or len(expected_subject) > 255
+        ):
+            raise ValueError("expected_subject is invalid")
         if expected_audience is not None and (
             not isinstance(expected_audience, str) or not expected_audience.strip()
             or len(expected_audience) > 512
@@ -49,7 +53,10 @@ class OAuthProviderIdentityVerifier:
         if not isinstance(profile, dict):
             raise OAuthProviderIdentityError("provider_identity_response_invalid")
         subject = profile.get("sub")
-        if not isinstance(subject, str) or subject != self._subject:
+        if (not isinstance(subject, str) or not 1 <= len(subject) <= 255
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in subject)):
+            raise OAuthProviderIdentityError("provider_identity_subject_invalid")
+        if self._subject is not None and subject != self._subject:
             raise OAuthProviderIdentityError("provider_account_identity_mismatch")
         issuer = profile.get("iss")
         if issuer is not None and issuer != self._issuer:
@@ -59,4 +66,4 @@ class OAuthProviderIdentityVerifier:
             audiences = [audience] if isinstance(audience, str) else audience
             if not isinstance(audiences, list) or self._audience not in audiences:
                 raise OAuthProviderIdentityError("provider_identity_audience_mismatch")
-        return {"subject": self._subject, "issuer": self._issuer}
+        return {"subject": subject, "issuer": self._issuer}

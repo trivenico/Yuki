@@ -230,5 +230,33 @@ class OAuthAuthorizationServiceTests(unittest.TestCase):
         self.assertEqual(self.vault.grants, [])
 
 
+    def test_shared_lifecycle_coordinator_wraps_authorization_completion(self):
+        from contextlib import contextmanager
+        class Coordinator:
+            calls = []
+            @contextmanager
+            def coordinate(self, **identity):
+                self.calls.append(identity)
+                yield
+        coordinator = Coordinator()
+        service = OAuthAuthorizationService(
+            transaction_store=self.transactions, credential_vault=self.vault,
+            transport=self.transport, provider_id="upwork", account_id="owner-account",
+            client_id="public-client", authorization_endpoint="https://auth.example.com/authorize",
+            token_endpoint="https://auth.example.com/token",
+            allowed_authorization_hosts={"auth.example.com"},
+            redirect_uri="https://yuki.example/oauth/callback",
+            issuer="https://auth.example.com", resource="https://api.example.com",
+            scopes=("read",), identity_verifier=self.identity,
+            lifecycle_coordinator=coordinator,
+        )
+        started = service.begin(owner_id="owner-1", session_id="session-1")
+        state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
+        callback = "https://yuki.example/oauth/callback?code=x&state=" + state
+        service.complete(owner_id="owner-1", session_id="session-1", callback_url=callback)
+        self.assertEqual(coordinator.calls, [{
+            "owner_id": "owner-1", "provider_id": "upwork",
+        }])
+
 if __name__ == "__main__":
     unittest.main()

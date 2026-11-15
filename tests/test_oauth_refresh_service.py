@@ -48,6 +48,20 @@ class OAuthTokenRefreshServiceTests(unittest.TestCase):
             clock=self.clock, refresh_skew_seconds=120,
         )
 
+    def test_rejects_credential_returned_for_another_owner(self):
+        self.vault.credential.owner_id = "owner-2"
+        with self.assertRaisesRegex(OAuthRefreshError, "credential_context_mismatch"):
+            self.service.refresh_if_needed(owner_id="owner-1", account_id="account-1")
+        self.assertEqual(self.transport.calls, [])
+        self.assertEqual(self.vault.rotations, [])
+
+    def test_rejects_malformed_credential_generation_before_refresh(self):
+        self.vault.credential.version = True
+        with self.assertRaisesRegex(OAuthRefreshError, "credential_metadata_invalid"):
+            self.service.refresh_if_needed(owner_id="owner-1", account_id="account-1")
+        self.assertEqual(self.transport.calls, [])
+        self.assertEqual(self.vault.rotations, [])
+
     def test_fresh_credential_is_not_refreshed(self):
         self.credential.expires_at = 1_800_001_000
         result = self.service.refresh_if_needed(owner_id="owner-1", account_id="account-1")
@@ -82,6 +96,27 @@ class OAuthTokenRefreshServiceTests(unittest.TestCase):
             self.service.refresh_if_needed(owner_id="owner-1", account_id="account-1")
         self.assertEqual(self.transport.calls, [])
 
+
+    def test_shared_lifecycle_coordinator_wraps_refresh(self):
+        from contextlib import contextmanager
+        class Coordinator:
+            calls = []
+            @contextmanager
+            def coordinate(self, **identity):
+                self.calls.append(identity)
+                yield
+        coordinator = Coordinator()
+        service = OAuthTokenRefreshService(
+            credential_vault=self.vault, transport=self.transport,
+            token_endpoint="https://auth.example.com/token",
+            provider_id="provider-1", client_id="client-1",
+            issuer="https://auth.example.com", resource="https://api.example.com",
+            clock=self.clock, lifecycle_coordinator=coordinator,
+        )
+        service.refresh_if_needed(owner_id="owner-1", account_id="account-1")
+        self.assertEqual(coordinator.calls, [{
+            "owner_id": "owner-1", "provider_id": "provider-1", "account_id": "account-1",
+        }])
 
 if __name__ == "__main__":
     unittest.main()
