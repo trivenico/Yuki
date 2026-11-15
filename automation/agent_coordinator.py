@@ -407,6 +407,8 @@ class SpecialistAgentCoordinator:
             raise PermissionError("agent planning is not authorized.")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
+        # owner_id is a trusted composition-layer identity, not a task field.
+        # Callers must resolve it from the authenticated principal/session.
         if owner_id is not None and (
             not isinstance(owner_id, str) or not owner_id.strip()
             or len(owner_id) > 200 or "\x00" in owner_id
