@@ -632,7 +632,7 @@ class WorkflowRunStore:
             not isinstance(expected_lease_owner, str)
             or not expected_lease_owner.strip()
             or len(expected_lease_owner) > 200
-            or "\\x00" in expected_lease_owner
+            or "\x00" in expected_lease_owner
         ):
             raise ValueError("expected_lease_owner must be bounded non-empty text.")
         if expected_lease_owner is not None and kind not in {"task.progress", "task.artifact"}:
