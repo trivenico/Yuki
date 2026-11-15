@@ -41,6 +41,48 @@ def _multiprocess_provider_claim_then_crash(database_path, conversation_id, requ
     os._exit(0)
 
 
+
+def _multiprocess_reconcile_and_crash_before_evidence(database_path, conversation_id, request_id, connection):
+    import os
+    import core.conversation_store as store_module
+    from core.conversation_store import ConversationStore
+    from core.provider_outcome import (
+        ProviderOutcome, ProviderOutcomeEvidence, ProviderOutcomeReconciler,
+        ProviderOutcomeRegistry,
+    )
+
+    store_module.time.time = lambda: 100.0
+    store = ConversationStore(database_path)
+
+    class Adapter:
+        provider_id = "mail.example"
+
+        def lookup_tool_outcome(self, identity):
+            return ProviderOutcomeEvidence(
+                provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
+                idempotency_key=identity["idempotency_key"],
+                arguments_sha256=identity["arguments_sha256"],
+                evidence_sha256="d" * 64,
+                observed_at=datetime.now(timezone.utc).isoformat(),
+                execution_id=identity["execution_id"],
+            )
+
+    def crash_before_persist(**kwargs):
+        connection.send("provider-lookup-returned")
+        connection.close()
+        os._exit(0)
+
+    store.record_provider_outcome_evidence = crash_before_persist
+    reconciler = ProviderOutcomeReconciler(
+        store, ProviderOutcomeRegistry({"send_email": Adapter()}),
+        lease_ttl_seconds=5, lease_renew_interval_seconds=1,
+    )
+    reconciler.reconcile(
+        owner_id="owner-reconcile-crash", conversation_id=conversation_id,
+        request_id=request_id, call_id="call-reconcile-crash",
+    )
+    os._exit(2)
+
 class ProviderOutcomeTests(unittest.TestCase):
     def setUp(self):
         self.execution = {
