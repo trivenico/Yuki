@@ -97,6 +97,31 @@ class SpecialistSupervisorTests(unittest.TestCase):
         self.assertEqual(resumed.validated_outputs["sensitive"], "facts for prepare sensitive action")
 
 
+
+    def test_role_mandated_approval_is_reported_even_if_subtask_did_not_request_it(self):
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime,
+            str(Path(self.tmp.name) / "yuki.sqlite3"),
+            [SpecialistAgent(
+                "research", "Research specialist", frozenset({"research"}), "emit",
+                requires_approval=True,
+            )],
+            authorize=lambda actor, action, _plan: (
+                actor == "alice" and action in {"agent:plan", "agent:dispatch", "agent:read"}
+            ),
+        )
+        supervisor = SpecialistSupervisor(coordinator, self.worker)
+        report = supervisor.run(
+            actor_id="alice",
+            idempotency_key="supervisor-role-approval",
+            subtasks=[
+                SubtaskSpec("role-protected", "research safely", ("research",),
+                            requires_approval=False),
+            ],
+        )
+        self.assertTrue(report.awaiting_approval)
+        self.assertFalse(report.complete)
+
     def test_supervisor_never_claims_unrelated_queued_tasks(self):
         unrelated = self.runtime.enqueue(
             actor_id="alice",
