@@ -225,9 +225,8 @@ class WorkflowRunStore:
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
-        digest = hashlib.sha256(
-            ((owner or "") + "\n" + name + "\n" + definition_json).encode("utf-8")
-        ).hexdigest()
+        digest_payload = (name + "\n" + definition_json) if owner is None else (owner + "\n" + name + "\n" + definition_json)
+        digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
         now = _now()
         with self._connect() as db:
             # Serialize the read-before-insert path so concurrent retries with
