@@ -238,7 +238,15 @@ class WorkflowRunStore:
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
-        digest_payload = json.dumps({"owner_id": owner, "plan_id": plan, "subtask_id": subtask, "name": name, "definition": canonical}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if plan is None:
+            # Keep pre-plan-linkage digests stable for existing idempotency keys.
+            digest_payload = (name + "\\n" + definition_json) if owner is None else (owner + "\\n" + name + "\\n" + definition_json)
+        else:
+            digest_payload = json.dumps(
+                {"owner_id": owner, "plan_id": plan, "subtask_id": subtask,
+                 "name": name, "definition": canonical},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            )
         digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
         now = _now()
         with self._connect() as db:
