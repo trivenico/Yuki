@@ -84,6 +84,19 @@ class SQLiteToolActionApprovalStoreTests(unittest.TestCase):
             self.assertTrue(store.revoke(token, principal_id="user-1"))
             self.assertFalse(store.consume(token, context, principal_id="user-1"))
 
+    def test_raw_approval_token_is_not_persisted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            context = ToolActionContext.create("user-1", "email.send", {})
+            token = store.issue(context, principal_id="user-1")
+            import sqlite3
+            with sqlite3.connect(store.database_path) as db:
+                persisted = db.execute(
+                    "SELECT approval_id FROM tool_action_approvals"
+                ).fetchone()[0]
+            self.assertNotEqual(persisted, token)
+            self.assertEqual(persisted, store._fingerprint(token))
+
     def test_audit_history_records_lifecycle_without_raw_token(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
