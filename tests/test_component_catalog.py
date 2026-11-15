@@ -112,6 +112,28 @@ class ComponentCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dependency cycle"):
             component_dependency_order([first, second])
 
+
+    def test_malformed_contract_collections_return_validation_errors(self):
+        root = Path(__file__).resolve().parents[1]
+        malformed = replace(DEFAULT_COMPONENTS[0], entrypoints=["core/auth.py"])
+        errors = validate_component_catalog([malformed], repository_root=root)
+        self.assertTrue(any("entrypoints must be a tuple" in error for error in errors))
+
+        malformed_values = replace(DEFAULT_COMPONENTS[0], depends_on=(None,))
+        errors = validate_component_catalog([malformed_values], repository_root=root)
+        self.assertTrue(any("depends_on must contain only non-empty strings" in error for error in errors))
+
+    def test_non_contract_catalog_entries_are_rejected_without_crashing(self):
+        errors = validate_component_catalog([object()])
+        self.assertIn("catalog entries must be ComponentContract instances", errors)
+
+    def test_dependency_order_rejects_malformed_dependency_collection(self):
+        from core.component_catalog import component_dependency_order
+
+        malformed = replace(DEFAULT_COMPONENTS[0], depends_on=["provider-runtime"])
+        with self.assertRaisesRegex(ValueError, "invalid dependency collection"):
+            component_dependency_order([malformed])
+
     def test_catalog_exports_json_safe_data(self):
         import json
         data = json.loads(component_catalog_json())
