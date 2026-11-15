@@ -53,13 +53,18 @@ class ComponentRegistryTests(unittest.TestCase):
         registry.register(self.runtime("identity-access", events))
         registry.register(self.runtime("provider-runtime", events))
         dependent = self.runtime("agent-execution", events)
-        failing = replace(dependent, start=lambda: (_ for _ in ()).throw(ValueError("boom")))
+        failing = replace(
+            dependent,
+            start=lambda: (_ for _ in ()).throw(ValueError("boom")),
+            close=lambda: events.append(("close", "agent-execution")),
+        )
         registry.register(failing)
         with self.assertRaisesRegex(RuntimeError, "startup failed"):
             registry.start_all()
         self.assertEqual(events, [
             ("start", "identity-access"), ("start", "provider-runtime"),
-            ("close", "provider-runtime"), ("close", "identity-access")
+            ("close", "agent-execution"), ("close", "provider-runtime"),
+            ("close", "identity-access")
         ])
         self.assertEqual(registry.started_components, ())
 
