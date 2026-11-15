@@ -227,6 +227,67 @@ class SpecialistWorkerTests(unittest.TestCase):
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
         self.assertEqual(events[-1].kind, "task.cancelled")
 
+    def test_durable_cancellation_reaches_delegated_agent_between_tool_calls(self):
+        task_id = self.create_task()
+        later_calls = []
+        observed = []
+
+        class ParentPolicy:
+            def authorize_tool(self, _name):
+                return True
+
+        def cancel_task(_arguments):
+            current = self.store.get(task_id)
+            self.runtime.cancel(
+                actor_id="alice", task_id=task_id,
+                expected_version=current.version,
+            )
+            return "cancellation accepted"
+
+        def later_tool(_arguments):
+            later_calls.append("executed")
+            return "should never run"
+
+        def model(**_kwargs):
+            if not observed:
+                observed.append("model")
+                return {
+                    "text": "",
+                    "tool_calls": {"tool_calls": [
+                        {"id": "cancel-call", "name": "cancel_task", "arguments": {}},
+                        {"id": "later-call", "name": "later_tool", "arguments": {}},
+                    ]},
+                }
+            return {"text": "unexpected continuation", "tool_calls": {"tool_calls": []}}
+
+        handlers = build_delegated_specialist_handlers({
+            "code-review": {
+                "model": model,
+                "tools": {
+                    "cancel_task": cancel_task,
+                    "later_tool": later_tool,
+                },
+                "tool_definitions": [
+                    {"type": "function", "function": {"name": "cancel_task"}},
+                    {"type": "function", "function": {"name": "later_tool"}},
+                ],
+                "parent_policy": ParentPolicy(),
+                "allowed_tools": ("cancel_task", "later_tool"),
+            },
+        })
+        result = self.worker(handlers).run_once()
+
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "cancelled")
+        self.assertEqual(later_calls, [])
+        self.assertEqual(self.store.get(task_id).state, "cancelled")
+        self.assertEqual(
+            [event.kind for event in self.runtime.events(
+                actor_id="worker-service", task_id=task_id,
+            )],
+            ["task.created", "task.cancelled"],
+        )
+
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()
         result = self.worker({
