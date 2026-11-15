@@ -420,7 +420,7 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            claim_sql = "SELECT * FROM workflow_runs WHERE state='queued'"
+            claim_sql = "SELECT * FROM workflow_runs INDEXED BY idx_workflow_runs_queued_order WHERE state='queued'"
             claim_params: list[Any] = []
             if plan_id is not None:
                 claim_sql += " AND plan_id=?"
