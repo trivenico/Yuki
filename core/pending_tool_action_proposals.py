@@ -295,7 +295,7 @@ class SQLitePendingToolActionProposalStore:
         """Finalize a stranded execution claim from authoritative journal state."""
         if not isinstance(principal_id, str) or not principal_id:
             raise ValueError("authenticated principal is required.")
-        if state not in {"finished", "unknown", "not_executed"}:
+        if state not in {"finished", "unknown"}:
             raise ValueError("recovered state must be finished or unknown.")
         with self._connect() as db:
             changed = db.execute("""UPDATE pending_tool_action_proposals
