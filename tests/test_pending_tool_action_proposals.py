@@ -113,6 +113,37 @@ class SQLitePendingToolActionProposalStoreTests(unittest.TestCase):
                 proposal.proposal_id, principal_id="user-1",
             ).status, "expired")
 
+    def test_concurrent_execution_claim_has_exactly_one_winner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = self.make_store(directory)
+            proposal = self.make_proposal(store)
+            store.decide(proposal.proposal_id, principal_id="user-1", decision="approved")
+            barrier = threading.Barrier(3)
+            results = []
+            lock = threading.Lock()
+
+            def claim():
+                barrier.wait()
+                result = store.claim_execution(
+                    proposal.proposal_id, principal_id="user-1",
+                )
+                with lock:
+                    results.append(result)
+
+            workers = [threading.Thread(target=claim) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            barrier.wait()
+            for worker in workers:
+                worker.join(timeout=5)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            self.assertEqual(results.count(True), 1)
+            self.assertEqual(results.count(False), 1)
+            self.assertEqual(
+                store.get(proposal.proposal_id, principal_id="user-1").execution_state,
+                "executing",
+            )
+
     def test_execution_claim_rechecks_expiry_atomically(self):
         import sqlite3
 
