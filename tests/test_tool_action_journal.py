@@ -87,7 +87,7 @@ class ToolActionJournalTests(unittest.TestCase):
         self.assertEqual(failed.state, "not_executed")
         self.assertEqual(failed.error_code, "connection_not_opened")
         with self.assertRaises(ToolActionTransitionError):
-            self.journal.mark_succeeded(record.idempotency_key, started.lease_owner, {"ok": True})
+            self.journal.mark_succeeded(record.idempotency_key, "stale-worker", {"ok": True})
 
     def test_execution_lease_renews_and_fences_stale_owner(self):
         record = self.journal.reserve("lease-1", "email.send", {"to": "a@example.com"})
