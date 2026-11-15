@@ -65,6 +65,11 @@ class SQLitePendingToolActionProposalStore:
                 expires_at TEXT NOT NULL,
                 decided_at TEXT
             )""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(pending_tool_action_proposals)")}
+            if "execution_state" not in columns:
+                db.execute("""ALTER TABLE pending_tool_action_proposals
+                    ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'not_started'
+                    CHECK(execution_state IN ('not_started','executing','finished','unknown'))""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_owner_status
                 ON pending_tool_action_proposals(principal_id, status, created_at)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_expiry
@@ -221,6 +226,40 @@ class SQLitePendingToolActionProposalStore:
                 db.execute("ROLLBACK")
                 raise
         return self._row_to_proposal(row) if row is not None else None
+
+    def claim_execution(self, proposal_id: str, *, principal_id: str) -> bool:
+        """Atomically claim an approved proposal exactly once for server execution."""
+        if not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("authenticated principal is required.")
+        if not isinstance(proposal_id, str) or not proposal_id or len(proposal_id) > 128:
+            return False
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                changed = db.execute("""UPDATE pending_tool_action_proposals
+                    SET execution_state = 'executing'
+                    WHERE proposal_id = ? AND principal_id = ?
+                      AND status = 'approved' AND execution_state = 'not_started'""",
+                    (proposal_id, principal_id)).rowcount
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+        return changed == 1
+
+    def finish_execution(self, proposal_id: str, *, principal_id: str,
+                         outcome_unknown: bool = False) -> bool:
+        """Record a terminal dispatch state; executing proposals are never replayed."""
+        if not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("authenticated principal is required.")
+        target = "unknown" if outcome_unknown else "finished"
+        with self._connect() as db:
+            changed = db.execute("""UPDATE pending_tool_action_proposals
+                SET execution_state = ?
+                WHERE proposal_id = ? AND principal_id = ?
+                  AND status = 'approved' AND execution_state = 'executing'""",
+                (target, proposal_id, principal_id)).rowcount
+        return changed == 1
 
     def cancel(self, proposal_id: str, *, principal_id: str) -> bool:
         """Cancel only an owner's proposal that has not yet been decided."""
