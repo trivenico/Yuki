@@ -518,11 +518,11 @@ class ConversationAPITests(unittest.TestCase):
             token=self.issued.token,
         )
         self.assertEqual(status, 200)
-        self.assertEqual(data["execution_state"], "unknown")
+        self.assertEqual(data["execution_state"], "executing")
         self.assertEqual(data["result"], None)
         self.assertEqual(proposals.get(
             proposal.proposal_id, principal_id=self.user.user_id,
-        ).execution_state, "unknown")
+        ).execution_state, "executing")
 
 if __name__ == "__main__":
     unittest.main()
