@@ -29,9 +29,11 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
                 store_factory=lambda config: store,
             )
             self.assertIs(runtime.store, store)
+            self.assertFalse(runtime.closed)
             self.assertEqual(runtime.owner_id, "local-owner-123")
             self.assertIsNotNone(runtime.conversations)
             runtime.close()
+            self.assertTrue(runtime.closed)
             runtime.close()
             # ConversationStore uses per-operation connections; closing the
             # application runtime must not invalidate subsequent store objects.
