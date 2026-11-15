@@ -633,6 +633,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
             provider_reference="message-reference-1",
         )
         saved = self._record_provider_evidence(
@@ -662,6 +663,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="d" * 64, arguments_sha256="b" * 64,
             evidence_sha256="e" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id="different-execution",
         )
         with self.assertRaises(ConversationConflict):
             self._record_provider_evidence(
@@ -701,6 +703,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
             provider_reference="provider-message-42",
         )
         saved = self._record_provider_evidence(
@@ -921,6 +924,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="d" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
         )
         self._record_provider_evidence(
             owner_id=self.owner, conversation_id=conversation_id,
@@ -1051,6 +1055,7 @@ class ConversationStoreTests(unittest.TestCase):
             provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64, observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=self.store.list_tool_executions(owner_id=self.owner, conversation_id=conversation_id, request_id=request_id)[0]["execution_id"],
         )
         first = ProviderOutcomeEvidence(**common, provider_reference="message-A")
         conflicting = ProviderOutcomeEvidence(**common, provider_reference="message-B")
@@ -1462,6 +1467,7 @@ class ConversationStoreTests(unittest.TestCase):
             provider="mail.example", outcome=ProviderOutcome.CONFIRMED_COMPLETED,
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="e" * 64, observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=claimed["execution_id"],
             provider_reference="message-verified",
         )
         saved = self._record_provider_evidence(
