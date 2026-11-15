@@ -145,6 +145,16 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
         ("The composition layer does not itself provide network authentication or deployment.",),
     ),
     ComponentContract(
+        "api-security", "Inbound API security boundary", "security", "experimental",
+        "Applies bounded peer-based HTTP rate limiting and baseline browser security headers at the ASGI runtime boundary.",
+        ("api/security.py", "api/runtime.py"),
+        ("identity-access",),
+        ("bounded per-peer fixed-window rate limiting", "ignore untrusted forwarded client headers",
+         "security headers on all HTTP responses", "429 responses with Retry-After"),
+        ("tests/test_api_security.py", "tests/test_api_runtime.py"),
+        ("The limiter is process-local; distributed rate limiting, trusted-proxy configuration, WAF integration and deployment-level DDoS protection remain separate controls.",),
+    ),
+    ComponentContract(
         "network-firewall", "Outbound network firewall", "security", "experimental",
         "Applies default-deny outbound host, port, protocol and resolved-address policy before supported transports connect.",
         ("core/network_firewall.py", "core/network_firewall_component_runtime.py",
