@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.local_owner_identity import load_or_create_local_owner_id
@@ -15,6 +16,12 @@ class FakeProvider:
 
     def close(self):
         self.close_calls += 1
+
+    def generate(self, prompt):
+        return prompt
+
+    def is_available(self):
+        return True
 
     def generate_chat(self, *, messages, tools, tool_choice):
         self.calls.append((messages, tools, tool_choice))
@@ -74,6 +81,11 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 owner_id_factory=lambda: "local-test-owner-identity-000000000000",
             )
             try:
+                self.assertEqual(set(runtime.component_registry.started_components), {
+                    "identity-access", "provider-runtime", "agent-execution",
+                    "durable-conversations", "application-composition",
+                })
+                self.assertTrue(all(runtime.component_registry.health().values()))
                 conversation = runtime.conversations.create(owner_id=runtime.owner_id)
                 first = runtime.conversations.reply(
                     owner_id=runtime.owner_id,
@@ -94,6 +106,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
                 self.assertEqual(provider.close_calls, 1)
+                self.assertTrue(runtime.application.closed)
 
             reopened = ConversationStore(store_path)
             try:
@@ -102,6 +115,39 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 self.assertEqual(persisted[0]["version"], 2)
             finally:
                 pass
+
+    def test_provider_startup_failure_closes_provider_and_application_store_once(self):
+        class UnavailableProvider(FakeProvider):
+            def is_available(self):
+                return False
+
+        with tempfile.TemporaryDirectory() as directory:
+            provider = UnavailableProvider()
+            store = ConversationStore(Path(directory) / "conversations.sqlite3")
+            store.close = Mock()
+            with self.assertRaisesRegex(RuntimeError, "component startup failed: provider-runtime"):
+                build_local_conversation_runtime(
+                    {"max_agent_steps": 3},
+                    provider_factory=lambda config: provider,
+                    store_factory=lambda config: store,
+                    owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+                )
+            self.assertEqual(provider.close_calls, 1)
+            store.close.assert_called_once_with()
+
+    def test_runtime_readiness_reflects_started_components_and_shutdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            runtime = build_local_conversation_runtime(
+                {"max_agent_steps": 3},
+                provider_factory=lambda config: provider,
+                store_factory=lambda config: ConversationStore(Path(directory) / "conversations.sqlite3"),
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+            )
+            self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "verified")
+            runtime.close()
+            self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "unavailable")
+            self.assertEqual(provider.close_calls, 1)
 
 
 if __name__ == "__main__":

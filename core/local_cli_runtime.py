@@ -9,12 +9,14 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from core.agent_execution_loop import AgentExecutionLoop
+from core.core_component_runtime import build_local_core_component_registry
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
 )
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.local_owner_identity import load_or_create_local_owner_id
+from core.readiness import ReadinessReport, build_readiness_report
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
@@ -27,8 +29,48 @@ class _DenyAllLocalTools:
         return False
 
 
-# Preserve the established import name while sharing the actual runtime type.
-LocalConversationRuntime = ConversationApplicationRuntime
+class _OwnedProvider:
+    """Idempotent ownership fence shared by CLI and component cleanup paths."""
+    def __init__(self, provider: Any):
+        self._provider = provider
+        self._closed = False
+
+    def generate(self, *args, **kwargs):
+        return self._provider.generate(*args, **kwargs)
+
+    def is_available(self):
+        return self._provider.is_available()
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        close = getattr(self._provider, "close", None)
+        if callable(close):
+            close()
+
+
+class LocalConversationRuntime:
+    """CLI-facing handle whose component registry owns runtime shutdown."""
+    def __init__(self, application: ConversationApplicationRuntime, component_registry):
+        self.application = application
+        self.component_registry = component_registry
+        self._closed = False
+
+    def __getattr__(self, name):
+        return getattr(self.application, name)
+
+    def readiness_report(self) -> ReadinessReport:
+        """Return local capability diagnostics including live component health."""
+        return build_readiness_report(component_registry=self.component_registry)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        failures = self.component_registry.close()
+        if failures:
+            raise RuntimeError("local CLI component shutdown failed: " + ", ".join(failures))
 
 
 def build_local_conversation_runtime(
@@ -42,9 +84,9 @@ def build_local_conversation_runtime(
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
     provider = provider_factory(config)
-    close_provider = getattr(provider, "close", None)
-    close_callbacks = (close_provider,) if callable(close_provider) else ()
-    ownership_transferred = False
+    owned_provider = _OwnedProvider(provider)
+    application = None
+    registry = None
     try:
         model = ProviderAgentAdapter(provider)
         tool_runtime = GuardedToolRuntime({}, _DenyAllLocalTools())
@@ -67,17 +109,26 @@ def build_local_conversation_runtime(
         )
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
             raise ValueError("local owner identity is invalid.")
-        ownership_transferred = True
-        return build_conversation_application_runtime(
+        application = build_conversation_application_runtime(
             config, agent_loop=agent_loop, owner_id=owner_id,
-            close_callbacks=close_callbacks,
             **({"store_factory": store_factory} if store_factory is not None else {}),
         )
+        registry = build_local_core_component_registry(
+            owner_id=owner_id, provider=owned_provider,
+            agent_loop=agent_loop, application_runtime=application,
+        )
+        registry.start_all()
+        return LocalConversationRuntime(application, registry)
     except Exception:
-        if not ownership_transferred:
-            for callback in close_callbacks:
-                try:
-                    callback()
-                except Exception:
-                    pass
+        if registry is not None:
+            registry.close()
+        if application is not None:
+            try:
+                application.close()
+            except Exception:
+                pass
+        try:
+            owned_provider.close()
+        except Exception:
+            pass
         raise

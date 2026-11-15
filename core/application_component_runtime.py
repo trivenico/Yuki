@@ -23,7 +23,7 @@ def build_application_composition_component_runtime(
 
     def start() -> None:
         with lock:
-            if state["closed"] or application._closed:
+            if state["closed"] or application.closed:
                 raise RuntimeError("application composition is already closed.")
             state["started"] = True
 

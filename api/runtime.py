@@ -19,6 +19,7 @@ from core.conversation_application_runtime import (
     build_conversation_application_runtime,
 )
 from core.device_pairing import DevicePairingService
+from core.readiness import ReadinessReport, build_readiness_report
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
@@ -54,6 +55,10 @@ class ConversationRuntime:
                 self.close()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
+
+    def readiness_report(self) -> ReadinessReport:
+        """Return capability diagnostics with this runtime component health."""
+        return build_readiness_report(component_registry=self.component_registry)
 
     def close(self) -> None:
         """Close backend resources once during graceful application shutdown."""

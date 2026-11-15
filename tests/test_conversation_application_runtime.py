@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -29,9 +30,11 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
                 store_factory=lambda config: store,
             )
             self.assertIs(runtime.store, store)
+            self.assertFalse(runtime.closed)
             self.assertEqual(runtime.owner_id, "local-owner-123")
             self.assertIsNotNone(runtime.conversations)
             runtime.close()
+            self.assertTrue(runtime.closed)
             runtime.close()
             # ConversationStore uses per-operation connections; closing the
             # application runtime must not invalidate subsequent store objects.
@@ -143,6 +146,41 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             )
         self.assertEqual(opened, [])
 
+    def test_concurrent_close_waits_for_single_resource_cleanup(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_finished = threading.Event()
+        calls = []
+
+        class BlockingStore(ConversationStore):
+            def close(self):
+                calls.append("close")
+                entered.set()
+                release.wait(timeout=3)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = BlockingStore(Path(directory) / "concurrent-close.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+            )
+            first = threading.Thread(target=runtime.close)
+            first.start()
+            self.assertTrue(entered.wait(timeout=2))
+
+            def close_again():
+                runtime.close()
+                second_finished.set()
+
+            second = threading.Thread(target=close_again)
+            second.start()
+            self.assertFalse(second_finished.wait(timeout=0.05))
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertTrue(second_finished.is_set())
+        self.assertEqual(calls, ["close"])
 
 if __name__ == "__main__":
     unittest.main()
