@@ -1,5 +1,10 @@
 import unittest
+import tempfile
+from pathlib import Path
 
+from automation.agent_coordinator import SpecialistAgentCoordinator, SubtaskSpec
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
 from automation.specialist_registry import (
     SpecialistBudget, SpecialistDefinition, SpecialistRegistry,
 )
@@ -87,6 +92,44 @@ class SpecialistRegistryTests(unittest.TestCase):
         })
         self.assertEqual(handlers["research-agent"]("Summarize the file"), "research complete")
         self.assertEqual(seen, [["read_documents"]])
+
+
+    def test_provider_preference_mismatch_is_rejected(self):
+        registry = SpecialistRegistry([self.definition()])
+        with self.assertRaisesRegex(ValueError, "outside the specialist provider preferences"):
+            registry.build_handlers({
+                "research-agent": {
+                    "model": lambda **_: {},
+                    "tools": {"read_documents": lambda _: "data"},
+                    "tool_definitions": [
+                        {"type": "function", "function": {"name": "read_documents"}},
+                    ],
+                    "parent_policy": type("Policy", (), {"authorize_tool": lambda self, name: True})(),
+                    "provider_name": "unapproved-cloud",
+                },
+            })
+
+    def test_registry_approval_default_survives_coordinator_persistence(self):
+        registry = SpecialistRegistry([self.definition()])
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "registry.sqlite3")
+            store = WorkflowRunStore(database)
+            runtime = TaskRuntime(store, authorize=lambda actor, action, task: True)
+            coordinator = SpecialistAgentCoordinator(
+                runtime, database, registry.coordinator_agents(),
+                authorize=lambda actor, action, resource: True,
+            )
+            plan = coordinator.submit(
+                actor_id="owner", idempotency_key="registry-approval-default",
+                subtasks=[SubtaskSpec(
+                    "research", "Research the supplied material", ("research",),
+                    requires_approval=False,
+                )],
+            )
+            plan = coordinator.advance(actor_id="owner", plan_id=plan.plan_id)
+            task = runtime.get(actor_id="owner", task_id=plan.subtasks[0].task_id)
+            self.assertEqual(task.state, "queued")
+            self.assertTrue(coordinator.agents["research-agent"].requires_approval)
 
     def test_disabled_specialists_need_no_runtime_binding(self):
         registry = SpecialistRegistry([self.definition(enabled=False)])
