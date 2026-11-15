@@ -494,7 +494,7 @@ class ConversationStore:
             except Exception:
                 db.rollback()
                 raise
-        return {"conversation_id": conversation_id, "expires_at": expires_at}
+        return {"conversation_id": conversation_id, "lease_token": lease_token.strip(), "expires_at": expires_at}
 
     def renew_generation_lease(
         self, *, owner_id: str, conversation_id: str, lease_token: str,
@@ -600,6 +600,7 @@ class ConversationStore:
                     return {"created": False, "status": previous["status"],
                             "execution_id": previous["execution_id"],
                             "idempotency_key": previous["idempotency_key"],
+                            "arguments_sha256": previous["arguments_sha256"],
                             "provider_idempotency": bool(previous["provider_idempotency"])}
                 execution_id = str(uuid.uuid4())
                 db.execute(
@@ -615,6 +616,7 @@ class ConversationStore:
                 db.commit()
                 return {"created": True, "status": "started", "execution_id": execution_id,
                         "idempotency_key": idempotency_key,
+                        "arguments_sha256": arguments_sha256,
                         "provider_idempotency": provider_idempotency}
             except Exception:
                 db.rollback()
