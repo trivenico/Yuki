@@ -135,6 +135,15 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         status, body = self.request("GET", "/v1/devices", token=paired["device_token"])
         self.assertEqual((status, body["error"]), (401, "authentication_required"))
 
+
+    def test_oversized_request_body_returns_413(self):
+        status, body = self.request(
+            "POST", "/v1/devices/pairing-challenges",
+            {"padding": "x" * 70_001}, self.owner_one.token,
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(body, {"error": "request_body_too_large"})
+
     def test_unrelated_routes_are_delegated(self):
         status, body = self.request("GET", "/healthz")
         self.assertEqual((status, body["delegated"]), (200, True))
