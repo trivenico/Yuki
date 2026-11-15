@@ -74,6 +74,7 @@ class ConversationRuntime:
             # Keep the closed fence set even if a cleanup hook raises: cleanup
             # is not retried implicitly against potentially partially closed resources.
             self._closed = True
+            self.web.close()
             if self.component_registry is None:
                 self.application.close()
                 return
