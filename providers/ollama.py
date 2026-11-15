@@ -1,12 +1,12 @@
 """Local Ollama chat/generation adapter using only the Python standard library."""
 from __future__ import annotations
 
-import json
 import http.client
 import ipaddress
+import json
+import re
 import urllib.error
 import urllib.request
-import re
 from urllib.parse import urlsplit
 
 from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport, PinnedHTTPTransportError
@@ -92,6 +92,7 @@ class _LoopbackHTTPTransport:
                 connection.request(method, target, body=body, headers=headers)
                 response = connection.getresponse()
                 if 300 <= response.status < 400:
+                    response.close()
                     raise PinnedHTTPTransportError("ollama_redirect_rejected")
                 return _LoopbackResponse(response, connection)
             except Exception:
