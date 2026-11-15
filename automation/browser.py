@@ -18,10 +18,7 @@ class SafeBrowser:
         if isinstance(allowed_hosts, (str, bytes)) or not allowed_hosts:
             raise ValueError("an explicit browser host allow-list is required")
         hosts = tuple(allowed_hosts)
-        normalized = tuple(
-            host.lower().rstrip(".") if isinstance(host, str) else host
-            for host in hosts
-        )
+        normalized = tuple(host.lower().rstrip(".") if isinstance(host, str) else host for host in hosts)
         if len(normalized) > 100 or len(set(normalized)) != len(normalized):
             raise ValueError("invalid browser host allow-list")
         self.firewall = firewall_policy or NetworkFirewall(allowed_hosts=normalized)
@@ -48,8 +45,7 @@ class SafeBrowser:
             raise BrowserAutomationError("URL is invalid.") from None
         host = (parts.hostname or "").lower().rstrip(".")
         if (parts.scheme.lower() != "https" or not host or parts.username is not None
-                or parts.password is not None or port not in (None, 443)
-                or parts.fragment):
+                or parts.password is not None or port not in (None, 443) or parts.fragment):
             raise BrowserAutomationError("Only public HTTPS URLs on port 443 are accepted.")
         if host not in self.allowed_hosts:
             raise BrowserAutomationError("Host is not on the explicit browser allow-list.")
@@ -80,12 +76,14 @@ class SafeBrowser:
             )
             if not decision.allowed:
                 raise BrowserAutomationError("Browser destination was denied by the network firewall.")
-            # Pin Chromium's resolver to one of the validated answers for this session.
-            rules.append(f"MAP {host} {sorted(addresses)[0]}")
+            pinned_ip = sorted(addresses)[0]
+            if ":" in pinned_ip:
+                pinned_ip = f"[{pinned_ip}]"
+            rules.append(f"MAP {host} {pinned_ip}")
         return ", ".join(rules)
 
     def read_page(self, url):
-        safe_url, requested_host = self._validate(url)
+        safe_url, _ = self._validate(url)
         resolver_rules = self._resolve_authorized_hosts()
         try:
             from playwright.sync_api import sync_playwright
@@ -105,11 +103,10 @@ class SafeBrowser:
                 def guard_request(route):
                     try:
                         target = urlsplit(route.request.url)
-                        port = target.port
                         host = (target.hostname or "").lower().rstrip(".")
                         permitted = (
                             target.scheme.lower() == "https"
-                            and port in (None, 443)
+                            and target.port in (None, 443)
                             and target.username is None
                             and target.password is None
                             and host in self.allowed_hosts
