@@ -225,14 +225,17 @@ class OllamaAgentChatTests(unittest.TestCase):
             status = 302
             reason = "Found"
             headers = {}
-            def close(self): pass
+            def __init__(self): self.closed = False
+            def close(self): self.closed = True
 
         class Connection:
             def __init__(self, host, port, timeout):
                 self.host, self.port, self.timeout = host, port, timeout
                 self.closed = False
             def request(self, *args, **kwargs): pass
-            def getresponse(self): return Response()
+            def getresponse(self):
+                self.response = Response()
+                return self.response
             def close(self): self.closed = True
 
         created = []
@@ -247,6 +250,7 @@ class OllamaAgentChatTests(unittest.TestCase):
                 transport.open(Request("http://localhost:11434/api/tags"))
         self.assertEqual(created[0].host, "127.0.0.1")
         self.assertTrue(created[0].closed)
+        self.assertTrue(created[0].response.closed)
 
     def test_loopback_transport_rejects_request_host_escape(self):
         from providers.ollama import _LoopbackHTTPTransport
