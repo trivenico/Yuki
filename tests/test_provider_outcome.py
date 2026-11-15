@@ -84,7 +84,7 @@ def _multiprocess_reconcile_and_crash_before_evidence(database_path, conversatio
     os._exit(2)
 
 
-def _multiprocess_reconcile_after_crash(database_path, conversation_id, request_id, barrier, connection, lookup_count, lookup_lock):
+def _multiprocess_reconcile_after_crash(database_path, conversation_id, request_id, barrier, connection, lookup_count, lookup_lock, lookup_release):
     import core.conversation_store as store_module
     from core.conversation_store import ConversationConflict, ConversationStore
     from core.provider_outcome import (
@@ -99,6 +99,9 @@ def _multiprocess_reconcile_after_crash(database_path, conversation_id, request_
         def lookup_tool_outcome(self, identity):
             with lookup_lock:
                 lookup_count.value += 1
+            connection.send(("lookup-started", None))
+            if not lookup_release.wait(timeout=15):
+                raise TimeoutError("parent did not release the serialized provider lookup")
             return ProviderOutcomeEvidence(
                 provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
                 idempotency_key=identity["idempotency_key"],
@@ -1489,6 +1492,7 @@ class ProviderOutcomeTests(unittest.TestCase):
             barrier = context.Barrier(2)
             lookup_count = context.Value("i", 0)
             lookup_lock = context.Lock()
+            lookup_release = context.Event()
             workers, parents = [], []
             for _ in range(2):
                 parent, child = context.Pipe(duplex=False)
@@ -1496,14 +1500,25 @@ class ProviderOutcomeTests(unittest.TestCase):
                 worker = context.Process(
                     target=_multiprocess_reconcile_after_crash,
                     args=(str(database), conversation_id, request_id, barrier,
-                          child, lookup_count, lookup_lock),
+                          child, lookup_count, lookup_lock, lookup_release),
                 )
                 workers.append(worker)
                 worker.start()
                 child.close()
 
-            outcomes = [parent.recv() for parent in parents]
-            for parent in parents:
+            initial = [parent.recv() for parent in parents]
+            self.assertEqual(sorted(message[0] for message in initial),
+                             ["lookup-started", "lost"])
+            # Keep the winner's lease live until the competing process has
+            # definitively attempted its claim; otherwise it could acquire the
+            # lease after a fast winner releases it and perform a second lookup.
+            lookup_release.set()
+            outcomes = []
+            for parent, message in zip(parents, initial):
+                if message[0] == "lookup-started":
+                    outcomes.append(parent.recv())
+                else:
+                    outcomes.append(message)
                 parent.close()
             for worker in workers:
                 worker.join(timeout=20)
