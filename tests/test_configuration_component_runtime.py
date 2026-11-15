@@ -37,6 +37,7 @@ class ConfigurationComponentRuntimeTests(unittest.TestCase):
         snapshot = runtime.instance
         self.assertEqual(snapshot.get("provider"), "ollama")
         self.assertEqual(snapshot.get("mcp_servers")[0]["allowed_tools"], ("search",))
+        self.assertNotIn("secret", repr(snapshot))
         with self.assertRaises(TypeError):
             snapshot.values["provider"] = "mutated"
         with self.assertRaises(TypeError):
