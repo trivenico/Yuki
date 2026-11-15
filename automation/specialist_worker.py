@@ -279,7 +279,25 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
-            output = handler(argument)
+            supports_cancellation = (
+                getattr(handler, "supports_cancellation_callback", False) is True
+            )
+            if supports_cancellation:
+                def cancellation_requested() -> bool:
+                    # Read durable state at each cooperative checkpoint. This
+                    # propagates remote/operator cancellation into the agent loop
+                    # without trusting an in-process flag that other workers cannot see.
+                    current_task = self.runtime.store.get(claimed.run_id)
+                    return (
+                        current_task is None
+                        or current_task.state != "running"
+                        or current_task.lease_owner != self.worker_id
+                    )
+                output = handler(
+                    argument, cancellation_requested=cancellation_requested,
+                )
+            else:
+                output = handler(argument)
             # A running handler may not be interruptible (for example, an in-flight
             # provider request). If an operator cancels while it runs, do not try to
             # complete the now-terminal task or turn cancellation into a pool error.
@@ -377,10 +395,19 @@ def build_delegated_specialist_handlers(
         def handle(request: str, *, _runtime=runtime) -> str:
             if not isinstance(request, str) or not request.strip() or len(request) > _MAX_INPUT_CHARS or "\x00" in request:
                 raise ValueError("specialist input must be bounded non-empty text")
-            result = _runtime.run(request)
+            if cancellation_requested is not None and not callable(cancellation_requested):
+                raise TypeError("cancellation_requested must be callable")
+            result = _runtime.run(
+                request, cancellation_requested=cancellation_requested,
+            )
+            if result.status == "cancelled":
+                return ""
             if result.status != "completed" or not isinstance(result.text, str) or not result.text.strip():
                 raise RuntimeError("delegated specialist execution did not complete")
             return result.text.strip()[:_MAX_OUTPUT_CHARS]
 
+        # SpecialistTaskWorker supplies a durable task-state callback only to
+        # handlers explicitly built for cooperative cancellation.
+        handle.supports_cancellation_callback = True
         handlers[agent_id] = handle
     return handlers
