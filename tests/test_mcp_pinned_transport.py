@@ -124,7 +124,7 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
     def test_rejects_multiple_trailing_dots_before_dns_or_connect(self):
         with self.assertRaisesRegex(MCPPinnedTransportError, "invalid_mcp_endpoint"):
             self.transport.post_json("https://mcp.example.com../rpc", payload={}, headers={})
-        self.assertEqual(self.resolutions, [])
+        self.assertEqual(self.connections, [])
 
     def test_rejects_header_override_and_untrusted_hosts(self):
         with self.assertRaises(MCPPinnedTransportError):
