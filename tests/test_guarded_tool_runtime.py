@@ -142,5 +142,30 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.invoke("echo", "ok"), "ok")
 
 
+    def test_non_boolean_truthy_policy_decisions_are_denied(self):
+        for decision in (1, "yes", object()):
+            with self.subTest(decision=type(decision).__name__):
+                calls = []
+                events = []
+                class MalformedPolicy:
+                    def authorize_tool(self, name):
+                        return decision
+
+                runtime = GuardedToolRuntime(
+                    {"send": lambda argument: calls.append(argument) or "sent"},
+                    MalformedPolicy(),
+                    audit=lambda action, outcome: events.append((action, outcome)),
+                    capabilities=ToolCapabilityCatalog({
+                        "send": ToolCapability(
+                            ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                        ),
+                    }),
+                )
+                self.assertFalse(runtime.requires_user_confirmation("send"))
+                result = runtime.invoke("send", "{}")
+                self.assertIn("blocked", result)
+                self.assertEqual(calls, [])
+                self.assertEqual(events[-1], ("tool:send", "denied"))
+
 if __name__ == "__main__":
     unittest.main()
