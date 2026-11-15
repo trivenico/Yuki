@@ -36,32 +36,45 @@ class ComponentContract:
         errors: list[str] = []
         if not isinstance(self.component_id, str) or not self.component_id or not self.component_id.replace("-", "").replace("_", "").isalnum():
             errors.append("component_id must be a non-empty simple identifier")
-        if self.layer not in LAYERS:
+        if not isinstance(self.layer, str) or self.layer not in LAYERS:
             errors.append(f"unsupported layer: {self.layer}")
-        if self.status not in COMPONENT_STATUSES:
+        if not isinstance(self.status, str) or self.status not in COMPONENT_STATUSES:
             errors.append(f"unsupported status: {self.status}")
         if not isinstance(self.name, str) or not self.name.strip():
             errors.append("name is required")
         if not isinstance(self.purpose, str) or not self.purpose.strip():
             errors.append("purpose is required")
-        if not self.entrypoints:
-            errors.append("at least one entrypoint is required")
-        if not self.public_contract:
-            errors.append("at least one public contract is required")
-        if self.status == "implemented" and not self.test_evidence:
-            errors.append("implemented components require test evidence")
-        fields = (
-            self.entrypoints + self.depends_on + self.public_contract
-            + self.test_evidence + self.limitations
+
+        collections = (
+            ("entrypoints", self.entrypoints),
+            ("depends_on", self.depends_on),
+            ("public_contract", self.public_contract),
+            ("test_evidence", self.test_evidence),
+            ("limitations", self.limitations),
         )
-        if any(not isinstance(value, str) or not value.strip() for value in fields):
-            errors.append("contract collections must contain non-empty strings")
-        if len(set(self.entrypoints)) != len(self.entrypoints):
+        valid: dict[str, tuple[str, ...]] = {}
+        for field_name, values in collections:
+            if not isinstance(values, tuple):
+                errors.append(f"{field_name} must be a tuple")
+                continue
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                errors.append(f"{field_name} must contain only non-empty strings")
+                continue
+            valid[field_name] = values
+
+        if not valid.get("entrypoints"):
+            errors.append("at least one entrypoint is required")
+        if not valid.get("public_contract"):
+            errors.append("at least one public contract is required")
+        if self.status == "implemented" and not valid.get("test_evidence"):
+            errors.append("implemented components require test evidence")
+        entrypoints = valid.get("entrypoints", ())
+        dependencies = valid.get("depends_on", ())
+        if len(set(entrypoints)) != len(entrypoints):
             errors.append("duplicate entrypoint")
-        if len(set(self.depends_on)) != len(self.depends_on):
+        if len(set(dependencies)) != len(dependencies):
             errors.append("duplicate dependency")
         return errors
-
 
 # Dependencies are component IDs, not package names. Keep this graph acyclic:
 # interfaces depend inward on application/domain contracts, never the reverse.
@@ -224,31 +237,41 @@ def validate_component_catalog(
     by_id: dict[str, ComponentContract] = {}
 
     for item in entries:
-        prefix = item.component_id or "<missing-id>"
+        if not isinstance(item, ComponentContract):
+            errors.append("catalog entries must be ComponentContract instances")
+            continue
+        prefix = item.component_id if isinstance(item.component_id, str) and item.component_id else "<missing-id>"
         for error in item.validate():
             errors.append(f"{prefix}: {error}")
-        if item.component_id in by_id:
+        if prefix in by_id:
             errors.append(f"{prefix}: duplicate component_id")
-        by_id[item.component_id] = item
+        by_id[prefix] = item
 
-        for relative in item.entrypoints + item.test_evidence:
-            path = Path(relative)
-            if path.is_absolute() or ".." in path.parts:
-                errors.append(f"{prefix}: unsafe repository path {relative!r}")
+        for field_name in ("entrypoints", "test_evidence"):
+            relative_paths = getattr(item, field_name)
+            if not isinstance(relative_paths, tuple):
                 continue
-            candidate = root / path
-            try:
-                resolved = candidate.resolve(strict=True)
-                resolved.relative_to(root)
-            except (OSError, RuntimeError, ValueError):
-                errors.append(f"{prefix}: repository path escapes root or cannot be resolved: {relative}")
-                continue
-            if not resolved.is_file():
-                errors.append(f"{prefix}: repository file does not exist: {relative}")
-
+            for relative in relative_paths:
+                if not isinstance(relative, str) or not relative.strip():
+                    continue
+                path = Path(relative)
+                if path.is_absolute() or ".." in path.parts:
+                    errors.append(f"{prefix}: unsafe repository path {relative!r}")
+                    continue
+                candidate = root / path
+                try:
+                    resolved = candidate.resolve(strict=True)
+                    resolved.relative_to(root)
+                except (OSError, RuntimeError, ValueError):
+                    errors.append(f"{prefix}: repository path escapes root or cannot be resolved: {relative}")
+                    continue
+                if not resolved.is_file():
+                    errors.append(f"{prefix}: repository file does not exist: {relative}")
     for item in entries:
+        if not isinstance(item, ComponentContract) or not isinstance(item.depends_on, tuple):
+            continue
         for dependency in item.depends_on:
-            if dependency not in by_id:
+            if isinstance(dependency, str) and dependency not in by_id:
                 errors.append(f"{item.component_id}: unknown dependency {dependency}")
 
     # Three-colour DFS reports cycles without relying on declaration order.
@@ -262,8 +285,11 @@ def validate_component_catalog(
             errors.append(f"{component_id}: dependency cycle detected")
             return
         visiting.add(component_id)
-        for dependency in by_id[component_id].depends_on:
-            visit(dependency)
+        dependencies = by_id[component_id].depends_on
+        if isinstance(dependencies, tuple):
+            for dependency in dependencies:
+                if isinstance(dependency, str):
+                    visit(dependency)
         visiting.remove(component_id)
         visited.add(component_id)
 
