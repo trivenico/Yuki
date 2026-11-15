@@ -38,6 +38,36 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             reopened = ConversationStore(Path(directory) / "conversations.sqlite3")
             self.assertEqual(reopened.list_conversations(owner_id="local-owner-123"), [])
 
+    def test_store_close_hook_is_invoked_exactly_once(self):
+        calls = []
+
+        class Store:
+            def close(self):
+                calls.append("closed")
+
+        runtime = build_conversation_application_runtime(
+            {}, agent_loop=_agent_loop(), store_factory=lambda config: Store(),
+        )
+        runtime.close()
+        runtime.close()
+        self.assertEqual(calls, ["closed"])
+
+    def test_failing_store_close_hook_is_not_retried(self):
+        calls = []
+
+        class Store:
+            def close(self):
+                calls.append("close")
+                raise RuntimeError("close failed")
+
+        runtime = build_conversation_application_runtime(
+            {}, agent_loop=_agent_loop(), store_factory=lambda config: Store(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "close failed"):
+            runtime.close()
+        runtime.close()
+        self.assertEqual(calls, ["close"])
+
     def test_api_runtime_can_leave_owner_resolution_to_authenticated_surface(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ConversationStore(Path(directory) / "api.sqlite3")
