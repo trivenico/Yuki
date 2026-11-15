@@ -117,6 +117,8 @@ class StructuredToolProtocolTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             journal = ToolActionJournal(str(Path(directory) / "actions.sqlite3"))
+            from core.tool_action_approvals import SQLiteToolActionApprovalStore
+            approvals = SQLiteToolActionApprovalStore(str(Path(directory) / "approvals.sqlite3"))
             executions = []
             runtime = GuardedToolRuntime(
                 {"send": lambda raw: executions.append(raw) or "sent"},
@@ -126,6 +128,7 @@ class StructuredToolProtocolTests(unittest.TestCase):
                 }),
                 require_action_context=True,
                 action_journal=journal,
+                approval_store=approvals,
             )
             protocol = StructuredToolProtocol(runtime)
             request = {"to": "person@example.com"}
@@ -135,6 +138,7 @@ class StructuredToolProtocolTests(unittest.TestCase):
                 response, principal_id="user-1",
                 action_context_factory=lambda principal, name, args: context,
                 confirmation_check=lambda call: True,
+                approval_id_factory=lambda principal, action, call: approvals.issue(action, principal_id=principal),
             )
             self.assertEqual(result[0].output, "sent")
             self.assertEqual(len(executions), 1)
@@ -168,6 +172,26 @@ class StructuredToolProtocolTests(unittest.TestCase):
                 )
                 self.assertEqual(result[0].output, "sent")
             self.assertEqual(len(executions), 1)
+
+
+    def test_approval_token_is_not_minted_without_positive_host_confirmation(self):
+        minted = []
+        result = self.protocol.dispatch(
+            self.envelope([self.call("approval-check", "echo")]),
+            confirmation_check=lambda call: False,
+            approval_id_factory=lambda *args: minted.append(True) or "token",
+        )
+        self.assertEqual(minted, [])
+        self.assertEqual(len(result), 1)
+
+    def test_confirmation_callback_must_return_a_real_boolean(self):
+        with self.assertRaises(TypeError):
+            self.protocol.dispatch(
+                self.envelope([self.call("approval-check", "echo")]),
+                confirmation_check=lambda call: 1,
+                approval_id_factory=lambda *args: "token",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

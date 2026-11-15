@@ -16,6 +16,7 @@ from typing import Any, Callable
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
 from api.request_body import RequestBodyTooLarge, read_json_object
+from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -37,6 +38,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -53,6 +55,11 @@ class YukiConversationAPI:
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
         self.provider_selector = provider_selector
+        if tool_action_approvals is not None and not isinstance(
+            tool_action_approvals, SQLiteToolActionApprovalStore
+        ):
+            raise TypeError("tool_action_approvals must be a SQLiteToolActionApprovalStore")
+        self.tool_action_approvals = tool_action_approvals
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -93,6 +100,34 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            if path == "/v1/tool-approvals/audit" and method == "GET":
+                if self.tool_action_approvals is None:
+                    return await self._respond(send, 503, {"error": "approval_management_unavailable"})
+                query = self._query(scope)
+                if set(query) - {"limit"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    limit = int(query.get("limit", "100"))
+                    events = await asyncio.to_thread(
+                        self.tool_action_approvals.audit_events,
+                        principal_id=user.user_id, limit=limit,
+                    )
+                except (TypeError, ValueError):
+                    return await self._respond(send, 400, {"error": "invalid_limit"})
+                return await self._respond(send, 200, {"events": events})
+
+            if path == "/v1/tool-approvals/revoke" and method == "POST":
+                if self.tool_action_approvals is None:
+                    return await self._respond(send, 503, {"error": "approval_management_unavailable"})
+                payload = await self._body(receive)
+                token = payload.get("approval_token")
+                if set(payload) != {"approval_token"} or not isinstance(token, str) or not token or len(token) > 128:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                revoked = await asyncio.to_thread(
+                    self.tool_action_approvals.revoke, token, principal_id=user.user_id,
+                )
+                return await self._respond(send, 200, {"revoked": revoked})
 
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {

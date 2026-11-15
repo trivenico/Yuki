@@ -29,6 +29,7 @@ from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from core.tool_action_approvals import SQLiteToolActionApprovalStore
 
 
 class ConversationRuntime:
@@ -99,6 +100,7 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
 ) -> ConversationRuntime:
@@ -140,6 +142,10 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    if tool_action_approvals is not None and not isinstance(
+        tool_action_approvals, SQLiteToolActionApprovalStore
+    ):
+        raise TypeError("tool_action_approvals must be a SQLiteToolActionApprovalStore")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -160,6 +166,7 @@ def build_conversation_runtime(
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            tool_action_approvals=tool_action_approvals,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)

@@ -5,6 +5,7 @@ import json
 from typing import Any, Callable
 
 from core.tool_action_context import ToolActionContext, ToolActionContextError
+from core.tool_action_approvals import SQLiteToolActionApprovalStore, ToolActionApprovalError
 from core.tool_action_journal import ToolActionJournal, ToolActionJournalError
 from core.tool_capabilities import ToolCapabilityCatalog, ToolCapabilityError, ToolEffect
 
@@ -41,6 +42,7 @@ class GuardedToolRuntime:
         capabilities: ToolCapabilityCatalog | None = None,
         require_action_context: bool = False,
         action_journal: ToolActionJournal | None = None,
+        approval_store: SQLiteToolActionApprovalStore | None = None,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -67,6 +69,8 @@ class GuardedToolRuntime:
             raise ValueError("action-context enforcement requires a durable action journal")
         if action_journal is not None and not isinstance(action_journal, ToolActionJournal):
             raise TypeError("action_journal must be a ToolActionJournal")
+        if approval_store is not None and not isinstance(approval_store, SQLiteToolActionApprovalStore):
+            raise TypeError("approval_store must be a SQLiteToolActionApprovalStore")
         if capabilities is not None:
             if not isinstance(capabilities, ToolCapabilityCatalog):
                 raise TypeError("capabilities must be a ToolCapabilityCatalog")
@@ -76,6 +80,7 @@ class GuardedToolRuntime:
         self._capabilities = capabilities
         self._require_action_context = require_action_context
         self._action_journal = action_journal
+        self._approval_store = approval_store
         self._policy = policy
         self._audit = audit
         self._max_argument_chars = max_argument_chars
@@ -94,6 +99,7 @@ class GuardedToolRuntime:
         action_context: ToolActionContext | None = None,
         principal_id: str | None = None,
         user_confirmed: bool = False,
+        approval_id: str | None = None,
     ) -> str:
         if not isinstance(name, str) or not name or len(name) > 128:
             self._record("invalid", "invalid_name")
@@ -117,9 +123,6 @@ class GuardedToolRuntime:
                 if not isinstance(action_context, ToolActionContext) or principal_id is None:
                     self._record(name, "action_context_missing")
                     return "Tool blocked: trusted action context is required."
-                if capability.requires_user_confirmation and user_confirmed is not True:
-                    self._record(name, "confirmation_required")
-                    return "Tool blocked: explicit user confirmation is required."
                 try:
                     action_request = _strict_json_object(argument)
                     action_context.verify(principal_id, name, action_request)
@@ -134,6 +137,27 @@ class GuardedToolRuntime:
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
+
+        # Consume only after the current authorization policy allows the action.
+        # The approval is still bound to the exact immutable context and is single-use.
+        if (
+            capability is not None
+            and capability.effect is ToolEffect.SIDE_EFFECTING
+            and self._require_action_context
+            and capability.requires_user_confirmation
+        ):
+            if self._approval_store is None or not isinstance(approval_id, str):
+                self._record(name, "confirmation_required")
+                return "Tool blocked: explicit confirmation requires a durable, action-bound approval."
+            try:
+                approved = self._approval_store.consume(
+                    approval_id, action_context, principal_id=principal_id,
+                )
+            except (ToolActionApprovalError, TypeError, ValueError):
+                approved = False
+            if not approved:
+                self._record(name, "approval_invalid_or_consumed")
+                return "Tool blocked: approval is invalid, expired, or already used."
 
         lease_owner = None
         if (

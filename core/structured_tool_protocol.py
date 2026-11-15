@@ -93,6 +93,7 @@ class StructuredToolProtocol:
         principal_id: str | None = None,
         action_context: ToolActionContext | None = None,
         user_confirmed: bool = False,
+        approval_id: str | None = None,
     ) -> StructuredToolResult:
         """Dispatch one proposal with host-supplied identity and confirmation state."""
         if not isinstance(call, StructuredToolCall):
@@ -105,6 +106,7 @@ class StructuredToolProtocol:
         output = self._runtime.invoke(
             call.name, argument, principal_id=principal_id,
             action_context=action_context, user_confirmed=user_confirmed,
+            approval_id=approval_id,
         )
         return StructuredToolResult(call.call_id, call.name, output)
 
@@ -113,6 +115,7 @@ class StructuredToolProtocol:
         principal_id: str | None = None,
         action_context_factory=None,
         confirmation_check=None,
+        approval_id_factory=None,
     ) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
@@ -121,6 +124,8 @@ class StructuredToolProtocol:
             raise TypeError("action_context_factory must be callable.")
         if confirmation_check is not None and not callable(confirmation_check):
             raise TypeError("confirmation_check must be callable.")
+        if approval_id_factory is not None and not callable(approval_id_factory):
+            raise TypeError("approval_id_factory must be callable.")
         results = []
         for call in calls:
             context = (
@@ -130,9 +135,16 @@ class StructuredToolProtocol:
             confirmed = (
                 confirmation_check(call) if confirmation_check is not None else False
             )
+            if type(confirmed) is not bool:
+                raise TypeError("confirmation_check must return a boolean.")
+            # Token issuance is allowed only after a positive trusted-host decision.
+            approval_id = (
+                approval_id_factory(principal_id, context, call)
+                if confirmed is True and context is not None and approval_id_factory is not None else None
+            )
             results.append(self.dispatch_call(
                 call, principal_id=principal_id, action_context=context,
-                user_confirmed=confirmed,
+                user_confirmed=confirmed, approval_id=approval_id,
             ))
         return tuple(results)
 
