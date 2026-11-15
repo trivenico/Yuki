@@ -202,6 +202,38 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(self.invocations, [])
 
+    def test_cancellation_during_model_request_discards_late_response(self):
+        cancelled = []
+        def model(**kwargs):
+            cancelled.append(True)
+            return {"text": "too late", "tool_calls": {"tool_calls": []}}
+        events = []
+        result = AgentExecutionLoop(
+            model, self.protocol,
+            cancellation_requested=lambda: bool(cancelled),
+            on_event=lambda kind, data: events.append((kind, data)),
+        ).run("Cancel while waiting", tools=[])
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.text, "")
+        self.assertEqual(events[-1][0], "agent.stopped")
+        self.assertEqual(events[-1][1]["reason"], "cancelled")
+
+    def test_cancellation_during_stream_next_discards_late_delta(self):
+        cancelled = []
+        deltas = []
+        def stream_model(**kwargs):
+            cancelled.append(True)
+            yield {"type": "text_delta", "text": "too late"}
+        result = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol, stream_model=stream_model,
+        ).run(
+            "Cancel while streaming", tools=[], on_text_delta=deltas.append,
+            cancellation_requested=lambda: bool(cancelled),
+        )
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(deltas, [])
+
     def test_transcript_limit_stops_before_next_model_call(self):
         calls = []
         def model(**kwargs):
