@@ -1,5 +1,6 @@
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from threading import Barrier
 from unittest.mock import patch
 import unittest
@@ -10,6 +11,20 @@ from core.conversation_store import (
     ConversationNotFound,
     ConversationStore,
 )
+
+
+@contextmanager
+def _sqlite_connection(database):
+    """Close SQLite handles deterministically on Windows as well as POSIX."""
+    db = sqlite3.connect(database)
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 class ConversationStoreTests(unittest.TestCase):
@@ -755,7 +770,7 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="legacy-call",
             action="acknowledge_uncertain", reason="Historical review must survive migration.",
         )
-        with sqlite3.connect(database) as db:
+        with _sqlite_connection(database) as db:
             db.execute("PRAGMA foreign_keys=ON")
             db.execute("ALTER TABLE conversation_tool_reviews RENAME TO conversation_tool_reviews_new")
             db.execute("""CREATE TABLE conversation_tool_reviews (
