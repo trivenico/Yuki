@@ -621,8 +621,22 @@ class WorkflowRunStore:
     def append_task_event(
         self, task_id: str, *, kind: str, actor_id: str,
         payload: dict[str, Any], expected_version: int,
+        expected_lease_owner: str | None = None,
     ):
-        """Atomically append a bounded task event and increment the task version."""
+        """Atomically append a bounded task event and increment the task version.
+
+        Worker-originated progress/artifact events may require a live lease; the
+        lease predicate is enforced in the same transaction as the journal write.
+        """
+        if expected_lease_owner is not None and (
+            not isinstance(expected_lease_owner, str)
+            or not expected_lease_owner.strip()
+            or len(expected_lease_owner) > 200
+            or "\\x00" in expected_lease_owner
+        ):
+            raise ValueError("expected_lease_owner must be bounded non-empty text.")
+        if expected_lease_owner is not None and kind not in {"task.progress", "task.artifact"}:
+            raise ValueError("lease ownership is only valid for worker progress and artifact events.")
         from automation.task_runtime import TaskEvent, _EVENT_KINDS
         if kind not in _EVENT_KINDS:
             raise ValueError("Unknown task event kind.")
@@ -657,11 +671,20 @@ class WorkflowRunStore:
                 ).fetchone()
                 if prior_terminal:
                     raise WorkflowTransitionError("terminal event has already been recorded.")
-            updated = db.execute(
-                "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
-                (now, task_id, expected_version),
-            )
+            if expected_lease_owner is None:
+                updated = db.execute(
+                    "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
+                    (now, task_id, expected_version),
+                )
+            else:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET updated_at=?, version=version+1
+                    WHERE run_id=? AND version=? AND state='running'
+                        AND lease_owner=? AND lease_expires_at>?
+                """, (now, task_id, expected_version, expected_lease_owner.strip(), now))
             if updated.rowcount != 1:
+                if expected_lease_owner is not None:
+                    raise WorkflowConflict("worker lease is no longer active.")
                 raise WorkflowConflict("task changed concurrently.")
             sequence = db.execute(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
