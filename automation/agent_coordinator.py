@@ -409,7 +409,7 @@ class SpecialistAgentCoordinator:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         if owner_id is not None and (
             not isinstance(owner_id, str) or not owner_id.strip()
-            or len(owner_id) > 200 or "\\x00" in owner_id
+            or len(owner_id) > 200 or "\x00" in owner_id
         ):
             raise ValueError("owner_id must be bounded non-empty text when supplied.")
         owner_id = owner_id.strip() if isinstance(owner_id, str) else None
@@ -426,7 +426,10 @@ class SpecialistAgentCoordinator:
              "action": assignments[i.subtask_id].action}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
-        payload = json.dumps({"owner_id": owner_id, "subtasks": canonical}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        # Preserve legacy idempotency digests for ownerless plans. A supplied
+        # owner is part of the digest so one key cannot cross tenant boundaries.
+        digest_payload = canonical if owner_id is None else {"owner_id": owner_id, "subtasks": canonical}
+        payload = json.dumps(digest_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
         plan_id = hashlib.sha256(("yuki-agent-plan\0" + key).encode("utf-8")).hexdigest()[:32]
