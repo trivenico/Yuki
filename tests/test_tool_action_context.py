@@ -110,6 +110,29 @@ class ToolActionContextTests(unittest.TestCase):
         token = self.approvals.issue(self.context, principal_id="user-123")
         self.assertEqual(runtime.invoke("email.send", argument, approval_id=token, **kwargs), "sent")
 
+    def test_journal_conflict_does_not_consume_confirmation_approval(self):
+        calls = []
+        runtime = self._runtime(
+            lambda argument: calls.append(argument) or "sent", confirmation=True,
+        )
+        argument = json.dumps(self.request, separators=(",", ":"))
+        token = self.approvals.issue(self.context, principal_id="user-123")
+        # Simulate a durable record that conflicts with this trusted action ID.
+        self.journal.reserve(
+            self.context.idempotency_key, "email.send", self.request,
+            action_id="a" * 32,
+        )
+        result = runtime.invoke(
+            "email.send", argument, action_context=self.context,
+            principal_id="user-123", approval_id=token,
+        )
+        self.assertIn("journal", result)
+        self.assertEqual(calls, [])
+        # The failed reservation happened before token consumption.
+        self.assertTrue(
+            self.approvals.consume(token, self.context, principal_id="user-123")
+        )
+
     def test_handler_failure_marks_outcome_unknown_and_prevents_replay(self):
         calls = []
         def fail(_):
