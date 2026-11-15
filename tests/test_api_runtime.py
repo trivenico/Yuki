@@ -62,6 +62,25 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.app.tool_action_approvals, approvals)
             runtime.close()
 
+    def test_runtime_wires_trusted_action_callbacks_to_conversation_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            action_factory = lambda principal, name, arguments: None
+            confirmation = lambda call: False
+            approval_factory = lambda principal, context, call: None
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                action_context_factory=action_factory,
+                confirmation_check=confirmation,
+                approval_id_factory=approval_factory,
+            )
+            service = runtime.application.conversations
+            self.assertIs(service.action_context_factory, action_factory)
+            self.assertIs(service.confirmation_check, confirmation)
+            self.assertIs(service.approval_id_factory, approval_factory)
+            runtime.close()
+
     def test_concurrent_close_waits_for_api_component_shutdown(self):
         entered = threading.Event()
         release = threading.Event()
