@@ -182,6 +182,21 @@ class AgentExecutionLoop:
                             event = next(stream_events)
                         except StopIteration:
                             break
+                        # A provider may yield after cancellation while next() was
+                        # blocked. Recheck before forwarding text or accepting tools.
+                        stream_stop_reason = self._stop_reason(started, cancel_check)
+                        if stream_stop_reason:
+                            close_stream = getattr(stream_events, "close", None)
+                            if callable(close_stream):
+                                close_stream()
+                            self._event(
+                                "agent.stopped", reason=stream_stop_reason,
+                                model_turns=turns, tool_calls=calls_total,
+                            )
+                            return AgentExecutionResult(
+                                stream_stop_reason, "", turns, calls_total,
+                                max(0.0, self.clock() - started),
+                            )
                         if not isinstance(event, Mapping):
                             raise AgentExecutionError("stream event must be an object.")
                         event_type = event.get("type")
@@ -223,6 +238,15 @@ class AgentExecutionLoop:
             except Exception as exc:
                 self._event("agent.model_failed", error_type=type(exc).__name__)
                 raise AgentExecutionError("model adapter request failed.") from exc
+            # Do not process a response that arrived after a cancellation
+            # during an in-flight provider request.
+            reason = self._stop_reason(started, cancel_check)
+            if reason:
+                self._event("agent.stopped", reason=reason, model_turns=turns, tool_calls=calls_total)
+                return AgentExecutionResult(
+                    reason, "", turns, calls_total,
+                    max(0.0, self.clock() - started),
+                )
             turns += 1
             if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
                 raise AgentExecutionError("model response must contain only text, tool_calls, and optional finish_reason.")
