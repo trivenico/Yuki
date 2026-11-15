@@ -28,6 +28,7 @@ class SpecialistRegistryTests(unittest.TestCase):
         agent, = registry.coordinator_agents()
         self.assertEqual(agent.permissions, frozenset({"task:artifact"}))
         self.assertNotIn("read_documents", agent.permissions)
+        self.assertTrue(agent.requires_approval)
 
     def test_registry_validates_ids_duplicates_and_budget_ceilings(self):
         with self.assertRaises(ValueError):
@@ -81,6 +82,7 @@ class SpecialistRegistryTests(unittest.TestCase):
                     {"type": "function", "function": {"name": "read_documents"}},
                 ],
                 "parent_policy": ParentPolicy(),
+                "provider_name": "local",
             },
         })
         self.assertEqual(handlers["research-agent"]("Summarize the file"), "research complete")
