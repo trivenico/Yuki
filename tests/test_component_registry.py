@@ -86,6 +86,23 @@ class ComponentRegistryTests(unittest.TestCase):
         self.assertEqual(registry.start_all(), ("identity-access",))
         self.assertEqual(events, [("start", "identity-access")])
 
+    def test_dependency_cycle_fails_before_any_runtime_lifecycle_hook(self):
+        events = []
+        cyclic = replace(
+            self.contracts["identity-access"],
+            depends_on=("identity-access",),
+        )
+        registry = ComponentRegistry(contracts=(cyclic,))
+        runtime = self.runtime("identity-access", events)
+        registry.register(replace(runtime, contract=cyclic))
+
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            registry.start_all()
+
+        self.assertEqual(events, [])
+        self.assertEqual(registry.started_components, ())
+        self.assertEqual(registry.health(), {})
+
     def test_registration_remains_available_after_dependency_validation_failure(self):
         events = []
         registry = ComponentRegistry()
