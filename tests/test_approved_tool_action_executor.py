@@ -98,7 +98,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         action = self.journal.get(self.proposal.idempotency_key)
         self.assertEqual(proposal.execution_state, "executing")
         self.assertEqual(action.state, "prepared")
-        self.assertEqual(action.version, 0)
+        self.assertEqual(action.version, 1)
         self.assertEqual(action.action_id, self.proposal.action_id)
 
         recovered = self.executor.recover_interrupted_execution(
@@ -186,7 +186,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(current.execution_state, "not_started")
         reserved = self.journal.get(self.proposal.idempotency_key)
         self.assertEqual(reserved.state, "prepared")
-        self.assertEqual(reserved.version, 0)
+        self.assertEqual(reserved.version, 1)
         self.assertEqual(self.calls, [])
 
         retried = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
@@ -364,7 +364,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(result.state, "unknown")
         self.assertIn("blocked", result.result.lower())
         self.assertEqual(self.calls, [])
-        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
         self.assertEqual(self.proposals.get(
             self.proposal.proposal_id, principal_id="owner-a",
         ).execution_state, "unknown")
