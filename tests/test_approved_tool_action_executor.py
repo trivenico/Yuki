@@ -184,6 +184,42 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
 
+    def test_expired_pre_dispatch_claim_releases_proposal_for_safe_retry(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        reserved = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send", self.arguments,
+            action_id=self.proposal.action_id,
+        )
+        claimed = self.journal.claim_execution(
+            self.proposal.idempotency_key, reserved.request_digest,
+        )
+        self.assertEqual(claimed.state, "authorizing")
+        db = sqlite3.connect(self.journal.database_path)
+        try:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", self.proposal.idempotency_key),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "not_started")
+
+        retried = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(retried.state, "finished")
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "succeeded")
+
     def test_expired_journal_lease_recovers_proposal_as_unknown(self):
         self.assertTrue(self.proposals.claim_execution(
             self.proposal.proposal_id, principal_id="owner-a",
