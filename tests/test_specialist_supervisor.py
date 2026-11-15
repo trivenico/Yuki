@@ -101,7 +101,7 @@ class SpecialistSupervisorTests(unittest.TestCase):
     def test_role_mandated_approval_is_reported_even_if_subtask_did_not_request_it(self):
         coordinator = SpecialistAgentCoordinator(
             self.runtime,
-            str(Path(self.tmp.name) / "yuki.sqlite3"),
+            str(Path(self.tmp.name) / "role-coordinator.sqlite3"),
             [SpecialistAgent(
                 "research", "Research specialist", frozenset({"research"}), "emit",
                 requires_approval=True,
