@@ -485,7 +485,7 @@ class WorkflowRunStore:
                 or not isinstance(terminal_event_actor_id, str)
                 or not terminal_event_actor_id.strip()
                 or len(terminal_event_actor_id) > 200
-                or "\\x00" in terminal_event_actor_id
+                or "\x00" in terminal_event_actor_id
                 or not isinstance(terminal_event_payload, dict)
             ):
                 raise ValueError("terminal event must match the target state and include a valid actor and payload.")
