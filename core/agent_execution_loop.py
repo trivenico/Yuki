@@ -165,6 +165,8 @@ class AgentExecutionLoop:
                         messages=list(messages), tools=list(tools), tool_choice="auto"
                     ))
                     while True:
+                        # Check the duration budget before blocking for the next
+                        # provider event; this preserves the per-event deadline.
                         stream_stop_reason = "cancelled" if cancel_check() else None
                         if stream_stop_reason:
                             close_stream = getattr(stream_events, "close", None)
