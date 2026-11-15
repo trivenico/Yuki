@@ -112,8 +112,13 @@ class SpecialistSupervisor:
             remaining_budget = max_tasks - len(worker_results)
             if remaining_budget <= 0:
                 break
+            assigned_task_ids = tuple(
+                item.task_id for item in plan.subtasks
+                if item.task_id is not None and item.status == "queued"
+            )
             batch = self.worker.run_concurrently(
                 max_workers=max_workers, max_tasks=remaining_budget,
+                task_ids=assigned_task_ids,
             )
             rounds += 1
             worker_results.extend(batch)
