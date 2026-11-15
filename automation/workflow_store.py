@@ -483,15 +483,6 @@ class WorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
-        if kind in {"task.progress", "task.artifact"} and expected_lease_owner is None:
-            raise ValueError("worker progress and artifact events require an active lease owner.")
-        if expected_lease_owner is not None and (
-            not isinstance(expected_lease_owner, str)
-            or not expected_lease_owner.strip()
-            or len(expected_lease_owner) > 200
-            or "\x00" in expected_lease_owner
-        ):
-            raise ValueError("expected_lease_owner must be bounded non-empty text.")
         if error_code is not None and (
             not isinstance(error_code, str) or not error_code or len(error_code) > 100
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in error_code)
@@ -630,6 +621,8 @@ class WorkflowRunStore:
         Worker-originated progress/artifact events may require a live lease; the
         lease predicate is enforced in the same transaction as the journal write.
         """
+        if kind in {"task.progress", "task.artifact"} and expected_lease_owner is None:
+            raise ValueError("worker progress and artifact events require an active lease owner.")
         if expected_lease_owner is not None and (
             not isinstance(expected_lease_owner, str)
             or not expected_lease_owner.strip()
