@@ -234,12 +234,14 @@ class AgentExecutionLoop:
                     finally:
                         # Release provider/network resources on success, cancellation,
                         # malformed events, callback failures, and provider exceptions.
-                        close_stream = getattr(stream_events, "close", None)
-                        if callable(close_stream):
-                            try:
+                        try:
+                            close_stream = getattr(stream_events, "close", None)
+                            if callable(close_stream):
                                 close_stream()
-                            except Exception:
-                                pass
+                        except Exception:
+                            # Even a hostile/broken close attribute must not mask
+                            # the provider, protocol, or client-callback failure.
+                            pass
                     streamed_answer = "".join(streamed_text)
                     if response is None:
                         response = {
