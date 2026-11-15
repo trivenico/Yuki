@@ -191,9 +191,9 @@ class ToolActionReconciliationTests(unittest.TestCase):
         )
         service.reconcile_proposal(proposal.proposal_id, principal_id="owner-a")
         current = proposals.get(proposal.proposal_id, principal_id="owner-a")
-        self.assertEqual(current.execution_state, "unknown")
-        with self.assertRaisesRegex(ValueError, "not awaiting reconciliation"):
-            service.reconcile_proposal(proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(current.execution_state, "not_executed")
+        repeated = service.reconcile_proposal(proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(repeated.state, "not_executed")
         self.assertEqual(adapter.calls, 1)
 
     def test_validates_provider_evidence_contract(self):

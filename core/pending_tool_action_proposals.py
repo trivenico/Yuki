@@ -52,29 +52,68 @@ class SQLitePendingToolActionProposalStore:
         self.database_path = prepare_private_sqlite_path(database_path)
         self.ttl_seconds = ttl_seconds
         with self._connect() as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS pending_tool_action_proposals (
-                proposal_id TEXT PRIMARY KEY,
-                principal_id TEXT NOT NULL,
-                action_id TEXT NOT NULL UNIQUE,
-                idempotency_key TEXT NOT NULL UNIQUE,
-                tool_name TEXT NOT NULL,
-                request_digest TEXT NOT NULL,
-                arguments_json TEXT NOT NULL,
-                status TEXT NOT NULL CHECK(status IN
-                    ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                decided_at TEXT
-            )""")
-            columns = {row[1] for row in db.execute("PRAGMA table_info(pending_tool_action_proposals)")}
-            if "execution_state" not in columns:
-                db.execute("""ALTER TABLE pending_tool_action_proposals
-                    ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'not_started'
-                    CHECK(execution_state IN ('not_started','executing','finished','unknown'))""")
-            db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_owner_status
-                ON pending_tool_action_proposals(principal_id, status, created_at)""")
-            db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_expiry
-                ON pending_tool_action_proposals(status, expires_at)""")
+            # Keep table creation, legacy-column migration, and index creation
+            # crash-atomic. A partially applied schema could otherwise make
+            # later startups observe an incompatible proposal state machine.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("""CREATE TABLE IF NOT EXISTS pending_tool_action_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    principal_id TEXT NOT NULL,
+                    action_id TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT,
+                    execution_state TEXT NOT NULL DEFAULT 'not_started' CHECK(execution_state IN
+                        ('not_started','executing','finished','unknown','not_executed'))
+                )""")
+                columns = {
+                    row[1] for row in db.execute(
+                        "PRAGMA table_info(pending_tool_action_proposals)"
+                    )
+                }
+                if "execution_state" not in columns:
+                    db.execute("""ALTER TABLE pending_tool_action_proposals
+                        ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'not_started'
+                        CHECK(execution_state IN ('not_started','executing','finished','unknown'))""")
+                schema_row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='pending_tool_action_proposals'").fetchone()
+                if schema_row and "'not_executed'" not in schema_row[0]:
+                    db.execute("""CREATE TABLE pending_tool_action_proposals_v2 (
+                        proposal_id TEXT PRIMARY KEY,
+                        principal_id TEXT NOT NULL,
+                        action_id TEXT NOT NULL UNIQUE,
+                        idempotency_key TEXT NOT NULL UNIQUE,
+                        tool_name TEXT NOT NULL,
+                        request_digest TEXT NOT NULL,
+                        arguments_json TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN
+                            ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        decided_at TEXT,
+                        execution_state TEXT NOT NULL DEFAULT 'not_started' CHECK(execution_state IN
+                            ('not_started','executing','finished','unknown','not_executed'))
+                    )""")
+                    db.execute("""INSERT INTO pending_tool_action_proposals_v2
+                        SELECT proposal_id, principal_id, action_id, idempotency_key, tool_name,
+                        request_digest, arguments_json, status, created_at, expires_at, decided_at,
+                        execution_state FROM pending_tool_action_proposals""")
+                    db.execute("DROP TABLE pending_tool_action_proposals")
+                    db.execute("ALTER TABLE pending_tool_action_proposals_v2 RENAME TO pending_tool_action_proposals")
+                db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_owner_status
+                    ON pending_tool_action_proposals(principal_id, status, created_at)""")
+                db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_expiry
+                    ON pending_tool_action_proposals(status, expires_at)""")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
 
     @contextmanager
     def _connect(self):
@@ -234,14 +273,16 @@ class SQLitePendingToolActionProposalStore:
             raise ValueError("authenticated principal is required.")
         if not isinstance(proposal_id, str) or not proposal_id or len(proposal_id) > 128:
             return False
+        now = self._now().isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 changed = db.execute("""UPDATE pending_tool_action_proposals
                     SET execution_state = 'executing'
                     WHERE proposal_id = ? AND principal_id = ?
-                      AND status = 'approved' AND execution_state = 'not_started'""",
-                    (proposal_id, principal_id)).rowcount
+                      AND status = 'approved' AND execution_state = 'not_started'
+                      AND expires_at > ?""",
+                    (proposal_id, principal_id, now)).rowcount
                 db.execute("COMMIT")
             except Exception:
                 db.execute("ROLLBACK")
@@ -262,6 +303,32 @@ class SQLitePendingToolActionProposalStore:
                 WHERE proposal_id = ? AND principal_id = ?
                   AND status = 'approved' AND execution_state = 'executing'""",
                 (state, proposal_id, principal_id)).rowcount
+        return changed == 1
+
+    def _release_recovered_pre_dispatch_claim(
+        self, proposal_id: str, *, principal_id: str,
+    ) -> bool:
+        """Allow a retry only after the journal proves a fenced pre-dispatch claim."""
+        if not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("authenticated principal is required.")
+        with self._connect() as db:
+            changed = db.execute("""UPDATE pending_tool_action_proposals
+                SET execution_state = 'not_started'
+                WHERE proposal_id = ? AND principal_id = ?
+                  AND status = 'approved' AND execution_state = 'executing'""",
+                (proposal_id, principal_id)).rowcount
+        return changed == 1
+
+    def finish_not_executed_reconciliation(self, proposal_id: str, *, principal_id: str) -> bool:
+        """Record provider-confirmed non-execution as terminal, never replayable."""
+        if not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("authenticated principal is required.")
+        with self._connect() as db:
+            changed = db.execute("""UPDATE pending_tool_action_proposals
+                SET execution_state = 'not_executed'
+                WHERE proposal_id = ? AND principal_id = ?
+                  AND status = 'approved' AND execution_state = 'unknown'""",
+                (proposal_id, principal_id)).rowcount
         return changed == 1
 
     def finish_reconciliation(self, proposal_id: str, *, principal_id: str) -> bool:

@@ -19,7 +19,7 @@ class ToolActionContextTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.journal = ToolActionJournal(str(Path(self.temp_dir.name) / "actions.sqlite3"))
-        self.approvals = SQLiteToolActionApprovalStore(str(Path(self.temp_dir.name) / "approvals.sqlite3"))
+        self.approvals = SQLiteToolActionApprovalStore(str(Path(self.temp_dir.name) / "actions.sqlite3"))
         self.request = {"to": "person@example.com", "subject": "Hello"}
         self.context = ToolActionContext.create("user-123", "email.send", self.request)
 

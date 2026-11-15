@@ -10,6 +10,24 @@ from core.tool_action_journal import ToolActionJournal, ToolActionJournalError
 from core.tool_capabilities import ToolCapabilityCatalog, ToolCapabilityError, ToolEffect
 
 
+def _bounded_tool_result(value: Any, limit: int) -> str:
+    """Convert only bounded, predictable result types without arbitrary __str__ calls."""
+    if type(value) is str:
+        result = value
+    elif value is None or type(value) in (bool, float):
+        result = str(value)
+    elif type(value) is int:
+        # Avoid expensive decimal conversion for attacker-controlled giant integers.
+        if value.bit_length() > 4096:
+            raise ValueError("tool result integer exceeds the safe conversion bound.")
+        result = str(value)
+    else:
+        raise TypeError("tool results must be strings or bounded scalar values.")
+    if len(result) > limit:
+        return result[:limit] + "… [truncated]"
+    return result
+
+
 def _strict_json_object(argument: str) -> dict[str, Any]:
     def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result = {}
@@ -214,14 +232,18 @@ class GuardedToolRuntime:
                 self._record(name, "journal_blocked")
                 return "Tool blocked: action is already claimed, running, or requires reconciliation."
 
+        atomic_action = None
         if requires_confirmation:
             try:
-                approved = self._approval_store.consume(
+                atomic_action = self._approval_store.consume_and_begin_execution(
                     approval_id, action_context, principal_id=principal_id,
+                    action_journal=self._action_journal,
+                    idempotency_key=action_context.idempotency_key,
+                    lease_owner=claim_owner,
                 )
-            except (ToolActionApprovalError, TypeError, ValueError):
-                approved = False
-            if not approved:
+            except (ToolActionApprovalError, ToolActionJournalError, TypeError, ValueError):
+                atomic_action = None
+            if atomic_action is None:
                 if claim_owner is not None:
                     try:
                         self._action_journal.release_authorization_claim(
@@ -235,7 +257,9 @@ class GuardedToolRuntime:
         lease_owner = None
         if side_effect:
             try:
-                if claim_owner is not None:
+                if atomic_action is not None:
+                    action = atomic_action
+                elif claim_owner is not None:
                     action = self._action_journal.begin_claimed_execution(
                         action_context.idempotency_key, claim_owner,
                     )
@@ -256,11 +280,12 @@ class GuardedToolRuntime:
             handler = self._tools[name]
             action_handler = getattr(handler, "invoke_action", None)
             if lease_owner is not None and callable(action_handler):
-                result = str(action_handler(
+                raw_result = action_handler(
                     argument, action_context=action_context, principal_id=principal_id,
-                ))
+                )
             else:
-                result = str(handler(argument))
+                raw_result = handler(argument)
+            result = _bounded_tool_result(raw_result, self._max_result_chars)
         except Exception:
             if lease_owner is not None:
                 try:
@@ -273,8 +298,6 @@ class GuardedToolRuntime:
             if lease_owner is not None:
                 return "The tool failed. Its external outcome may require reconciliation."
             return "The tool failed. Check the input and try again."
-        if len(result) > self._max_result_chars:
-            result = result[: self._max_result_chars] + "… [truncated]"
         if lease_owner is not None:
             try:
                 self._action_journal.mark_succeeded(

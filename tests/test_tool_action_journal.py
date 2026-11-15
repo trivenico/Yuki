@@ -265,6 +265,60 @@ class ToolActionJournalTests(unittest.TestCase):
         self.assertIn("'authorizing'", schema)
         self.assertIsNotNone(index)
 
+    def test_failed_legacy_migration_rolls_back_schema_and_index_changes(self):
+        legacy_path = str(Path(self.temp_dir.name) / "legacy-migration-rollback.sqlite3")
+        with closing(sqlite3.connect(legacy_path)) as db:
+            db.execute(
+                """CREATE TABLE tool_actions (
+                    action_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN
+                        ('prepared','executing','succeeded','outcome_unknown','not_executed')),
+                    result_json TEXT,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT
+                )"""
+            )
+            db.execute(
+                "CREATE INDEX idx_tool_actions_state_updated ON tool_actions(state, updated_at)"
+            )
+            db.execute(
+                """INSERT INTO tool_actions
+                   (action_id,idempotency_key,tool_name,request_digest,state,created_at,updated_at)
+                   VALUES ('rollback-action','rollback-key','email.send',?,'prepared',?,?)""",
+                ("c" * 64, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+            # Force the migration's table rename to fail after its index drop.
+            db.execute("CREATE TABLE tool_actions_legacy_authorizing (sentinel TEXT)")
+            db.commit()
+
+        with self.assertRaises(sqlite3.OperationalError):
+            ToolActionJournal(legacy_path)
+
+        with closing(sqlite3.connect(legacy_path)) as db:
+            schema = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_actions'"
+            ).fetchone()[0]
+            row = db.execute(
+                "SELECT action_id,idempotency_key,state FROM tool_actions"
+            ).fetchone()
+            index = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_tool_actions_state_updated'"
+            ).fetchone()
+            blocker = db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_actions_legacy_authorizing'"
+            ).fetchone()
+        self.assertNotIn("'authorizing'", schema)
+        self.assertEqual(row, ("rollback-action", "rollback-key", "prepared"))
+        self.assertIsNotNone(index)
+        self.assertIsNotNone(blocker)
+
     def test_execution_lease_bounds_are_validated(self):
         record = self.journal.reserve("lease-bounds", "email.send", {})
         for invalid in (True, 0, 4, 3601, 1.5):

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import json
 
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.guarded_tool_runtime import GuardedToolRuntime
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
 
@@ -32,8 +33,14 @@ class ApprovedToolActionExecutor:
             raise TypeError("approvals must be a SQLiteToolActionApprovalStore")
         if not callable(getattr(guarded_runtime, "invoke", None)):
             raise TypeError("guarded_runtime must provide invoke()")
-        if not callable(getattr(guarded_runtime, "requires_confirmation_by_capability", None)):
-            raise TypeError("guarded_runtime must classify confirmation-required capabilities")
+        if not isinstance(guarded_runtime, GuardedToolRuntime):
+            raise TypeError("guarded_runtime must be a GuardedToolRuntime")
+        if guarded_runtime._approval_store is not approvals:
+            raise ValueError("executor and guarded runtime must share the exact approval store")
+        if guarded_runtime._action_journal is None:
+            raise ValueError("approved execution requires a durable action journal")
+        if guarded_runtime._action_journal.database_path != approvals.database_path:
+            raise ValueError("approval store and guarded action journal must share one SQLite database")
         self.proposals = proposals
         self.approvals = approvals
         self.guarded_runtime = guarded_runtime
@@ -60,10 +67,22 @@ class ApprovedToolActionExecutor:
         # Recover only this proposal's action; an owner must not trigger
         # maintenance transitions for another user's unrelated executions.
         action = journal.recover_expired_execution(proposal.idempotency_key)
-        if action is None or action.state in {"prepared", "executing"}:
-            # A prepared action can still be moving into its dispatch lease.
-            # Keep the proposal claimed until a durable terminal/unknown state
-            # proves what happened.
+        if action is None or action.state == "executing":
+            # No journal row means the worker may still be between proposal
+            # claim and reservation. An active execution lease is also live.
+            return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
+        if action.state == "prepared":
+            # Version 2+ proves an authorizing claim was acquired and then
+            # fenced/released back to prepared. No dispatch lease ever began,
+            # so the proposal claim can be made available for a safe retry.
+            if action.version >= 2:
+                released = self._release_pre_dispatch_claim(
+                    proposal, principal_id=principal_id,
+                )
+                if released:
+                    return ApprovedToolActionExecution(
+                        proposal_id, state="not_started", result=None,
+                    )
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         recovered_state = "finished" if action.state == "succeeded" else "unknown"
         self.proposals.recover_execution_state(
@@ -73,6 +92,20 @@ class ApprovedToolActionExecutor:
             proposal_id=proposal_id,
             state=recovered_state,
             result=str(action.result) if recovered_state == "finished" else None,
+        )
+
+    def _release_pre_dispatch_claim(
+        self, proposal, *, principal_id: str,
+    ) -> bool:
+        """Release only when the durable journal proves dispatch never began."""
+        journal = self.guarded_runtime._action_journal
+        action = journal.get(proposal.idempotency_key)
+        if action is not None and not (
+            action.state == "prepared" and action.version >= 2
+        ):
+            return False
+        return self.proposals._release_recovered_pre_dispatch_claim(
+            proposal.proposal_id, principal_id=principal_id,
         )
 
     def execute(self, proposal_id: str, *, principal_id: str) -> ApprovedToolActionExecution:
@@ -99,9 +132,18 @@ class ApprovedToolActionExecutor:
         try:
             approval_id = self.approvals.issue(context, principal_id=principal_id)
         except Exception:
-            self.proposals.finish_execution(
-                proposal_id, principal_id=principal_id, outcome_unknown=True,
+            # Token issuance is a pre-dispatch operation. Its SQLite transaction
+            # rolls back on failure, so no provider side effect can have begun.
+            # Release the proposal claim instead of incorrectly parking it in
+            # outcome_unknown, which requires provider reconciliation.
+            released = self._release_pre_dispatch_claim(
+                proposal, principal_id=principal_id,
             )
+            if not released:
+                raise RuntimeError(
+                    "approval issuance failed and the pre-dispatch proposal claim "
+                    "could not be safely released"
+                )
             raise
         try:
             argument = json.dumps(

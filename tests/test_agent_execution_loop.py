@@ -451,7 +451,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             journal = ToolActionJournal(str(Path(directory) / "actions.sqlite3"))
             from core.tool_action_approvals import SQLiteToolActionApprovalStore
-            approvals = SQLiteToolActionApprovalStore(str(Path(directory) / "approvals.sqlite3"))
+            approvals = SQLiteToolActionApprovalStore(str(Path(directory) / "actions.sqlite3"))
             sent = []
             runtime = GuardedToolRuntime(
                 {"email.send": lambda raw: sent.append(raw) or "sent"},

@@ -22,7 +22,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         self.proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
-        self.approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
+        self.approvals = SQLiteToolActionApprovalStore(str(root / "journal.sqlite"))
         self.journal = ToolActionJournal(str(root / "journal.sqlite"))
         self.calls = []
         self.runtime = GuardedToolRuntime(
@@ -46,6 +46,27 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.proposal = self.proposals.decide(
             proposal.proposal_id, principal_id="owner-a", decision="approved",
         )
+
+    def test_executor_rejects_split_or_mismatched_atomic_store_wiring(self):
+        root = Path(self.temp.name)
+        other_approvals = SQLiteToolActionApprovalStore(str(root / "other-approvals.sqlite"))
+        with self.assertRaisesRegex(ValueError, "exact approval store"):
+            ApprovedToolActionExecutor(self.proposals, other_approvals, self.runtime)
+
+        split_journal = ToolActionJournal(str(root / "split-journal.sqlite"))
+        split_runtime = GuardedToolRuntime(
+            {"email.send": lambda raw: "sent"}, AllowPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=split_journal,
+            approval_store=self.approvals,
+        )
+        with self.assertRaisesRegex(ValueError, "share one SQLite database"):
+            ApprovedToolActionExecutor(self.proposals, self.approvals, split_runtime)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -80,6 +101,49 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not been approved"):
             self.executor.execute(pending.proposal_id, principal_id="owner-a")
         self.assertEqual(self.calls, [])
+
+    def test_pre_dispatch_release_refuses_when_journal_dispatch_may_have_started(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        reserved = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send", self.arguments,
+            action_id=self.proposal.action_id,
+        )
+        running = self.journal.begin_execution(
+            self.proposal.idempotency_key, reserved.request_digest,
+        )
+        self.assertFalse(self.executor._release_pre_dispatch_claim(
+            self.proposal, principal_id="owner-a",
+        ))
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "executing")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "executing")
+
+    def test_approval_token_issue_failure_releases_pre_dispatch_claim(self):
+        original_issue = self.approvals.issue
+        calls = {"count": 0}
+
+        def fail_once(context, *, principal_id):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("approval storage unavailable")
+            return original_issue(context, principal_id=principal_id)
+
+        self.approvals.issue = fail_once
+        with self.assertRaisesRegex(RuntimeError, "approval storage unavailable"):
+            self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+
+        current = self.proposals.get(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(current.execution_state, "not_started")
+        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
+        self.assertEqual(self.calls, [])
+
+        retried = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(retried.state, "finished")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.calls), 1)
 
     def test_handler_exception_is_recorded_as_unknown_and_never_replayed(self):
         broken = GuardedToolRuntime(
@@ -162,6 +226,42 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         ).execution_state, "executing")
         self.assertEqual(self.calls, [])
 
+
+    def test_expired_pre_dispatch_claim_releases_proposal_for_safe_retry(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        reserved = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send", self.arguments,
+            action_id=self.proposal.action_id,
+        )
+        claimed = self.journal.claim_execution(
+            self.proposal.idempotency_key, reserved.request_digest,
+        )
+        self.assertEqual(claimed.state, "authorizing")
+        db = sqlite3.connect(self.journal.database_path)
+        try:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", self.proposal.idempotency_key),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "not_started")
+
+        retried = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(retried.state, "finished")
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "succeeded")
 
     def test_expired_journal_lease_recovers_proposal_as_unknown(self):
         self.assertTrue(self.proposals.claim_execution(

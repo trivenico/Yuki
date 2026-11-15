@@ -113,6 +113,59 @@ class SQLitePendingToolActionProposalStoreTests(unittest.TestCase):
                 proposal.proposal_id, principal_id="user-1",
             ).status, "expired")
 
+    def test_concurrent_execution_claim_has_exactly_one_winner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = self.make_store(directory)
+            proposal = self.make_proposal(store)
+            store.decide(proposal.proposal_id, principal_id="user-1", decision="approved")
+            barrier = threading.Barrier(3)
+            results = []
+            lock = threading.Lock()
+
+            def claim():
+                barrier.wait()
+                result = store.claim_execution(
+                    proposal.proposal_id, principal_id="user-1",
+                )
+                with lock:
+                    results.append(result)
+
+            workers = [threading.Thread(target=claim) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            barrier.wait()
+            for worker in workers:
+                worker.join(timeout=5)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            self.assertEqual(results.count(True), 1)
+            self.assertEqual(results.count(False), 1)
+            self.assertEqual(
+                store.get(proposal.proposal_id, principal_id="user-1").execution_state,
+                "executing",
+            )
+
+    def test_execution_claim_rechecks_expiry_atomically(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = self.make_store(directory)
+            proposal = self.make_proposal(store)
+            approved = store.decide(
+                proposal.proposal_id, principal_id="user-1", decision="approved",
+            )
+            self.assertEqual(approved.status, "approved")
+            with sqlite3.connect(store.database_path) as db:
+                db.execute(
+                    "UPDATE pending_tool_action_proposals SET expires_at=? WHERE proposal_id=?",
+                    ("2000-01-01T00:00:00+00:00", proposal.proposal_id),
+                )
+            self.assertFalse(store.claim_execution(
+                proposal.proposal_id, principal_id="user-1",
+            ))
+            self.assertEqual(store.get(
+                proposal.proposal_id, principal_id="user-1",
+            ).execution_state, "not_started")
+
     def test_cancel_only_affects_pending_proposal(self):
         with tempfile.TemporaryDirectory() as directory:
             store = self.make_store(directory)
@@ -122,6 +175,94 @@ class SQLitePendingToolActionProposalStoreTests(unittest.TestCase):
             self.assertEqual(store.get(
                 proposal.proposal_id, principal_id="user-1",
             ).status, "cancelled")
+
+
+    def test_schema_migration_rolls_back_when_index_creation_fails(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pending-proposals.sqlite3"
+            db = sqlite3.connect(path)
+            try:
+                db.execute("""CREATE TABLE pending_tool_action_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    principal_id TEXT NOT NULL,
+                    action_id TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT
+                )""")
+                # SQLite index and table names share a namespace. This makes
+                # the second index creation fail after ALTER TABLE has run.
+                db.execute("CREATE TABLE idx_pending_tool_proposals_expiry (id INTEGER)")
+                db.commit()
+            finally:
+                db.close()
+
+            with self.assertRaises(sqlite3.OperationalError):
+                self.make_store(directory)
+
+            db = sqlite3.connect(path)
+            try:
+                columns = {
+                    row[1] for row in db.execute(
+                        "PRAGMA table_info(pending_tool_action_proposals)"
+                    )
+                }
+                self.assertNotIn("execution_state", columns)
+                self.assertIsNone(db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='index' "
+                    "AND name='idx_pending_tool_proposals_owner_status'"
+                ).fetchone())
+            finally:
+                db.close()
+
+    def test_execution_state_migration_preserves_rows_and_allows_not_executed(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pending-proposals.sqlite3"
+            db = sqlite3.connect(path)
+            try:
+                db.execute("""CREATE TABLE pending_tool_action_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    principal_id TEXT NOT NULL,
+                    action_id TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT,
+                    execution_state TEXT NOT NULL DEFAULT 'not_started'
+                        CHECK(execution_state IN ('not_started','executing','finished','unknown'))
+                )""")
+                db.execute("""INSERT INTO pending_tool_action_proposals VALUES
+                    ('proposal-1','user-1','action-1','idem-1','email.send',
+                     'digest','{}','approved','2026-01-01T00:00:00+00:00',
+                     '2099-01-01T00:00:00+00:00',NULL,'unknown')""")
+                db.commit()
+            finally:
+                db.close()
+
+            store = self.make_store(directory)
+            preserved = store.get("proposal-1", principal_id="user-1")
+            self.assertEqual(preserved.execution_state, "unknown")
+            self.assertTrue(store.finish_not_executed_reconciliation(
+                "proposal-1", principal_id="user-1",
+            ))
+            self.assertEqual(
+                store.get("proposal-1", principal_id="user-1").execution_state,
+                "not_executed",
+            )
 
     def test_invalid_ttl_and_limit_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
