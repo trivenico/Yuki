@@ -14,7 +14,29 @@ The returned `GmailToolRuntimeBundle` contains the guarded runtime, complete mod
 
 ## Host integration
 
-The deployment host must first construct the Google OAuth provider, owner-scoped connection registry, encrypted credential vault, refresh service, pinned HTTPS transport, and the two Gmail clients. It then calls `build_gmail_tool_runtime_bundle(...)` with those trusted clients and its existing tools/policy. The host passes `bundle.guarded_runtime` to `StructuredToolProtocol`, uses `bundle.tool_definitions` for the model-facing tool list, and supplies `bundle.reconciliation_service` to `build_conversation_runtime`.
+The deployment host must first construct the Google OAuth provider, owner-scoped connection registry, encrypted credential vault, refresh service, pinned HTTPS transport, and the two Gmail clients. It then calls `build_gmail_tool_runtime_bundle(...)` with those trusted clients and its existing tools/policy. The bundle now includes `bundle.tool_protocol`, already bound to the exact same guarded runtime as `bundle.guarded_runtime`. A host can construct the core loop and API using the existing composition contracts:
+
+```python
+agent_loop = AgentExecutionLoop(model, bundle.tool_protocol)
+runtime = build_conversation_runtime(
+    config,
+    auth_service=auth_service,
+    agent_loop=agent_loop,
+    tools_for_user=lambda _owner: list(bundle.tool_definitions),
+    tool_action_approvals=approval_store,
+    pending_tool_action_proposals=proposals,
+    approved_tool_action_executor=ApprovedToolActionExecutor(
+        proposals, approval_store, bundle.guarded_runtime,
+    ),
+    tool_action_reconciler=bundle.reconciliation_service,
+    pending_proposal_factory=pending_proposal_factory,
+    action_context_factory=action_context_factory,
+    confirmation_check=confirmation_check,
+    approval_id_factory=approval_id_factory,
+)
+```
+
+The host still supplies the authenticated services and trusted callbacks; the example is wiring guidance, not an automatically running deployment.
 
 The host still owns authenticated identity, UI confirmation, policy decisions, persistence paths, OAuth callback routing, and lifecycle shutdown. This factory does not read environment variables, create OAuth secrets, connect an account, or send email during startup.
 
