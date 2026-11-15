@@ -86,6 +86,15 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 definition=self.definition, plan_id="plan-1",
             )
 
+    def test_queued_claim_order_uses_partial_index(self):
+        with self.store._connect() as db:
+            plan = db.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM workflow_runs "
+                "WHERE state='queued' ORDER BY created_at, run_id"
+            ).fetchall()
+        details = " ".join(row["detail"] for row in plan)
+        self.assertIn("idx_workflow_runs_queued_order", details)
+
     def test_claim_skips_more_than_one_hundred_unapproved_tasks(self):
         for index in range(101):
             self.store.create(
