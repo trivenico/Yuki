@@ -53,16 +53,19 @@ class ApprovedToolActionExecutor:
             )
         journal = getattr(self.guarded_runtime, "_action_journal", None)
         if journal is None:
-            self.proposals.recover_execution_state(
-                proposal_id, principal_id=principal_id, state="unknown",
-            )
-            return ApprovedToolActionExecution(proposal_id, state="unknown", result=None)
+            # No journal means the executor may still be between its proposal
+            # claim and durable action reservation. Do not race it by declaring
+            # the claim abandoned.
+            return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         # Recover only this proposal's action; an owner must not trigger
         # maintenance transitions for another user's unrelated executions.
         action = journal.recover_expired_execution(proposal.idempotency_key)
-        if action is not None and action.state == "executing":
+        if action is None or action.state in {"prepared", "executing"}:
+            # A prepared action can still be moving into its dispatch lease.
+            # Keep the proposal claimed until a durable terminal/unknown state
+            # proves what happened.
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
-        recovered_state = "finished" if action is not None and action.state == "succeeded" else "unknown"
+        recovered_state = "finished" if action.state == "succeeded" else "unknown"
         self.proposals.recover_execution_state(
             proposal_id, principal_id=principal_id, state=recovered_state,
         )
