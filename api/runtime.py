@@ -55,8 +55,11 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
-        self.application.close()
+        # Mark the wrapper closed before delegating. The application runtime
+        # also fences repeated cleanup, and this keeps the ASGI owner idempotent
+        # even when an underlying close hook raises.
         self._closed = True
+        self.application.close()
 
 
 def build_conversation_runtime(
