@@ -36,6 +36,7 @@ class PendingToolActionProposal:
     created_at: str
     expires_at: str
     decided_at: str | None
+    execution_state: str = "not_started"
 
 
 class SQLitePendingToolActionProposalStore:
@@ -94,13 +95,13 @@ class SQLitePendingToolActionProposalStore:
             proposal_id=row[0], principal_id=row[1], action_id=row[2],
             idempotency_key=row[3], tool_name=row[4], request_digest=row[5],
             arguments=json.loads(row[6]), status=row[7], created_at=row[8],
-            expires_at=row[9], decided_at=row[10],
+            expires_at=row[9], decided_at=row[10], execution_state=row[11],
         )
 
     @staticmethod
     def _select_columns() -> str:
         return ("proposal_id, principal_id, action_id, idempotency_key, tool_name, "
-                "request_digest, arguments_json, status, created_at, expires_at, decided_at")
+                "request_digest, arguments_json, status, created_at, expires_at, decided_at, execution_state")
 
     def create(self, context: ToolActionContext, arguments: Mapping[str, Any], *,
                principal_id: str) -> PendingToolActionProposal:
