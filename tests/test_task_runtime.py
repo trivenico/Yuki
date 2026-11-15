@@ -371,6 +371,7 @@ class TaskRuntimeTests(unittest.TestCase):
         events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
         self.assertEqual([event.kind for event in events], ["task.created"])
         self.assertEqual(events[0].payload["retry_of"], task.task_id)
+        self.assertEqual(events[0].actor_id, "alice")
         again = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                           expected_version=failed.version)
         self.assertEqual(again.task_id, retried.task_id)
