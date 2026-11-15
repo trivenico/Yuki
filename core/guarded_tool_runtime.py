@@ -187,25 +187,32 @@ class GuardedToolRuntime:
             self._record(name, "confirmation_required")
             return "Tool blocked: explicit confirmation requires a durable, action-bound approval."
 
-        # Reserve the immutable action identity before consuming approval. A
-        # conflicting, already-running, or unreconciled journal record must not
-        # burn a valid one-time approval token. Reservation is non-dispatching;
-        # the execution lease is acquired only after approval is consumed.
+        # Reserve identity, then acquire an exclusive pre-dispatch claim. The
+        # claim serializes competing callers before either can consume approval.
         side_effect = (
             capability is not None
             and capability.effect is ToolEffect.SIDE_EFFECTING
             and self._require_action_context
         )
         reserved = None
+        claim_owner = None
         if side_effect:
             try:
                 reserved = self._action_journal.reserve(
                     action_context.idempotency_key, name, action_request,
                     action_id=action_context.action_id,
                 )
+                claimed = self._action_journal.claim_execution(
+                    action_context.idempotency_key, reserved.request_digest,
+                )
+                if claimed.state != "succeeded":
+                    claim_owner = claimed.lease_owner
+                    if not claim_owner:
+                        self._record(name, "journal_invalid_claim")
+                        return "Tool blocked: durable authorization claim is unavailable."
             except (ToolActionJournalError, ValueError, TypeError):
                 self._record(name, "journal_blocked")
-                return "Tool blocked: action is already running or requires reconciliation."
+                return "Tool blocked: action is already claimed, running, or requires reconciliation."
 
         if requires_confirmation:
             try:
@@ -215,15 +222,25 @@ class GuardedToolRuntime:
             except (ToolActionApprovalError, TypeError, ValueError):
                 approved = False
             if not approved:
+                if claim_owner is not None:
+                    try:
+                        self._action_journal.release_authorization_claim(
+                            action_context.idempotency_key, claim_owner,
+                        )
+                    except ToolActionJournalError:
+                        self._record(name, "journal_claim_release_required")
                 self._record(name, "approval_invalid_or_consumed")
                 return "Tool blocked: approval is invalid, expired, or already used."
 
         lease_owner = None
         if side_effect:
             try:
-                action = self._action_journal.begin_execution(
-                    action_context.idempotency_key, reserved.request_digest,
-                )
+                if claim_owner is not None:
+                    action = self._action_journal.begin_claimed_execution(
+                        action_context.idempotency_key, claim_owner,
+                    )
+                else:
+                    action = claimed
                 if action.state == "succeeded":
                     self._record(name, "idempotent_replay")
                     return str(action.result)

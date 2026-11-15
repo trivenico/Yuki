@@ -33,7 +33,7 @@ class ToolActionTransitionError(ToolActionJournalError):
 
 _KEY = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 _TOOL = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
-_STATES = frozenset({"prepared", "executing", "succeeded", "outcome_unknown", "not_executed"})
+_STATES = frozenset({"prepared", "authorizing", "executing", "succeeded", "outcome_unknown", "not_executed"})
 _MAX_REQUEST_BYTES = 32 * 1024
 _MAX_RESULT_BYTES = 16 * 1024
 
@@ -79,6 +79,11 @@ class ToolActionJournal:
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
+            # Schema creation, legacy CHECK-constraint rebuild, row copy, and
+            # index recreation must commit as one unit. Closing an interrupted
+            # connection rolls back the entire migration rather than leaving a
+            # renamed or partially copied action table behind.
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS tool_actions (
                     action_id TEXT PRIMARY KEY,
@@ -86,7 +91,7 @@ class ToolActionJournal:
                     tool_name TEXT NOT NULL,
                     request_digest TEXT NOT NULL,
                     state TEXT NOT NULL CHECK(state IN
-                        ('prepared','executing','succeeded','outcome_unknown','not_executed')),
+                        ('prepared','authorizing','executing','succeeded','outcome_unknown','not_executed')),
                     result_json TEXT,
                     error_code TEXT,
                     created_at TEXT NOT NULL,
@@ -100,10 +105,40 @@ class ToolActionJournal:
             for column in ("lease_owner", "lease_expires_at"):
                 if column not in columns:
                     db.execute("ALTER TABLE tool_actions ADD COLUMN " + column + " TEXT")
+            schema_row = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_actions'"
+            ).fetchone()
+            if schema_row is not None and "'authorizing'" not in (schema_row["sql"] or ""):
+                # Upgrade the legacy CHECK constraint without dropping durable actions.
+                db.execute("DROP INDEX IF EXISTS idx_tool_actions_state_updated")
+                db.execute("ALTER TABLE tool_actions RENAME TO tool_actions_legacy_authorizing")
+                db.execute("""CREATE TABLE tool_actions (
+                    action_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN
+                        ('prepared','authorizing','executing','succeeded','outcome_unknown','not_executed')),
+                    result_json TEXT,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT
+                )""")
+                db.execute("""INSERT INTO tool_actions
+                    (action_id,idempotency_key,tool_name,request_digest,state,result_json,
+                     error_code,created_at,updated_at,version,lease_owner,lease_expires_at)
+                    SELECT action_id,idempotency_key,tool_name,request_digest,state,result_json,
+                     error_code,created_at,updated_at,version,lease_owner,lease_expires_at
+                    FROM tool_actions_legacy_authorizing""")
+                db.execute("DROP TABLE tool_actions_legacy_authorizing")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tool_actions_state_updated "
                 "ON tool_actions(state, updated_at)"
             )
+            db.execute("COMMIT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -194,6 +229,97 @@ class ToolActionJournal:
                 raise
         return self._record(row)
 
+    def claim_execution(
+        self, idempotency_key: str, request_digest: str, *, lease_seconds: int = 120,
+    ) -> ToolAction:
+        """Exclusively claim authorization; no external dispatch is permitted in this state."""
+        self._validate_key(idempotency_key)
+        if not isinstance(request_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", request_digest):
+            raise ValueError("request_digest must be a SHA-256 hex digest.")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 5 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 5 to 3600.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        owner = secrets.token_urlsafe(24)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+                if row is None or row["request_digest"] != request_digest:
+                    raise ToolActionConflict("action does not exist for this request digest.")
+                if row["state"] == "succeeded":
+                    db.commit()
+                    return self._record(row)
+                if row["state"] != "prepared":
+                    raise ToolActionTransitionError("action is already claimed, executing, or requires reconciliation.")
+                db.execute(
+                    """UPDATE tool_actions SET state='authorizing',updated_at=?,version=version+1,
+                       lease_owner=?,lease_expires_at=?
+                       WHERE idempotency_key=? AND state='prepared' AND version=?""",
+                    (now, owner, expires, idempotency_key, row["version"]),
+                )
+                updated = db.execute("SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return self._record(updated)
+
+    def begin_claimed_execution(self, idempotency_key: str, lease_owner: str) -> ToolAction:
+        """Promote an authorized claim to dispatchable execution after approval succeeds."""
+        self._validate_key(idempotency_key)
+        if not isinstance(lease_owner, str) or not lease_owner:
+            raise ValueError("lease_owner must be a non-empty fencing token.")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+                if row is None:
+                    raise ToolActionTransitionError("action claim does not exist.")
+                if row["state"] == "succeeded":
+                    db.commit()
+                    return self._record(row)
+                if row["state"] != "authorizing" or row["lease_owner"] != lease_owner or row["lease_expires_at"] <= now:
+                    raise ToolActionTransitionError("authorization claim is no longer owned by this worker.")
+                db.execute(
+                    """UPDATE tool_actions SET state='executing',updated_at=?,version=version+1
+                       WHERE idempotency_key=? AND state='authorizing' AND lease_owner=? AND version=?""",
+                    (now, idempotency_key, lease_owner, row["version"]),
+                )
+                updated = db.execute("SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return self._record(updated)
+
+    def release_authorization_claim(self, idempotency_key: str, lease_owner: str) -> ToolAction:
+        """Return a pre-dispatch claim to prepared when approval validation fails."""
+        self._validate_key(idempotency_key)
+        if not isinstance(lease_owner, str) or not lease_owner:
+            raise ValueError("lease_owner must be a non-empty fencing token.")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+                if row is None or row["state"] != "authorizing" or row["lease_owner"] != lease_owner:
+                    raise ToolActionTransitionError("authorization claim is no longer owned by this worker.")
+                db.execute(
+                    """UPDATE tool_actions SET state='prepared',updated_at=?,version=version+1,
+                       lease_owner=NULL,lease_expires_at=NULL
+                       WHERE idempotency_key=? AND state='authorizing' AND lease_owner=? AND version=?""",
+                    (now, idempotency_key, lease_owner, row["version"]),
+                )
+                updated = db.execute("SELECT * FROM tool_actions WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return self._record(updated)
+
     def begin_execution(
         self, idempotency_key: str, request_digest: str, *, lease_seconds: int = 120,
     ) -> ToolAction:
@@ -281,6 +407,13 @@ class ToolActionJournal:
             db.execute("BEGIN IMMEDIATE")
             try:
                 db.execute(
+                    """UPDATE tool_actions SET state='prepared',error_code=NULL,
+                       lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
+                       WHERE idempotency_key=? AND state='authorizing'
+                         AND lease_expires_at IS NOT NULL AND lease_expires_at<=?""",
+                    (now, idempotency_key, now),
+                )
+                db.execute(
                     """UPDATE tool_actions
                        SET state='outcome_unknown',error_code='execution_lease_expired',
                            lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
@@ -304,7 +437,14 @@ class ToolActionJournal:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                cursor = db.execute(
+                authorizing_cursor = db.execute(
+                    """UPDATE tool_actions SET state='prepared',error_code=NULL,
+                       lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
+                       WHERE state='authorizing' AND lease_expires_at IS NOT NULL
+                         AND lease_expires_at<=?""",
+                    (now, now),
+                )
+                executing_cursor = db.execute(
                     """UPDATE tool_actions
                        SET state='outcome_unknown',error_code='execution_lease_expired',
                            lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
@@ -312,7 +452,7 @@ class ToolActionJournal:
                          AND lease_expires_at<=?""",
                     (now, now),
                 )
-                count = cursor.rowcount
+                count = authorizing_cursor.rowcount + executing_cursor.rowcount
                 db.commit()
             except Exception:
                 db.rollback()

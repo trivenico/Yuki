@@ -133,6 +133,30 @@ class ToolActionContextTests(unittest.TestCase):
             self.approvals.consume(token, self.context, principal_id="user-123")
         )
 
+    def test_competing_request_does_not_consume_approval_without_action_claim(self):
+        runtime = self._runtime(lambda _: "sent", confirmation=True)
+        argument = json.dumps(self.request, separators=(",", ":"))
+        token = self.approvals.issue(self.context, principal_id="user-123")
+        reserved = self.journal.reserve(
+            self.context.idempotency_key, "email.send", self.request,
+            action_id=self.context.action_id,
+        )
+        held = self.journal.claim_execution(
+            self.context.idempotency_key, reserved.request_digest,
+        )
+        result = runtime.invoke(
+            "email.send", argument, action_context=self.context,
+            principal_id="user-123", approval_id=token,
+        )
+        self.assertIn("blocked", result.lower())
+        self.assertEqual(self.journal.get(self.context.idempotency_key).state, "authorizing")
+        self.assertTrue(
+            self.approvals.consume(token, self.context, principal_id="user-123")
+        )
+        self.journal.release_authorization_claim(
+            self.context.idempotency_key, held.lease_owner,
+        )
+
     def test_handler_failure_marks_outcome_unknown_and_prevents_replay(self):
         calls = []
         def fail(_):

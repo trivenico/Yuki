@@ -54,6 +54,34 @@ class ToolActionJournalTests(unittest.TestCase):
         with self.assertRaises(ToolActionConflict):
             self.journal.reserve("action-1", "calendar.create", {"title": "Different"})
 
+    def test_authorization_claim_is_exclusive_and_releasable(self):
+        record = self.journal.reserve("approval-claim", "email.send", {"to": "a@example.com"})
+        claimed = self.journal.claim_execution("approval-claim", record.request_digest)
+        self.assertEqual(claimed.state, "authorizing")
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.claim_execution("approval-claim", record.request_digest)
+        released = self.journal.release_authorization_claim("approval-claim", claimed.lease_owner)
+        self.assertEqual(released.state, "prepared")
+        self.assertIsNone(released.lease_owner)
+        second = self.journal.claim_execution("approval-claim", record.request_digest)
+        executing = self.journal.begin_claimed_execution("approval-claim", second.lease_owner)
+        self.assertEqual(executing.state, "executing")
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.release_authorization_claim("approval-claim", second.lease_owner)
+
+    def test_expired_authorization_claim_recovers_to_prepared_not_unknown(self):
+        record = self.journal.reserve("approval-crash", "email.send", {"to": "a@example.com"})
+        self.journal.claim_execution("approval-crash", record.request_digest)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", "approval-crash"),
+            )
+            db.commit()
+        recovered = self.journal.recover_expired_execution("approval-crash")
+        self.assertEqual(recovered.state, "prepared")
+        self.assertIsNone(recovered.lease_owner)
+
     def test_execution_claim_is_single_use(self):
         record = self.journal.reserve("action-1", "email.send", {"to": "a@example.com"})
         started = self.journal.begin_execution("action-1", record.request_digest)
@@ -140,6 +168,21 @@ class ToolActionJournalTests(unittest.TestCase):
         with self.assertRaises(ToolActionTransitionError):
             self.journal.renew_execution("lease-expired", started.lease_owner)
 
+    def test_bulk_recovery_counts_authorization_and_execution_claims(self):
+        auth_record = self.journal.reserve("bulk-auth", "email.send", {"to": "a@example.com"})
+        self.journal.claim_execution("bulk-auth", auth_record.request_digest)
+        execution_record = self.journal.reserve("bulk-exec", "email.send", {"to": "b@example.com"})
+        self.journal.begin_execution("bulk-exec", execution_record.request_digest)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key IN (?, ?)",
+                ("2000-01-01T00:00:00+00:00", "bulk-auth", "bulk-exec"),
+            )
+            db.commit()
+        self.assertEqual(self.journal.recover_expired_executions(), 2)
+        self.assertEqual(self.journal.get("bulk-auth").state, "prepared")
+        self.assertEqual(self.journal.get("bulk-exec").state, "outcome_unknown")
+
     def test_existing_journal_schema_is_upgraded_with_lease_columns(self):
         # setUp initializes the current schema; use a separate database to
         # accurately model a pre-lease database created by an older release.
@@ -165,6 +208,62 @@ class ToolActionJournalTests(unittest.TestCase):
         self.assertEqual(upgraded.state, "prepared")
         self.assertIsNone(upgraded.lease_owner)
         self.assertIsNone(upgraded.lease_expires_at)
+
+    def test_legacy_state_check_constraint_is_rebuilt_without_losing_actions(self):
+        legacy_path = str(Path(self.temp_dir.name) / "legacy-check-actions.sqlite3")
+        with closing(sqlite3.connect(legacy_path)) as db:
+            db.execute(
+                """CREATE TABLE tool_actions (
+                    action_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN
+                        ('prepared','executing','succeeded','outcome_unknown','not_executed')),
+                    result_json TEXT,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT
+                )"""
+            )
+            db.execute(
+                "CREATE INDEX idx_tool_actions_state_updated ON tool_actions(state, updated_at)"
+            )
+            db.executemany(
+                """INSERT INTO tool_actions
+                   (action_id,idempotency_key,tool_name,request_digest,state,created_at,
+                    updated_at,version,lease_owner,lease_expires_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                [
+                    ("legacy-prepared", "legacy-prepared", "email.send", "a" * 64,
+                     "prepared", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
+                     0, None, None),
+                    ("legacy-running", "legacy-running", "email.send", "b" * 64,
+                     "executing", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
+                     3, "worker-lease", "2099-01-01T00:00:00+00:00"),
+                ],
+            )
+            db.commit()
+
+        upgraded = ToolActionJournal(legacy_path)
+        prepared = upgraded.get("legacy-prepared")
+        running = upgraded.get("legacy-running")
+        self.assertEqual(prepared.state, "prepared")
+        self.assertEqual(running.state, "executing")
+        self.assertEqual(running.version, 3)
+        self.assertEqual(running.lease_owner, "worker-lease")
+        with closing(sqlite3.connect(legacy_path)) as db:
+            schema = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_actions'"
+            ).fetchone()[0]
+            index = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_tool_actions_state_updated'"
+            ).fetchone()
+        self.assertIn("'authorizing'", schema)
+        self.assertIsNotNone(index)
 
     def test_execution_lease_bounds_are_validated(self):
         record = self.journal.reserve("lease-bounds", "email.send", {})
