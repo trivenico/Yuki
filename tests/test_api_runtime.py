@@ -246,6 +246,30 @@ class ConversationRuntimeTests(unittest.TestCase):
                     auth_service=object(), agent_loop=_loop(),
                 )
 
+    def test_runtime_readiness_reflects_component_health_and_shutdown(self):
+        class Provider:
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                component_registry_factory=lambda auth_service, agent_loop, application:
+                    build_core_component_registry(
+                        auth_service=auth_service, provider=Provider(),
+                        agent_loop=agent_loop, application_runtime=application,
+                    ),
+            )
+            self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "verified")
+            runtime.close()
+            self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "unavailable")
+
 
 if __name__ == "__main__":
     unittest.main()
