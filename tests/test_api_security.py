@@ -89,7 +89,9 @@ class APISecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
             await send({"type": "http.response.body", "body": b"ok"})
 
         middleware = APISecurityMiddleware(
-            app, limiter=FixedWindowRateLimiter(max_requests=1, window_seconds=60),
+            app, limiter=FixedWindowRateLimiter(
+                max_requests=1, window_seconds=60, clock=lambda: 120.0,
+            ),
         )
         scope = {
             "type": "http", "method": "GET", "path": "/",
