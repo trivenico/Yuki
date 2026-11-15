@@ -35,6 +35,19 @@ class ComponentRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "runtime contract"):
             registry.register(malformed)
 
+    def test_registration_rejects_unhashable_or_empty_runtime_component_id(self):
+        events = []
+        registry = ComponentRegistry()
+        for component_id in ([], ""):
+            malformed_contract = replace(
+                self.contracts["identity-access"], component_id=component_id
+            )
+            malformed_runtime = replace(
+                self.runtime("identity-access", events), contract=malformed_contract
+            )
+            with self.assertRaisesRegex(ValueError, "non-empty string component ID"):
+                registry.register(malformed_runtime)
+
     def test_starts_dependencies_before_dependents_and_closes_in_reverse(self):
         events = []
         registry = ComponentRegistry()
@@ -82,6 +95,26 @@ class ComponentRegistryTests(unittest.TestCase):
             ("close", "agent-execution"), ("close", "provider-runtime"),
             ("close", "identity-access")
         ])
+        self.assertEqual(registry.started_components, ())
+
+    def test_start_failure_reports_cleanup_failures_without_masking_start_error(self):
+        events = []
+        registry = ComponentRegistry()
+        base = self.runtime("identity-access", events)
+        registry.register(replace(
+            base, close=lambda: (_ for _ in ()).throw(OSError("cleanup secret"))
+        ))
+        dependent = self.runtime("provider-runtime", events)
+        registry.register(replace(
+            dependent, start=lambda: (_ for _ in ()).throw(ValueError("startup secret"))
+        ))
+        with self.assertRaisesRegex(
+            RuntimeError, "startup failed: provider-runtime; cleanup failed for: identity-access"
+        ) as raised:
+            registry.start_all()
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        self.assertNotIn("secret", str(raised.exception))
+        self.assertEqual(registry.startup_cleanup_errors, ("identity-access",))
         self.assertEqual(registry.started_components, ())
 
     def test_registration_rejects_unknown_contract_and_duplicate(self):
