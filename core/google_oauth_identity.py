@@ -59,7 +59,7 @@ class GoogleAccountIdentityFactory:
         # account identifier. Hash it so provider subject values aren't exposed
         # in connection URLs, logs, or ordinary connection metadata.
         digest = hashlib.sha256(
-            (GOOGLE_OIDC_ISSUER + "\\0" + subject).encode("ascii")
+            (GOOGLE_OIDC_ISSUER + "\0" + subject).encode("ascii")
         ).hexdigest()
         return GoogleAccountIdentity(
             provider_id=self.provider_id,
