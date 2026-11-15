@@ -403,6 +403,8 @@ class AgentExecutionLoopTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             journal = ToolActionJournal(str(Path(directory) / "actions.sqlite3"))
+            from core.tool_action_approvals import SQLiteToolActionApprovalStore
+            approvals = SQLiteToolActionApprovalStore(str(Path(directory) / "approvals.sqlite3"))
             sent = []
             runtime = GuardedToolRuntime(
                 {"email.send": lambda raw: sent.append(raw) or "sent"},
@@ -412,6 +414,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
                 }),
                 require_action_context=True,
                 action_journal=journal,
+                approval_store=approvals,
             )
             protocol = StructuredToolProtocol(runtime)
             request = {"to": "person@example.com"}
@@ -428,6 +431,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
                 principal_id="authenticated-user",
                 action_context_factory=lambda principal, name, args: context,
                 confirmation_check=lambda call: True,
+                approval_id_factory=lambda principal, action, call: approvals.issue(action, principal_id=principal),
             )
             self.assertEqual(result.status, "limit_reached")
             self.assertEqual(sent, ['{"to":"person@example.com"}'])
