@@ -35,18 +35,33 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 
 class _Response:
+    MAX_RESPONSE_BYTES = 8_000_000
+
     def __init__(self, response, connection):
         self._response = response
         self._connection = connection
         self.status = response.status
         self.reason = response.reason
         self.headers = response.headers
+        self._bytes_read = 0
+
+    def _bounded_read(self, reader, amount):
+        remaining = self.MAX_RESPONSE_BYTES - self._bytes_read
+        # Read at most one byte beyond the budget so oversized bodies are
+        # detected without buffering an unbounded response in memory.
+        requested = remaining + 1 if amount is None or amount < 0 else min(amount, remaining + 1)
+        data = reader(requested)
+        self._bytes_read += len(data)
+        if self._bytes_read > self.MAX_RESPONSE_BYTES:
+            self.close()
+            raise PinnedHTTPTransportError("cloud_response_too_large")
+        return data
 
     def read(self, amount=-1):
-        return self._response.read(amount)
+        return self._bounded_read(self._response.read, amount)
 
     def readline(self, amount=-1):
-        return self._response.readline(amount)
+        return self._bounded_read(self._response.readline, amount)
 
     def close(self):
         try:
