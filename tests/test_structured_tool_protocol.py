@@ -185,8 +185,17 @@ class StructuredToolProtocolTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
 
     def test_confirmation_callback_must_return_a_real_boolean(self):
+        from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
+        runtime = GuardedToolRuntime(
+            {"echo": lambda argument: argument},
+            self.policy,
+            capabilities=ToolCapabilityCatalog({
+                "echo": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
+            }),
+        )
+        protocol = StructuredToolProtocol(runtime)
         with self.assertRaises(TypeError):
-            self.protocol.dispatch(
+            protocol.dispatch(
                 self.envelope([self.call("approval-check", "echo")]),
                 confirmation_check=lambda call: 1,
                 approval_id_factory=lambda *args: "token",
