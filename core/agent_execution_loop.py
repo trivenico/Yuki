@@ -201,9 +201,10 @@ class AgentExecutionLoop:
                                 event = next(stream_events)
                             except StopIteration:
                                 break
-                            # A provider may yield after cancellation while next() was
-                            # blocked. Recheck before forwarding text or accepting tools.
-                            stream_stop_reason = "cancelled" if cancel_check() else None
+                            # A provider may yield after cancellation or the total
+                            # deadline while next() was blocked. Recheck both before
+                            # forwarding text or accepting a tool proposal.
+                            stream_stop_reason = self._stop_reason(started, cancel_check)
                             if stream_stop_reason:
                                 self._event(
                                     "agent.stopped", reason=stream_stop_reason,
