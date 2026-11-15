@@ -11,7 +11,9 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport, PinnedHTTPTransportError
 
 _BASE = "https://huggingface.co/api"
 _DEFAULT_QUERIES = {
@@ -49,7 +51,7 @@ class Candidate:
 class HuggingFaceScout:
     """Search public Hub model/dataset/Space metadata with bounded requests."""
     def __init__(self, *, timeout_seconds: float = 8.0, max_results_per_query: int = 20,
-                 user_agent: str = "Yuki-HuggingFace-Scout/1.0"):
+                 user_agent: str = "Yuki-HuggingFace-Scout/1.0", transport=None):
         if not 1 <= timeout_seconds <= 30:
             raise ValueError("timeout_seconds must be between 1 and 30")
         if not 1 <= max_results_per_query <= 100:
@@ -57,6 +59,9 @@ class HuggingFaceScout:
         self.timeout_seconds = timeout_seconds
         self.max_results_per_query = max_results_per_query
         self.user_agent = user_agent[:120]
+        if transport is not None and not callable(getattr(transport, "open", None)):
+            raise TypeError("transport must provide an open(request, timeout=...) method")
+        self._transport = transport or PinnedHTTPSProviderTransport(allowed_hosts={"huggingface.co"}, timeout=timeout_seconds)
 
     def _get_json(self, url: str):
         # Only fixed Hub API hosts are queried; callers cannot supply an arbitrary URL.
@@ -64,7 +69,7 @@ class HuggingFaceScout:
             raise ValueError("Unsupported Hub API endpoint")
         request = Request(url, headers={"Accept": "application/json", "User-Agent": self.user_agent})
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            with self._transport.open(request, timeout=self.timeout_seconds) as response:
                 if response.status != 200:
                     raise RuntimeError(f"Hugging Face Hub returned HTTP {response.status}")
                 payload = response.read(4_000_001)
@@ -76,7 +81,7 @@ class HuggingFaceScout:
             return data
         except HTTPError as exc:
             raise RuntimeError(f"Hugging Face Hub returned HTTP {exc.code}") from exc
-        except (URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Hugging Face Hub request failed or timed out") from exc
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("Hugging Face Hub returned invalid JSON") from exc
