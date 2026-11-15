@@ -13,7 +13,8 @@ import json
 import re
 import secrets
 import sqlite3
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 from core.sqlite_file_security import prepare_private_sqlite_path
 
@@ -104,12 +105,17 @@ class ToolActionJournal:
                 "ON tool_actions(state, updated_at)"
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """Open a short-lived connection and always release its OS file handles."""
         db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA busy_timeout=10000")
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _record(row: sqlite3.Row) -> ToolAction:
