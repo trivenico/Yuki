@@ -3,7 +3,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from core.google_oauth_provider import (
     GOOGLE_GMAIL_SCOPES, GOOGLE_HOSTS,
-    build_google_gmail_authorization_service, GoogleOAuthConfigurationError,
+    build_google_gmail_authorization_service, prepare_google_gmail_provider,
+    GoogleOAuthConfigurationError,
 )
 
 
@@ -56,6 +57,21 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         self.assertIsNone(service._oidc_verifier._subject)
         self.assertIsNone(service._identity_verifier._subject)
         self.assertIsNone(service._identity_verifier._audience)
+
+    def test_google_provider_uses_existing_prepared_registry_contract(self):
+        prepared = prepare_google_gmail_provider(
+            client_id="client-id.apps.googleusercontent.com",
+            redirect_uri="https://yuki.example.com/oauth/callback/google",
+            transaction_store=Store(), credential_vault=Vault(),
+            pinned_transport=Transport(),
+            account_id_resolver=lambda claims: "google-" + "a" * 64,
+        )
+        from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
+        self.assertIsInstance(prepared, PreparedOAuthProvider)
+        self.assertEqual(prepared.provider_id, "google")
+        self.assertEqual(prepared.registration_method, "pre-registered")
+        self.assertTrue(callable(prepared.authorization_service.begin))
+        self.assertTrue(callable(prepared.authorization_service.complete))
 
     def test_requests_only_send_and_readonly_gmail_scopes(self):
         self.assertEqual(set(GOOGLE_GMAIL_SCOPES), {
