@@ -194,6 +194,7 @@ class SpecialistTaskWorker:
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
+        task_ids: tuple[str, ...] | None = None,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -223,7 +224,7 @@ class SpecialistTaskWorker:
                 agent_ids=tuple(self.agent_ids),
             )
             while permits.acquire(blocking=False):
-                result = worker.run_once()
+                result = worker.run_once(task_ids=task_ids)
                 if result is None:
                     permits.release()
                     return
@@ -236,9 +237,9 @@ class SpecialistTaskWorker:
                 future.result()
         return tuple(results)
 
-    def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+    def run_once(self, *, task_ids: tuple[str, ...] | None = None) -> TaskRecord | None:
+        """Claim and execute one eligible task, optionally restricted to a task set."""
+        claimed = self.runtime.store.claim_next(worker_id=self.worker_id, allowed_run_ids=task_ids)
         if claimed is None:
             return None
 
