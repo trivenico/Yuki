@@ -18,6 +18,7 @@ from core.conversation_service import ConversationService
 from api.request_body import RequestBodyTooLarge, read_json_object
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.approved_tool_action_executor import ApprovedToolActionExecutor
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -41,6 +42,7 @@ class YukiConversationAPI:
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
         pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
+        approved_tool_action_executor: ApprovedToolActionExecutor | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -67,6 +69,14 @@ class YukiConversationAPI:
         ):
             raise TypeError("pending_tool_action_proposals must be a SQLitePendingToolActionProposalStore")
         self.pending_tool_action_proposals = pending_tool_action_proposals
+        if approved_tool_action_executor is not None:
+            if not isinstance(approved_tool_action_executor, ApprovedToolActionExecutor):
+                raise TypeError("approved_tool_action_executor must be an ApprovedToolActionExecutor")
+            if pending_tool_action_proposals is None or approved_tool_action_executor.proposals is not pending_tool_action_proposals:
+                raise ValueError("executor must use the API's pending proposal store")
+            if tool_action_approvals is None or approved_tool_action_executor.approvals is not tool_action_approvals:
+                raise ValueError("executor must use the API's approval store")
+        self.approved_tool_action_executor = approved_tool_action_executor
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -124,6 +134,33 @@ class YukiConversationAPI:
                     return await self._respond(send, 400, {"error": "invalid_limit"})
                 return await self._respond(send, 200, {
                     "proposals": [self._proposal_view(item) for item in proposals]
+                })
+
+            execute_match = re.fullmatch(
+                r"/v1/tool-action-proposals/([A-Za-z0-9_-]{1,128})/execute", path,
+            )
+            if execute_match and method == "POST":
+                if self.approved_tool_action_executor is None:
+                    return await self._respond(send, 503, {"error": "proposal_execution_unavailable"})
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                proposal_id = execute_match.group(1)
+                try:
+                    execution = await asyncio.to_thread(
+                        self.approved_tool_action_executor.execute,
+                        proposal_id, principal_id=user.user_id,
+                    )
+                except LookupError:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                except ValueError:
+                    return await self._respond(send, 409, {"error": "proposal_not_executable"})
+                except Exception:
+                    return await self._respond(send, 503, {"error": "proposal_execution_failed"})
+                return await self._respond(send, 200, {
+                    "proposal_id": execution.proposal_id,
+                    "execution_state": execution.state,
+                    "result": execution.result,
                 })
 
             proposal_match = re.fullmatch(
