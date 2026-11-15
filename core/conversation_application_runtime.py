@@ -65,6 +65,9 @@ def build_conversation_application_runtime(
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     close_callbacks: tuple[Callable[[], None], ...] = (),
+    action_context_factory: Callable | None = None,
+    confirmation_check: Callable | None = None,
+    approval_id_factory: Callable | None = None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -80,6 +83,13 @@ def build_conversation_application_runtime(
         raise TypeError("agent_loop_for_owner must be callable.")
     if not callable(store_factory):
         raise TypeError("store_factory must be callable.")
+    for callback, name in (
+        (action_context_factory, "action_context_factory"),
+        (confirmation_check, "confirmation_check"),
+        (approval_id_factory, "approval_id_factory"),
+    ):
+        if callback is not None and not callable(callback):
+            raise TypeError(f"{name} must be callable.")
     if not isinstance(close_callbacks, tuple) or any(
         not callable(callback) for callback in close_callbacks
     ):
@@ -100,6 +110,9 @@ def build_conversation_application_runtime(
     try:
         conversations = ConversationService(
             store, agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+            action_context_factory=action_context_factory,
+            confirmation_check=confirmation_check,
+            approval_id_factory=approval_id_factory,
         )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,

@@ -68,6 +68,39 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(captured, ["owner-a"])
 
+    def test_host_approval_callbacks_are_forwarded_with_authenticated_principal(self):
+        action_factory = lambda principal, name, arguments: None
+        confirmation = lambda call: False
+        approval_factory = lambda principal, context, call: None
+        service = ConversationService(
+            self.store, self.loop,
+            action_context_factory=action_factory,
+            confirmation_check=confirmation,
+            approval_id_factory=approval_factory,
+        )
+        captured = {}
+        original_run = self.loop.run
+
+        def recording_run(*args, **kwargs):
+            captured.update(kwargs)
+            return original_run(*args, **kwargs)
+
+        self.loop.run = recording_run
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Hello", request_id="approval-hooks", expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(captured["principal_id"], "owner-a")
+        self.assertIs(captured["action_context_factory"], action_factory)
+        self.assertIs(captured["confirmation_check"], confirmation)
+        self.assertIs(captured["approval_id_factory"], approval_factory)
+
+    def test_invalid_host_approval_callbacks_are_rejected(self):
+        for name in ("action_context_factory", "confirmation_check", "approval_id_factory"):
+            with self.subTest(callback=name), self.assertRaisesRegex(TypeError, name):
+                ConversationService(self.store, self.loop, **{name: object()})
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
