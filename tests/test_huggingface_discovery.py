@@ -1,6 +1,7 @@
 import json
 import unittest
 from unittest.mock import patch
+from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport
 from providers.huggingface_discovery import (
     DiscoveryError, HuggingFaceDiscovery, normalize_model,
 )
@@ -51,13 +52,18 @@ class HuggingFaceDiscoveryTests(unittest.TestCase):
             {"id":"org/second","pipeline_tag":"text-generation","downloads":2},
         ]).encode()
         opener = _Opener(payload)
-        result = HuggingFaceDiscovery(max_results=3, opener=opener).discover()
+        result = HuggingFaceDiscovery(max_results=3, transport=opener).discover()
         self.assertEqual(result["count"], 2)
         self.assertEqual(result["source"], "huggingface_hub_public_model_metadata")
         self.assertEqual(result["activation_policy"], "manual_review_required")
         self.assertEqual(opener.timeout, 10)
         self.assertIn("filter=text-generation", opener.request.full_url)
         self.assertEqual(opener.request.get_method(), "GET")
+
+    def test_default_transport_is_dns_pinned_to_the_hub_host(self):
+        discovery = HuggingFaceDiscovery()
+        self.assertIsInstance(discovery._transport, PinnedHTTPSProviderTransport)
+        self.assertEqual(discovery._transport.allowed_hosts, frozenset({"huggingface.co"}))
 
     def test_task_sort_and_bounds_are_validated(self):
         discovery = HuggingFaceDiscovery()
@@ -78,7 +84,7 @@ class HuggingFaceDiscoveryTests(unittest.TestCase):
 
     def test_invalid_json_fails_closed(self):
         with self.assertRaises(DiscoveryError):
-            HuggingFaceDiscovery(opener=_Opener(b"not-json")).discover()
+            HuggingFaceDiscovery(transport=_Opener(b"not-json")).discover()
 
     @patch("providers.huggingface_discovery.datetime")
     def test_discovery_timestamp_is_utc(self, mock_datetime):
