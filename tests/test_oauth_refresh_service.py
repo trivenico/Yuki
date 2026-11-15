@@ -97,5 +97,26 @@ class OAuthTokenRefreshServiceTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [])
 
 
+    def test_shared_lifecycle_coordinator_wraps_refresh(self):
+        from contextlib import contextmanager
+        class Coordinator:
+            calls = []
+            @contextmanager
+            def coordinate(self, **identity):
+                self.calls.append(identity)
+                yield
+        coordinator = Coordinator()
+        service = OAuthTokenRefreshService(
+            credential_vault=self.vault, transport=self.transport,
+            token_endpoint="https://auth.example.com/token",
+            provider_id="provider-1", client_id="client-1",
+            issuer="https://auth.example.com", resource="https://api.example.com",
+            clock=self.clock, lifecycle_coordinator=coordinator,
+        )
+        service.refresh_if_needed(owner_id="owner-1", account_id="account-1")
+        self.assertEqual(coordinator.calls, [{
+            "owner_id": "owner-1", "provider_id": "provider-1", "account_id": "account-1",
+        }])
+
 if __name__ == "__main__":
     unittest.main()
