@@ -72,6 +72,7 @@ class AuthenticatedOAuthConnectionAPI:
             await asyncio.to_thread(
                 self.registry.remove, owner_id=user.user_id,
                 provider_id=provider_id, account_id=account_id,
+                expected_connected_at=record.connected_at,
             )
             return await self._respond(send, 200, {
                 "disconnected": True,
