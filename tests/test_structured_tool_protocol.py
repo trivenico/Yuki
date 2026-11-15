@@ -2,6 +2,7 @@ import json
 import unittest
 
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.tool_action_context import ToolActionContext
 from core.structured_tool_protocol import (
     StructuredToolProtocol,
     ToolProtocolError,
@@ -106,6 +107,67 @@ class StructuredToolProtocolTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             StructuredToolProtocol(object())
 
+
+
+    def test_trusted_context_factory_and_confirmation_reach_guarded_runtime(self):
+        import tempfile
+        from pathlib import Path
+        from core.tool_action_journal import ToolActionJournal
+        from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
+
+        with tempfile.TemporaryDirectory() as directory:
+            journal = ToolActionJournal(str(Path(directory) / "actions.sqlite3"))
+            executions = []
+            runtime = GuardedToolRuntime(
+                {"send": lambda raw: executions.append(raw) or "sent"},
+                self.policy,
+                capabilities=ToolCapabilityCatalog({
+                    "send": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
+                }),
+                require_action_context=True,
+                action_journal=journal,
+            )
+            protocol = StructuredToolProtocol(runtime)
+            request = {"to": "person@example.com"}
+            context = ToolActionContext.create("user-1", "send", request)
+            response = self.envelope([self.call("model-id-A", "send", request)])
+            result = protocol.dispatch(
+                response, principal_id="user-1",
+                action_context_factory=lambda principal, name, args: context,
+                confirmation_check=lambda call: True,
+            )
+            self.assertEqual(result[0].output, "sent")
+            self.assertEqual(len(executions), 1)
+
+    def test_model_call_id_does_not_control_durable_action_identity(self):
+        import tempfile
+        from pathlib import Path
+        from core.tool_action_journal import ToolActionJournal
+        from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
+
+        with tempfile.TemporaryDirectory() as directory:
+            journal = ToolActionJournal(str(Path(directory) / "actions.sqlite3"))
+            executions = []
+            runtime = GuardedToolRuntime(
+                {"send": lambda raw: executions.append(raw) or "sent"},
+                self.policy,
+                capabilities=ToolCapabilityCatalog({
+                    "send": ToolCapability(ToolEffect.SIDE_EFFECTING),
+                }),
+                require_action_context=True,
+                action_journal=journal,
+            )
+            protocol = StructuredToolProtocol(runtime)
+            request = {"to": "person@example.com"}
+            context = ToolActionContext.create("user-1", "send", request)
+            for model_id in ("model-id-A", "model-id-B"):
+                result = protocol.dispatch(
+                    self.envelope([self.call(model_id, "send", request)]),
+                    principal_id="user-1",
+                    action_context_factory=lambda *args: context,
+                )
+                self.assertEqual(result[0].output, "sent")
+            self.assertEqual(len(executions), 1)
 
 if __name__ == "__main__":
     unittest.main()

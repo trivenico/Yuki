@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.tool_action_context import ToolActionContext
 
 _MAX_RESPONSE_CHARS = 24_000
 _MAX_CALLS = 5
@@ -87,19 +88,53 @@ class StructuredToolProtocol:
             raise TypeError("runtime must be a GuardedToolRuntime.")
         self._runtime = runtime
 
-    def dispatch_call(self, call: StructuredToolCall) -> StructuredToolResult:
-        """Dispatch one already-validated call through the guarded runtime."""
+    def dispatch_call(
+        self, call: StructuredToolCall, *,
+        principal_id: str | None = None,
+        action_context: ToolActionContext | None = None,
+        user_confirmed: bool = False,
+    ) -> StructuredToolResult:
+        """Dispatch one proposal with host-supplied identity and confirmation state."""
         if not isinstance(call, StructuredToolCall):
             raise TypeError("call must be a validated StructuredToolCall.")
+        if action_context is not None and not isinstance(action_context, ToolActionContext):
+            raise TypeError("action_context must be a host-created ToolActionContext.")
+        if type(user_confirmed) is not bool:
+            raise TypeError("user_confirmed must be a boolean.")
         argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
-        output = self._runtime.invoke(call.name, argument)
+        output = self._runtime.invoke(
+            call.name, argument, principal_id=principal_id,
+            action_context=action_context, user_confirmed=user_confirmed,
+        )
         return StructuredToolResult(call.call_id, call.name, output)
 
-    def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
+    def dispatch(
+        self, response: str, *,
+        principal_id: str | None = None,
+        action_context_factory=None,
+        confirmation_check=None,
+    ) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
         calls = parse_tool_calls(response)
-        return tuple(self.dispatch_call(call) for call in calls)
+        if action_context_factory is not None and not callable(action_context_factory):
+            raise TypeError("action_context_factory must be callable.")
+        if confirmation_check is not None and not callable(confirmation_check):
+            raise TypeError("confirmation_check must be callable.")
+        results = []
+        for call in calls:
+            context = (
+                action_context_factory(principal_id, call.name, call.arguments)
+                if action_context_factory is not None else None
+            )
+            confirmed = (
+                confirmation_check(call) if confirmation_check is not None else False
+            )
+            results.append(self.dispatch_call(
+                call, principal_id=principal_id, action_context=context,
+                user_confirmed=confirmed,
+            ))
+        return tuple(results)
 
     @staticmethod
     def format_results(results: tuple[StructuredToolResult, ...]) -> str:
