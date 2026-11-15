@@ -144,11 +144,11 @@ class SQLiteToolActionApprovalStore:
                     if matches:
                         outcome = "consumed"
                         db.execute("DELETE FROM tool_action_approvals WHERE approval_id = ?",
-                                   (approval_id,))
+                                   (fingerprint,))
                     elif row[4] <= now:
                         outcome = "expired"
                         db.execute("DELETE FROM tool_action_approvals WHERE approval_id = ?",
-                                   (approval_id,))
+                                   (fingerprint,))
                     else:
                         outcome = "binding_mismatch"
                 else:
