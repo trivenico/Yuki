@@ -56,6 +56,20 @@ class ConfigurationComponentRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "mapping"):
             build_configuration_component_runtime(None)
 
+    def test_opaque_mutable_values_and_non_string_keys_are_rejected(self):
+        with self.assertRaisesRegex(TypeError, "scalar primitives"):
+            build_configuration_component_runtime({
+                "workspace": "/tmp/yuki",
+                "provider": "ollama",
+                "opaque": bytearray(b"mutable"),
+            })
+        with self.assertRaisesRegex(TypeError, "keys must be strings"):
+            build_configuration_component_runtime({
+                "workspace": "/tmp/yuki",
+                "provider": "ollama",
+                "nested": {1: "invalid key"},
+            })
+
     def test_wrong_component_contract_is_rejected(self):
         wrong_contract = next(
             item for item in DEFAULT_COMPONENTS
