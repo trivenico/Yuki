@@ -26,6 +26,16 @@ class ComponentRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-empty string IDs"):
             ComponentRegistry(contracts=(malformed,))
 
+    def test_registration_rejects_missing_runtime_instance(self):
+        registry = ComponentRegistry()
+        contract = self.contracts["identity-access"]
+        runtime = ComponentRuntime(
+            contract=contract, instance=None, start=lambda: None,
+            close=lambda: None, health_check=lambda: True,
+        )
+        with self.assertRaisesRegex(ValueError, "instance must not be None"):
+            registry.register(runtime)
+
     def test_registration_rejects_runtime_with_malformed_contract(self):
         events = []
         registry = ComponentRegistry()
