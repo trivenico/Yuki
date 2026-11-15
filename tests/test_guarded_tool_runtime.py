@@ -46,6 +46,28 @@ class GuardedToolRuntimeTests(unittest.TestCase):
     def test_result_is_bounded(self):
         self.assertEqual(self.runtime.invoke("echo", "123456789"), "12345… [truncated]")
 
+    def test_result_conversion_rejects_arbitrary_objects_without_calling_str(self):
+        class HostileResult:
+            def __str__(self):
+                raise AssertionError("arbitrary __str__ must not be invoked")
+
+        runtime = GuardedToolRuntime({"custom": lambda _: HostileResult()}, Policy())
+        self.assertEqual(
+            runtime.invoke("custom"),
+            "The tool failed. Check the input and try again.",
+        )
+
+    def test_result_conversion_bounds_large_integers(self):
+        runtime = GuardedToolRuntime({"number": lambda _: 1 << 5000}, Policy())
+        self.assertEqual(
+            runtime.invoke("number"),
+            "The tool failed. Check the input and try again.",
+        )
+
+    def test_result_conversion_supports_bounded_scalar_values(self):
+        runtime = GuardedToolRuntime({"number": lambda _: 42}, Policy())
+        self.assertEqual(runtime.invoke("number"), "42")
+
     def test_tool_exception_does_not_leak_exception(self):
         runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy())
         self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
