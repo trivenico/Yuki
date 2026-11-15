@@ -6,6 +6,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Core component contracts and integration order
+
+See [Core component contracts](docs/CORE_COMPONENTS.md) for the canonical component ownership map, dependency direction, interface requirements, integration sequence, and definition of done. New components should follow that contract before being wired into the shared runtime.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
