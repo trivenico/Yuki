@@ -387,10 +387,8 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.store._connect() as db:
             db.execute(
                 "CREATE TRIGGER reject_retry_creation_audit BEFORE INSERT ON task_events "
-                "WHEN NEW.kind='task.created' AND NEW.task_id IN "
-                "(SELECT run_id FROM workflow_runs WHERE idempotency_key=?) "
-                "BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
-                (retry_key,),
+                "WHEN NEW.kind='task.created' AND NEW.payload_json LIKE '%retry_of%' "
+                "BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END"
             )
         with self.assertRaises(sqlite3.IntegrityError):
             self.runtime.retry_failed(
