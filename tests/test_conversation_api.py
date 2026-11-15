@@ -12,6 +12,8 @@ from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.tool_action_approvals import SQLiteToolActionApprovalStore
+from core.tool_action_context import ToolActionContext
 
 
 class _NoApprovals:
@@ -64,6 +66,34 @@ class ConversationAPITests(unittest.TestCase):
             response_headers = dict(messages[0]["headers"])
             return status, data, response_headers
         return asyncio.run(run())
+
+    def test_approval_audit_and_revocation_are_authenticated_and_principal_scoped(self):
+        store = SQLiteToolActionApprovalStore(str(Path(self.tempdir.name) / "approvals.sqlite"))
+        self.app.tool_action_approvals = store
+        context = ToolActionContext.create(self.user.user_id, "email.send", {"to": "a@example.com"})
+        token = store.issue(context, principal_id=self.user.user_id)
+
+        status, data, _ = self.request("GET", "/v1/tool-approvals/audit")
+        self.assertEqual(status, 401)
+        status, data, _ = self.request("GET", "/v1/tool-approvals/audit", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["events"][0]["outcome"], "issued")
+        self.assertNotIn(token, json.dumps(data))
+
+        status, data, _ = self.request(
+            "POST", "/v1/tool-approvals/revoke",
+            {"approval_token": token}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["revoked"])
+        self.assertFalse(store.consume(token, context, principal_id=self.user.user_id))
+
+    def test_approval_management_returns_unavailable_when_not_configured(self):
+        status, data, _ = self.request(
+            "GET", "/v1/tool-approvals/audit", token=self.issued.token,
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(data["error"], "approval_management_unavailable")
 
     def test_provider_catalog_requires_authentication_and_projects_safe_fields(self):
         self.app.provider_catalog = lambda: [{
