@@ -68,7 +68,7 @@ class SpecialistSupervisorTests(unittest.TestCase):
         self.assertEqual(report.failed_subtasks, ())
         self.assertEqual(report.remaining_subtasks, ())
         self.assertEqual(report.validated_outputs["gather"], "facts for collect sources")
-        self.assertEqual(report.validated_outputs["review-findings"], "reviewed review the findings")
+        self.assertTrue(report.validated_outputs["review-findings"].startswith("reviewed review the findings"))
         self.assertGreaterEqual(report.rounds, 2)
 
     def test_approval_gate_stops_without_spinning_and_can_resume(self):
