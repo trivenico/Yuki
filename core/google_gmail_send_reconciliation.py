@@ -89,3 +89,22 @@ class GmailSendReconciliationAdapter:
                 "label_ids": message.get("label_ids", []),
             },
         )
+
+
+
+def build_gmail_send_reconciliation_registration(
+    *, client: GmailReadOnlyClient, message_id_domain: str,
+):
+    """Return host-only reconciliation adapter keyed to the exact Gmail tool."""
+    from core.tool_action_reconciliation import ToolActionReconciliationRegistry
+
+    adapter = GmailSendReconciliationAdapter(
+        client=client, message_id_domain=message_id_domain,
+    )
+    return {
+        "tool_name": adapter.tool_name,
+        "adapter": adapter,
+        "registry": ToolActionReconciliationRegistry({
+            adapter.tool_name: adapter,
+        }),
+    }
