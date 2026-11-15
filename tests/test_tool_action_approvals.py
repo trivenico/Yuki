@@ -118,5 +118,108 @@ class SQLiteToolActionApprovalStoreTests(unittest.TestCase):
                 store.audit_events(principal_id="user-1", limit=0)
 
 
+    def test_approval_consumption_and_journal_promotion_share_one_transaction(self):
+        import sqlite3
+        from core.tool_action_journal import ToolActionJournal
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "shared.sqlite3")
+            approvals = SQLiteToolActionApprovalStore(path)
+            journal = ToolActionJournal(path)
+            request = {"to": "atomic@example.com"}
+            context = ToolActionContext.create("user-1", "email.send", request)
+            approvals_token = approvals.issue(context, principal_id="user-1")
+            reserved = journal.reserve(
+                context.idempotency_key, context.tool_name, request,
+                action_id=context.action_id,
+            )
+            claim = journal.claim_execution(
+                context.idempotency_key, reserved.request_digest,
+            )
+
+            action = approvals.consume_and_begin_execution(
+                approvals_token, context, principal_id="user-1",
+                action_journal=journal,
+                idempotency_key=context.idempotency_key,
+                lease_owner=claim.lease_owner,
+            )
+
+            self.assertEqual(action.state, "executing")
+            self.assertEqual(journal.get(context.idempotency_key).state, "executing")
+            self.assertFalse(approvals.consume(
+                approvals_token, context, principal_id="user-1",
+            ))
+            with sqlite3.connect(path) as db:
+                remaining = db.execute(
+                    "SELECT COUNT(*) FROM tool_action_approvals"
+                ).fetchone()[0]
+            self.assertEqual(remaining, 0)
+
+    def test_failed_atomic_promotion_rolls_back_approval_consumption(self):
+        from unittest.mock import patch
+        from core.tool_action_journal import ToolActionJournal
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "shared.sqlite3")
+            approvals = SQLiteToolActionApprovalStore(path)
+            journal = ToolActionJournal(path)
+            request = {"to": "rollback@example.com"}
+            context = ToolActionContext.create("user-1", "email.send", request)
+            token = approvals.issue(context, principal_id="user-1")
+            reserved = journal.reserve(
+                context.idempotency_key, context.tool_name, request,
+                action_id=context.action_id,
+            )
+            claim = journal.claim_execution(
+                context.idempotency_key, reserved.request_digest,
+            )
+
+            with patch.object(
+                SQLiteToolActionApprovalStore, "_audit",
+                side_effect=OSError("simulated audit write failure"),
+            ):
+                with self.assertRaises(OSError):
+                    approvals.consume_and_begin_execution(
+                        token, context, principal_id="user-1",
+                        action_journal=journal,
+                        idempotency_key=context.idempotency_key,
+                        lease_owner=claim.lease_owner,
+                    )
+
+            self.assertEqual(journal.get(context.idempotency_key).state, "authorizing")
+            self.assertTrue(approvals.consume(
+                token, context, principal_id="user-1",
+            ))
+
+    def test_atomic_transition_rejects_separate_database_files(self):
+        from core.tool_action_journal import ToolActionJournal
+
+        with tempfile.TemporaryDirectory() as tmp:
+            approvals = SQLiteToolActionApprovalStore(
+                str(Path(tmp) / "approvals.sqlite3")
+            )
+            journal = ToolActionJournal(str(Path(tmp) / "journal.sqlite3"))
+            context = ToolActionContext.create("user-1", "email.send", {})
+            token = approvals.issue(context, principal_id="user-1")
+            reserved = journal.reserve(
+                context.idempotency_key, context.tool_name, {},
+                action_id=context.action_id,
+            )
+            claim = journal.claim_execution(
+                context.idempotency_key, reserved.request_digest,
+            )
+            with self.assertRaises(Exception):
+                approvals.consume_and_begin_execution(
+                    token, context, principal_id="user-1",
+                    action_journal=journal,
+                    idempotency_key=context.idempotency_key,
+                    lease_owner=claim.lease_owner,
+                )
+            self.assertTrue(approvals.consume(
+                token, context, principal_id="user-1",
+            ))
+
+
+
 if __name__ == "__main__":
     unittest.main()
