@@ -26,10 +26,12 @@ class ConversationApplicationRuntime:
         """Close persistence exactly once; safe for repeated shutdown paths."""
         if self._closed:
             return
+        # Mark shutdown before invoking user/provider-owned cleanup so a
+        # failing close hook is never called twice by nested shutdown paths.
+        self._closed = True
         close = getattr(self.store, "close", None)
         if callable(close):
             close()
-        self._closed = True
 
 
 def build_conversation_application_runtime(
