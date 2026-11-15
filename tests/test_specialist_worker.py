@@ -57,10 +57,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         return plan.subtasks[0].task_id
 
-    def worker(self, handlers, owner_handler_factory=None):
+    def worker(self, handlers, owner_handler_factory=None, agent_ids=()):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers=handlers, owner_handler_factory=owner_handler_factory,
+            agent_ids=agent_ids,
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
@@ -95,7 +96,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         def factory(owner_id, agent_id):
             resolved.append((owner_id, agent_id))
             return lambda request: f"{owner_id}:{request}"
-        result = self.worker({}, owner_handler_factory=factory).run_once()
+        result = self.worker({}, owner_handler_factory=factory, agent_ids=("code-review",)).run_once()
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(result.result["output"], "alice:Propose a safe patch")
@@ -110,6 +111,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         result = self.worker(
             {}, owner_handler_factory=lambda owner, agent: lambda request: "unsafe",
+            agent_ids=("code-review",),
         ).run_once()
         self.assertEqual(result.state, "failed")
         self.assertEqual(result.error_code, "missing_task_owner")
