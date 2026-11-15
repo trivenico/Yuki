@@ -57,6 +57,17 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             "The tool failed. Check the input and try again.",
         )
 
+    def test_result_conversion_rejects_string_subclasses(self):
+        class HostileString(str):
+            def __len__(self):
+                raise AssertionError("overridden string methods must not be invoked")
+
+        runtime = GuardedToolRuntime({"custom": lambda _: HostileString("unsafe")}, Policy())
+        self.assertEqual(
+            runtime.invoke("custom"),
+            "The tool failed. Check the input and try again.",
+        )
+
     def test_result_conversion_bounds_large_integers(self):
         runtime = GuardedToolRuntime({"number": lambda _: 1 << 5000}, Policy())
         self.assertEqual(
