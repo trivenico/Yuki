@@ -65,6 +65,28 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
                 skill.execute(url)
         self.assertEqual(transport.calls, [])
 
+    def test_rejects_surrounding_whitespace_and_control_characters_before_transport(self):
+        transport = FakeTransport()
+        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        invalid_urls = (
+            " https://example.com/",
+            "https://example.com/ ",
+            "\nhttps://example.com/",
+            "https://example.com/\t",
+            "https://example.com/\n",
+        )
+        for url in invalid_urls:
+            with self.subTest(url=repr(url)), self.assertRaises(WebSkillError):
+                skill.execute(url)
+        self.assertEqual(transport.calls, [])
+
+    def test_rejects_multiple_trailing_dots_before_injected_transport(self):
+        transport = FakeTransport()
+        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        with self.assertRaises(WebSkillError):
+            skill.execute("https://example.com../")
+        self.assertEqual(transport.calls, [])
+
     def test_firewall_transport_failure_is_reported_as_blocked(self):
         transport = FakeTransport(error=PinnedHTTPTransportError("cloud_destination_blocked"))
         skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
