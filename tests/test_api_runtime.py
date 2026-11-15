@@ -41,11 +41,20 @@ def _loop():
 
 
 class _GmailSendClient(GmailSendClient):
+    def __init__(self):
+        # Composition tests use a non-networking test double; no credential
+        # resolver or transport is needed because send_email is never called.
+        pass
+
     def send_email(self, **kwargs):
         raise AssertionError("API composition test must not send email")
 
 
 class _GmailReadClient(GmailReadOnlyClient):
+    def __init__(self):
+        # The test double is only registered for composition identity checks.
+        pass
+
     def find_message_by_rfc822_message_id(self, **kwargs):
         return {"found": False}
 
