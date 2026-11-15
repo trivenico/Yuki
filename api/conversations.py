@@ -499,9 +499,12 @@ class YukiConversationAPI:
     def _validated_request_id(value):
         if not isinstance(value, str):
             return None
+        # Reject control characters before trimming; otherwise a leading or
+        # trailing newline is silently normalized into a valid request ID.
+        if any(ord(char) < 0x20 or ord(char) == 0x7f for char in value):
+            return None
         normalized = value.strip()
-        if (not normalized or len(normalized) > 160
-                or any(ord(char) < 0x20 or ord(char) == 0x7f for char in normalized)):
+        if not normalized or len(normalized) > 160:
             return None
         return normalized
 
