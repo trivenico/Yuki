@@ -1,0 +1,71 @@
+import json
+import unittest
+
+from core.google_gmail_send_tool import GmailSendTool
+from core.tool_action_context import ToolActionContext
+from core.google_gmail_send_client import GmailSendClient
+
+
+class StubGmailClient(GmailSendClient):
+    def __init__(self):
+        self.calls = []
+    def send_email(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"provider_message_id": "message123", "thread_id": None,
+                "message_id": "<yuki-" + kwargs["action"].action_id + "@mail.example.com>"}
+
+
+class GmailSendToolTests(unittest.TestCase):
+    def setUp(self):
+        self.client = StubGmailClient()
+        self.tool = GmailSendTool(self.client)
+        self.arguments = {
+            "account_id": "google-account-1",
+            "to": "recipient@example.com",
+            "subject": "Hello",
+            "body": "A message",
+        }
+        self.context = ToolActionContext.create(
+            "owner-1", "gmail.send_email", self.arguments,
+        )
+
+    def test_direct_invocation_without_approval_context_is_denied(self):
+        with self.assertRaises(PermissionError):
+            self.tool(json.dumps(self.arguments))
+
+    def test_invocation_uses_authenticated_owner_and_host_action_identity(self):
+        result = json.loads(self.tool.invoke_action(
+            json.dumps(self.arguments), action_context=self.context,
+            principal_id="owner-1",
+        ))
+        self.assertEqual(result["provider_message_id"], "message123")
+        self.assertEqual(len(self.client.calls), 1)
+        call = self.client.calls[0]
+        self.assertEqual(call["owner_id"], "owner-1")
+        self.assertEqual(call["account_id"], "google-account-1")
+        self.assertEqual(call["action"].action_id, self.context.action_id)
+        self.assertEqual(call["action"].tool_name, "gmail.send_email")
+
+    def test_rejects_owner_tool_or_argument_substitution(self):
+        with self.assertRaises(PermissionError):
+            self.tool.invoke_action(json.dumps(self.arguments),
+                action_context=self.context, principal_id="owner-2")
+        with self.assertRaises(PermissionError):
+            self.tool.invoke_action(json.dumps(self.arguments),
+                action_context=ToolActionContext.create("owner-1", "other.tool", self.arguments),
+                principal_id="owner-1")
+        changed = dict(self.arguments, to="attacker@example.com")
+        with self.assertRaises(ValueError):
+            self.context.verify("owner-1", "gmail.send_email", changed)
+        self.assertEqual(self.client.calls, [])
+
+    def test_model_schema_is_strict_and_requires_every_argument(self):
+        schema = self.tool.definition()["function"]
+        self.assertEqual(schema["name"], "gmail.send_email")
+        self.assertEqual(set(schema["parameters"]["required"]),
+                         {"account_id", "to", "subject", "body"})
+        self.assertFalse(schema["parameters"]["additionalProperties"])
+
+
+if __name__ == "__main__":
+    unittest.main()
