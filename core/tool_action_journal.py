@@ -431,13 +431,6 @@ class ToolActionJournal:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                cursor = db.execute(
-                    """UPDATE tool_actions SET state='prepared',error_code=NULL,
-                       lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
-                       WHERE state='authorizing' AND lease_expires_at IS NOT NULL
-                         AND lease_expires_at<=?""",
-                    (now, now),
-                )
                 authorizing_cursor = db.execute(
                     """UPDATE tool_actions SET state='prepared',error_code=NULL,
                        lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
