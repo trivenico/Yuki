@@ -1,9 +1,32 @@
 """Guarded dispatch for explicitly registered CLI tools."""
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
-from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolCapabilityError
+from core.tool_action_context import ToolActionContext, ToolActionContextError
+from core.tool_action_journal import ToolActionJournal, ToolActionJournalError
+from core.tool_capabilities import ToolCapabilityCatalog, ToolCapabilityError, ToolEffect
+
+
+def _strict_json_object(argument: str) -> dict[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key.")
+            result[key] = value
+        return result
+
+    def reject_non_finite(value: str) -> None:
+        raise ValueError("non-finite JSON number.")
+
+    value = json.loads(
+        argument, object_pairs_hook=reject_duplicate_keys, parse_constant=reject_non_finite,
+    )
+    if not isinstance(value, dict):
+        raise ValueError("tool arguments must be a JSON object.")
+    return value
 
 
 class GuardedToolRuntime:
@@ -16,6 +39,8 @@ class GuardedToolRuntime:
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
         capabilities: ToolCapabilityCatalog | None = None,
+        require_action_context: bool = False,
+        action_journal: ToolActionJournal | None = None,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -34,6 +59,14 @@ class GuardedToolRuntime:
             raise TypeError("policy must provide authorize_tool(name)")
         if audit is not None and not callable(audit):
             raise TypeError("audit must be callable when provided")
+        if type(require_action_context) is not bool:
+            raise TypeError("require_action_context must be a boolean")
+        if require_action_context and capabilities is None:
+            raise ValueError("action-context enforcement requires a capability catalog")
+        if require_action_context and action_journal is None:
+            raise ValueError("action-context enforcement requires a durable action journal")
+        if action_journal is not None and not isinstance(action_journal, ToolActionJournal):
+            raise TypeError("action_journal must be a ToolActionJournal")
         if capabilities is not None:
             if not isinstance(capabilities, ToolCapabilityCatalog):
                 raise TypeError("capabilities must be a ToolCapabilityCatalog")
@@ -41,6 +74,8 @@ class GuardedToolRuntime:
                 raise ValueError("capability catalog must classify every registered tool exactly once")
         self._tools = dict(tools)
         self._capabilities = capabilities
+        self._require_action_context = require_action_context
+        self._action_journal = action_journal
         self._policy = policy
         self._audit = audit
         self._max_argument_chars = max_argument_chars
@@ -54,7 +89,12 @@ class GuardedToolRuntime:
                 # Telemetry failure must not bypass or broaden authorization.
                 pass
 
-    def invoke(self, name: str, argument: str = "") -> str:
+    def invoke(
+        self, name: str, argument: str = "", *,
+        action_context: ToolActionContext | None = None,
+        principal_id: str | None = None,
+        user_confirmed: bool = False,
+    ) -> str:
         if not isinstance(name, str) or not name or len(name) > 128:
             self._record("invalid", "invalid_name")
             return "Invalid tool name."
@@ -64,12 +104,29 @@ class GuardedToolRuntime:
         if name not in self._tools:
             self._record(name, "not_found")
             return "Unknown tool."
+
+        capability = None
+        action_request = None
         if self._capabilities is not None:
             try:
-                self._capabilities.resolve(name)
+                capability = self._capabilities.resolve(name)
             except ToolCapabilityError:
                 self._record(name, "capability_denied")
                 return "Tool blocked: capability metadata is missing."
+            if capability.effect is ToolEffect.SIDE_EFFECTING and self._require_action_context:
+                if not isinstance(action_context, ToolActionContext) or principal_id is None:
+                    self._record(name, "action_context_missing")
+                    return "Tool blocked: trusted action context is required."
+                if capability.requires_user_confirmation and user_confirmed is not True:
+                    self._record(name, "confirmation_required")
+                    return "Tool blocked: explicit user confirmation is required."
+                try:
+                    action_request = _strict_json_object(argument)
+                    action_context.verify(principal_id, name, action_request)
+                except (TypeError, ValueError, ToolActionContextError):
+                    self._record(name, "action_context_mismatch")
+                    return "Tool blocked: trusted action context does not match the request."
+
         try:
             authorized = self._policy.authorize_tool(name)
         except Exception:
@@ -77,12 +134,53 @@ class GuardedToolRuntime:
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
+
+        lease_owner = None
+        if (
+            capability is not None
+            and capability.effect is ToolEffect.SIDE_EFFECTING
+            and self._require_action_context
+        ):
+            try:
+                reserved = self._action_journal.reserve(
+                    action_context.idempotency_key, name, action_request,
+                    action_id=action_context.action_id,
+                )
+                action = self._action_journal.begin_execution(
+                    action_context.idempotency_key, reserved.request_digest,
+                )
+                if action.state == "succeeded":
+                    self._record(name, "idempotent_replay")
+                    return str(action.result)
+                lease_owner = action.lease_owner
+                if not lease_owner:
+                    self._record(name, "journal_invalid_lease")
+                    return "Tool blocked: durable execution lease is unavailable."
+            except (ToolActionJournalError, ValueError, TypeError):
+                self._record(name, "journal_blocked")
+                return "Tool blocked: action is already running or requires reconciliation."
+
         try:
             result = str(self._tools[name](argument))
         except Exception:
+            if lease_owner is not None:
+                try:
+                    self._action_journal.mark_outcome_unknown(
+                        action_context.idempotency_key, lease_owner, "handler_exception",
+                    )
+                except ToolActionJournalError:
+                    self._record(name, "journal_reconciliation_required")
             self._record(name, "failed")
-            return "The tool failed. Check the input and try again."
+            return "The tool failed. Its external outcome may require reconciliation."
         if len(result) > self._max_result_chars:
             result = result[: self._max_result_chars] + "… [truncated]"
+        if lease_owner is not None:
+            try:
+                self._action_journal.mark_succeeded(
+                    action_context.idempotency_key, lease_owner, result,
+                )
+            except ToolActionJournalError:
+                self._record(name, "journal_reconciliation_required")
+                return "The tool may have completed, but its result was not committed. Reconciliation is required."
         self._record(name, "completed")
         return result

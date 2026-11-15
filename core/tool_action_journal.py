@@ -154,12 +154,18 @@ class ToolActionJournal:
             ).fetchone()
         return self._record(row) if row is not None else None
 
-    def reserve(self, idempotency_key: str, tool_name: str, request: Any) -> ToolAction:
+    def reserve(
+        self, idempotency_key: str, tool_name: str, request: Any, *, action_id: str | None = None,
+    ) -> ToolAction:
         """Create a prepared action or return the same-key, same-payload record."""
         self._validate_key(idempotency_key)
         self._validate_tool(tool_name)
         _, raw = _json_bytes(request, _MAX_REQUEST_BYTES, "request")
         digest = hashlib.sha256(raw).hexdigest()
+        if action_id is not None and (
+            not isinstance(action_id, str) or not re.fullmatch(r"[0-9a-f]{32}", action_id)
+        ):
+            raise ValueError("action_id must be a 32-character lowercase hex identifier.")
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -170,13 +176,17 @@ class ToolActionJournal:
                         created_at,updated_at,version)
                        VALUES (?,?,?,?, 'prepared',?,?,0)
                        ON CONFLICT(idempotency_key) DO NOTHING""",
-                    (secrets.token_hex(16), idempotency_key, tool_name, digest, now, now),
+                    (action_id or secrets.token_hex(16), idempotency_key, tool_name, digest, now, now),
                 )
                 row = db.execute(
                     "SELECT * FROM tool_actions WHERE idempotency_key=?",
                     (idempotency_key,),
                 ).fetchone()
-                if row["tool_name"] != tool_name or row["request_digest"] != digest:
+                if (
+                    row["tool_name"] != tool_name
+                    or row["request_digest"] != digest
+                    or (action_id is not None and row["action_id"] != action_id)
+                ):
                     raise ToolActionConflict("idempotency key is already bound to a different action.")
                 db.commit()
             except Exception:
