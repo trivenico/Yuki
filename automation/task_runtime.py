@@ -167,7 +167,7 @@ class TaskRuntime:
         )
 
     def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
-                        message: str, percent: int | None = None) -> TaskRecord:
+                        worker_id: str, message: str, percent: int | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:progress", task_id):
             raise PermissionError("task progress update is not authorized.")
@@ -175,14 +175,12 @@ class TaskRuntime:
             raise ValueError("message must be non-empty bounded text.")
         if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
             raise ValueError("percent must be an integer from 0 to 100.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
-        if run.state != "running":
-            raise WorkflowTransitionError("progress can only be recorded for a running task.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
                                      payload={"message": message.strip(), "percent": percent},
-                                     expected_version=expected_version)
+                                     expected_version=expected_version,
+                                     expected_lease_owner=worker_id.strip())
         return self._record(self.store.get(task_id))
 
     def renew_lease(
@@ -205,7 +203,8 @@ class TaskRuntime:
         return self._record(renewed)
 
     def record_artifact(self, *, actor_id: str, task_id: str, expected_version: int,
-                        artifact_type: str, reference: str, metadata: dict[str, Any] | None = None) -> TaskRecord:
+                        worker_id: str, artifact_type: str, reference: str,
+                        metadata: dict[str, Any] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:artifact", task_id):
             raise PermissionError("task artifact update is not authorized.")
@@ -217,15 +216,13 @@ class TaskRuntime:
             metadata = {}
         if not isinstance(metadata, dict):
             raise ValueError("metadata must be an object.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
-        if run.state != "running":
-            raise WorkflowTransitionError("artifacts can only be attached to a running task.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
                                      payload={"artifact_type": artifact_type, "reference": reference.strip(),
                                               "metadata": metadata},
-                                     expected_version=expected_version)
+                                     expected_version=expected_version,
+                                     expected_lease_owner=worker_id.strip())
         return self._record(self.store.get(task_id))
 
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
