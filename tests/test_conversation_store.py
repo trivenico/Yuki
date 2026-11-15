@@ -1212,7 +1212,7 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id=request_id, call_id="call-claim",
                 lease_token="worker-new", ttl_seconds=30,
             )
-            evidence = self._make_claim_test_evidence()
+            evidence = self._make_claim_test_evidence(request_id, "call-claim")
             with self.assertRaisesRegex(ConversationConflict, "claim expired"):
                 self.store.record_provider_outcome_evidence(
                     owner_id=self.owner, conversation_id=conversation_id,
@@ -1262,7 +1262,7 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="call-evidence-race",
             lease_token="evidence-race-worker", ttl_seconds=30,
         )
-        evidence = self._make_claim_test_evidence()
+        evidence = self._make_claim_test_evidence(request_id, "call-evidence-race")
         barrier = Barrier(2)
 
         def record():
@@ -1333,7 +1333,7 @@ class ConversationStoreTests(unittest.TestCase):
                 request_id=request_id, call_id="call-restart",
                 lease_token="worker-recovered", ttl_seconds=30,
             )
-            evidence = self._make_claim_test_evidence()
+            evidence = self._make_claim_test_evidence(request_id, "call-restart", recovered_store)
             with self.assertRaisesRegex(ConversationConflict, "claim expired"):
                 self.store.record_provider_outcome_evidence(
                     owner_id=self.owner, conversation_id=conversation_id,
@@ -1497,12 +1497,21 @@ class ConversationStoreTests(unittest.TestCase):
             request_id=request_id, call_id="call-crash",
         )), 1)
 
-    def _make_claim_test_evidence(self):
+    def _make_claim_test_evidence(self, request_id, call_id, store=None):
         from core.provider_outcome import ProviderOutcome, ProviderOutcomeEvidence
+        source = store or self.store
+        execution = next(
+            item for item in source.list_tool_executions(
+                owner_id=self.owner,
+                conversation_id=self.conversation["conversation_id"],
+                request_id=request_id,
+            ) if item["call_id"] == call_id
+        )
         return ProviderOutcomeEvidence(
             provider="mail.example", outcome=ProviderOutcome.UNKNOWN,
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="f" * 64, observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=execution["execution_id"],
         )
 
 if __name__ == "__main__":
