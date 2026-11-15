@@ -976,7 +976,7 @@ class ConversationStoreTests(unittest.TestCase):
                 owner_id=self.owner, conversation_id=conversation_id,
                 lease_token="review-worker", ttl_seconds=60,
             )
-            self.store.begin_tool_execution(
+            execution = self.store.begin_tool_execution(
                 owner_id=self.owner, conversation_id=conversation_id,
                 request_id=request_id, call_id="send-confirmed", tool_name="send_email",
                 arguments_sha256="b" * 64, idempotency_key="a" * 64,
@@ -998,6 +998,7 @@ class ConversationStoreTests(unittest.TestCase):
             idempotency_key="a" * 64, arguments_sha256="b" * 64,
             evidence_sha256="c" * 64,
             observed_at="2026-11-14T10:00:00+00:00",
+            execution_id=execution["execution_id"],
             provider_reference="provider-message-confirmed",
         )
         self._record_provider_evidence(
