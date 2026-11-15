@@ -214,14 +214,18 @@ class GuardedToolRuntime:
                 self._record(name, "journal_blocked")
                 return "Tool blocked: action is already claimed, running, or requires reconciliation."
 
+        atomic_action = None
         if requires_confirmation:
             try:
-                approved = self._approval_store.consume(
+                atomic_action = self._approval_store.consume_and_begin_execution(
                     approval_id, action_context, principal_id=principal_id,
+                    action_journal=self._action_journal,
+                    idempotency_key=action_context.idempotency_key,
+                    lease_owner=claim_owner,
                 )
-            except (ToolActionApprovalError, TypeError, ValueError):
-                approved = False
-            if not approved:
+            except (ToolActionApprovalError, ToolActionJournalError, TypeError, ValueError):
+                atomic_action = None
+            if atomic_action is None:
                 if claim_owner is not None:
                     try:
                         self._action_journal.release_authorization_claim(
@@ -235,7 +239,9 @@ class GuardedToolRuntime:
         lease_owner = None
         if side_effect:
             try:
-                if claim_owner is not None:
+                if atomic_action is not None:
+                    action = atomic_action
+                elif claim_owner is not None:
                     action = self._action_journal.begin_claimed_execution(
                         action_context.idempotency_key, claim_owner,
                     )
