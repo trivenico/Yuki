@@ -30,6 +30,16 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertIn("not verified", report["capabilities"]["pytorch"]["detail"])
         self.assertIn("not verified", report["capabilities"]["onnxruntime"]["detail"])
 
+    def test_readiness_validates_canonical_component_architecture(self):
+        report = build_readiness_report(
+            environ={},
+            executable_finder=lambda name: None,
+            module_finder=lambda name: None,
+        )
+        architecture = report.capabilities["architecture_catalog"]
+        self.assertEqual(architecture.status, "verified")
+        self.assertIn("component contracts", architecture.detail)
+
     def test_empty_environment_reports_model_unconfigured(self):
         report = build_readiness_report(
             environ={},
