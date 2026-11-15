@@ -48,6 +48,22 @@ class ComponentRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "non-empty string component ID"):
                 registry.register(malformed_runtime)
 
+    def test_health_does_not_probe_registered_components_before_startup(self):
+        calls = []
+        registry = ComponentRegistry()
+        contract = self.contracts["identity-access"]
+        registry.register(ComponentRuntime(
+            contract=contract, instance=object(), start=lambda: None,
+            close=lambda: None, health_check=lambda: calls.append("probe") or True,
+        ))
+
+        self.assertEqual(registry.health(), {})
+        self.assertEqual(calls, [])
+
+        registry.start_all()
+        self.assertEqual(registry.health(), {"identity-access": True})
+        self.assertEqual(calls, ["probe"])
+
     def test_starts_dependencies_before_dependents_and_closes_in_reverse(self):
         events = []
         registry = ComponentRegistry()

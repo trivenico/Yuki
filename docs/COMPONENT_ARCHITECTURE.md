@@ -66,6 +66,8 @@ catalog contract. A runtime supplies explicit `start`, `close` and
   the sanitized startup exception without disclosing underlying exception text.
 - Rejects malformed contract IDs before using them as registry keys.
 - Exposes only explicitly registered instances through `resolve`.
+- Runs health probes only for started runtimes; registration alone does not
+  make an inactive component part of live readiness.
 
 This is a lifecycle primitive, not automatic application wiring. The current
 API and CLI compositions remain the owners of their existing service instances;

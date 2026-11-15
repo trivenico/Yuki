@@ -110,8 +110,10 @@ class ComponentRegistry:
         return tuple(self._started)
 
     def health(self) -> dict[str, bool]:
+        """Probe only started runtimes; registered-but-inactive services are not live."""
         results: dict[str, bool] = {}
-        for component_id, runtime in self._runtimes.items():
+        for component_id in self._started:
+            runtime = self._runtimes[component_id]
             result = runtime.health_check()
             if not isinstance(result, bool):
                 raise TypeError(
