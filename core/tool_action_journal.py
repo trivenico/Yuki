@@ -33,7 +33,7 @@ class ToolActionTransitionError(ToolActionJournalError):
 
 _KEY = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 _TOOL = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
-_STATES = frozenset({"prepared", "executing", "succeeded", "outcome_unknown", "not_executed"})
+_STATES = frozenset({"prepared", "authorizing", "executing", "succeeded", "outcome_unknown", "not_executed"})
 _MAX_REQUEST_BYTES = 32 * 1024
 _MAX_RESULT_BYTES = 16 * 1024
 
@@ -438,7 +438,14 @@ class ToolActionJournal:
                          AND lease_expires_at<=?""",
                     (now, now),
                 )
-                cursor = db.execute(
+                authorizing_cursor = db.execute(
+                    """UPDATE tool_actions SET state='prepared',error_code=NULL,
+                       lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
+                       WHERE state='authorizing' AND lease_expires_at IS NOT NULL
+                         AND lease_expires_at<=?""",
+                    (now, now),
+                )
+                executing_cursor = db.execute(
                     """UPDATE tool_actions
                        SET state='outcome_unknown',error_code='execution_lease_expired',
                            lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
@@ -446,7 +453,7 @@ class ToolActionJournal:
                          AND lease_expires_at<=?""",
                     (now, now),
                 )
-                count = cursor.rowcount
+                count = authorizing_cursor.rowcount + executing_cursor.rowcount
                 db.commit()
             except Exception:
                 db.rollback()
