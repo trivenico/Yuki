@@ -25,7 +25,7 @@ class ComponentCatalogTests(unittest.TestCase):
     def test_dependencies_resolve_and_catalog_has_major_domains(self):
         ids = {item.component_id for item in DEFAULT_COMPONENTS}
         self.assertTrue({
-            "identity-access", "provider-runtime", "agent-execution",
+            "identity-access", "configuration-runtime", "provider-runtime", "agent-execution",
             "durable-conversations", "application-composition", "guarded-actions",
             "durable-workflows", "memory", "business-integrations", "conversation-api",
             "mcp-integrations", "voice-runtime", "operator-interface",
