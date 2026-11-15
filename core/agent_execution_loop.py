@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.tool_action_context import ToolActionContext
 
 
 class AgentExecutionError(RuntimeError):
@@ -67,6 +68,14 @@ class AgentExecutionLoop:
             raise ValueError("max_duration_seconds must be between 0.1 and 3600.")
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
+        if action_context_factory is not None and not callable(action_context_factory):
+            raise TypeError("action_context_factory must be callable.")
+        if confirmation_check is not None and not callable(confirmation_check):
+            raise TypeError("confirmation_check must be callable.")
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id or len(principal_id) > 256
+        ):
+            raise ValueError("principal_id must be a bounded authenticated principal identifier.")
         if on_event is not None and not callable(on_event):
             raise TypeError("on_event must be callable.")
         if not callable(clock):
@@ -107,6 +116,9 @@ class AgentExecutionLoop:
         history: Sequence[Mapping[str, str]] = (),
         on_text_delta: Callable[[str], None] | None = None,
         cancellation_requested: Callable[[], bool] | None = None,
+        principal_id: str | None = None,
+        action_context_factory: Callable[[str | None, str, Mapping[str, Any]], ToolActionContext | None] | None = None,
+        confirmation_check: Callable[[Any], bool] | None = None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
@@ -299,7 +311,17 @@ class AgentExecutionLoop:
                         max(0.0, self.clock() - started),
                     )
                 try:
-                    result = self.tool_protocol.dispatch_call(call)
+                    action_context = (
+                        action_context_factory(principal_id, call.name, call.arguments)
+                        if action_context_factory is not None else None
+                    )
+                    user_confirmed = (
+                        confirmation_check(call) if confirmation_check is not None else False
+                    )
+                    result = self.tool_protocol.dispatch_call(
+                        call, principal_id=principal_id,
+                        action_context=action_context, user_confirmed=user_confirmed,
+                    )
                 except Exception as exc:
                     self._event("agent.tool_dispatch_failed", error_type=type(exc).__name__)
                     raise AgentExecutionError("guarded tool dispatch failed.") from exc
