@@ -80,6 +80,35 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
         asyncio.run(self.app(scope, receive, send))
         return sent[0]["status"], json.loads(sent[1]["body"])
 
+    def test_rejects_duplicate_authorization_headers(self):
+        sent = []
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        async def send(message):
+            sent.append(message)
+        scope = {
+            "type": "http", "method": "POST",
+            "path": "/v1/integrations/oauth/providers/provider/authorize",
+            "headers": [
+                (b"authorization", b"Bearer valid-session-token-1234567890"),
+                (b"authorization", b"Bearer attacker-session-token-1234567890"),
+            ],
+        }
+        asyncio.run(self.app(scope, receive, send))
+        self.assertEqual(sent[0]["status"], 401)
+        self.assertEqual(self.service.begin_calls, [])
+
+    def test_rejects_whitespace_padded_or_embedded_bearer_tokens(self):
+        for token in (" valid-session-token-1234567890",
+                      "valid-session-token-1234567890 ",
+                      "valid-session-token-123 4567890"):
+            with self.subTest(token=token):
+                status, _ = self.request(
+                    "POST", "/v1/integrations/oauth/providers/provider/authorize", token,
+                )
+                self.assertEqual(status, 401)
+        self.assertEqual(self.service.begin_calls, [])
+
     def test_provider_catalog_is_authenticated_and_contains_only_safe_fields(self):
         app = AuthenticatedOAuthAuthorizationAPI(
             lambda *_: None, FakeAuth(), self.registry,
