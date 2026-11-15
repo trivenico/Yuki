@@ -169,7 +169,9 @@ class GuardedToolRuntime:
             authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
-        if not authorized:
+        # Authorization is a strict boolean contract: truthy values such as 1
+        # must not be interpreted as an affirmative policy decision.
+        if authorized is not True:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
 
