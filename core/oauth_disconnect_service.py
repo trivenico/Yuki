@@ -38,6 +38,11 @@ class OAuthDisconnectService:
         self._client_id = client_id
         self._revocation_endpoint = revocation_endpoint
 
+    @property
+    def provider_id(self) -> str:
+        """Trusted provider identity used to bind host routing to this service."""
+        return self._provider_id
+
     def disconnect(self, *, owner_id: str, account_id: str) -> dict:
         try:
             credential = self._vault.get(
