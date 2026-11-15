@@ -352,7 +352,7 @@ class YukiConversationAPI:
                     owner_id=user.user_id,
                     conversation_id=match.group(1),
                     user_text=payload["content"],
-                    request_id=request_id,
+                    request_id=payload["request_id"],
                     expected_version=payload["expected_version"],
                     tools=tools,
                 )
