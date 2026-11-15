@@ -232,6 +232,15 @@ class BuiltInAuthService:
             db.execute("UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (_timestamp(_utcnow()), user_id))
             return result.rowcount == 1
 
+    def health_check(self):
+        """Verify the auth database is reachable without exposing account data."""
+        try:
+            with self._connect() as db:
+                db.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
+
     def list_users(self):
         with self._connect() as db:
             return [self._user(row) for row in db.execute(
