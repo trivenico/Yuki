@@ -11,6 +11,7 @@ import ipaddress
 import re
 import socket
 import ssl
+import time
 from urllib.parse import urlsplit
 
 from core.network_firewall import NetworkFirewall
@@ -35,17 +36,29 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 
 class _Response:
-    def __init__(self, response, connection):
+    def __init__(self, response, connection, *, deadline, clock):
         self._response = response
         self._connection = connection
+        self._deadline = deadline
+        self._clock = clock
+
+    def _apply_remaining_timeout(self):
+        remaining = self._deadline - self._clock()
+        if remaining <= 0:
+            raise TimeoutError("provider request deadline exceeded")
+        sock = getattr(self._connection, "sock", None)
+        if sock is not None:
+            sock.settimeout(remaining)
         self.status = response.status
         self.reason = response.reason
         self.headers = response.headers
 
     def read(self, amount=-1):
+        self._apply_remaining_timeout()
         return self._response.read(amount)
 
     def readline(self, amount=-1):
+        self._apply_remaining_timeout()
         return self._response.readline(amount)
 
     def close(self):
@@ -103,6 +116,7 @@ class PinnedHTTPSProviderTransport:
         if 443 not in firewall_policy.allowed_ports or "tcp" not in firewall_policy.allowed_protocols:
             raise ValueError("firewall policy must allow HTTPS over TCP port 443")
         self.firewall_policy = firewall_policy
+        self._clock = time.monotonic
 
     def _parse_url(self, url):
         if not isinstance(url, str) or not 1 <= len(url) <= 4096:
@@ -171,6 +185,8 @@ class PinnedHTTPSProviderTransport:
             timeout = self.timeout
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
             raise PinnedHTTPTransportError("invalid_cloud_timeout")
+        started = self._clock()
+        deadline = started + float(timeout)
         try:
             host, target = self._parse_url(request.full_url)
             method = request.get_method()
@@ -183,13 +199,24 @@ class PinnedHTTPSProviderTransport:
                 raise PinnedHTTPTransportError("cloud_request_too_large")
             headers = self._request_headers(request)
             pinned_ip = self._resolve_and_authorize(host)
-            connection = self._factory(host, pinned_ip, timeout=float(timeout), context=self._ssl_context)
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                raise PinnedHTTPTransportError("cloud_deadline_exceeded")
+            connection = self._factory(host, pinned_ip, timeout=min(float(timeout), remaining), context=self._ssl_context)
             try:
                 connection.request(method, target, body=body, headers=headers)
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    raise PinnedHTTPTransportError("cloud_deadline_exceeded")
+                sock = getattr(connection, "sock", None)
+                if sock is not None:
+                    sock.settimeout(remaining)
                 response = connection.getresponse()
                 if 300 <= response.status < 400:
                     raise PinnedHTTPTransportError("cloud_redirect_rejected")
-                return _Response(response, connection)
+                if self._clock() >= deadline:
+                    raise PinnedHTTPTransportError("cloud_deadline_exceeded")
+                return _Response(response, connection, deadline=deadline, clock=self._clock)
             except Exception:
                 connection.close()
                 raise
