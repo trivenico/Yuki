@@ -192,7 +192,7 @@ class TaskRuntimeTests(unittest.TestCase):
     def test_terminal_updates_reject_malformed_worker_ids(self):
         task = self.create("invalid-terminal-worker-id")
         claimed = self.claim(task)
-        for invalid_worker_id in ("", "   ", "worker\\x00a", "w" * 201, None, 123):
+        for invalid_worker_id in ("", "   ", "worker\x00a", "w" * 201, None, 123):
             with self.subTest(worker_id=invalid_worker_id):
                 with self.assertRaises(ValueError):
                     self.runtime.complete(
