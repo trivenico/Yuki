@@ -21,8 +21,9 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
-        self.proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
-        self.approvals = SQLiteToolActionApprovalStore(str(root / "journal.sqlite"))
+        shared_db = str(root / "journal.sqlite")
+        self.proposals = SQLitePendingToolActionProposalStore(shared_db)
+        self.approvals = SQLiteToolActionApprovalStore(shared_db)
         self.journal = ToolActionJournal(str(root / "journal.sqlite"))
         self.calls = []
         self.runtime = GuardedToolRuntime(
@@ -48,6 +49,10 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         )
 
     def test_executor_rejects_split_or_mismatched_atomic_store_wiring(self):
+        root = Path(self.temp.name)
+        split_proposals = SQLitePendingToolActionProposalStore(str(root / "split-proposals.sqlite"))
+        with self.assertRaisesRegex(ValueError, "proposal store, approval store"):
+            ApprovedToolActionExecutor(split_proposals, self.approvals, self.runtime)
         root = Path(self.temp.name)
         other_approvals = SQLiteToolActionApprovalStore(str(root / "other-approvals.sqlite"))
         with self.assertRaisesRegex(ValueError, "exact approval store"):
