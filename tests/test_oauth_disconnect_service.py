@@ -13,6 +13,7 @@ class Vault:
     def get(self, **kwargs):
         return self.credential
     def disconnect(self, **kwargs):
+        self.disconnect_kwargs = kwargs
         if self.disconnect_error:
             raise self.disconnect_error
         self.deleted = True
@@ -34,7 +35,7 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
     def credential(self):
         return SimpleNamespace(
             access_token="secret-access-token",
-            refresh_token="secret-refresh-token",
+            refresh_token="secret-refresh-token", version=7,
         )
 
     def test_revokes_refresh_token_then_deletes_local_credentials(self):
@@ -49,6 +50,7 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         self.assertTrue(vault.deleted)
         self.assertTrue(result["remote_revoked"])
         self.assertTrue(result["disconnected"])
+        self.assertEqual(vault.disconnect_kwargs["expected_version"], 7)
         self.assertNotIn("secret-refresh-token", repr(result))
 
     def test_remote_failure_still_deletes_local_credentials_without_retry(self):
@@ -83,6 +85,22 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         )
         result = service.disconnect(owner_id="owner", account_id="account")
         self.assertFalse(result["disconnected"])
+
+    def test_stale_disconnect_generation_does_not_claim_success(self):
+        class VersionFencedVault(Vault):
+            def disconnect(self, **kwargs):
+                self.disconnect_kwargs = kwargs
+                return False
+        vault, transport = VersionFencedVault(self.credential()), Transport()
+        service = OAuthDisconnectService(
+            credential_vault=vault, transport=transport,
+            provider_id="provider", client_id="client",
+            revocation_endpoint="https://auth.example.com/revoke",
+        )
+        result = service.disconnect(owner_id="owner", account_id="account")
+        self.assertFalse(result["disconnected"])
+        self.assertEqual(vault.disconnect_kwargs["expected_version"], 7)
+        self.assertEqual(len(transport.calls), 1)
 
     def test_local_delete_failure_is_sanitized(self):
         vault = Vault(self.credential(), disconnect_error=RuntimeError("secret"))
