@@ -74,5 +74,33 @@ class SQLiteToolActionApprovalStoreTests(unittest.TestCase):
                     self.make_store(tmp, ttl_seconds=ttl)
 
 
+
+    def test_revocation_is_principal_scoped_and_prevents_consumption(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            context = ToolActionContext.create("user-1", "email.send", {"to": "a@example.com"})
+            token = store.issue(context, principal_id="user-1")
+            self.assertFalse(store.revoke(token, principal_id="user-2"))
+            self.assertTrue(store.revoke(token, principal_id="user-1"))
+            self.assertFalse(store.consume(token, context, principal_id="user-1"))
+
+    def test_audit_history_records_lifecycle_without_raw_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            context = ToolActionContext.create("user-1", "email.send", {"to": "a@example.com"})
+            token = store.issue(context, principal_id="user-1")
+            self.assertTrue(store.consume(token, context, principal_id="user-1"))
+            events = store.audit_events(principal_id="user-1")
+            self.assertEqual([event["outcome"] for event in events], ["consumed", "issued"])
+            self.assertTrue(all(token not in str(event) for event in events))
+            self.assertEqual(store.audit_events(principal_id="user-2"), ())
+
+    def test_audit_limit_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            with self.assertRaises(ValueError):
+                store.audit_events(principal_id="user-1", limit=0)
+
+
 if __name__ == "__main__":
     unittest.main()
