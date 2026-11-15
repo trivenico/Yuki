@@ -277,6 +277,20 @@ class SQLitePendingToolActionProposalStore:
                 (state, proposal_id, principal_id)).rowcount
         return changed == 1
 
+    def release_recovered_pre_dispatch_claim(
+        self, proposal_id: str, *, principal_id: str,
+    ) -> bool:
+        """Allow a retry only after the journal proves a fenced pre-dispatch claim."""
+        if not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("authenticated principal is required.")
+        with self._connect() as db:
+            changed = db.execute("""UPDATE pending_tool_action_proposals
+                SET execution_state = 'not_started'
+                WHERE proposal_id = ? AND principal_id = ?
+                  AND status = 'approved' AND execution_state = 'executing'""",
+                (proposal_id, principal_id)).rowcount
+        return changed == 1
+
     def finish_reconciliation(self, proposal_id: str, *, principal_id: str) -> bool:
         """Mark provider-confirmed success; only unknown proposals may transition."""
         if not isinstance(principal_id, str) or not principal_id:
