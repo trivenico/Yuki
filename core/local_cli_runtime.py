@@ -6,6 +6,7 @@ grant the terminal an implicit ability to execute tools.
 """
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, Callable
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -56,6 +57,7 @@ class LocalConversationRuntime:
         self.application = application
         self.component_registry = component_registry
         self._closed = False
+        self._close_lock = RLock()
 
     def __getattr__(self, name):
         return getattr(self.application, name)
@@ -65,12 +67,13 @@ class LocalConversationRuntime:
         return build_readiness_report(component_registry=self.component_registry)
 
     def close(self):
-        if self._closed:
-            return
-        self._closed = True
-        failures = self.component_registry.close()
-        if failures:
-            raise RuntimeError("local CLI component shutdown failed: " + ", ".join(failures))
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            failures = self.component_registry.close()
+            if failures:
+                raise RuntimeError("local CLI component shutdown failed: " + ", ".join(failures))
 
 
 def build_local_conversation_runtime(
