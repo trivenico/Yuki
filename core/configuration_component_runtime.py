@@ -102,4 +102,4 @@ def build_configuration_component_runtime(
             state["closed"] = True
             state["started"] = False
 
-    return ComponentRuntime(snapshot, snapshot, start, close, health_check)
+    return ComponentRuntime(contract, snapshot, start, close, health_check)
