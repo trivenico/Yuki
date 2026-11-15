@@ -77,6 +77,8 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=agent, gmail_runtime_bundle=bundle,
+                tools_for_user=lambda owner: [dict(item) for item in bundle.tool_definitions]
+                if owner == "gmail-owner" else [],
             )
             self.assertIs(runtime.app.tool_action_approvals, approvals)
             self.assertIs(runtime.app.pending_tool_action_proposals, proposals)
@@ -86,6 +88,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             definitions = runtime.app.tools_for_user("gmail-owner")
             self.assertEqual([item["function"]["name"] for item in definitions],
                              [GMAIL_SEND_TOOL_NAME])
+            self.assertEqual(runtime.app.tools_for_user("other-owner"), [])
             self.assertIs(runtime.application.conversations.agent_loop.tool_protocol,
                           bundle.tool_protocol)
             runtime.close()
