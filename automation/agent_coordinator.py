@@ -111,9 +111,13 @@ class SpecialistAgentCoordinator:
                     plan_id TEXT PRIMARY KEY,
                     idempotency_key TEXT NOT NULL UNIQUE,
                     request_digest TEXT NOT NULL,
+                    owner_id TEXT,
                     created_at TEXT NOT NULL
                 )
             """)
+            plan_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plans)")}
+            if "owner_id" not in plan_columns:
+                db.execute("ALTER TABLE agent_plans ADD COLUMN owner_id TEXT")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_subtasks (
                     plan_id TEXT NOT NULL,
@@ -398,11 +402,17 @@ class SpecialistAgentCoordinator:
             # Deterministic least-overprovisioned match, then stable ID tie-break.
             return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
 
-    def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
+    def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec], owner_id: str | None = None) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or len(owner_id) > 200 or "\\x00" in owner_id
+        ):
+            raise ValueError("owner_id must be bounded non-empty text when supplied.")
+        owner_id = owner_id.strip() if isinstance(owner_id, str) else None
         items = self._validate_subtasks(subtasks, self.max_subtasks)
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
@@ -416,7 +426,7 @@ class SpecialistAgentCoordinator:
              "action": assignments[i.subtask_id].action}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
-        payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        payload = json.dumps({"owner_id": owner_id, "subtasks": canonical}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
         plan_id = hashlib.sha256(("yuki-agent-plan\0" + key).encode("utf-8")).hexdigest()[:32]
@@ -428,8 +438,8 @@ class SpecialistAgentCoordinator:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
-            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at) VALUES (?, ?, ?, ?)",
-                       (plan_id, key, digest, now))
+            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, owner_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                       (plan_id, key, digest, owner_id, now))
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
@@ -458,6 +468,7 @@ class SpecialistAgentCoordinator:
             if plan is None:
                 raise KeyError("agent plan not found.")
             plan_key = plan["idempotency_key"]
+            plan_owner_id = plan["owner_id"] if "owner_id" in plan.keys() else None
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
             ).fetchall()]
@@ -524,6 +535,7 @@ class SpecialistAgentCoordinator:
                     argument += header + "\n".join(context_lines)
             task = self.runtime.enqueue(
                 actor_id=actor_id,
+                owner_id=plan_owner_id,
                 idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
                 name=f"agent-{agent.agent_id}-{row['subtask_id']}",
                 steps=[{
