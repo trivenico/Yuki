@@ -7,6 +7,7 @@ It is a host-side building block; it does not expose an HTTP callback route.
 from __future__ import annotations
 
 from urllib.parse import parse_qs, urlsplit
+from contextlib import nullcontext
 import secrets
 import re
 
@@ -34,6 +35,7 @@ class OAuthAuthorizationService:
         authorization_response_iss_parameter_supported: bool = False,
         oidc_verifier=None, account_id_resolver=None,
         authorization_parameters=(), include_resource_parameter=True,
+        lifecycle_coordinator=None,
     ):
         required = {
             "provider_id": provider_id,
@@ -94,6 +96,7 @@ class OAuthAuthorizationService:
             raise TypeError("a trusted OIDC ID-token verifier is required")
         self._authorization_scopes = tuple(dict.fromkeys((*self._scopes, *(("openid",) if oidc_verifier is not None else ()))))
         self._require_response_issuer = authorization_response_iss_parameter_supported
+        self._lifecycle_coordinator = lifecycle_coordinator
 
     @property
     def provider_id(self) -> str:
@@ -148,6 +151,20 @@ class OAuthAuthorizationService:
         return values[0]
 
     def complete(self, *, owner_id: str, session_id: str, callback_url: str) -> dict:
+        """Serialize transaction consumption, exchange, and vault persistence."""
+        coordinator = self._lifecycle_coordinator
+        lock = (
+            coordinator.coordinate(
+                owner_id=owner_id, provider_id=self._provider_id,
+            )
+            if coordinator is not None else nullcontext()
+        )
+        with lock:
+            return self._complete_unlocked(
+                owner_id=owner_id, session_id=session_id, callback_url=callback_url,
+            )
+
+    def _complete_unlocked(self, *, owner_id: str, session_id: str, callback_url: str) -> dict:
         """Validate, atomically consume, exchange once, and persist a token grant."""
         state = self._callback_state(callback_url)
         try:
