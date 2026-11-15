@@ -36,6 +36,7 @@ class GoogleOAuthProviderTests(unittest.TestCase):
             redirect_uri="https://yuki.example.com/oauth/callback/google",
             transaction_store=Store(), credential_vault=Vault(),
             pinned_transport=Transport(),
+            trusted_redirect_hosts=frozenset({"yuki.example.com"}),
             account_id_resolver=lambda claims: "google-" + "a" * 64,
         )
         values.update(overrides)
@@ -74,7 +75,7 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         self.assertTrue(callable(prepared.authorization_service.complete))
 
     def test_default_account_resolver_hashes_verified_subject_without_email(self):
-        prepared = self.build(account_id_resolver=None)
+        prepared = self.build(account_id_resolver=object())
         self.assertTrue(callable(prepared._account_id_resolver))
         account_id = prepared._account_id_resolver({
             "issuer": "https://accounts.google.com", "subject": "stable-subject",
@@ -91,7 +92,7 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         self.assertNotIn("https://mail.google.com/", GOOGLE_GMAIL_SCOPES)
         self.assertNotIn("https://www.googleapis.com/auth/gmail.modify", GOOGLE_GMAIL_SCOPES)
 
-    def test_rejects_bad_callback_and_missing_identity_resolver(self):
+    def test_rejects_untrusted_callback_and_invalid_identity_resolver(self):
         for redirect in (
             "http://yuki.example.com/oauth/callback/google",
             "https://attacker.example/oauth/callback/google",
@@ -102,6 +103,10 @@ class GoogleOAuthProviderTests(unittest.TestCase):
                 self.build(redirect_uri=redirect)
         with self.assertRaises(GoogleOAuthConfigurationError):
             self.build(account_id_resolver=None)
+
+    def test_requires_explicit_trusted_callback_host_allowlist(self):
+        with self.assertRaisesRegex(GoogleOAuthConfigurationError, "trusted_google_redirect_hosts"):
+            self.build(trusted_redirect_hosts=())
 
     def test_requires_every_google_oauth_and_oidc_host_on_pinned_transport(self):
         class Incomplete:
