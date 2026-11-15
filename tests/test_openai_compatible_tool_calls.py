@@ -17,6 +17,9 @@ class FakeResponse:
     def read(self, limit):
         return self.body[:limit]
 
+    def close(self):
+        pass
+
 
 class FakeOpener:
     def __init__(self, body, requests):
@@ -34,6 +37,7 @@ class FakeStreamResponse:
         self.lines = [line if isinstance(line, bytes) else line.encode() for line in lines]
     def __enter__(self): return self
     def __exit__(self, *args): return False
+    def close(self): pass
     def readline(self, limit):
         if not self.lines: return b""
         line = self.lines.pop(0)
