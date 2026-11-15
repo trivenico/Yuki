@@ -112,6 +112,35 @@ class APISecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[0]["status"], 429)
         self.assertEqual(len(calls), 1)
 
+    async def test_rate_limited_head_request_has_no_response_body(self):
+        async def app(scope, receive, send):
+            raise AssertionError("rate-limited request must not reach application")
+
+        middleware = APISecurityMiddleware(
+            app, limiter=FixedWindowRateLimiter(
+                max_requests=1, window_seconds=60, clock=lambda: 120.0,
+            ),
+        )
+        peer = ("192.0.2.30", 1234)
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            return None
+
+        get_scope = {"type": "http", "method": "GET", "path": "/", "client": peer}
+        await middleware(get_scope, receive, send)
+
+        messages = []
+        async def capture(message):
+            messages.append(message)
+        head_scope = {"type": "http", "method": "HEAD", "path": "/", "client": peer}
+        await middleware(head_scope, receive, capture)
+        self.assertEqual(messages[0]["status"], 429)
+        self.assertEqual(messages[1]["body"], b"")
+        self.assertEqual(dict(messages[0]["headers"])[b"content-length"], b"31")
+
     async def test_non_http_scopes_pass_through_without_rate_limiting(self):
         called = []
 
