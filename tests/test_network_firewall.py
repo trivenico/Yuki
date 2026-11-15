@@ -33,6 +33,13 @@ class NetworkFirewallTests(unittest.TestCase):
             resolved_addresses=("93.184.216.34", "10.0.0.1"),
         ).allowed)
 
+    def test_rejects_multiple_trailing_dots_in_authorization_host(self):
+        result = self.firewall.authorize(
+            host="api.example.com..", port=443, resolved_addresses=("93.184.216.34",),
+        )
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.reason, "invalid_host")
+
     def test_denies_missing_or_malformed_dns_answers(self):
         for addresses in ((), ("not-an-ip",), (123456789,)):
             with self.subTest(addresses=addresses):
@@ -52,7 +59,7 @@ class NetworkFirewallTests(unittest.TestCase):
         self.assertEqual(result.reason, "audit_unavailable")
 
     def test_invalid_allowlist_configuration_is_rejected(self):
-        for hosts in ((), ("*.example.com",), ("127.0.0.1",), ("bad host",)):
+        for hosts in ((), ("*.example.com",), ("127.0.0.1",), ("bad host",), ("api.example.com..",)):
             with self.subTest(hosts=hosts), self.assertRaises(FirewallPolicyError):
                 NetworkFirewall(allowed_hosts=hosts)
         with self.assertRaises(FirewallPolicyError):
