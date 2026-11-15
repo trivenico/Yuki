@@ -38,6 +38,8 @@ class GmailToolRuntimeBundle:
     tool_protocol: StructuredToolProtocol
     tool_definitions: tuple[dict[str, Any], ...]
     reconciliation_service: ToolActionReconciliationService
+    approval_store: SQLiteToolActionApprovalStore
+    proposals: SQLitePendingToolActionProposalStore
 
 
 def build_gmail_tool_runtime_bundle(
@@ -129,4 +131,6 @@ def build_gmail_tool_runtime_bundle(
         tool_protocol=StructuredToolProtocol(guarded),
         tool_definitions=definitions,
         reconciliation_service=reconciliation,
+        approval_store=approval_store,
+        proposals=proposals,
     )
