@@ -268,5 +268,27 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(deltas, ["partial"])
 
+    def test_streaming_enforces_duration_budget_and_closes_iterator(self):
+        clock_calls = []
+        closed = []
+        deltas = []
+        def clock():
+            clock_calls.append(True)
+            return 0.0 if len(clock_calls) <= 3 else 0.2
+        def stream_model(**kwargs):
+            try:
+                yield {"type": "text_delta", "text": "first"}
+                yield {"type": "text_delta", "text": "late"}
+            finally:
+                closed.append(True)
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol, stream_model=stream_model, max_duration_seconds=0.1, clock=clock,
+        )
+        result = loop.run("Bound this stream", tools=[], on_text_delta=deltas.append)
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(deltas, ["first"])
+        self.assertEqual(closed, [True])
+
 if __name__ == "__main__":
     unittest.main()
