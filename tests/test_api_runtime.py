@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import Mock
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
@@ -45,7 +46,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(runtime._closed)
 
-    def test_runtime_wires_authenticated_owner_execution_factory(self):
+    def test_runtime_close_is_not_retried_when_application_cleanup_fails(self):\n        application = Mock()\n        application.store = object()\n        application.close.side_effect = RuntimeError("cleanup failed")\n        runtime = ConversationRuntime(lambda scope, receive, send: None, application)\n\n        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):\n            runtime.close()\n        runtime.close()\n\n        self.assertTrue(runtime._closed)\n        application.close.assert_called_once_with()\n\n    def test_runtime_wires_authenticated_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
             factory = lambda owner_id: _loop()
