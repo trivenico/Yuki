@@ -424,18 +424,25 @@ class WorkflowRunStore:
                     predicates.append("substr(workflow_name, 1, ?) = ?")
                     claim_params.extend((len(prefix), prefix))
                 claim_sql += " AND (" + " OR ".join(predicates) + ")"
-            claim_sql += " ORDER BY created_at, run_id LIMIT 100"
-            rows = db.execute(claim_sql, claim_params).fetchall()
-            row = next((
-                candidate for candidate in rows
-                if (workflow_prefixes is None or any(candidate["workflow_name"].startswith(prefix) for prefix in workflow_prefixes))
-                and (not self._requires_approval(json.loads(candidate["definition_json"]))
-                or (
+            # Iterate the ordered queue until an eligible item is found. A fixed
+            # candidate limit can starve later runnable tasks behind an arbitrary
+            # number of approval-gated tasks.
+            claim_sql += " ORDER BY created_at, run_id"
+            row = None
+            for candidate in db.execute(claim_sql, claim_params):
+                if workflow_prefixes is not None and not any(
+                    candidate["workflow_name"].startswith(prefix)
+                    for prefix in workflow_prefixes
+                ):
+                    continue
+                if self._requires_approval(json.loads(candidate["definition_json"])) and not (
                     candidate["approved_by"] and candidate["approved_at"]
                     and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
-                ))
-            ), None)
+                ):
+                    continue
+                row = candidate
+                break
             if row is None:
                 return None
             updated = db.execute("""
