@@ -158,6 +158,28 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "limit_reached")
         self.assertEqual(self.invocations, [])
 
+    def test_cancellation_is_checked_between_calls_in_one_model_batch(self):
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "call_first", "name": "echo", "arguments": {"value": "first"}},
+                {"id": "call_second", "name": "echo", "arguments": {"value": "second"}},
+            ]}}
+        events = []
+        result = AgentExecutionLoop(
+            model, self.protocol,
+            cancellation_requested=lambda: len(self.invocations) >= 1,
+            on_event=lambda kind, data: events.append((kind, data)),
+        ).run("Perform both actions", tools=self.tools)
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.tool_calls, 1)
+        self.assertEqual(self.invocations, [{"value": "first"}])
+        self.assertEqual(
+            [kind for kind, _ in events if kind == "agent.tool_dispatched"],
+            ["agent.tool_dispatched"],
+        )
+        self.assertEqual(events[-1][0], "agent.stopped")
+        self.assertEqual(events[-1][1]["reason"], "cancelled")
+
     def test_cancellation_before_first_model_call(self):
         model_calls = []
         result = AgentExecutionLoop(
