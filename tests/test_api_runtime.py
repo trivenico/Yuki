@@ -17,6 +17,7 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.tool_action_approvals import SQLiteToolActionApprovalStore
 
 
 class _NoApprovals:
@@ -47,6 +48,19 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
             self.assertTrue(runtime._closed)
+
+    def test_runtime_wires_optional_tool_action_approval_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                tool_action_approvals=approvals,
+            )
+            self.assertIs(runtime.app.tool_action_approvals, approvals)
+            runtime.close()
 
     def test_concurrent_close_waits_for_api_component_shutdown(self):
         entered = threading.Event()
