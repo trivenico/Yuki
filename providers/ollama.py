@@ -79,7 +79,8 @@ class OllamaProvider:
         if (parsed.scheme != "https" and not (parsed.scheme == "http" and loopback)
                 or not host or parsed.username or parsed.password or parsed.query or parsed.fragment):
             raise ValueError("Ollama must use HTTPS or loopback HTTP without URL credentials.")
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+        if port < 1: raise ValueError("Invalid Ollama port.")
         if parsed.scheme == "https" and port != 443: raise ValueError("Remote Ollama HTTPS must use port 443.")
         if transport is not None and not callable(getattr(transport, "open", None)): raise TypeError("transport must provide an open(request, timeout=...) method")
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
