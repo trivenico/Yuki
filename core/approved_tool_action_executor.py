@@ -103,7 +103,7 @@ class ApprovedToolActionExecutor:
         journal = self.guarded_runtime._action_journal
         action = journal.get(proposal.idempotency_key)
         if action is not None and not (
-            action.state == "prepared" and action.version >= 2
+            action.state == "prepared" and (action.version == 0 or action.version >= 2)
         ):
             return False
         return self.proposals._release_recovered_pre_dispatch_claim(
