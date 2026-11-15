@@ -338,7 +338,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bounded non-empty text"):
             handlers["research-agent"](" ")
         with self.assertRaisesRegex(ValueError, "bounded non-empty text"):
-            handlers["research-agent"]("bad\\x00input")
+            handlers["research-agent"]("bad\x00input")
         with self.assertRaisesRegex(ValueError, "exceeds the delegated specialist budget"):
             build_delegated_specialist_handlers({
                 "research-agent": {
