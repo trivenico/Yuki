@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from core.google_oauth_identity import (
     GOOGLE_OIDC_ISSUER, GOOGLE_OIDC_JWKS_URI, GOOGLE_OIDC_USERINFO_URI,
+    GoogleAccountIdentityFactory,
 )
 from core.oauth_authorization_service import OAuthAuthorizationService
 from core.oauth_provider_identity import OAuthProviderIdentityVerifier
@@ -40,7 +41,7 @@ class GoogleOAuthConfigurationError(ValueError):
 
 def build_google_gmail_authorization_service(
     *, client_id: str, redirect_uri: str, transaction_store,
-    credential_vault, pinned_transport, account_id_resolver,
+    credential_vault, pinned_transport, account_id_resolver=None,
     clock=None, jwks_cache=None,
 ) -> OAuthAuthorizationService:
     """Build Google authorization-code + PKCE with cryptographic OIDC binding."""
@@ -62,6 +63,9 @@ def build_google_gmail_authorization_service(
         raise GoogleOAuthConfigurationError("invalid_google_redirect_uri")
     if not set(GOOGLE_HOSTS).issubset(getattr(pinned_transport, "allowed_hosts", ())):
         raise GoogleOAuthConfigurationError("google_oauth_transport_host_not_allowed")
+    if account_id_resolver is None:
+        identity_factory = GoogleAccountIdentityFactory()
+        account_id_resolver = lambda verified: identity_factory.create(verified).account_id
     if not callable(account_id_resolver):
         raise GoogleOAuthConfigurationError("verified_google_account_resolver_required")
     oidc_kwargs = dict(
