@@ -51,6 +51,8 @@ class ToolCapabilityCatalogTests(unittest.TestCase):
             catalog.resolve("write")
         with self.assertRaises(TypeError):
             catalog._capabilities["write"] = ToolCapability(ToolEffect.SIDE_EFFECTING)
+        with self.assertRaises(AttributeError):
+            catalog._capabilities = {}
 
     def test_invalid_names_and_metadata_are_rejected(self):
         for name in ("", "../send", "x" * 129, 12):
