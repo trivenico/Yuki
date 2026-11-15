@@ -85,11 +85,11 @@ class TaskRuntimeTests(unittest.TestCase):
         claimed = self.store.claim_next(worker_id="worker-a")
         first = self.runtime.record_progress(
             actor_id="alice", task_id=task.task_id,
-            expected_version=claimed.version, message="first update", percent=25,
+            expected_version=claimed.version, worker_id="worker-a", message="first update", percent=25,
         )
         self.runtime.record_progress(
             actor_id="alice", task_id=task.task_id,
-            expected_version=first.version, message="second update", percent=50,
+            expected_version=first.version, worker_id="worker-a", message="second update", percent=50,
         )
         page_one = self.runtime.events(
             actor_id="alice", task_id=task.task_id, after_sequence=1, limit=1,
@@ -119,11 +119,11 @@ class TaskRuntimeTests(unittest.TestCase):
         task = self.create()
         claimed = self.claim(task)
         updated = self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
-            expected_version=claimed.version, message="Analyzing", percent=25)
+            expected_version=claimed.version, worker_id="worker-a", message="Analyzing", percent=25)
         self.assertEqual(updated.version, claimed.version + 1)
         with self.assertRaises(WorkflowConflict):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
-                expected_version=claimed.version, message="stale")
+                expected_version=claimed.version, worker_id="worker-a", message="stale")
         self.assertEqual([e.kind for e in self.runtime.events(actor_id="alice", task_id=task.task_id)],
                          ["task.created", "task.progress"])
 
@@ -131,11 +131,57 @@ class TaskRuntimeTests(unittest.TestCase):
         task = self.create()
         claimed = self.claim(task)
         self.runtime.record_artifact(actor_id="alice", task_id=task.task_id,
-            expected_version=claimed.version, artifact_type="report",
+            expected_version=claimed.version, worker_id="worker-a", artifact_type="report",
             reference="artifact://report-1", metadata={"format": "markdown"})
         event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
         self.assertEqual(event.kind, "task.artifact")
         self.assertEqual(event.payload["reference"], "artifact://report-1")
+
+    def test_progress_and_artifacts_require_the_active_worker_lease(self):
+        task = self.create("lease-fenced-events")
+        claimed = self.claim(task)
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_progress(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-b",
+                message="stale worker update",
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_artifact(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-b",
+                artifact_type="report", reference="artifact://stale",
+            )
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
+        self.assertEqual(self.store.get(task.task_id).version, claimed.version)
+
+    def test_expired_lease_cannot_append_progress_or_artifact(self):
+        task = self.create("expired-lease-events")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        for write in (
+            lambda: self.runtime.record_progress(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a", message="too late",
+            ),
+            lambda: self.runtime.record_artifact(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                artifact_type="report", reference="artifact://expired",
+            ),
+        ):
+            with self.assertRaises(WorkflowConflict):
+                write()
+        self.assertEqual(
+            [event.kind for event in self.runtime.events(actor_id="alice", task_id=task.task_id)],
+            ["task.created"],
+        )
+        self.assertEqual(self.store.get(task.task_id).version, claimed.version)
 
     def test_only_current_worker_can_complete(self):
         task = self.create()
@@ -326,10 +372,10 @@ class TaskRuntimeTests(unittest.TestCase):
         claimed = self.claim(task)
         with self.assertRaises(ValueError):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
-                expected_version=claimed.version, message="x" * 1001)
+                expected_version=claimed.version, worker_id="worker-a", message="x" * 1001)
         with self.assertRaises(ValueError):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
-                expected_version=claimed.version, message="ok", percent=True)
+                expected_version=claimed.version, worker_id="worker-a", message="ok", percent=True)
 
     def test_expired_lease_recovery_is_authorized_and_journaled(self):
         task = self.create("recover-expired")
