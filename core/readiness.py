@@ -16,6 +16,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from core.component_catalog import component_catalog, validate_component_catalog
 from typing import Callable
 
 
@@ -116,6 +119,24 @@ def build_readiness_report(
             else Capability("unavailable", "ONNX Runtime is not import-discoverable.")
         ),
     }
+    # The canonical component catalog is a read-only architecture contract.
+    # Report its validation separately from runtime feature detection.
+    catalog = component_catalog()
+    catalog_errors = validate_component_catalog(
+        catalog, repository_root=Path(__file__).resolve().parents[1]
+    )
+    capabilities["architecture_catalog"] = (
+        Capability(
+            "verified",
+            f"{len(catalog)} component contracts and dependency references validated.",
+        )
+        if not catalog_errors
+        else Capability(
+            "unavailable",
+            f"Component catalog validation failed ({len(catalog_errors)} issue(s)).",
+        )
+    )
+
     return ReadinessReport(
         python=platform.python_version(),
         implementation=platform.python_implementation(),
