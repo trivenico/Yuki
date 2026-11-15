@@ -117,9 +117,9 @@ class GmailSendClientTests(unittest.TestCase):
 
     def test_header_injection_and_invalid_recipient_are_rejected(self):
         for kwargs in (
-            {"to": "person@example.com\\r\\nBcc:evil@example.com", "subject": "Hello", "body": "Body"},
+            {"to": "person@example.com\r\nBcc:evil@example.com", "subject": "Hello", "body": "Body"},
             {"to": "not-an-email", "subject": "Hello", "body": "Body"},
-            {"to": "person@example.com", "subject": "Hello\\r\\nBcc:evil@example.com", "body": "Body"},
+            {"to": "person@example.com", "subject": "Hello\r\nBcc:evil@example.com", "body": "Body"},
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(GmailSendError):
                 self.client.send_email(
