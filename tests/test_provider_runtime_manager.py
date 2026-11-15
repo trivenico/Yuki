@@ -106,7 +106,7 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                 manager.select("ollama")
             self.assertIs(adapter.provider, previous)
             self.assertEqual(previous.closed, 0)
-            self.assertEqual(candidate.closed, 0)
+            self.assertEqual(candidate.closed, 1)
 
     def test_corrupt_persisted_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
