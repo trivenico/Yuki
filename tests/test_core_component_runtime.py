@@ -11,6 +11,11 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
 
+class _NoApprovals:
+    def authorize_tool(self, name):
+        return False
+
+
 class FakeProvider:
     def __init__(self):
         self.closed = 0
@@ -26,7 +31,7 @@ class CoreComponentCompositionTests(unittest.TestCase):
     def _loop(self):
         return AgentExecutionLoop(
             lambda **kwargs: {"text": "ready", "tool_calls": {"tool_calls": []}},
-            StructuredToolProtocol(GuardedToolRuntime({}, object())),
+            StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals())),
         )
 
     def test_registers_and_starts_real_core_dependency_graph(self):
