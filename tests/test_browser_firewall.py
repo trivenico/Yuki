@@ -6,7 +6,8 @@ from core.network_firewall import NetworkFirewall
 
 
 def answer(ip):
-    return (socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443))
+    family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+    return (family, socket.SOCK_STREAM, 6, "", (ip, 443, 0, 0) if family == socket.AF_INET6 else (ip, 443))
 
 
 class BrowserFirewallTests(unittest.TestCase):
@@ -28,6 +29,13 @@ class BrowserFirewallTests(unittest.TestCase):
         rules = browser._resolve_authorized_hosts()
         self.assertIn("MAP example.com 1.1.1.1", rules)
         self.assertIn("MAP static.example.com 8.8.8.8", rules)
+
+    def test_formats_public_ipv6_address_for_chromium_resolver(self):
+        browser = SafeBrowser(
+            allowed_hosts=("example.com",),
+            resolver=self.resolver_for({"example.com": ["2606:4700:4700::1111"]}),
+        )
+        self.assertEqual(browser._resolve_authorized_hosts(), "MAP example.com [2606:4700:4700::1111]")
 
     def test_rejects_private_or_mixed_dns_answers(self):
         for values in (["127.0.0.1"], ["93.184.216.34", "10.0.0.2"]):
