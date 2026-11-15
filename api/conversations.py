@@ -19,6 +19,7 @@ from api.request_body import RequestBodyTooLarge, read_json_object
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.approved_tool_action_executor import ApprovedToolActionExecutor
+from core.tool_action_reconciliation import ToolActionReconciliationService
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -43,6 +44,7 @@ class YukiConversationAPI:
         tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
         pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
         approved_tool_action_executor: ApprovedToolActionExecutor | None = None,
+        tool_action_reconciler: ToolActionReconciliationService | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -77,6 +79,12 @@ class YukiConversationAPI:
             if tool_action_approvals is None or approved_tool_action_executor.approvals is not tool_action_approvals:
                 raise ValueError("executor must use the API's approval store")
         self.approved_tool_action_executor = approved_tool_action_executor
+        if tool_action_reconciler is not None:
+            if not isinstance(tool_action_reconciler, ToolActionReconciliationService):
+                raise TypeError("tool_action_reconciler must be a ToolActionReconciliationService")
+            if pending_tool_action_proposals is None or tool_action_reconciler.proposals is not pending_tool_action_proposals:
+                raise ValueError("reconciler must use the API's pending proposal store")
+        self.tool_action_reconciler = tool_action_reconciler
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -156,6 +164,33 @@ class YukiConversationAPI:
                     "proposal_id": recovered.proposal_id,
                     "execution_state": recovered.state,
                     "result": recovered.result,
+                })
+
+            reconcile_match = re.fullmatch(
+                r"/v1/tool-action-proposals/([A-Za-z0-9_-]{1,128})/reconcile", path,
+            )
+            if reconcile_match and method == "POST":
+                if self.tool_action_reconciler is None:
+                    return await self._respond(send, 503, {"error": "proposal_reconciliation_unavailable"})
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    action = await asyncio.to_thread(
+                        self.tool_action_reconciler.reconcile_proposal,
+                        reconcile_match.group(1), principal_id=user.user_id,
+                    )
+                except LookupError:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                except ValueError:
+                    return await self._respond(send, 409, {"error": "proposal_not_reconcilable"})
+                except Exception:
+                    return await self._respond(send, 503, {"error": "reconciliation_failed"})
+                return await self._respond(send, 200, {
+                    "action_id": action.action_id,
+                    "state": action.state,
+                    "error_code": action.error_code,
+                    "result": action.result,
                 })
 
             execute_match = re.fullmatch(
