@@ -13,15 +13,21 @@ from core.component_registry import ComponentRuntime
 
 
 def _freeze(value: Any) -> Any:
+    """Freeze supported configuration primitives and reject opaque mutable values."""
     if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
+        frozen = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("configuration mapping keys must be strings.")
+            frozen[key] = _freeze(item)
+        return MappingProxyType(frozen)
+    if isinstance(value, (list, tuple)):
         return tuple(_freeze(item) for item in value)
-    if isinstance(value, tuple):
-        return tuple(_freeze(item) for item in value)
-    if isinstance(value, set):
+    if isinstance(value, (set, frozenset)):
         return frozenset(_freeze(item) for item in value)
-    return value
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise TypeError("configuration values must be mappings, sequences, sets or scalar primitives.")
 
 
 @dataclass(frozen=True)
