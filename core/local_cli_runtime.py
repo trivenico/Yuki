@@ -16,6 +16,7 @@ from core.conversation_application_runtime import (
 )
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.local_owner_identity import load_or_create_local_owner_id
+from core.readiness import ReadinessReport, build_readiness_report
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
@@ -39,6 +40,10 @@ class _OwnedProvider:
 
     def is_available(self):
         return self._provider.is_available()
+
+    def readiness_report(self) -> ReadinessReport:
+        """Return local capability diagnostics including live component health."""
+        return build_readiness_report(component_registry=self.component_registry)
 
     def close(self):
         if self._closed:
