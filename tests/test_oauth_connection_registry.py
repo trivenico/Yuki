@@ -40,6 +40,30 @@ class OAuthConnectionRegistryTests(unittest.TestCase):
         self.assertEqual(updated.scopes, ("write",))
         self.assertEqual(len(self.registry.list_for_owner(owner_id="o")), 1)
 
+    def test_version_fenced_remove_preserves_reconnected_account_metadata(self):
+        now = [100]
+        registry = SQLiteOAuthConnectionRegistry(self.path, clock=lambda: now[0])
+        original = registry.register(
+            owner_id="owner", provider_id="google", account_id="account",
+            scopes=("gmail.send",),
+        )
+        now[0] = 200
+        replacement = registry.register(
+            owner_id="owner", provider_id="google", account_id="account",
+            scopes=("gmail.send", "gmail.readonly"),
+        )
+        self.assertFalse(registry.remove(
+            owner_id="owner", provider_id="google", account_id="account",
+            expected_connected_at=original.connected_at,
+        ))
+        self.assertEqual(registry.get(
+            owner_id="owner", provider_id="google", account_id="account"
+        ), replacement)
+        self.assertTrue(registry.remove(
+            owner_id="owner", provider_id="google", account_id="account",
+            expected_connected_at=replacement.connected_at,
+        ))
+
     def test_creates_missing_database_parent_directory(self):
         nested = str(Path(self.temp.name) / "nested" / "registry.sqlite3")
         registry = SQLiteOAuthConnectionRegistry(nested, clock=lambda: 1234)
