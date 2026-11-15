@@ -84,6 +84,13 @@ class SQLiteToolActionApprovalStore:
             (principal_id, action_id, tool_name, token_fingerprint, outcome, occurred_at)
             VALUES (?, ?, ?, ?, ?, ?)""",
             (principal_id, action_id, tool_name, token_fingerprint, outcome, occurred_at))
+        # Bound local audit growth per principal; deployments needing longer
+        # retention should export signed events to their central audit system.
+        db.execute("""DELETE FROM tool_action_approval_audit
+            WHERE principal_id = ? AND event_id NOT IN (
+                SELECT event_id FROM tool_action_approval_audit
+                WHERE principal_id = ? ORDER BY event_id DESC LIMIT 10000
+            )""", (principal_id, principal_id))
 
     def issue(self, context: ToolActionContext, *, principal_id: str) -> str:
         """Mint a one-time token after trusted UI/server code records user approval."""
