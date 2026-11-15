@@ -142,7 +142,7 @@ class APISecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         await middleware(head_scope, receive, capture)
         self.assertEqual(messages[0]["status"], 429)
         self.assertEqual(messages[1]["body"], b"")
-        self.assertEqual(dict(messages[0]["headers"])[b"content-length"], b"31")
+        self.assertEqual(dict(messages[0]["headers"])[b"content-length"], b"32")
 
     async def test_non_http_scopes_pass_through_without_rate_limiting(self):
         called = []
