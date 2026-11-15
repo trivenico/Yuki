@@ -93,10 +93,12 @@ class ComponentRegistry:
                 raise RuntimeError(
                     f"{component_id} is missing runtime dependencies: {', '.join(sorted(missing))}"
                 )
-        self._startup_attempted = True
         ordered = component_dependency_order(
             runtime.contract for runtime in self._runtimes.values()
         )
+        # Freeze only after dependency ordering succeeds. Catalog graph errors
+        # happen before lifecycle execution and must not lock registration.
+        self._startup_attempted = True
         try:
             for contract in ordered:
                 component_id = contract.component_id
