@@ -83,7 +83,7 @@ class GmailSendToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
-            approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
+            approvals = SQLiteToolActionApprovalStore(str(root / "journal.sqlite"))
             journal = ToolActionJournal(str(root / "journal.sqlite"))
             runtime = GuardedToolRuntime(
                 {"gmail.send_email": self.tool}, AllowPolicy(),
