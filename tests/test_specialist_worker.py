@@ -430,6 +430,26 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
 
+    def test_parallel_worker_pool_pre_set_stop_event_claims_nothing(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="pre-set-cooperative-stop-plan",
+            subtasks=[
+                SubtaskSpec("first", "First independent review", ("coding",), requires_approval=False),
+            ],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        stop = Event()
+        stop.set()
+
+        results = self.worker({"code-review": lambda _: "must not run"}).run_concurrently(
+            max_workers=2, max_tasks=2, stop_event=stop,
+        )
+        self.assertEqual(results, ())
+        remaining = [run for run in self.store.list_runs() if run.plan_id == plan.plan_id]
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0].state, "queued")
+        self.assertEqual(remaining[0].attempts, 0)
+
     def test_parallel_worker_pool_stop_event_prevents_additional_claims(self):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key="cooperative-stop-plan",
