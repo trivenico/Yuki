@@ -524,15 +524,19 @@ if __name__ == "__main__":
     def test_confirmation_callback_is_not_invoked_for_read_only_tool(self):
         confirmation_calls = []
         approval_calls = []
-        result = AgentExecutionLoop(
-            lambda **kwargs: {
-                "text": "Read complete",
-                "tool_calls": {"tool_calls": [{
-                    "id": "read_1", "name": "echo", "arguments": {"value": "safe"}
-                }]},
-            },
-            self.protocol,
-        ).run(
+        turns = {"count": 0}
+        def model(**kwargs):
+            turns["count"] += 1
+            if turns["count"] == 1:
+                return {
+                    "text": "",
+                    "tool_calls": {"tool_calls": [{
+                        "id": "read_1", "name": "echo", "arguments": {"value": "safe"}
+                    }]},
+                }
+            return {"text": "Read complete", "tool_calls": {"tool_calls": []}}
+
+        result = AgentExecutionLoop(model, self.protocol).run(
             "Read safely",
             tools=self.tools,
             principal_id="owner-1",
