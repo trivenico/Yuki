@@ -40,9 +40,8 @@ class RemoteClientTests(unittest.TestCase):
             "job_id": "a" * 32, "model_id": "local/model", "input_text": "hello",
             "lease_expires_at": "2030-01-01T00:00:00+00:00", "lease_token": "t" * 43,
         }}).encode())
-        self.client = RemoteInferenceJobClient(
-            "https://yuki.example", "x" * 32, transport=self.transport,
-        )
+        self.client = RemoteInferenceJobClient("https://yuki.example", "x" * 32)
+        self.client._transport = self.transport
 
     def test_claim_parses_job_and_sends_device_auth(self):
         job = self.client.claim_next()
