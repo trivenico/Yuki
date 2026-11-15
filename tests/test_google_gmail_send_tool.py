@@ -42,6 +42,8 @@ class GmailSendToolTests(unittest.TestCase):
         schema = GmailSendTool.definition()["function"]["parameters"]["properties"]
         self.assertEqual(schema["body"]["maxLength"], 4000)
         self.assertEqual(schema["to"]["oneOf"][1]["maxItems"], 5)
+        self.assertEqual(schema["to"]["oneOf"][0]["maxLength"], 320)
+        self.assertEqual(schema["to"]["oneOf"][1]["items"]["maxLength"], 320)
 
     def test_direct_invocation_without_approval_context_is_denied(self):
         with self.assertRaises(PermissionError):
