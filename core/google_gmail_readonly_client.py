@@ -87,6 +87,10 @@ class GmailReadOnlyClient:
         messages = listing.get("messages", [])
         if not isinstance(messages, list) or len(messages) > 10:
             raise GmailReadOnlyError("invalid_gmail_message_list")
+        # A truncated result set cannot prove uniqueness. Never accept a
+        # partial page as authoritative reconciliation evidence.
+        if listing.get("nextPageToken") is not None:
+            raise GmailReadOnlyError("ambiguous_gmail_message_match")
         matches = []
         for item in messages:
             if not isinstance(item, dict) or not isinstance(item.get("id"), str):
