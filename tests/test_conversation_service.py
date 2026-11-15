@@ -276,10 +276,12 @@ class ConversationServiceTests(unittest.TestCase):
                 owner_id="owner-a", conversation_id=conversation_id,
                 lease_token=retry_token,
             )
-        self.assertEqual(summary.completed_generations, 1)
+        # The durable assistant message is the interruption notice, so a
+        # replacement worker must preserve the interrupted outcome.
+        self.assertEqual(summary.interrupted_generations, 1)
         self.assertEqual(self.store.list_recovery_events(
             owner_id="owner-a", conversation_id=conversation_id,
-        )[0]["outcome"], "completed")
+        )[0]["outcome"], "interrupted")
         messages = self.store.list_messages(
             owner_id="owner-a", conversation_id=conversation_id, limit=100,
         )
@@ -601,6 +603,8 @@ class ConversationServiceTests(unittest.TestCase):
         service.LEASE_RENEW_INTERVAL_SECONDS = 0.01
 
         def failed_renewal(**kwargs):
+            if not first_started.wait(timeout=5):
+                raise AssertionError("heartbeat ran before the first tool started")
             raise OSError("simulated durable lease store outage")
 
         try:
@@ -634,13 +638,16 @@ class ConversationServiceTests(unittest.TestCase):
 
     def test_lease_renewal_failure_prevents_assistant_persistence(self):
         started = threading.Event()
+        renewal_attempted = threading.Event()
 
         def failing_renew(**kwargs):
+            renewal_attempted.set()
             raise OSError("simulated lease store outage")
 
         def slow_model(**kwargs):
             started.set()
-            threading.Event().wait(0.08)
+            if not renewal_attempted.wait(timeout=5):
+                raise AssertionError("heartbeat did not attempt lease renewal")
             return {"text": "must not be committed", "tool_calls": {"tool_calls": []}}
 
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
