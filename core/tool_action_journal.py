@@ -273,6 +273,31 @@ class ToolActionJournal:
                 raise
         return self._record(updated)
 
+    def recover_expired_execution(self, idempotency_key: str) -> ToolAction | None:
+        """Fence one expired execution lease and return its durable current state."""
+        self._validate_key(idempotency_key)
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute(
+                    """UPDATE tool_actions
+                       SET state='outcome_unknown',error_code='execution_lease_expired',
+                           lease_owner=NULL,lease_expires_at=NULL,updated_at=?,version=version+1
+                       WHERE idempotency_key=? AND state='executing'
+                         AND lease_expires_at IS NOT NULL AND lease_expires_at<=?""",
+                    (now, idempotency_key, now),
+                )
+                row = db.execute(
+                    "SELECT * FROM tool_actions WHERE idempotency_key=?",
+                    (idempotency_key,),
+                ).fetchone()
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return self._record(row) if row is not None else None
+
     def recover_expired_executions(self) -> int:
         """Fence expired workers and mark their external outcome as unknown."""
         now = _now()
