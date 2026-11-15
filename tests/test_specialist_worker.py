@@ -6,6 +6,7 @@ from pathlib import Path
 from automation.agent_coordinator import (
     SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
 )
+from automation.plan_supervisor import PlanSupervisor
 from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
     build_delegated_specialist_handlers,
@@ -91,6 +92,55 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.task_id, plan_a.subtasks[0].task_id)
         self.assertEqual(self.store.get(plan_b.subtasks[0].task_id).state, "queued")
         self.assertEqual(self.store.get(result.task_id).plan_id, plan_a.plan_id)
+
+    def test_plan_supervisor_executes_dependency_waves_with_plan_fencing(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="supervisor-dag",
+            subtasks=[
+                SubtaskSpec("collect-a", "Collect A", ("coding",), requires_approval=False),
+                SubtaskSpec("collect-b", "Collect B", ("coding",), requires_approval=False),
+                SubtaskSpec("synthesize", "Synthesize results", ("coding",),
+                            depends_on=("collect-a", "collect-b"), requires_approval=False),
+            ],
+        )
+        worker = self.worker({"code-review": lambda text: "completed: " + text})
+        result = PlanSupervisor(self.coordinator, worker).run_plan(
+            actor_id="alice", plan_id=plan.plan_id, max_workers=2, max_tasks=5,
+        )
+        self.assertEqual(result.executed_tasks, 3)
+        self.assertFalse(result.budget_exhausted)
+        self.assertEqual({item.status for item in result.plan.subtasks}, {"succeeded"})
+        self.assertGreaterEqual(result.rounds, 2)
+        final_task = next(item for item in result.plan.subtasks if item.subtask_id == "synthesize")
+        final_record = self.store.get(final_task.task_id)
+        self.assertIn("completed: Collect A", final_record.definition[0]["argument"])
+        self.assertIn("completed: Collect B", final_record.definition[0]["argument"])
+
+    def test_plan_supervisor_respects_approval_and_task_budget(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="supervisor-budget",
+            subtasks=[
+                SubtaskSpec("one", "First", ("coding",), requires_approval=False),
+                SubtaskSpec("two", "Second", ("coding",), requires_approval=False),
+            ],
+        )
+        worker = self.worker({"code-review": lambda text: "done: " + text})
+        result = PlanSupervisor(self.coordinator, worker).run_plan(
+            actor_id="alice", plan_id=plan.plan_id, max_workers=1, max_tasks=1,
+        )
+        self.assertEqual(result.executed_tasks, 1)
+        self.assertTrue(result.budget_exhausted)
+        self.assertEqual(sum(item.status == "succeeded" for item in result.plan.subtasks), 1)
+
+        approval_plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="supervisor-approval",
+            subtasks=[SubtaskSpec("approval", "Needs review", ("coding",), requires_approval=True)],
+        )
+        waiting = PlanSupervisor(self.coordinator, worker).run_plan(
+            actor_id="alice", plan_id=approval_plan.plan_id,
+        )
+        self.assertEqual(waiting.executed_tasks, 0)
+        self.assertEqual(waiting.plan.subtasks[0].status, "queued")
 
     def test_worker_does_not_claim_unrelated_queued_workflows(self):
         unrelated = []
