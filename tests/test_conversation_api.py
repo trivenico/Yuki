@@ -14,6 +14,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
+from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 
 
 class _NoApprovals:
@@ -87,6 +88,70 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(data["revoked"])
         self.assertFalse(store.consume(token, context, principal_id=self.user.user_id))
+
+    def test_pending_proposals_require_authentication_and_support_owner_decisions(self):
+        store = SQLitePendingToolActionProposalStore(
+            str(Path(self.tempdir.name) / "pending-proposals.sqlite"),
+        )
+        self.app.pending_tool_action_proposals = store
+        arguments = {"to": "person@example.com", "subject": "Review"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = store.create(context, arguments, principal_id=self.user.user_id)
+
+        status, data, _ = self.request("GET", "/v1/tool-action-proposals")
+        self.assertEqual(status, 401)
+        status, data, _ = self.request(
+            "GET", "/v1/tool-action-proposals", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposals"][0]["proposal_id"], proposal.proposal_id)
+        self.assertEqual(data["proposals"][0]["arguments"], arguments)
+
+        status, data, _ = self.request(
+            "GET", "/v1/tool-action-proposals/" + proposal.proposal_id,
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposal"]["status"], "pending")
+
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + proposal.proposal_id + "/approve",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposal"]["status"], "approved")
+        self.assertEqual(data["execution"], "not_started")
+        self.assertNotIn("approval_token", data)
+
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + proposal.proposal_id + "/reject",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(data["error"], "proposal_not_pending")
+
+    def test_pending_proposal_rejection_is_terminal(self):
+        store = SQLitePendingToolActionProposalStore(
+            str(Path(self.tempdir.name) / "pending-rejections.sqlite"),
+        )
+        self.app.pending_tool_action_proposals = store
+        arguments = {"event_id": "event-123"}
+        context = ToolActionContext.create(self.user.user_id, "calendar.delete", arguments)
+        proposal = store.create(context, arguments, principal_id=self.user.user_id)
+        status, data, _ = self.request(
+            "POST", "/v1/tool-action-proposals/" + proposal.proposal_id + "/reject",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposal"]["status"], "rejected")
+        self.assertEqual(store.list_pending(principal_id=self.user.user_id), ())
+
+    def test_pending_proposal_api_is_unavailable_when_not_configured(self):
+        status, data, _ = self.request(
+            "GET", "/v1/tool-action-proposals", token=self.issued.token,
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(data["error"], "proposal_management_unavailable")
 
     def test_approval_management_returns_unavailable_when_not_configured(self):
         status, data, _ = self.request(
