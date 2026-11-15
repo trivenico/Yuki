@@ -131,6 +131,42 @@ class ToolActionReconciliationTests(unittest.TestCase):
         ).execution_state, "finished")
         self.assertEqual(adapter.calls, 1)
 
+    def test_repairs_proposal_after_journal_success_commit_interruption(self):
+        proposals = SQLitePendingToolActionProposalStore(
+            str(Path(self.temp.name) / "repair-proposals.sqlite"),
+        )
+        context = ToolActionContext(
+            action_id=self.action.action_id,
+            idempotency_key=self.action.idempotency_key,
+            principal_id="owner-a",
+            tool_name=self.action.tool_name,
+            request_digest=self.action.request_digest,
+        )
+        proposal = proposals.create(
+            context, self.proposal.arguments, principal_id="owner-a",
+        )
+        proposals.decide(proposal.proposal_id, principal_id="owner-a", decision="approved")
+        proposals.claim_execution(proposal.proposal_id, principal_id="owner-a")
+        proposals.finish_execution(
+            proposal.proposal_id, principal_id="owner-a", outcome_unknown=True,
+        )
+        succeeded = self.journal.reconcile_succeeded(
+            self.action.idempotency_key, {"evidence_reference": "provider-message:ok"},
+        )
+        adapter = FakeProvider(ProviderReconciliationResult(
+            "succeeded", "should-not-be-called",
+        ))
+        service = ToolActionReconciliationService(
+            self.journal, ToolActionReconciliationRegistry({"email.send": adapter}),
+            proposals=proposals,
+        )
+        result = service.reconcile_proposal(proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(proposals.get(
+            proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "finished")
+        self.assertEqual(adapter.calls, 0)
+
     def test_provider_confirmed_non_execution_does_not_make_proposal_replayable(self):
         proposals = SQLitePendingToolActionProposalStore(
             str(Path(self.temp.name) / "proposals.sqlite"),
