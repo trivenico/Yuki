@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -159,6 +160,33 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(self.proposals.get(
             self.proposal.proposal_id, principal_id="owner-a",
         ).execution_state, "executing")
+        self.assertEqual(self.calls, [])
+
+
+    def test_expired_journal_lease_recovers_proposal_as_unknown(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        reserved = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send", self.arguments,
+            action_id=self.proposal.action_id,
+        )
+        self.journal.begin_execution(
+            self.proposal.idempotency_key, reserved.request_digest,
+        )
+        with sqlite3.connect(self.journal.database_path) as db:
+            db.execute(
+                "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", self.proposal.idempotency_key),
+            )
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "unknown")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "outcome_unknown")
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "unknown")
         self.assertEqual(self.calls, [])
 
     def test_blocked_dispatch_is_not_reported_as_success(self):
