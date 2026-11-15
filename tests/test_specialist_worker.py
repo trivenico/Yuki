@@ -8,6 +8,7 @@ from automation.agent_coordinator import (
 )
 from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
+    build_delegated_specialist_handlers,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
@@ -283,6 +284,59 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.worker({})
         with self.assertRaises(ValueError):
             self.worker({"not valid": lambda _: "no"})
+
+
+    def test_worker_handlers_use_parent_bounded_delegated_agent_runtime(self):
+        class ParentPolicy:
+            def __init__(self):
+                self.calls = []
+            def authorize_tool(self, name):
+                self.calls.append(name)
+                return name == "read"
+
+        parent = ParentPolicy()
+        observed = []
+        def model(*, messages, tools, tool_choice):
+            observed.append([item["function"]["name"] for item in tools])
+            return {"text": "specialist result", "tool_calls": {"tool_calls": []}}
+
+        handlers = build_delegated_specialist_handlers({
+            "research-agent": {
+                "model": model,
+                "tools": {"read": lambda _: "read data", "delete": lambda _: "deleted"},
+                "tool_definitions": [
+                    {"type": "function", "function": {"name": "read"}},
+                    {"type": "function", "function": {"name": "delete"}},
+                ],
+                "parent_policy": parent,
+                "allowed_tools": {"read"},
+                "loop_options": {
+                    "max_model_turns": 2,
+                    "max_tool_calls": 3,
+                    "max_duration_seconds": 5,
+                },
+            },
+        })
+        self.assertEqual(handlers["research-agent"]("Research this"), "specialist result")
+        self.assertEqual(observed, [["read"]])
+        self.assertEqual(parent.calls, [])
+
+    def test_delegated_specialist_handler_rejects_invalid_config_and_input(self):
+        with self.assertRaisesRegex(ValueError, "documented runtime fields"):
+            build_delegated_specialist_handlers({
+                "research-agent": {"model": lambda **_: {}, "unexpected": True},
+            })
+        handlers = build_delegated_specialist_handlers({
+            "research-agent": {
+                "model": lambda **_: {"text": "ok", "tool_calls": {"tool_calls": []}},
+                "tools": {},
+                "tool_definitions": [],
+                "parent_policy": type("Policy", (), {"authorize_tool": lambda self, name: False})(),
+                "allowed_tools": (),
+            },
+        })
+        with self.assertRaisesRegex(ValueError, "bounded non-empty text"):
+            handlers["research-agent"](" ")
 
 
 if __name__ == "__main__":
