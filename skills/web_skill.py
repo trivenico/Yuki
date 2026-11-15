@@ -20,7 +20,7 @@ class WebSkill:
     risk = "medium"
     requires_approval = True
 
-    def __init__(self, *, allowed_hosts=(), timeout=8, max_bytes=500000, firewall_policy=None):
+    def __init__(self, *, allowed_hosts=(), timeout=8, max_bytes=500000, transport=None, firewall_policy=None):
         if isinstance(allowed_hosts, (str, bytes)) or not isinstance(allowed_hosts, (tuple, list, set, frozenset)):
             raise ValueError("allowed_hosts must be a collection of exact hostnames.")
         normalized_hosts = set()
@@ -41,10 +41,12 @@ class WebSkill:
             raise ValueError("timeout must be between 1 and 120 seconds")
         if type(max_bytes) is not int or not 1 <= max_bytes <= 2_000_000:
             raise ValueError("max_bytes must be between 1 and 2000000")
-        # Construct the trusted transport internally; arbitrary injected
-        # transports could bypass DNS pinning and the shared outbound firewall.
-        self._transport = None
-        if self.allowed_hosts:
+        if transport is not None and not callable(getattr(transport, "open", None)):
+            raise TypeError("web transport must provide open(request, timeout=...)")
+        if transport is not None and firewall_policy is not None:
+            raise ValueError("provide a transport or a firewall policy, not both")
+        self._transport = transport
+        if self._transport is None and self.allowed_hosts:
             self._transport = PinnedHTTPSProviderTransport(
                 allowed_hosts=self.allowed_hosts, timeout=timeout, firewall_policy=firewall_policy,
             )
