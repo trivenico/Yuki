@@ -8,16 +8,16 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from core.pinned_https_provider_transport import (
+    PinnedHTTPSProviderTransport,
+    PinnedHTTPTransportError,
+)
+
 _DEFAULT_ALLOWED_HOSTS = frozenset({
     "api.openai.com", "openrouter.ai", "api.deepseek.com",
     "api.moonshot.ai", "api.minimax.chat", "api.minimax.io",
     "api.z.ai", "api.tokenrouter.io",
 })
-
-class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    """Cloud credentials and prompts must never follow redirects to another endpoint."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
 
 def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
     if not isinstance(base_url, str) or not base_url.strip():
@@ -51,7 +51,7 @@ class OpenAICompatibleProvider:
     """Chat Completions adapter. API keys come from environment variables only."""
     def __init__(self, model, *, api_key_env="OPENAI_API_KEY",
                  base_url="https://api.openai.com/v1", timeout=45, allowed_hosts=None,
-                 environ=None):
+                 environ=None, transport=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid cloud model name.")
         if not isinstance(api_key_env, str) or not api_key_env.isidentifier():
@@ -62,6 +62,12 @@ class OpenAICompatibleProvider:
         self.model = model.strip()
         self.api_key_env = api_key_env
         self.timeout = timeout
+        endpoint_host = urlsplit(self.base_url).hostname
+        if transport is not None and not callable(getattr(transport, "open", None)):
+            raise TypeError("transport must provide an open(request, timeout=...) method")
+        self._transport = transport or PinnedHTTPSProviderTransport(
+            allowed_hosts={endpoint_host}, timeout=timeout,
+        )
         # Injectable environment mapping keeps provider construction deterministic in
         # tests while production defaults to the real process environment.
         self._environ = os.environ if environ is None else environ
@@ -87,12 +93,9 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            # Deliberately disable automatic redirects: even a valid initial host must
-            # not redirect credentials/prompts to an unreviewed destination.
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider request failed; redirects are not followed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
@@ -160,10 +163,9 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider chat request failed; redirects are not followed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
@@ -265,8 +267,7 @@ class OpenAICompatibleProvider:
         finish_reason = None
         saw_done = False
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 while True:
                     line = response.readline(65_537)
                     if not line:
@@ -323,7 +324,7 @@ class OpenAICompatibleProvider:
                         current["arguments"] += fragment
                     if choice.get("finish_reason") is not None:
                         finish_reason = choice["finish_reason"]
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider streaming request failed; redirects are not followed.") from exc
 
         if not saw_done and finish_reason is None:
@@ -409,10 +410,9 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider tool-call request failed; redirects are not followed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
