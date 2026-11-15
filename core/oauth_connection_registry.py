@@ -124,12 +124,20 @@ class SQLiteOAuthConnectionRegistry:
             self._scopes(json.loads(row["scopes_json"])), row["connected_at"]
         )
 
-    def remove(self, *, owner_id, provider_id, account_id):
+    def remove(self, *, owner_id, provider_id, account_id, expected_connected_at=None):
         owner_id = self._identifier(owner_id, "owner_id")
         provider_id = self._identifier(provider_id, "provider_id")
         account_id = self._identifier(account_id, "account_id")
         with self._connection() as db:
-            cursor = db.execute("""
-                DELETE FROM oauth_connections WHERE owner_id=? AND provider_id=? AND account_id=?
-            """, (owner_id, provider_id, account_id))
+            if expected_connected_at is None:
+                cursor = db.execute("""
+                    DELETE FROM oauth_connections WHERE owner_id=? AND provider_id=? AND account_id=?
+                """, (owner_id, provider_id, account_id))
+            else:
+                if type(expected_connected_at) is not int or expected_connected_at < 0:
+                    raise ValueError("expected_connected_at is invalid")
+                cursor = db.execute("""
+                    DELETE FROM oauth_connections
+                    WHERE owner_id=? AND provider_id=? AND account_id=? AND connected_at=?
+                """, (owner_id, provider_id, account_id, expected_connected_at))
             return cursor.rowcount == 1
