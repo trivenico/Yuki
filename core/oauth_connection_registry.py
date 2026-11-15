@@ -82,8 +82,16 @@ class SQLiteOAuthConnectionRegistry:
         provider_id = self._identifier(provider_id, "provider_id")
         account_id = self._identifier(account_id, "account_id")
         scopes = self._scopes(scopes)
-        connected_at = int(self._clock())
+        now = int(self._clock())
         with self._connection() as db:
+            # Make connected_at a per-account generation as well as a timestamp.
+            # A reconnect in the same clock second must still fence stale cleanup.
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute("""
+                SELECT connected_at FROM oauth_connections
+                WHERE owner_id=? AND provider_id=? AND account_id=?
+            """, (owner_id, provider_id, account_id)).fetchone()
+            connected_at = max(now, previous[0] + 1) if previous else now
             db.execute("""
                 INSERT INTO oauth_connections(owner_id, provider_id, account_id, scopes_json, connected_at)
                 VALUES(?,?,?,?,?)
