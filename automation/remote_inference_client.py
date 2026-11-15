@@ -100,6 +100,8 @@ class RemoteInferenceJobClient:
             if exc.code in (400, 409):
                 raise ValueError("inference_job_rejected") from None
             raise RuntimeError("Yuki inference API request failed") from None
+        except PermissionError:
+            raise
         except PinnedHTTPTransportError:
             raise RuntimeError("Yuki inference API blocked or unavailable by network firewall") from None
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError):
