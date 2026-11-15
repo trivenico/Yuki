@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from providers.ollama import OllamaProvider
+from core.pinned_https_provider_transport import PinnedHTTPTransportError
 
 
 class FakeResponse:
