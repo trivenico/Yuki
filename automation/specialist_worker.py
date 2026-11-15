@@ -194,6 +194,7 @@ class SpecialistTaskWorker:
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
+        plan_id: str | None = None,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -205,6 +206,12 @@ class SpecialistTaskWorker:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
             raise ValueError("max_tasks must be an integer from 1 to 100.")
+        if plan_id is not None and (
+            not isinstance(plan_id, str) or not plan_id.strip()
+            or len(plan_id) > 100 or "\x00" in plan_id
+        ):
+            raise ValueError("plan_id must be bounded non-empty text when supplied.")
+        plan_id = plan_id.strip() if plan_id is not None else None
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -223,7 +230,7 @@ class SpecialistTaskWorker:
                 agent_ids=tuple(self.agent_ids),
             )
             while permits.acquire(blocking=False):
-                result = worker.run_once()
+                result = worker.run_once(plan_id=plan_id)
                 if result is None:
                     permits.release()
                     return
