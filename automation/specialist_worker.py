@@ -275,3 +275,56 @@ class SpecialistTaskWorker:
             if workflow_name.startswith("agent-" + agent_id + "-"):
                 return agent_id
         return ""
+
+
+def build_delegated_specialist_handlers(
+    specialist_configs: Mapping[str, Mapping[str, object]],
+) -> dict[str, Callable[[str], str]]:
+    """Create worker handlers backed by isolated, parent-bounded agent runtimes.
+
+    Each specialist gets its own model, fixed tool schemas, guarded handler map,
+    parent authorization policy, and execution budget. The returned mapping is
+    directly consumable by SpecialistTaskWorker; no coordinator bypass is added.
+    """
+    from core.delegated_agent_runtime import build_delegated_agent_runtime
+
+    if not isinstance(specialist_configs, Mapping) or not specialist_configs or len(specialist_configs) > 32:
+        raise ValueError("specialist_configs must be a non-empty bounded mapping")
+    handlers: dict[str, Callable[[str], str]] = {}
+    required = {"model", "tools", "tool_definitions", "parent_policy", "allowed_tools"}
+    optional = {"stream_model", "loop_options", "audit"}
+    for agent_id, config in specialist_configs.items():
+        if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
+            raise ValueError("specialist IDs must be bounded identifiers")
+        if not isinstance(config, Mapping) or not required.issubset(config) or set(config).difference(required | optional):
+            raise ValueError("each specialist config must contain only the documented runtime fields")
+        loop_options = config.get("loop_options", {})
+        if not isinstance(loop_options, Mapping):
+            raise TypeError("loop_options must be a mapping")
+        options = dict(loop_options)
+        # Apply conservative defaults while allowing an explicit, validated
+        # lower per-role budget through AgentExecutionLoop's own constructor.
+        options.setdefault("max_model_turns", 4)
+        options.setdefault("max_tool_calls", 8)
+        options.setdefault("max_duration_seconds", 45)
+        runtime = build_delegated_agent_runtime(
+            model=config["model"],
+            tools=config["tools"],
+            tool_definitions=config["tool_definitions"],
+            parent_policy=config["parent_policy"],
+            allowed_tools=config["allowed_tools"],
+            stream_model=config.get("stream_model"),
+            loop_options=options,
+            audit=config.get("audit"),
+        )
+
+        def handle(request: str, *, _runtime=runtime) -> str:
+            if not isinstance(request, str) or not request.strip() or len(request) > _MAX_INPUT_CHARS or "\\x00" in request:
+                raise ValueError("specialist input must be bounded non-empty text")
+            result = _runtime.run(request)
+            if result.status != "completed" or not isinstance(result.text, str) or not result.text.strip():
+                raise RuntimeError("delegated specialist execution did not complete")
+            return result.text.strip()[:_MAX_OUTPUT_CHARS]
+
+        handlers[agent_id] = handle
+    return handlers
