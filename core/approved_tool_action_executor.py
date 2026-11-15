@@ -77,7 +77,7 @@ class ApprovedToolActionExecutor:
             # Version 2+ proves an authorizing claim was acquired and then
             # fenced/released back to prepared. No dispatch lease ever began,
             # so the proposal claim can be made available for a safe retry.
-            if action.version >= 2:
+            if action.version == 0 or action.version >= 2:
                 released = self._release_pre_dispatch_claim(
                     proposal, principal_id=principal_id,
                 )
