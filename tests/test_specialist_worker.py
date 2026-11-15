@@ -430,6 +430,36 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
 
+    def test_parallel_worker_pool_stop_event_prevents_additional_claims(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="cooperative-stop-plan",
+            subtasks=[
+                SubtaskSpec("first", "First independent review", ("coding",), requires_approval=False),
+                SubtaskSpec("second", "Second independent review", ("coding",), requires_approval=False),
+            ],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        stop = Event()
+
+        def handler(argument):
+            stop.set()
+            return "finished: " + argument
+
+        results = self.worker({"code-review": handler}).run_concurrently(
+            max_workers=1, max_tasks=2, stop_event=stop,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].state, "succeeded")
+        remaining = [run for run in self.store.list_runs() if run.plan_id == plan.plan_id]
+        self.assertEqual(sum(run.state == "queued" for run in remaining), 1)
+        self.assertEqual(sum(run.state == "succeeded" for run in remaining), 1)
+
+    def test_parallel_worker_pool_stop_event_must_be_threading_event(self):
+        with self.assertRaisesRegex(ValueError, "threading.Event"):
+            self.worker({"code-review": lambda _: "ok"}).run_concurrently(
+                stop_event=True,
+            )
+
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key="parallel-budget-plan",
