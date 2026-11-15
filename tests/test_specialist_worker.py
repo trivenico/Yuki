@@ -6,8 +6,10 @@ from pathlib import Path
 from automation.agent_coordinator import (
     SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
 )
+from automation.plan_supervisor import PlanSupervisor
 from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
+    build_delegated_specialist_handlers,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
@@ -56,10 +58,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         return plan.subtasks[0].task_id
 
-    def worker(self, handlers):
+    def worker(self, handlers, owner_handler_factory=None, agent_ids=()):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
-            handlers=handlers,
+            handlers=handlers, owner_handler_factory=owner_handler_factory,
+            agent_ids=agent_ids,
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
@@ -72,6 +75,87 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.result["execution"], "text-only")
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
+
+    def test_worker_plan_scope_leaves_other_plans_queued(self):
+        plan_a = self.coordinator.submit(
+            actor_id="alice", idempotency_key="plan-scope-a",
+            subtasks=[SubtaskSpec("task-a", "Task A", ("coding",), requires_approval=False)],
+        )
+        plan_b = self.coordinator.submit(
+            actor_id="alice", idempotency_key="plan-scope-b",
+            subtasks=[SubtaskSpec("task-b", "Task B", ("coding",), requires_approval=False)],
+        )
+        plan_a = self.coordinator.advance(actor_id="alice", plan_id=plan_a.plan_id)
+        plan_b = self.coordinator.advance(actor_id="alice", plan_id=plan_b.plan_id)
+        worker = self.worker({"code-review": lambda text: "done: " + text})
+        result = worker.run_once(plan_id=plan_a.plan_id)
+        self.assertEqual(result.task_id, plan_a.subtasks[0].task_id)
+        self.assertEqual(self.store.get(plan_b.subtasks[0].task_id).state, "queued")
+        self.assertEqual(self.store.get(result.task_id).plan_id, plan_a.plan_id)
+
+    def test_plan_supervisor_executes_dependency_waves_with_plan_fencing(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="supervisor-dag",
+            subtasks=[
+                SubtaskSpec("collect-a", "Collect A", ("coding",), requires_approval=False),
+                SubtaskSpec("collect-b", "Collect B", ("coding",), requires_approval=False),
+                SubtaskSpec("synthesize", "Synthesize results", ("coding",),
+                            depends_on=("collect-a", "collect-b"), requires_approval=False),
+            ],
+        )
+        worker = self.worker({"code-review": lambda text: "completed: " + text})
+        result = PlanSupervisor(self.coordinator, worker).run_plan(
+            actor_id="alice", plan_id=plan.plan_id, max_workers=2, max_tasks=5,
+        )
+        self.assertEqual(result.executed_tasks, 3)
+        self.assertFalse(result.budget_exhausted)
+        self.assertEqual({item.status for item in result.plan.subtasks}, {"succeeded"})
+        self.assertGreaterEqual(result.rounds, 2)
+        final_task = next(item for item in result.plan.subtasks if item.subtask_id == "synthesize")
+        final_record = self.store.get(final_task.task_id)
+        self.assertIn("completed: Collect A", final_record.definition[0]["argument"])
+        self.assertIn("completed: Collect B", final_record.definition[0]["argument"])
+
+    def test_plan_supervisor_respects_approval_and_task_budget(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="supervisor-budget",
+            subtasks=[
+                SubtaskSpec("one", "First", ("coding",), requires_approval=False),
+                SubtaskSpec("two", "Second", ("coding",), requires_approval=False),
+            ],
+        )
+        worker = self.worker({"code-review": lambda text: "done: " + text})
+        result = PlanSupervisor(self.coordinator, worker).run_plan(
+            actor_id="alice", plan_id=plan.plan_id, max_workers=1, max_tasks=1,
+        )
+        self.assertEqual(result.executed_tasks, 1)
+        self.assertTrue(result.budget_exhausted)
+        self.assertEqual(sum(item.status == "succeeded" for item in result.plan.subtasks), 1)
+
+        approval_plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="supervisor-approval",
+            subtasks=[SubtaskSpec("approval", "Needs review", ("coding",), requires_approval=True)],
+        )
+        waiting = PlanSupervisor(self.coordinator, worker).run_plan(
+            actor_id="alice", plan_id=approval_plan.plan_id,
+        )
+        self.assertEqual(waiting.executed_tasks, 0)
+        self.assertEqual(waiting.plan.subtasks[0].status, "queued")
+
+    def test_worker_does_not_claim_unrelated_queued_workflows(self):
+        unrelated = []
+        for index in range(101):
+            unrelated.append(self.store.create(
+                idempotency_key=f"unrelated-general-workflow-{index}",
+                workflow_name=f"daily-business-report-{index}",
+                definition=[{"name": "report", "action": "emit", "argument": "unrelated",
+                             "requires_approval": False}],
+            ))
+        specialist_task = self.create_task()
+        result = self.worker({"code-review": lambda text: "reviewed: " + text}).run_once()
+        self.assertEqual(result.task_id, specialist_task)
+        self.assertEqual(result.state, "succeeded")
+        self.assertTrue(all(self.store.get(task.run_id).state == "queued" for task in unrelated))
 
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
@@ -86,6 +170,33 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = self.worker({"code-review": lambda _: "approved result"}).run_once()
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
+
+
+    def test_owner_scoped_handler_factory_receives_persisted_task_owner(self):
+        task_id = self.create_task()
+        resolved = []
+        def factory(owner_id, agent_id):
+            resolved.append((owner_id, agent_id))
+            return lambda request: f"{owner_id}:{request}"
+        result = self.worker({}, owner_handler_factory=factory, agent_ids=("code-review",)).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(result.result["output"], "alice:Propose a safe patch")
+        self.assertEqual(resolved, [("alice", "code-review")])
+
+    def test_owner_scoped_worker_fails_closed_for_legacy_task_without_owner(self):
+        self.store.create(
+            idempotency_key="legacy-ownerless-task",
+            workflow_name="agent-code-review-legacy",
+            definition=[{"name": "review", "action": "emit", "argument": "inspect",
+                         "requires_approval": False}],
+        )
+        result = self.worker(
+            {}, owner_handler_factory=lambda owner, agent: lambda request: "unsafe",
+            agent_ids=("code-review",),
+        ).run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "missing_task_owner")
 
     def test_cancellation_during_handler_prevents_late_completion(self):
         task_id = self.create_task()
@@ -283,6 +394,72 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.worker({})
         with self.assertRaises(ValueError):
             self.worker({"not valid": lambda _: "no"})
+
+
+    def test_worker_handlers_use_parent_bounded_delegated_agent_runtime(self):
+        class ParentPolicy:
+            def __init__(self):
+                self.calls = []
+            def authorize_tool(self, name):
+                self.calls.append(name)
+                return name == "read"
+
+        parent = ParentPolicy()
+        observed = []
+        def model(*, messages, tools, tool_choice):
+            observed.append([item["function"]["name"] for item in tools])
+            return {"text": "specialist result", "tool_calls": {"tool_calls": []}}
+
+        handlers = build_delegated_specialist_handlers({
+            "research-agent": {
+                "model": model,
+                "tools": {"read": lambda _: "read data", "delete": lambda _: "deleted"},
+                "tool_definitions": [
+                    {"type": "function", "function": {"name": "read"}},
+                    {"type": "function", "function": {"name": "delete"}},
+                ],
+                "parent_policy": parent,
+                "allowed_tools": {"read"},
+                "loop_options": {
+                    "max_model_turns": 2,
+                    "max_tool_calls": 3,
+                    "max_duration_seconds": 5,
+                },
+            },
+        })
+        self.assertEqual(handlers["research-agent"]("Research this"), "specialist result")
+        self.assertEqual(observed, [["read"]])
+        self.assertEqual(parent.calls, [])
+
+    def test_delegated_specialist_handler_rejects_invalid_config_and_input(self):
+        with self.assertRaisesRegex(ValueError, "documented runtime fields"):
+            build_delegated_specialist_handlers({
+                "research-agent": {"model": lambda **_: {}, "unexpected": True},
+            })
+        handlers = build_delegated_specialist_handlers({
+            "research-agent": {
+                "model": lambda **_: {"text": "ok", "tool_calls": {"tool_calls": []}},
+                "tools": {},
+                "tool_definitions": [],
+                "parent_policy": type("Policy", (), {"authorize_tool": lambda self, name: False})(),
+                "allowed_tools": (),
+            },
+        })
+        with self.assertRaisesRegex(ValueError, "bounded non-empty text"):
+            handlers["research-agent"](" ")
+        with self.assertRaisesRegex(ValueError, "bounded non-empty text"):
+            handlers["research-agent"]("bad\x00input")
+        with self.assertRaisesRegex(ValueError, "exceeds the delegated specialist budget"):
+            build_delegated_specialist_handlers({
+                "research-agent": {
+                    "model": lambda **_: {"text": "ok", "tool_calls": {"tool_calls": []}},
+                    "tools": {},
+                    "tool_definitions": [],
+                    "parent_policy": type("Policy", (), {"authorize_tool": lambda self, name: False})(),
+                    "allowed_tools": (),
+                    "loop_options": {"max_duration_seconds": 121},
+                },
+            })
 
 
 if __name__ == "__main__":

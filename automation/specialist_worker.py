@@ -154,6 +154,8 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        owner_handler_factory: Callable[[str, str], Callable[[str], str]] | None = None,
+        agent_ids: tuple[str, ...] = (),
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -161,7 +163,9 @@ class SpecialistTaskWorker:
             raise ValueError("worker_id must be bounded non-empty text.")
         if not isinstance(service_actor_id, str) or not service_actor_id.strip() or len(service_actor_id) > 200:
             raise ValueError("service_actor_id must be bounded non-empty text.")
-        if not isinstance(handlers, Mapping) or not handlers:
+        if not isinstance(handlers, Mapping):
+            raise TypeError("handlers must be a mapping.")
+        if owner_handler_factory is None and not handlers:
             raise ValueError("at least one explicit specialist handler is required.")
         validated = {}
         for agent_id, handler in handlers.items():
@@ -173,10 +177,24 @@ class SpecialistTaskWorker:
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
+        if owner_handler_factory is not None and not callable(owner_handler_factory):
+            raise TypeError("owner_handler_factory must be callable when supplied.")
+        if not isinstance(agent_ids, tuple) or len(agent_ids) > 100:
+            raise ValueError("agent_ids must be a bounded tuple.")
+        registered_ids = set(validated)
+        for agent_id in agent_ids:
+            if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
+                raise ValueError("agent_ids must contain bounded identifiers.")
+            registered_ids.add(agent_id)
+        if owner_handler_factory is not None and not registered_ids:
+            raise ValueError("owner-scoped workers require explicit agent_ids or handlers.")
         self.handlers = validated
+        self.agent_ids = frozenset(registered_ids)
+        self.owner_handler_factory = owner_handler_factory
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
+        plan_id: str | None = None,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -188,6 +206,12 @@ class SpecialistTaskWorker:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
             raise ValueError("max_tasks must be an integer from 1 to 100.")
+        if plan_id is not None and (
+            not isinstance(plan_id, str) or not plan_id.strip()
+            or len(plan_id) > 100 or "\x00" in plan_id
+        ):
+            raise ValueError("plan_id must be bounded non-empty text when supplied.")
+        plan_id = plan_id.strip() if plan_id is not None else None
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -202,9 +226,11 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                owner_handler_factory=self.owner_handler_factory,
+                agent_ids=tuple(self.agent_ids),
             )
             while permits.acquire(blocking=False):
-                result = worker.run_once()
+                result = worker.run_once(plan_id=plan_id)
                 if result is None:
                     permits.release()
                     return
@@ -217,15 +243,32 @@ class SpecialistTaskWorker:
                 future.result()
         return tuple(results)
 
-    def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+    def run_once(self, *, plan_id: str | None = None) -> TaskRecord | None:
+        """Claim at most one task, optionally fenced to one trusted plan ID."""
+        prefixes = tuple("agent-" + agent_id + "-" for agent_id in self.agent_ids) or None
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id, workflow_prefixes=prefixes, plan_id=plan_id,
+        )
         if claimed is None:
             return None
 
-        agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
+        agent_id = self._agent_id(claimed.workflow_name, self.agent_ids)
         handler = self.handlers.get(agent_id)
-        if handler is None:
+        if self.owner_handler_factory is not None:
+            if not agent_id:
+                handler = None
+            elif not isinstance(claimed.owner_id, str) or not claimed.owner_id.strip():
+                return self.runtime.fail(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    error_code="missing_task_owner",
+                )
+            else:
+                try:
+                    handler = self.owner_handler_factory(claimed.owner_id, agent_id)
+                except Exception:
+                    handler = None
+        if not callable(handler):
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
@@ -275,3 +318,69 @@ class SpecialistTaskWorker:
             if workflow_name.startswith("agent-" + agent_id + "-"):
                 return agent_id
         return ""
+
+
+def build_delegated_specialist_handlers(
+    specialist_configs: Mapping[str, Mapping[str, object]],
+) -> dict[str, Callable[[str], str]]:
+    """Create worker handlers backed by isolated, parent-bounded agent runtimes.
+
+    Each specialist gets its own model, fixed tool schemas, guarded handler map,
+    parent authorization policy, and execution budget. The returned mapping is
+    directly consumable by SpecialistTaskWorker; no coordinator bypass is added.
+    """
+    from core.delegated_agent_runtime import build_delegated_agent_runtime
+
+    if not isinstance(specialist_configs, Mapping) or not specialist_configs or len(specialist_configs) > 100:
+        raise ValueError("specialist_configs must contain between 1 and 100 specialists")
+    handlers: dict[str, Callable[[str], str]] = {}
+    required = {"model", "tools", "tool_definitions", "parent_policy", "allowed_tools"}
+    optional = {"stream_model", "loop_options", "audit"}
+    for agent_id, config in specialist_configs.items():
+        if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
+            raise ValueError("specialist IDs must be bounded identifiers")
+        if not isinstance(config, Mapping) or not required.issubset(config) or set(config).difference(required | optional):
+            raise ValueError("each specialist config must contain only the documented runtime fields")
+        loop_options = config.get("loop_options", {})
+        if not isinstance(loop_options, Mapping):
+            raise TypeError("loop_options must be a mapping")
+        options = dict(loop_options)
+        # Apply conservative defaults while allowing an explicit, validated
+        # lower per-role budget through AgentExecutionLoop's own constructor.
+        options.setdefault("max_model_turns", 4)
+        options.setdefault("max_tool_calls", 8)
+        options.setdefault("max_duration_seconds", 45)
+        budget_caps = {
+            "max_model_turns": 8,
+            "max_tool_calls": 20,
+            "max_duration_seconds": 120,
+            "max_transcript_chars": 80_000,
+        }
+        for name, maximum in budget_caps.items():
+            if name in options and (
+                isinstance(options[name], bool)
+                or not isinstance(options[name], (int, float))
+                or options[name] > maximum
+            ):
+                raise ValueError(f"{name} exceeds the delegated specialist budget")
+        runtime = build_delegated_agent_runtime(
+            model=config["model"],
+            tools=config["tools"],
+            tool_definitions=config["tool_definitions"],
+            parent_policy=config["parent_policy"],
+            allowed_tools=config["allowed_tools"],
+            stream_model=config.get("stream_model"),
+            loop_options=options,
+            audit=config.get("audit"),
+        )
+
+        def handle(request: str, *, _runtime=runtime) -> str:
+            if not isinstance(request, str) or not request.strip() or len(request) > _MAX_INPUT_CHARS or "\x00" in request:
+                raise ValueError("specialist input must be bounded non-empty text")
+            result = _runtime.run(request)
+            if result.status != "completed" or not isinstance(result.text, str) or not result.text.strip():
+                raise RuntimeError("delegated specialist execution did not complete")
+            return result.text.strip()[:_MAX_OUTPUT_CHARS]
+
+        handlers[agent_id] = handle
+    return handlers

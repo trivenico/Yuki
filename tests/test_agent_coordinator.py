@@ -249,6 +249,21 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.submit(actor_id="alice", idempotency_key="idem",
                                     subtasks=[SubtaskSpec("a", "different", ("research",))])
 
+    def test_plan_owner_is_propagated_to_dispatched_tasks(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", owner_id="tenant-42", idempotency_key="owner-plan",
+            subtasks=[SubtaskSpec("a", "Owner-scoped work", ("research",), requires_approval=False)],
+        )
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        self.assertIsNotNone(task_id)
+        self.assertEqual(self.store.get(task_id).owner_id, "tenant-42")
+        with self.assertRaises(WorkflowConflict):
+            self.coordinator.submit(
+                actor_id="alice", owner_id="tenant-43", idempotency_key="owner-plan",
+                subtasks=[SubtaskSpec("a", "Owner-scoped work", ("research",), requires_approval=False)],
+            )
+
     def test_authorization_missing_or_raising_fails_closed(self):
         no_auth = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "noauth.sqlite3"),
                                              self.agents, authorize=lambda *_: False)

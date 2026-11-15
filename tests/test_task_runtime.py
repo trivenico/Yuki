@@ -31,9 +31,23 @@ class TaskRuntimeTests(unittest.TestCase):
         first = self.create()
         second = self.create()
         self.assertEqual(first.task_id, second.task_id)
+        self.assertEqual(self.store.get(first.task_id).owner_id, "alice")
         events = self.runtime.events(actor_id="alice", task_id=first.task_id)
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
+
+
+    def test_owner_identity_is_bound_to_task_idempotency_key(self):
+        first = self.store.create(
+            idempotency_key="owner-bound-key", workflow_name="owner-task",
+            definition=self.steps, owner_id="alice",
+        )
+        self.assertEqual(first.owner_id, "alice")
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="owner-bound-key", workflow_name="owner-task",
+                definition=self.steps, owner_id="bob",
+            )
 
     def test_task_listing_requires_separate_capability_and_is_bounded(self):
         first = self.create("list-first")
@@ -176,6 +190,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertNotEqual(retried.task_id, task.task_id)
         self.assertEqual(retried.state, "queued")
         self.assertEqual(retried.attempts, 0)
+        self.assertEqual(self.store.get(retried.task_id).owner_id, "alice")
         events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
         self.assertEqual([event.kind for event in events], ["task.created"])
         self.assertEqual(events[0].payload["retry_of"], task.task_id)

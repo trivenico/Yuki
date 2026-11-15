@@ -52,6 +52,39 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(len(results), 6)
         self.assertEqual(len(set(results)), 1)
 
+    def test_plan_scoped_claim_cannot_consume_another_plans_task(self):
+        first = self.store.create(
+            idempotency_key="plan-a-task", workflow_name="agent-research-a",
+            definition=[{"name": "work", "action": "emit", "argument": "a", "requires_approval": False}],
+            owner_id="alice", plan_id="plan-a", subtask_id="research",
+        )
+        second = self.store.create(
+            idempotency_key="plan-b-task", workflow_name="agent-research-b",
+            definition=[{"name": "work", "action": "emit", "argument": "b", "requires_approval": False}],
+            owner_id="alice", plan_id="plan-b", subtask_id="research",
+        )
+        claimed = self.store.claim_next(worker_id="plan-a-worker", plan_id="plan-a")
+        self.assertEqual(claimed.run_id, first.run_id)
+        self.assertEqual(claimed.plan_id, "plan-a")
+        self.assertEqual(claimed.subtask_id, "research")
+        self.assertEqual(self.store.get(second.run_id).state, "queued")
+
+    def test_plan_linkage_is_bound_to_idempotency_and_validated(self):
+        self.store.create(
+            idempotency_key="plan-link-key", workflow_name="agent-review",
+            definition=self.definition, plan_id="plan-1", subtask_id="review",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="plan-link-key", workflow_name="agent-review",
+                definition=self.definition, plan_id="plan-2", subtask_id="review",
+            )
+        with self.assertRaises(ValueError):
+            self.store.create(
+                idempotency_key="partial-plan-link", workflow_name="agent-review",
+                definition=self.definition, plan_id="plan-1",
+            )
+
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)

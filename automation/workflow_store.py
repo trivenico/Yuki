@@ -83,6 +83,9 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    owner_id: str | None = None
+    plan_id: str | None = None
+    subtask_id: str | None = None
 
 
 class WorkflowRunStore:
@@ -114,11 +117,14 @@ class WorkflowRunStore:
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
-                    approved_session_hash TEXT
+                    approved_session_hash TEXT,
+                    owner_id TEXT,
+                    plan_id TEXT,
+                    subtask_id TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "owner_id", "plan_id", "subtask_id"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -129,6 +135,8 @@ class WorkflowRunStore:
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_lease "
                 "ON workflow_runs(state, lease_expires_at)"
             )
+            db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_owner_created ON workflow_runs(owner_id, created_at)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_plan_state_created ON workflow_runs(plan_id, state, created_at)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,9 +212,12 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            owner_id=row["owner_id"] if "owner_id" in row.keys() else None,
+            plan_id=row["plan_id"] if "plan_id" in row.keys() else None,
+            subtask_id=row["subtask_id"] if "subtask_id" in row.keys() else None,
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], owner_id: str | None = None, plan_id: str | None = None, subtask_id: str | None = None) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -215,12 +226,29 @@ class WorkflowRunStore:
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or "\x00" in owner_id):
+            raise ValueError("owner_id must be non-empty bounded text when supplied.")
+        owner = owner_id.strip() if owner_id is not None else None
+        if (plan_id is None) != (subtask_id is None):
+            raise ValueError("plan_id and subtask_id must be supplied together.")
+        for field, value in (("plan_id", plan_id), ("subtask_id", subtask_id)):
+            if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 100 or "\x00" in value):
+                raise ValueError(f"{field} must be bounded non-empty text when supplied.")
+        plan = plan_id.strip() if plan_id is not None else None
+        subtask = subtask_id.strip() if subtask_id is not None else None
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
-        digest = hashlib.sha256(
-            (name + "\n" + definition_json).encode("utf-8")
-        ).hexdigest()
+        if plan is None:
+            # Keep pre-plan-linkage digests stable for existing idempotency keys.
+            digest_payload = (name + "\\n" + definition_json) if owner is None else (owner + "\\n" + name + "\\n" + definition_json)
+        else:
+            digest_payload = json.dumps(
+                {"owner_id": owner, "plan_id": plan, "subtask_id": subtask,
+                 "name": name, "definition": canonical},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            )
+        digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
         now = _now()
         with self._connect() as db:
             # Serialize the read-before-insert path so concurrent retries with
@@ -237,9 +265,9 @@ class WorkflowRunStore:
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now))
+                    definition_json, state, created_at, updated_at, owner_id, plan_id, subtask_id
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, owner, plan, subtask))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -279,12 +307,28 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
-        """Atomically claim the oldest queued run; never steals or replays running work."""
+    def claim_next(
+        self, *, worker_id: str, lease_seconds: int = 60,
+        workflow_prefixes: tuple[str, ...] | None = None,
+        plan_id: str | None = None,
+    ) -> WorkflowRun | None:
+        """Atomically claim the oldest eligible queued run.
+
+        Optional workflow prefixes let specialist pools claim only their own
+        agent task namespace instead of consuming unrelated workflow work.
+        """
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if workflow_prefixes is not None:
+            if (not isinstance(workflow_prefixes, tuple) or not workflow_prefixes
+                or len(workflow_prefixes) > 100
+                or any(not isinstance(prefix, str) or not prefix or len(prefix) > 200 or "\x00" in prefix for prefix in workflow_prefixes)):
+                raise ValueError("workflow_prefixes must be a bounded tuple of non-empty prefixes.")
+        if plan_id is not None and (not isinstance(plan_id, str) or not plan_id.strip() or len(plan_id) > 100 or "\x00" in plan_id):
+            raise ValueError("plan_id must be bounded non-empty text when supplied.")
+        plan_id = plan_id.strip() if plan_id is not None else None
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
@@ -292,18 +336,28 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
-            ).fetchall()
+            claim_sql = "SELECT * FROM workflow_runs WHERE state='queued'"
+            claim_params: list[Any] = []
+            if plan_id is not None:
+                claim_sql += " AND plan_id=?"
+                claim_params.append(plan_id)
+            if workflow_prefixes is not None:
+                predicates = []
+                for prefix in workflow_prefixes:
+                    predicates.append("substr(workflow_name, 1, ?) = ?")
+                    claim_params.extend((len(prefix), prefix))
+                claim_sql += " AND (" + " OR ".join(predicates) + ")"
+            claim_sql += " ORDER BY created_at, run_id LIMIT 100"
+            rows = db.execute(claim_sql, claim_params).fetchall()
             row = next((
                 candidate for candidate in rows
-                if not self._requires_approval(json.loads(candidate["definition_json"]))
+                if (workflow_prefixes is None or any(candidate["workflow_name"].startswith(prefix) for prefix in workflow_prefixes))
+                and (not self._requires_approval(json.loads(candidate["definition_json"]))
                 or (
                     candidate["approved_by"] and candidate["approved_at"]
                     and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
-                )
+                ))
             ), None)
             if row is None:
                 return None

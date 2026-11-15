@@ -38,6 +38,7 @@ class SpecialistAgent:
     action: str
     permissions: frozenset[str] = frozenset()
     enabled: bool = True
+    requires_approval: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,9 +111,13 @@ class SpecialistAgentCoordinator:
                     plan_id TEXT PRIMARY KEY,
                     idempotency_key TEXT NOT NULL UNIQUE,
                     request_digest TEXT NOT NULL,
+                    owner_id TEXT,
                     created_at TEXT NOT NULL
                 )
             """)
+            plan_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plans)")}
+            if "owner_id" not in plan_columns:
+                db.execute("ALTER TABLE agent_plans ADD COLUMN owner_id TEXT")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_subtasks (
                     plan_id TEXT NOT NULL,
@@ -141,21 +146,26 @@ class SpecialistAgentCoordinator:
                     action TEXT NOT NULL,
                     permissions_json TEXT NOT NULL,
                     enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+                    requires_approval INTEGER NOT NULL DEFAULT 0 CHECK(requires_approval IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             """)
+            agent_columns = {row["name"] for row in db.execute("PRAGMA table_info(specialist_agents)")}
+            if "requires_approval" not in agent_columns:
+                db.execute("ALTER TABLE specialist_agents ADD COLUMN requires_approval INTEGER NOT NULL DEFAULT 0")
             now = datetime.now(timezone.utc).isoformat()
             for agent in agent_map.values():
                 db.execute("""
                     INSERT OR IGNORE INTO specialist_agents(
                         agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        enabled, requires_approval, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     agent.agent_id, agent.name,
                     json.dumps(sorted(agent.capabilities)), agent.action,
-                    json.dumps(sorted(agent.permissions)), int(agent.enabled), now, now,
+                    json.dumps(sorted(agent.permissions)), int(agent.enabled),
+                    int(agent.requires_approval), now, now,
                 ))
         self._refresh_agent_registry()
 
@@ -190,8 +200,8 @@ class SpecialistAgentCoordinator:
             or any(not isinstance(item, str) or not _PERMISSION.fullmatch(item) for item in agent.permissions)
         ):
             raise ValueError("permissions must contain at most 32 bounded identifiers.")
-        if type(agent.enabled) is not bool:
-            raise ValueError("enabled must be a boolean.")
+        if type(agent.enabled) is not bool or type(agent.requires_approval) is not bool:
+            raise ValueError("enabled and requires_approval must be booleans.")
 
     def _allowed(self, actor_id: str, action: str, resource_id: str) -> bool:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
@@ -292,10 +302,13 @@ class SpecialistAgentCoordinator:
                 action=row["action"],
                 permissions=frozenset(permissions),
                 enabled=bool(row["enabled"]),
+                requires_approval=bool(row["requires_approval"]) if "requires_approval" in row.keys() else False,
             )
             SpecialistAgentCoordinator._validate_agent(agent)
             if row["enabled"] not in (0, 1):
                 raise ValueError("enabled state must be 0 or 1")
+            if "requires_approval" in row.keys() and row["requires_approval"] not in (0, 1):
+                raise ValueError("requires_approval state must be 0 or 1")
             return agent
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
@@ -324,12 +337,12 @@ class SpecialistAgentCoordinator:
                     db.execute("""
                         INSERT INTO specialist_agents(
                             agent_id, name, capabilities_json, action, permissions_json,
-                            enabled, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            enabled, requires_approval, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
                         agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                        now, now,
+                        int(agent.requires_approval), now, now,
                     ))
             except sqlite3.IntegrityError as exc:
                 raise AgentPlanError("agent ID is already registered.") from exc
@@ -389,11 +402,19 @@ class SpecialistAgentCoordinator:
             # Deterministic least-overprovisioned match, then stable ID tie-break.
             return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
 
-    def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
+    def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec], owner_id: str | None = None) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
+        # owner_id is a trusted composition-layer identity, not a task field.
+        # Callers must resolve it from the authenticated principal/session.
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or len(owner_id) > 200 or "\x00" in owner_id
+        ):
+            raise ValueError("owner_id must be bounded non-empty text when supplied.")
+        owner_id = owner_id.strip() if isinstance(owner_id, str) else None
         items = self._validate_subtasks(subtasks, self.max_subtasks)
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
@@ -407,7 +428,10 @@ class SpecialistAgentCoordinator:
              "action": assignments[i.subtask_id].action}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
-        payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        # Preserve legacy idempotency digests for ownerless plans. A supplied
+        # owner is part of the digest so one key cannot cross tenant boundaries.
+        digest_payload = canonical if owner_id is None else {"owner_id": owner_id, "subtasks": canonical}
+        payload = json.dumps(digest_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
         plan_id = hashlib.sha256(("yuki-agent-plan\0" + key).encode("utf-8")).hexdigest()[:32]
@@ -419,8 +443,8 @@ class SpecialistAgentCoordinator:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
-            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at) VALUES (?, ?, ?, ?)",
-                       (plan_id, key, digest, now))
+            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, owner_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                       (plan_id, key, digest, owner_id, now))
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
@@ -449,6 +473,7 @@ class SpecialistAgentCoordinator:
             if plan is None:
                 raise KeyError("agent plan not found.")
             plan_key = plan["idempotency_key"]
+            plan_owner_id = plan["owner_id"] if "owner_id" in plan.keys() else None
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
             ).fetchall()]
@@ -515,12 +540,15 @@ class SpecialistAgentCoordinator:
                     argument += header + "\n".join(context_lines)
             task = self.runtime.enqueue(
                 actor_id=actor_id,
+                owner_id=plan_owner_id,
+                plan_id=plan_id,
+                subtask_id=row["subtask_id"],
                 idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
                 name=f"agent-{agent.agent_id}-{row['subtask_id']}",
                 steps=[{
                     "name": row["subtask_id"], "action": agent.action,
                     "argument": argument,
-                    "requires_approval": bool(row["requires_approval"]),
+                    "requires_approval": bool(row["requires_approval"]) or agent.requires_approval,
                 }],
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
