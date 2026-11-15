@@ -173,5 +173,25 @@ class StructuredToolProtocolTests(unittest.TestCase):
                 self.assertEqual(result[0].output, "sent")
             self.assertEqual(len(executions), 1)
 
+
+    def test_approval_token_is_not_minted_without_positive_host_confirmation(self):
+        minted = []
+        result = self.protocol.dispatch(
+            self.envelope([self.call("approval-check", "echo")]),
+            confirmation_check=lambda call: False,
+            approval_id_factory=lambda *args: minted.append(True) or "token",
+        )
+        self.assertEqual(minted, [])
+        self.assertEqual(len(result), 1)
+
+    def test_confirmation_callback_must_return_a_real_boolean(self):
+        with self.assertRaises(TypeError):
+            self.protocol.dispatch(
+                self.envelope([self.call("approval-check", "echo")]),
+                confirmation_check=lambda call: 1,
+                approval_id_factory=lambda *args: "token",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
