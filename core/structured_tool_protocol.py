@@ -135,9 +135,12 @@ class StructuredToolProtocol:
             confirmed = (
                 confirmation_check(call) if confirmation_check is not None else False
             )
+            if type(confirmed) is not bool:
+                raise TypeError("confirmation_check must return a boolean.")
+            # Token issuance is allowed only after a positive trusted-host decision.
             approval_id = (
                 approval_id_factory(principal_id, context, call)
-                if approval_id_factory is not None else None
+                if confirmed is True and approval_id_factory is not None else None
             )
             results.append(self.dispatch_call(
                 call, principal_id=principal_id, action_context=context,
