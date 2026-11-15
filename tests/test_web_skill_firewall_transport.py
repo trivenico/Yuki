@@ -40,6 +40,25 @@ class FakeTransport:
 
 
 class WebSkillFirewallTransportTests(unittest.TestCase):
+    def test_rejects_malformed_allowlist_entries_instead_of_sanitizing_them(self):
+        invalid_allowlists = (
+            "example.com",
+            ("example.com..",),
+            (" example.com",),
+            ("example.com ",),
+            ("*.example.com",),
+            ("example..com",),
+            ("example.com", "EXAMPLE.COM"),
+            ("example.com", None),
+        )
+        for hosts in invalid_allowlists:
+            with self.subTest(hosts=hosts), self.assertRaises(ValueError):
+                WebSkill(allowed_hosts=hosts, transport=FakeTransport())
+
+    def test_normalizes_one_terminal_root_dot_in_allowlist(self):
+        skill = WebSkill(allowed_hosts=("EXAMPLE.COM.",), transport=FakeTransport())
+        self.assertEqual(skill.allowed_hosts, frozenset({"example.com"}))
+
     def test_fetch_uses_injected_firewall_transport_and_extracts_text(self):
         transport = FakeTransport()
         skill = WebSkill(allowed_hosts=("example.com",), transport=transport)

@@ -7,6 +7,9 @@ from urllib.parse import urlsplit
 from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport, PinnedHTTPTransportError
 
 
+_HOSTNAME = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$")
+
+
 class WebSkillError(RuntimeError):
     pass
 
@@ -18,7 +21,21 @@ class WebSkill:
     requires_approval = True
 
     def __init__(self, *, allowed_hosts=(), timeout=8, max_bytes=500000, transport=None, firewall_policy=None):
-        self.allowed_hosts = frozenset(host.lower().rstrip(".") for host in allowed_hosts if isinstance(host, str))
+        if isinstance(allowed_hosts, (str, bytes)) or not isinstance(allowed_hosts, (tuple, list, set, frozenset)):
+            raise ValueError("allowed_hosts must be a collection of exact hostnames.")
+        normalized_hosts = set()
+        for host in allowed_hosts:
+            if not isinstance(host, str) or host != host.strip() or host.endswith(".."):
+                raise ValueError("invalid web host allow-list entry.")
+            normalized = host.lower()
+            if normalized.endswith("."):
+                normalized = normalized[:-1]
+            if not _HOSTNAME.fullmatch(normalized):
+                raise ValueError("invalid web host allow-list entry.")
+            if normalized in normalized_hosts:
+                raise ValueError("duplicate web host allow-list entry.")
+            normalized_hosts.add(normalized)
+        self.allowed_hosts = frozenset(normalized_hosts)
         self.timeout, self.max_bytes = timeout, max_bytes
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
             raise ValueError("timeout must be between 1 and 120 seconds")
@@ -47,7 +64,7 @@ class WebSkill:
         raw_host = (parts.hostname or "").lower()
         if raw_host.endswith(".."):
             raise WebSkillError("URL hostname is malformed.")
-        host = raw_host.rstrip(".")
+        host = raw_host[:-1] if raw_host.endswith(".") else raw_host
         if (parts.scheme.lower() != "https" or not host or parts.username is not None
                 or parts.password is not None or port not in (None, 443) or parts.fragment):
             raise WebSkillError("Only public HTTPS URLs on the default port are accepted.")
