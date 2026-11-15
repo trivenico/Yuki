@@ -10,21 +10,9 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Callable
 
-from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
+from automation.workflow_store import TaskEvent, WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.lease_renewed"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
-
-
-@dataclass(frozen=True)
-class TaskEvent:
-    event_id: int
-    task_id: str
-    sequence: int
-    kind: str
-    actor_id: str
-    payload: dict[str, Any]
-    created_at: str
 
 
 @dataclass(frozen=True)
