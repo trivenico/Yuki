@@ -1,8 +1,9 @@
 import tempfile
 import unittest
+from unittest.mock import Mock
 from pathlib import Path
 
-from api.runtime import build_conversation_runtime
+from api.runtime import ConversationRuntime, build_conversation_runtime
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
@@ -44,6 +45,43 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
             self.assertTrue(runtime._closed)
+
+    def test_runtime_close_is_not_retried_when_application_cleanup_fails(self):
+        application = Mock()
+        application.store = object()
+        application.close.side_effect = RuntimeError("cleanup failed")
+        runtime = ConversationRuntime(lambda scope, receive, send: None, application)
+
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            runtime.close()
+        runtime.close()
+
+        self.assertTrue(runtime._closed)
+        application.close.assert_called_once_with()
+
+    def test_runtime_rejects_http_dispatch_after_shutdown(self):
+        application = Mock()
+        application.store = object()
+        runtime = ConversationRuntime(lambda scope, receive, send: None, application)
+        runtime.close()
+        dispatched = []
+
+        async def web(scope, receive, send):
+            dispatched.append(scope)
+
+        runtime.web = web
+
+        import asyncio
+        async def invoke():
+            async def receive():
+                return {"type": "http.request"}
+            async def send(message):
+                return None
+            await runtime({"type": "http"}, receive, send)
+
+        with self.assertRaisesRegex(RuntimeError, "runtime is closed"):
+            asyncio.run(invoke())
+        self.assertEqual(dispatched, [])
 
     def test_runtime_wires_authenticated_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:

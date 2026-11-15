@@ -37,6 +37,8 @@ class ConversationRuntime:
         self._closed = False
 
     async def __call__(self, scope, receive, send):
+        if self._closed:
+            raise RuntimeError("conversation runtime is closed")
         if scope.get("type") == "http":
             await self.web(scope, receive, send)
             return
@@ -55,8 +57,11 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
-        self.application.close()
+        # Mark the wrapper closed before delegating. The application runtime
+        # also fences repeated cleanup, and this keeps the ASGI owner idempotent
+        # even when an underlying close hook raises.
         self._closed = True
+        self.application.close()
 
 
 def build_conversation_runtime(

@@ -46,12 +46,15 @@ class ComponentRegistry:
             raise ValueError("component contract IDs must be unique")
         self._runtimes: dict[str, ComponentRuntime] = {}
         self._started: list[str] = []
+        self._startup_attempted = False
         self._startup_cleanup_errors: tuple[str, ...] = ()
         self._closed = False
 
     def register(self, runtime: ComponentRuntime) -> None:
         if self._closed:
             raise RuntimeError("component registry is closed")
+        if self._startup_attempted:
+            raise RuntimeError("component registry registration is frozen after startup")
         if not isinstance(runtime, ComponentRuntime):
             raise TypeError("runtime must be a ComponentRuntime")
         if not isinstance(runtime.contract, ComponentContract):
@@ -73,6 +76,8 @@ class ComponentRegistry:
         self._runtimes[component_id] = runtime
 
     def resolve(self, component_id: str) -> object:
+        if self._closed:
+            raise RuntimeError("component registry is closed")
         try:
             return self._runtimes[component_id].instance
         except KeyError as exc:
@@ -81,7 +86,7 @@ class ComponentRegistry:
     def start_all(self) -> tuple[str, ...]:
         if self._closed:
             raise RuntimeError("component registry is closed")
-        if self._started:
+        if self._startup_attempted:
             return tuple(self._started)
         registered = set(self._runtimes)
         for component_id, runtime in self._runtimes.items():
@@ -93,6 +98,9 @@ class ComponentRegistry:
         ordered = component_dependency_order(
             runtime.contract for runtime in self._runtimes.values()
         )
+        # Freeze only after dependency ordering succeeds. Catalog graph errors
+        # happen before lifecycle execution and must not lock registration.
+        self._startup_attempted = True
         try:
             for contract in ordered:
                 component_id = contract.component_id
@@ -113,6 +121,8 @@ class ComponentRegistry:
 
     def health(self) -> dict[str, bool]:
         """Probe only started runtimes; registered-but-inactive services are not live."""
+        if self._closed:
+            raise RuntimeError("component registry is closed")
         results: dict[str, bool] = {}
         for component_id in self._started:
             runtime = self._runtimes[component_id]

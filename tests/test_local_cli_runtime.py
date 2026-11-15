@@ -11,6 +11,10 @@ from core.conversation_store import ConversationStore
 class FakeProvider:
     def __init__(self):
         self.calls = []
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
 
     def generate_chat(self, *, messages, tools, tool_choice):
         self.calls.append((messages, tools, tool_choice))
@@ -39,6 +43,25 @@ class LocalOwnerIdentityTests(unittest.TestCase):
 
 
 class LocalCliRuntimeTests(unittest.TestCase):
+    def test_provider_is_closed_if_cli_composition_fails_before_ownership_transfer(self):
+        provider = FakeProvider()
+        with self.assertRaisesRegex(ValueError, "max_agent_steps"):
+            build_local_conversation_runtime(
+                {"max_agent_steps": 0}, provider_factory=lambda config: provider,
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+            )
+        self.assertEqual(provider.close_calls, 1)
+
+    def test_provider_is_closed_if_store_construction_fails(self):
+        provider = FakeProvider()
+        with self.assertRaisesRegex(RuntimeError, "store unavailable"):
+            build_local_conversation_runtime(
+                {"max_agent_steps": 3}, provider_factory=lambda config: provider,
+                store_factory=lambda config: (_ for _ in ()).throw(RuntimeError("store unavailable")),
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+            )
+        self.assertEqual(provider.close_calls, 1)
+
     def test_runtime_uses_guarded_agent_loop_and_persists_conversation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -70,6 +93,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 self.assertEqual(provider.calls[0][1], [])
             finally:
                 runtime.close()
+                self.assertEqual(provider.close_calls, 1)
 
             reopened = ConversationStore(store_path)
             try:

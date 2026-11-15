@@ -65,7 +65,7 @@ catalog contract. A runtime supplies explicit `start`, `close` and
 - Preserves rollback cleanup failures in `startup_cleanup_errors` and in
   the sanitized startup exception without disclosing underlying exception text.
 - Rejects malformed contract IDs before using them as registry keys.
-- Exposes only explicitly registered instances through `resolve`.
+- Exposes only explicitly registered instances through `resolve`; resolving instances or probing health after registry shutdown raises a clear lifecycle error.
 - Runs health probes only for started runtimes; registration alone does not
   make an inactive component part of live readiness.
 - Rejects registrations without a concrete runtime instance; lifecycle hooks
@@ -113,3 +113,8 @@ that every listed component is complete, production-secure, deployed or usable
 as a daily business operator. The individual limitations in the catalog are
 part of the contract and must be removed with tested implementations, not
 edited away to make readiness look better.
+
+
+### Conversation shutdown boundary
+
+The shared application runtime closes the conversation service first. Its service lock drains an active reply before shutdown proceeds, then rejects new create/list/history/reply operations. The runtime next closes its persistence store and attempts every explicitly owned external cleanup callback, even if an earlier hook raises. The service fence and runtime close are idempotent; this does not yet coordinate unrelated component processes or distributed workers.

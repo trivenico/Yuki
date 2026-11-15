@@ -34,29 +34,47 @@ class ConversationService:
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
         self._lock = threading.RLock()
+        self._closed = False
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("conversation service is closed")
+
+    def close(self) -> None:
+        """Fence new operations and wait for an active reply to finish."""
+        with self._lock:
+            self._closed = True
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
-        return self.store.create_conversation(owner_id=owner_id, title=title)
+        with self._lock:
+            self._ensure_open()
+            return self.store.create_conversation(owner_id=owner_id, title=title)
 
     def list(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        return self.store.list_conversations(owner_id=owner_id, limit=limit)
+        with self._lock:
+            self._ensure_open()
+            return self.store.list_conversations(owner_id=owner_id, limit=limit)
 
     def history(
         self, *, owner_id: str, conversation_id: str, limit: int = 100,
         after_sequence: int | None = None,
     ) -> list[dict[str, Any]]:
-        return self.store.list_messages(
-            owner_id=owner_id, conversation_id=conversation_id,
-            limit=limit, after_sequence=after_sequence,
-        )
+        with self._lock:
+            self._ensure_open()
+            return self.store.list_messages(
+                owner_id=owner_id, conversation_id=conversation_id,
+                limit=limit, after_sequence=after_sequence,
+            )
 
     def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
-        token = str(uuid.uuid4())
-        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
-        try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
-        finally:
-            self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
+        with self._lock:
+            self._ensure_open()
+            token = str(uuid.uuid4())
+            self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
+            try:
+                return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
+            finally:
+                self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,

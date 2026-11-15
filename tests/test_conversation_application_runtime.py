@@ -38,6 +38,23 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             reopened = ConversationStore(Path(directory) / "conversations.sqlite3")
             self.assertEqual(reopened.list_conversations(owner_id="local-owner-123"), [])
 
+    def test_runtime_fences_conversations_before_resource_cleanup(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "shutdown-order.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+                close_callbacks=(lambda: calls.append("provider"),),
+            )
+            conversation = runtime.conversations.create(owner_id="shutdown-owner")
+            runtime.close()
+            with self.assertRaisesRegex(RuntimeError, "service is closed"):
+                runtime.conversations.history(
+                    owner_id="shutdown-owner",
+                    conversation_id=conversation["conversation_id"],
+                )
+            self.assertEqual(calls, ["provider"])
+
     def test_store_close_hook_is_invoked_exactly_once(self):
         calls = []
 
@@ -71,6 +88,34 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
                 runtime.close()
             runtime.close()
         self.assertEqual(calls, ["close"])
+
+    def test_owned_cleanup_hooks_run_after_store_even_when_store_close_fails(self):
+        calls = []
+
+        class Store(ConversationStore):
+            def close(self):
+                calls.append("store")
+                raise RuntimeError("store close failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "owned-resources.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+                close_callbacks=(lambda: calls.append("provider"),),
+            )
+            with self.assertRaisesRegex(RuntimeError, "store close failed"):
+                runtime.close()
+            runtime.close()
+        self.assertEqual(calls, ["store", "provider"])
+
+    def test_invalid_cleanup_hooks_fail_before_opening_store(self):
+        opened = []
+        with self.assertRaisesRegex(TypeError, "close_callbacks"):
+            build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), close_callbacks=(object(),),
+                store_factory=lambda config: opened.append(True),
+            )
+        self.assertEqual(opened, [])
 
     def test_api_runtime_can_leave_owner_resolution_to_authenticated_surface(self):
         with tempfile.TemporaryDirectory() as directory:

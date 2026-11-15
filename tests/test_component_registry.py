@@ -74,6 +74,70 @@ class ComponentRegistryTests(unittest.TestCase):
         self.assertEqual(registry.health(), {"identity-access": True})
         self.assertEqual(calls, ["probe"])
 
+    def test_registration_is_frozen_after_startup_begins(self):
+        events = []
+        registry = ComponentRegistry()
+        registry.register(self.runtime("identity-access", events))
+        registry.start_all()
+
+        with self.assertRaisesRegex(RuntimeError, "registration is frozen"):
+            registry.register(self.runtime("configuration-runtime", events))
+
+        self.assertEqual(registry.start_all(), ("identity-access",))
+        self.assertEqual(events, [("start", "identity-access")])
+
+    def test_dependency_cycle_fails_before_any_runtime_lifecycle_hook(self):
+        events = []
+        cyclic = replace(
+            self.contracts["identity-access"],
+            depends_on=("identity-access",),
+        )
+        registry = ComponentRegistry(contracts=(cyclic,))
+        runtime = self.runtime("identity-access", events)
+        registry.register(replace(runtime, contract=cyclic))
+
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            registry.start_all()
+
+        self.assertEqual(events, [])
+        self.assertEqual(registry.started_components, ())
+        self.assertEqual(registry.health(), {})
+
+    def test_registration_remains_available_after_dependency_validation_failure(self):
+        events = []
+        registry = ComponentRegistry()
+        registry.register(self.runtime("agent-execution", events))
+        with self.assertRaisesRegex(RuntimeError, "missing runtime dependencies"):
+            registry.start_all()
+
+        registry.register(self.runtime("identity-access", events))
+        registry.register(self.runtime("provider-runtime", events))
+        self.assertEqual(
+            registry.start_all(),
+            ("provider-runtime", "identity-access", "agent-execution"),
+        )
+
+    def test_health_rejects_non_boolean_probe_results(self):
+        registry = ComponentRegistry()
+        runtime = self.runtime("identity-access", [])
+        registry.register(replace(runtime, health_check=lambda: 1))
+        registry.start_all()
+
+        with self.assertRaisesRegex(TypeError, "must return bool"):
+            registry.health()
+
+    def test_health_probe_exception_is_not_reported_as_healthy(self):
+        registry = ComponentRegistry()
+        runtime = self.runtime("identity-access", [])
+        registry.register(replace(
+            runtime,
+            health_check=lambda: (_ for _ in ()).throw(OSError("probe failed")),
+        ))
+        registry.start_all()
+
+        with self.assertRaisesRegex(OSError, "probe failed"):
+            registry.health()
+
     def test_starts_dependencies_before_dependents_and_closes_in_reverse(self):
         events = []
         registry = ComponentRegistry()
@@ -152,6 +216,25 @@ class ComponentRegistryTests(unittest.TestCase):
         unknown = replace(self.contracts["identity-access"], component_id="unknown")
         with self.assertRaisesRegex(ValueError, "not registered"):
             registry.register(replace(self.runtime("identity-access", events), contract=unknown))
+
+    def test_resolve_and_health_reject_use_after_close(self):
+        registry = ComponentRegistry()
+        registry.register(self.runtime("identity-access", []))
+        registry.start_all()
+        registry.close()
+
+        with self.assertRaisesRegex(RuntimeError, "registry is closed"):
+            registry.resolve("identity-access")
+        with self.assertRaisesRegex(RuntimeError, "registry is closed"):
+            registry.health()
+
+    def test_resolve_rejects_closed_registry_even_for_registered_inactive_runtime(self):
+        registry = ComponentRegistry()
+        registry.register(self.runtime("identity-access", []))
+        registry.close()
+
+        with self.assertRaisesRegex(RuntimeError, "registry is closed"):
+            registry.resolve("identity-access")
 
     def test_close_failure_does_not_prevent_remaining_cleanup(self):
         events = []
