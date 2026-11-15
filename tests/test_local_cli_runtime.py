@@ -16,6 +16,12 @@ class FakeProvider:
     def close(self):
         self.close_calls += 1
 
+    def generate(self, prompt):
+        return prompt
+
+    def is_available(self):
+        return True
+
     def generate_chat(self, *, messages, tools, tool_choice):
         self.calls.append((messages, tools, tool_choice))
         return {"text": "Persistent answer", "tool_calls": {"tool_calls": []}}
@@ -74,6 +80,11 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 owner_id_factory=lambda: "local-test-owner-identity-000000000000",
             )
             try:
+                self.assertEqual(set(runtime.component_registry.started_components), {
+                    "identity-access", "provider-runtime", "agent-execution",
+                    "durable-conversations", "application-composition",
+                })
+                self.assertTrue(all(runtime.component_registry.health().values()))
                 conversation = runtime.conversations.create(owner_id=runtime.owner_id)
                 first = runtime.conversations.reply(
                     owner_id=runtime.owner_id,
@@ -94,6 +105,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
                 self.assertEqual(provider.close_calls, 1)
+                self.assertTrue(runtime.application._closed)
 
             reopened = ConversationStore(store_path)
             try:
