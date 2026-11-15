@@ -10,6 +10,8 @@ from core.durable_conversations_component_runtime import build_durable_conversat
 from core.component_registry import ComponentRegistry
 from core.identity_component_runtime import build_identity_access_component_runtime
 from core.local_identity_component_runtime import build_local_identity_access_component_runtime
+from core.network_firewall import NetworkFirewall
+from core.network_firewall_component_runtime import build_network_firewall_component_runtime
 from core.owner_agent_component_runtime import build_owner_agent_execution_component_runtime
 from providers.component_runtime import build_provider_component_runtime
 
@@ -26,6 +28,7 @@ def build_core_component_registry(
     agent_loop: AgentExecutionLoop,
     application_runtime: ConversationApplicationRuntime | None = None,
     config: dict | None = None,
+    network_firewall: NetworkFirewall | None = None,
 ) -> ComponentRegistry:
     """Register validated configuration and foundational API component runtimes."""
     registry = ComponentRegistry()
@@ -37,6 +40,8 @@ def build_core_component_registry(
     )
     for runtime in runtimes:
         registry.register(runtime)
+    if network_firewall is not None:
+        registry.register(build_network_firewall_component_runtime(network_firewall))
     if application_runtime is not None:
         owner_factory = application_runtime.conversations.agent_loop_for_owner
         if owner_factory is not None:
@@ -53,6 +58,7 @@ def build_local_core_component_registry(
     agent_loop: AgentExecutionLoop,
     application_runtime: ConversationApplicationRuntime,
     config: dict | None = None,
+    network_firewall: NetworkFirewall | None = None,
 ) -> ComponentRegistry:
     """Compose the local-only CLI graph with configuration and local identity."""
     registry = ComponentRegistry()
@@ -64,6 +70,8 @@ def build_local_core_component_registry(
     )
     for runtime in runtimes:
         registry.register(runtime)
+    if network_firewall is not None:
+        registry.register(build_network_firewall_component_runtime(network_firewall))
     owner_factory = application_runtime.conversations.agent_loop_for_owner
     if owner_factory is not None:
         registry.register(build_owner_agent_execution_component_runtime(owner_factory))

@@ -8,6 +8,8 @@ import socket
 import ssl
 from urllib.parse import urlsplit
 
+from core.network_firewall import NetworkFirewall
+
 
 class MCPPinnedTransportError(RuntimeError):
     """Stable transport error without endpoint or credential disclosure."""
@@ -32,7 +34,7 @@ class PinnedMCPHTTPTransport:
     MAX_RESPONSE_BYTES = 1_000_000
     _HEADER = re.compile(r"[!#$%&'*+.^_|~0-9A-Za-z-]+")
 
-    def __init__(self, *, allowed_hosts, timeout=10, resolver=None, connection_factory=None):
+    def __init__(self, *, allowed_hosts, timeout=10, resolver=None, connection_factory=None, firewall_policy=None):
         if not isinstance(allowed_hosts, (set, frozenset, tuple, list)) or not allowed_hosts:
             raise ValueError("an explicit MCP host allow-list is required")
         hosts = set()
@@ -41,6 +43,13 @@ class PinnedMCPHTTPTransport:
                 raise ValueError("invalid MCP host allow-list")
             hosts.add(host.lower().rstrip("."))
         self.allowed_hosts = frozenset(hosts)
+        if firewall_policy is None:
+            firewall_policy = NetworkFirewall(allowed_hosts=self.allowed_hosts)
+        if not isinstance(firewall_policy, NetworkFirewall):
+            raise TypeError("firewall_policy must be a NetworkFirewall.")
+        if not self.allowed_hosts.issubset(firewall_policy.allowed_hosts):
+            raise ValueError("firewall policy must explicitly allow every configured MCP host.")
+        self.firewall_policy = firewall_policy
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 30:
             raise ValueError("timeout must be between 1 and 30 seconds")
         self.timeout = float(timeout)
@@ -199,6 +208,11 @@ class PinnedMCPHTTPTransport:
             raise MCPPinnedTransportError("mcp_request_too_large")
         host, target = self._endpoint(endpoint)
         pinned_ip = self._resolve(host)
+        decision = self.firewall_policy.authorize(
+            host=host, port=443, protocol="tcp", resolved_addresses=(pinned_ip,),
+        )
+        if not decision.allowed:
+            raise MCPPinnedTransportError("mcp_destination_blocked")
         request_headers = {"Accept": "application/json, text/event-stream",
                            "Content-Type": "application/json",
                            "User-Agent": "Yuki-MCP/1.0"}
