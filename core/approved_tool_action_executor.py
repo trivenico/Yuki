@@ -32,6 +32,8 @@ class ApprovedToolActionExecutor:
             raise TypeError("approvals must be a SQLiteToolActionApprovalStore")
         if not callable(getattr(guarded_runtime, "invoke", None)):
             raise TypeError("guarded_runtime must provide invoke()")
+        if not callable(getattr(guarded_runtime, "requires_user_confirmation", None)):
+            raise TypeError("guarded_runtime must classify confirmation-required tools")
         self.proposals = proposals
         self.approvals = approvals
         self.guarded_runtime = guarded_runtime
@@ -45,6 +47,8 @@ class ApprovedToolActionExecutor:
             raise ValueError("proposal has not been approved")
         if datetime.now(timezone.utc) >= datetime.fromisoformat(proposal.expires_at):
             raise ValueError("approved proposal has expired")
+        if self.guarded_runtime.requires_user_confirmation(proposal.tool_name) is not True:
+            raise ValueError("tool is no longer classified as a permitted confirmation-required action")
         context = ToolActionContext(
             action_id=proposal.action_id,
             idempotency_key=proposal.idempotency_key,
