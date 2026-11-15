@@ -45,8 +45,8 @@ class GmailSendTool:
                         },
                         "to": {
                             "oneOf": [
-                                {"type": "string", "format": "email"},
-                                {"type": "array", "items": {"type": "string", "format": "email"},
+                                {"type": "string", "format": "email", "maxLength": 320},
+                                {"type": "array", "items": {"type": "string", "format": "email", "maxLength": 320},
                                  "minItems": 1, "maxItems": 5},
                             ],
                         },
