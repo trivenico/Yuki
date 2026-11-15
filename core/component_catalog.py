@@ -151,7 +151,7 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
          "core/mcp_pinned_transport.py"),
         ("identity-access",),
         ("exact hostname allow-list", "default-deny destination policy",
-         "public-address-only DNS pinning", "audit failure denies access"),
+         "public-address-only DNS pinning", "configured audit sink failure denies access"),
         ("tests/test_network_firewall.py", "tests/test_mcp_pinned_transport.py"),
         ("Application-layer egress control only; inbound filtering, host firewall rules, process isolation and deployment hardening remain separate controls.",),
     ),
