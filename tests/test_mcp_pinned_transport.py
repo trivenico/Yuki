@@ -1,6 +1,7 @@
 import json
 import unittest
 
+from core.network_firewall import NetworkFirewall
 from core.mcp_pinned_transport import (
     MCPPinnedTransportError,
     PinnedMCPHTTPTransport,
@@ -61,6 +62,26 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers["content-type"], "application/json")
         self.assertIn(b"jsonrpc", body)
+
+    def test_enforces_injected_firewall_policy_before_connecting(self):
+        firewall = NetworkFirewall(allowed_hosts=("other.example.com",))
+        transport = PinnedMCPHTTPTransport(
+            allowed_hosts={"mcp.example.com"},
+            resolver=lambda *args, **kwargs: [record("8.8.8.8")],
+            connection_factory=lambda *args, **kwargs: self.fail("firewall must block before connect"),
+            firewall_policy=NetworkFirewall(
+                allowed_hosts=("mcp.example.com",), allowed_ports=(8443,),
+            ),
+        )
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_destination_blocked"):
+            transport.post_json("https://mcp.example.com/rpc", payload={}, headers={})
+
+    def test_rejects_firewall_policy_that_does_not_cover_configured_hosts(self):
+        with self.assertRaisesRegex(ValueError, "explicitly allow"):
+            PinnedMCPHTTPTransport(
+                allowed_hosts={"mcp.example.com"},
+                firewall_policy=NetworkFirewall(allowed_hosts=("other.example.com",)),
+            )
 
     def test_rejects_private_and_ipv4_mapped_private_destinations(self):
         for address in ("127.0.0.1", "::ffff:127.0.0.1"):
