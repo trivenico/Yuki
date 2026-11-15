@@ -93,6 +93,11 @@ def build_gmail_tool_runtime_bundle(
     ):
         if not isinstance(value, expected):
             raise TypeError(label + " has an invalid trusted implementation")
+    if action_journal.database_path != approval_store.database_path:
+        raise ValueError(
+            "Gmail approval store and action journal must share one SQLite database "
+            "for crash-atomic approval dispatch"
+        )
     if not callable(getattr(policy, "authorize_tool", None)):
         raise TypeError("policy must provide authorize_tool(name)")
     if audit is not None and not callable(audit):
