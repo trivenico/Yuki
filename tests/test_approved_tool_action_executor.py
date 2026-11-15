@@ -103,3 +103,22 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         ).execution_state, "unknown")
 
 
+
+    def test_rejects_proposal_if_host_capability_no_longer_requires_confirmation(self):
+        changed = GuardedToolRuntime(
+            {"email.send": lambda raw: self.calls.append(raw) or "sent"},
+            AllowPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(ToolEffect.READ_ONLY),
+            }),
+            require_action_context=True,
+            action_journal=self.journal,
+            approval_store=self.approvals,
+        )
+        executor = ApprovedToolActionExecutor(self.proposals, self.approvals, changed)
+        with self.assertRaisesRegex(ValueError, "no longer classified"):
+            executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "not_started")
