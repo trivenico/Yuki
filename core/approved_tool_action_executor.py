@@ -76,8 +76,8 @@ class ApprovedToolActionExecutor:
             # fenced/released back to prepared. No dispatch lease ever began,
             # so the proposal claim can be made available for a safe retry.
             if action.version >= 2:
-                released = self.proposals.release_recovered_pre_dispatch_claim(
-                    proposal_id, principal_id=principal_id,
+                released = self._release_pre_dispatch_claim(
+                    proposal, principal_id=principal_id,
                 )
                 if released:
                     return ApprovedToolActionExecution(
@@ -92,6 +92,20 @@ class ApprovedToolActionExecutor:
             proposal_id=proposal_id,
             state=recovered_state,
             result=str(action.result) if recovered_state == "finished" else None,
+        )
+
+    def _release_pre_dispatch_claim(
+        self, proposal, *, principal_id: str,
+    ) -> bool:
+        """Release only when the durable journal proves dispatch never began."""
+        journal = self.guarded_runtime._action_journal
+        action = journal.get(proposal.idempotency_key)
+        if action is not None and not (
+            action.state == "prepared" and action.version >= 2
+        ):
+            return False
+        return self.proposals._release_recovered_pre_dispatch_claim(
+            proposal.proposal_id, principal_id=principal_id,
         )
 
     def execute(self, proposal_id: str, *, principal_id: str) -> ApprovedToolActionExecution:
@@ -122,8 +136,8 @@ class ApprovedToolActionExecutor:
             # rolls back on failure, so no provider side effect can have begun.
             # Release the proposal claim instead of incorrectly parking it in
             # outcome_unknown, which requires provider reconciliation.
-            released = self.proposals.release_recovered_pre_dispatch_claim(
-                proposal_id, principal_id=principal_id,
+            released = self._release_pre_dispatch_claim(
+                proposal, principal_id=principal_id,
             )
             if not released:
                 raise RuntimeError(
