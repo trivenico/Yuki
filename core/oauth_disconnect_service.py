@@ -46,6 +46,12 @@ class OAuthDisconnectService:
         except Exception:
             raise OAuthDisconnectError("credential_lookup_failed") from None
 
+        expected_version = credential.version if credential is not None else None
+        if expected_version is not None and (
+            type(expected_version) is not int or expected_version < 1
+        ):
+            raise OAuthDisconnectError("credential_generation_invalid")
+
         remote_revoked = False
         revocation_attempted = False
         if credential is not None and self._revocation_endpoint is not None:
@@ -66,8 +72,12 @@ class OAuthDisconnectService:
                 remote_revoked = False
 
         try:
+            # Fence deletion to the exact credential generation whose token
+            # was selected for revocation. A concurrent reconnect/refresh must
+            # never be deleted by this older disconnect request.
             disconnected = self._vault.disconnect(
-                owner_id=owner_id, provider_id=self._provider_id, account_id=account_id,
+                owner_id=owner_id, provider_id=self._provider_id,
+                account_id=account_id, expected_version=expected_version,
             )
         except Exception:
             raise OAuthDisconnectError("local_credential_disconnect_failed") from None
