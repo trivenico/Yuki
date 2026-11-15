@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from core.component_catalog import component_catalog, validate_component_catalog
+from core.component_registry import ComponentRegistry
 from typing import Callable
 
 
@@ -88,6 +89,7 @@ def build_readiness_report(
     executable_finder: Callable[[str], str | None] = shutil.which,
     module_finder: Callable[[str], object] = importlib.util.find_spec,
     ollama_probe: Callable[[str, float], Capability] = _probe_ollama,
+    component_registry: ComponentRegistry | None = None,
 ) -> ReadinessReport:
     """Build a deterministic, side-effect-free report of locally detectable features."""
     env = os.environ if environ is None else environ
@@ -136,6 +138,31 @@ def build_readiness_report(
             f"Component catalog validation failed ({len(catalog_errors)} issue(s)).",
         )
     )
+
+    if component_registry is None:
+        capabilities["component_runtime"] = Capability(
+            "unconfigured", "No component runtime registry was supplied; runtime health was not checked."
+        )
+    else:
+        try:
+            started = component_registry.started_components
+            health = component_registry.health()
+            if not started:
+                capabilities["component_runtime"] = Capability(
+                    "unavailable", "A registry was supplied but no components are started."
+                )
+            elif all(health.get(component_id) is True for component_id in started):
+                capabilities["component_runtime"] = Capability(
+                    "verified", f"All {len(started)} started component runtime(s) report healthy."
+                )
+            else:
+                capabilities["component_runtime"] = Capability(
+                    "unavailable", "One or more started component runtimes are unhealthy or missing health evidence."
+                )
+        except Exception as exc:
+            capabilities["component_runtime"] = Capability(
+                "unavailable", f"Component runtime health check failed ({type(exc).__name__})."
+            )
 
     return ReadinessReport(
         python=platform.python_version(),
