@@ -119,6 +119,11 @@ class GoogleOAuthProviderTests(unittest.TestCase):
                 self.build(trusted_redirect_hosts={host})
         with self.assertRaises(GoogleOAuthConfigurationError):
             self.build(trusted_redirect_hosts=["yuki.example.com", "yuki.example.com"])
+        for malformed in ([["yuki.example.com"]], [{"host": "yuki.example.com"}], [None]):
+            with self.subTest(malformed=malformed), self.assertRaisesRegex(
+                GoogleOAuthConfigurationError, "invalid_trusted_google_redirect_hosts"
+            ):
+                self.build(trusted_redirect_hosts=malformed)
 
     def test_rejects_ip_literal_callback_even_if_host_is_allowlisted(self):
         with self.assertRaises(GoogleOAuthConfigurationError):
