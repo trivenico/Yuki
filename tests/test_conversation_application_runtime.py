@@ -38,6 +38,23 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             reopened = ConversationStore(Path(directory) / "conversations.sqlite3")
             self.assertEqual(reopened.list_conversations(owner_id="local-owner-123"), [])
 
+    def test_runtime_fences_conversations_before_resource_cleanup(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "shutdown-order.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+                close_callbacks=(lambda: calls.append("provider"),),
+            )
+            conversation = runtime.conversations.create(owner_id="shutdown-owner")
+            runtime.close()
+            with self.assertRaisesRegex(RuntimeError, "service is closed"):
+                runtime.conversations.history(
+                    owner_id="shutdown-owner",
+                    conversation_id=conversation["conversation_id"],
+                )
+            self.assertEqual(calls, ["provider"])
+
     def test_store_close_hook_is_invoked_exactly_once(self):
         calls = []
 
