@@ -131,6 +131,8 @@ def build_conversation_runtime(
             raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
         if agent_loop.tool_protocol is not gmail_runtime_bundle.tool_protocol:
             raise ValueError("agent_loop must use the Gmail bundle's exact structured tool protocol.")
+        if tools_for_user is None:
+            raise ValueError("Gmail composition requires an owner-scoped tools_for_user callback.")
         if tool_action_approvals is not None or pending_tool_action_proposals is not None:
             raise ValueError("Gmail bundle owns the durable approval and proposal stores.")
         if approved_tool_action_executor is not None or tool_action_reconciler is not None:
