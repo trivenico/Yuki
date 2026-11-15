@@ -64,9 +64,9 @@ class WebSkill:
                 if len(body) > self.max_bytes:
                     raise WebSkillError("Page exceeds the configured size limit.")
                 decoded = body.decode("utf-8", errors="replace")
-                decoded = re.sub(r"(?is)<(script|style|noscript).*?>.*?</\\1>", " ", decoded)
+                decoded = re.sub(r"(?is)<(?:script|style|noscript)\b[^>]*>.*?</(?:script|style|noscript)\s*>", " ", decoded)
                 decoded = re.sub(r"(?s)<[^>]+>", " ", decoded)
-                text = re.sub(r"\\s+", " ", html.unescape(decoded)).strip()
+                text = re.sub(r"[ \t\r\n]+", " ", html.unescape(decoded)).strip()
                 return {"url": url.strip(), "title": text[:160], "text": text[:12000]}
         except PinnedHTTPTransportError:
             raise WebSkillError("Page fetch was blocked or failed by the network firewall.") from None
