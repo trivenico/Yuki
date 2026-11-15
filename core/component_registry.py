@@ -46,12 +46,15 @@ class ComponentRegistry:
             raise ValueError("component contract IDs must be unique")
         self._runtimes: dict[str, ComponentRuntime] = {}
         self._started: list[str] = []
+        self._startup_attempted = False
         self._startup_cleanup_errors: tuple[str, ...] = ()
         self._closed = False
 
     def register(self, runtime: ComponentRuntime) -> None:
         if self._closed:
             raise RuntimeError("component registry is closed")
+        if self._startup_attempted:
+            raise RuntimeError("component registry registration is frozen after startup")
         if not isinstance(runtime, ComponentRuntime):
             raise TypeError("runtime must be a ComponentRuntime")
         if not isinstance(runtime.contract, ComponentContract):
@@ -81,7 +84,7 @@ class ComponentRegistry:
     def start_all(self) -> tuple[str, ...]:
         if self._closed:
             raise RuntimeError("component registry is closed")
-        if self._started:
+        if self._startup_attempted:
             return tuple(self._started)
         registered = set(self._runtimes)
         for component_id, runtime in self._runtimes.items():
@@ -90,6 +93,7 @@ class ComponentRegistry:
                 raise RuntimeError(
                     f"{component_id} is missing runtime dependencies: {', '.join(sorted(missing))}"
                 )
+        self._startup_attempted = True
         ordered = component_dependency_order(
             runtime.contract for runtime in self._runtimes.values()
         )
