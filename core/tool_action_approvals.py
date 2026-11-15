@@ -97,6 +97,7 @@ class SQLiteToolActionApprovalStore:
         self._validate_context(context, principal_id)
         now = datetime.now(timezone.utc)
         approval_id = secrets.token_urlsafe(32)
+        stored_id = self._fingerprint(approval_id)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -105,7 +106,7 @@ class SQLiteToolActionApprovalStore:
                 db.execute("""INSERT INTO tool_action_approvals
                     (approval_id, principal_id, action_id, tool_name, request_digest,
                      created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (approval_id, principal_id, context.action_id, context.tool_name,
+                    (stored_id, principal_id, context.action_id, context.tool_name,
                      context.request_digest, now.isoformat(),
                      (now + timedelta(seconds=self.ttl_seconds)).isoformat()))
                 self._audit(db, principal_id=principal_id, action_id=context.action_id,
@@ -132,7 +133,7 @@ class SQLiteToolActionApprovalStore:
             try:
                 row = db.execute("""SELECT principal_id, action_id, tool_name,
                     request_digest, expires_at FROM tool_action_approvals
-                    WHERE approval_id = ?""", (approval_id,)).fetchone()
+                    WHERE approval_id = ?""", (fingerprint,)).fetchone()
                 outcome = "not_found"
                 if row is not None:
                     matches = (
@@ -173,12 +174,12 @@ class SQLiteToolActionApprovalStore:
             try:
                 row = db.execute("""SELECT action_id, tool_name FROM tool_action_approvals
                     WHERE approval_id = ? AND principal_id = ?""",
-                    (approval_id, principal_id)).fetchone()
+                    (self._fingerprint(approval_id), principal_id)).fetchone()
                 if row is None:
                     db.execute("COMMIT")
                     return False
                 db.execute("""DELETE FROM tool_action_approvals
-                    WHERE approval_id = ? AND principal_id = ?""", (approval_id, principal_id))
+                    WHERE approval_id = ? AND principal_id = ?""", (self._fingerprint(approval_id), principal_id))
                 self._audit(db, principal_id=principal_id, action_id=row[0],
                             tool_name=row[1], token_fingerprint=self._fingerprint(approval_id),
                             outcome="revoked", occurred_at=now)
