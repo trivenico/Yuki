@@ -59,12 +59,15 @@ class ConversationRecoveryCoordinator:
             # An interruption notice may have been persisted before the audit
             # transaction failed. On retry, preserve its interrupted outcome
             # instead of misclassifying the assistant message as a completed turn.
-            interruption_persisted = assistant_exists and any(
-                item.get("idempotency_key") == assistant_key
-                and item.get("content") == self.INTERRUPTION_MESSAGE
-                for item in self.store.list_messages(
-                    owner_id=owner_id, conversation_id=conversation_id, limit=5000,
-                )
+            assistant_message = (
+                self.store.get_message_by_idempotency_key(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    idempotency_key=assistant_key,
+                ) if assistant_exists else None
+            )
+            interruption_persisted = (
+                assistant_message is not None
+                and assistant_message.get("content") == self.INTERRUPTION_MESSAGE
             )
             if interruption_persisted:
                 finalized = self.store.finish_generation_with_recovery_event(
