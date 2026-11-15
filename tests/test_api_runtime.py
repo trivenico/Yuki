@@ -5,6 +5,7 @@ from unittest.mock import Mock
 from pathlib import Path
 
 from api.runtime import ConversationRuntime, build_conversation_runtime
+from api.security import APISecurityMiddleware
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
@@ -42,6 +43,7 @@ class ConversationRuntimeTests(unittest.TestCase):
                 agent_loop=_loop(),
             )
             self.assertIsInstance(runtime.store, ConversationStore)
+            self.assertIsInstance(runtime.web, APISecurityMiddleware)
             conversation = runtime.app.conversations.create(owner_id="runtime-user")
             self.assertEqual(conversation["owner_id"], "runtime-user")
             runtime.close()
