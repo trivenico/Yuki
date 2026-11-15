@@ -6,6 +6,7 @@ and deliberately does not retry an ambiguous provider refresh request.
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from typing import Callable
 
 from core.oauth_token_response import validate_oauth_token_response
@@ -23,6 +24,7 @@ class OAuthTokenRefreshService:
         provider_id: str, client_id: str, issuer: str, resource: str,
         clock: Callable[[], float] = time.time,
         refresh_skew_seconds: int = 120,
+        lifecycle_coordinator=None,
     ):
         if not callable(getattr(credential_vault, "get", None)) or not callable(
             getattr(credential_vault, "rotate", None)
@@ -49,6 +51,7 @@ class OAuthTokenRefreshService:
         self._resource = resource
         self._clock = clock
         self._skew = refresh_skew_seconds
+        self._lifecycle_coordinator = lifecycle_coordinator
 
     @property
     def provider_id(self) -> str:
@@ -56,6 +59,18 @@ class OAuthTokenRefreshService:
         return self._provider_id
 
     def refresh_if_needed(self, *, owner_id: str, account_id: str) -> dict:
+        """Serialize lookup, provider rotation, and vault CAS across workers."""
+        coordinator = self._lifecycle_coordinator
+        lock = (
+            coordinator.coordinate(
+                owner_id=owner_id, provider_id=self._provider_id, account_id=account_id,
+            )
+            if coordinator is not None else nullcontext()
+        )
+        with lock:
+            return self._refresh_if_needed_unlocked(owner_id=owner_id, account_id=account_id)
+
+    def _refresh_if_needed_unlocked(self, *, owner_id: str, account_id: str) -> dict:
         """Return metadata unchanged while fresh; otherwise perform one refresh."""
         try:
             current = self._vault.get(
