@@ -74,10 +74,10 @@ class ApprovedToolActionExecutor:
             # claim and reservation. An active execution lease is also live.
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         if action.state == "prepared":
-            # Version 2+ proves an authorizing claim was acquired and then
-            # fenced/released back to prepared. No dispatch lease ever began,
-            # so the proposal claim can be made available for a safe retry.
-            if action.version == 0 or action.version >= 2:
+            # Version 1 marks the atomic proposal+journal reservation; later versions
+            # represent journal transitions. Legacy version-0 rows cannot prove that
+            # the proposal claim and reservation committed together.
+            if action.version >= 1:
                 released = self._release_pre_dispatch_claim(
                     proposal, principal_id=principal_id,
                 )
@@ -103,7 +103,7 @@ class ApprovedToolActionExecutor:
         journal = self.guarded_runtime._action_journal
         action = journal.get(proposal.idempotency_key)
         if action is not None and not (
-            action.state == "prepared" and (action.version == 0 or action.version >= 2)
+            action.state == "prepared" and (action.version >= 1)
         ):
             return False
         return self.proposals._release_recovered_pre_dispatch_claim(
