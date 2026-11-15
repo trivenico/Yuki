@@ -70,6 +70,7 @@ class APISecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start["status"], 200)
         self.assertEqual(headers[b"x-content-type-options"], b"nosniff")
         self.assertEqual(headers[b"x-frame-options"], b"DENY")
+        self.assertEqual(headers[b"permissions-policy"], b"camera=(), microphone=(self), geolocation=()")
 
         messages.clear()
         await middleware(scope, receive, send)
