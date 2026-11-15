@@ -80,6 +80,30 @@ class SQLitePendingToolActionProposalStore:
                     db.execute("""ALTER TABLE pending_tool_action_proposals
                         ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'not_started'
                         CHECK(execution_state IN ('not_started','executing','finished','unknown'))""")
+                schema_row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='pending_tool_action_proposals'").fetchone()
+                if schema_row and "'not_executed'" not in schema_row[0]:
+                    db.execute("""CREATE TABLE pending_tool_action_proposals_v2 (
+                        proposal_id TEXT PRIMARY KEY,
+                        principal_id TEXT NOT NULL,
+                        action_id TEXT NOT NULL UNIQUE,
+                        idempotency_key TEXT NOT NULL UNIQUE,
+                        tool_name TEXT NOT NULL,
+                        request_digest TEXT NOT NULL,
+                        arguments_json TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN
+                            ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        decided_at TEXT,
+                        execution_state TEXT NOT NULL DEFAULT 'not_started' CHECK(execution_state IN
+                            ('not_started','executing','finished','unknown','not_executed'))
+                    )""")
+                    db.execute("""INSERT INTO pending_tool_action_proposals_v2
+                        SELECT proposal_id, principal_id, action_id, idempotency_key, tool_name,
+                        request_digest, arguments_json, status, created_at, expires_at, decided_at,
+                        execution_state FROM pending_tool_action_proposals""")
+                    db.execute("DROP TABLE pending_tool_action_proposals")
+                    db.execute("ALTER TABLE pending_tool_action_proposals_v2 RENAME TO pending_tool_action_proposals")
                 db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_owner_status
                     ON pending_tool_action_proposals(principal_id, status, created_at)""")
                 db.execute("""CREATE INDEX IF NOT EXISTS idx_pending_tool_proposals_expiry
@@ -269,7 +293,7 @@ class SQLitePendingToolActionProposalStore:
         """Finalize a stranded execution claim from authoritative journal state."""
         if not isinstance(principal_id, str) or not principal_id:
             raise ValueError("authenticated principal is required.")
-        if state not in {"finished", "unknown"}:
+        if state not in {"finished", "unknown", "not_executed"}:
             raise ValueError("recovered state must be finished or unknown.")
         with self._connect() as db:
             changed = db.execute("""UPDATE pending_tool_action_proposals
@@ -290,6 +314,18 @@ class SQLitePendingToolActionProposalStore:
                 SET execution_state = 'not_started'
                 WHERE proposal_id = ? AND principal_id = ?
                   AND status = 'approved' AND execution_state = 'executing'""",
+                (proposal_id, principal_id)).rowcount
+        return changed == 1
+
+    def finish_not_executed_reconciliation(self, proposal_id: str, *, principal_id: str) -> bool:
+        """Record provider-confirmed non-execution as terminal, never replayable."""
+        if not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("authenticated principal is required.")
+        with self._connect() as db:
+            changed = db.execute("""UPDATE pending_tool_action_proposals
+                SET execution_state = 'not_executed'
+                WHERE proposal_id = ? AND principal_id = ?
+                  AND status = 'approved' AND execution_state = 'unknown'""",
                 (proposal_id, principal_id)).rowcount
         return changed == 1
 
