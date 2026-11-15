@@ -556,5 +556,21 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(self.invocations, [{"value": "safe"}])
 
 
+    def test_expired_duration_budget_prevents_first_model_request(self):
+        model_calls = []
+        clock_values = iter([0.0, 0.2, 0.2])
+        loop = AgentExecutionLoop(
+            lambda **kwargs: model_calls.append(True),
+            self.protocol,
+            max_duration_seconds=0.1,
+            clock=lambda: next(clock_values),
+        )
+
+        result = loop.run("Do not start after deadline", tools=[])
+
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(result.model_turns, 0)
+        self.assertEqual(model_calls, [])
+
 if __name__ == "__main__":
     unittest.main()

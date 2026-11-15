@@ -164,7 +164,8 @@ class AgentExecutionLoop:
         self._event("agent.started", user_chars=len(user_text), tool_count=len(tools))
 
         while turns < self.max_model_turns:
-            reason = "cancelled" if cancel_check() else None
+            # Enforce the total deadline before starting every provider turn.
+            reason = self._stop_reason(started, cancel_check)
             if reason:
                 self._event("agent.stopped", reason=reason, model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult(reason, "", turns, calls_total, max(0.0, self.clock() - started))
