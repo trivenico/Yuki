@@ -13,49 +13,94 @@ from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport, P
 
 
 class _LoopbackResponse:
-    def __init__(self, response, connection): self._response, self._connection = response, connection; self.status, self.reason, self.headers = response.status, response.reason, response.headers
-    def read(self, amount=-1): return self._response.read(amount)
-    def readline(self, amount=-1): return self._response.readline(amount)
+    def __init__(self, response, connection):
+        self._response = response
+        self._connection = connection
+        self.status = response.status
+        self.reason = response.reason
+        self.headers = response.headers
+
+    def read(self, amount=-1):
+        return self._response.read(amount)
+
+    def readline(self, amount=-1):
+        return self._response.readline(amount)
+
     def close(self):
-        try: self._response.close()
-        finally: self._connection.close()
-    def __enter__(self): return self
-    def __exit__(self, *_): self.close(); return False
+        try:
+            self._response.close()
+        finally:
+            self._connection.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+        return False
+
 
 class _LoopbackHTTPTransport:
-    """Connect only to literal loopback IPs; never resolve hostnames."""
+    """HTTP transport restricted to one loopback host and pinned literal IP."""
+
     MAX_REQUEST_BYTES = 2_000_000
+    _METHOD = re.compile(r"^[A-Z][A-Z0-9_-]{0,15}$")
+    _HEADER = re.compile(r"^[!#$%&+.^_~0-9A-Za-z-]+$")
+
     def __init__(self, allowed_host, port):
-        self.allowed_host, self.port = allowed_host, port
+        self.allowed_host = allowed_host
+        self.port = port
         self._ip = "127.0.0.1" if allowed_host == "localhost" else str(ipaddress.ip_address(allowed_host))
-        if not ipaddress.ip_address(self._ip).is_loopback: raise ValueError("Local Ollama HTTP requires a loopback address.")
+        if not ipaddress.ip_address(self._ip).is_loopback:
+            raise ValueError("Local Ollama HTTP requires a loopback address.")
+
     def open(self, request, timeout=None):
         try:
             parsed = urlsplit(request.full_url)
-            if parsed.scheme != "http" or parsed.hostname != self.allowed_host or (parsed.port or 80) != self.port or parsed.username or parsed.password or parsed.fragment: raise PinnedHTTPTransportError("ollama_loopback_destination_blocked")
-            method, body = request.get_method(), request.data
-            if not isinstance(method, str) or not re.fullmatch(r"[A-Z][A-Z0-9_-]{0,15}", method): raise PinnedHTTPTransportError("ollama_invalid_method")
-            if body is not None and (not isinstance(body, bytes) or len(body) > self.MAX_REQUEST_BYTES): raise PinnedHTTPTransportError("ollama_invalid_request_body")
+            if (parsed.scheme != "http" or parsed.hostname != self.allowed_host
+                    or (parsed.port if parsed.port is not None else 80) != self.port
+                    or parsed.username or parsed.password or parsed.fragment):
+                raise PinnedHTTPTransportError("ollama_loopback_destination_blocked")
+            method = request.get_method()
+            if not isinstance(method, str) or not self._METHOD.fullmatch(method):
+                raise PinnedHTTPTransportError("ollama_invalid_method")
+            body = request.data
+            if body is not None and (not isinstance(body, bytes) or len(body) > self.MAX_REQUEST_BYTES):
+                raise PinnedHTTPTransportError("ollama_invalid_request_body")
+
             headers = {}
             for key, value in request.header_items():
-                if not isinstance(key, str) or not re.fullmatch(r"[!#$%&+.^_~0-9A-Za-z-]+", key) or not isinstance(value, str) or any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in value) or key.lower() in {"host", "connection", "transfer-encoding", "content-length"}: raise PinnedHTTPTransportError("ollama_invalid_headers")
+                if (not isinstance(key, str) or not self._HEADER.fullmatch(key)
+                        or not isinstance(value, str)
+                        or any(ord(char) < 0x20 or ord(char) == 0x7f for char in value)
+                        or key.lower() in {"host", "connection", "transfer-encoding", "content-length"}):
+                    raise PinnedHTTPTransportError("ollama_invalid_headers")
                 headers[key] = value
-            host_header = "[" + self.allowed_host + "]" if ":" in self.allowed_host else self.allowed_host
-            if self.port != 80: host_header += ":" + str(self.port)
+
+            host_header = f"[{self.allowed_host}]" if ":" in self.allowed_host else self.allowed_host
+            if self.port != 80:
+                host_header += f":{self.port}"
             headers["Host"] = host_header
-            connection = http.client.HTTPConnection(self._ip, self.port, timeout=timeout or 45)
+
+            connection = http.client.HTTPConnection(
+                self._ip, self.port, timeout=timeout or 45,
+            )
             try:
                 target = parsed.path or "/"
-                if parsed.query: target += "?" + parsed.query
+                if parsed.query:
+                    target += "?" + parsed.query
                 connection.request(method, target, body=body, headers=headers)
                 response = connection.getresponse()
-                if 300 <= response.status < 400: raise PinnedHTTPTransportError("ollama_redirect_rejected")
+                if 300 <= response.status < 400:
+                    raise PinnedHTTPTransportError("ollama_redirect_rejected")
                 return _LoopbackResponse(response, connection)
             except Exception:
                 connection.close()
                 raise
-        except PinnedHTTPTransportError: raise
-        except (OSError, http.client.HTTPException, ValueError, TypeError): raise PinnedHTTPTransportError("ollama_loopback_unavailable") from None
+        except PinnedHTTPTransportError:
+            raise
+        except (OSError, http.client.HTTPException, ValueError, TypeError):
+            raise PinnedHTTPTransportError("ollama_loopback_unavailable") from None
 
 class OllamaProvider:
     """Talk to a local or HTTPS Ollama endpoint; never silently routes to cloud."""
