@@ -100,6 +100,27 @@ class ComponentRegistryTests(unittest.TestCase):
             ("provider-runtime", "identity-access", "agent-execution"),
         )
 
+    def test_health_rejects_non_boolean_probe_results(self):
+        registry = ComponentRegistry()
+        runtime = self.runtime("identity-access", [])
+        registry.register(replace(runtime, health_check=lambda: 1))
+        registry.start_all()
+
+        with self.assertRaisesRegex(TypeError, "must return bool"):
+            registry.health()
+
+    def test_health_probe_exception_is_not_reported_as_healthy(self):
+        registry = ComponentRegistry()
+        runtime = self.runtime("identity-access", [])
+        registry.register(replace(
+            runtime,
+            health_check=lambda: (_ for _ in ()).throw(OSError("probe failed")),
+        ))
+        registry.start_all()
+
+        with self.assertRaisesRegex(OSError, "probe failed"):
+            registry.health()
+
     def test_starts_dependencies_before_dependents_and_closes_in_reverse(self):
         events = []
         registry = ComponentRegistry()
