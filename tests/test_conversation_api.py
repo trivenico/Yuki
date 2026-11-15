@@ -15,6 +15,9 @@ from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.approved_tool_action_executor import ApprovedToolActionExecutor
+from core.tool_action_journal import ToolActionJournal
+from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
 class _NoApprovals:
@@ -402,6 +405,75 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_approved_proposal_executes_only_through_authenticated_endpoint(self):
+        root = Path(self.tempdir.name)
+        proposals = SQLitePendingToolActionProposalStore(str(root / "api-proposals.sqlite"))
+        approvals = SQLiteToolActionApprovalStore(str(root / "api-approvals.sqlite"))
+        journal = ToolActionJournal(str(root / "api-journal.sqlite"))
+        calls = []
+
+        class AllowEmailPolicy:
+            def authorize_tool(self, name):
+                return name == "email.send"
+
+        guarded = GuardedToolRuntime(
+            {"email.send": lambda raw: calls.append(json.loads(raw)) or "sent"},
+            AllowEmailPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=journal,
+            approval_store=approvals,
+        )
+        executor = ApprovedToolActionExecutor(proposals, approvals, guarded)
+        self.app.pending_tool_action_proposals = proposals
+        self.app.tool_action_approvals = approvals
+        self.app.approved_tool_action_executor = executor
+        arguments = {"to": "recipient@example.com", "subject": "Approved"}
+        context = ToolActionContext.create(self.user.user_id, "email.send", arguments)
+        proposal = proposals.create(context, arguments, principal_id=self.user.user_id)
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(calls, [])
+
+        status, data, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/approve",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["execution"], "not_started")
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(calls, [])
+
+        status, data, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["execution_state"], "finished")
+        self.assertEqual(data["result"], "sent")
+        self.assertEqual(calls, [arguments])
+        self.assertEqual(journal.get(proposal.idempotency_key).state, "succeeded")
+
+        status, _, _ = self.request(
+            "POST", f"/v1/tool-action-proposals/{proposal.proposal_id}/execute",
+            token=self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(len(calls), 1)
 
 if __name__ == "__main__":
     unittest.main()
