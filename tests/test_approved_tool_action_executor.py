@@ -143,6 +143,24 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
             self.proposal.proposal_id, principal_id="owner-a",
         ).execution_state, "executing")
 
+
+    def test_keeps_claimed_execution_when_journal_is_only_prepared(self):
+        self.assertTrue(self.proposals.claim_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ))
+        self.journal.reserve(
+            self.proposal.idempotency_key, "email.send", self.arguments,
+            action_id=self.proposal.action_id,
+        )
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "executing")
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "executing")
+        self.assertEqual(self.calls, [])
+
     def test_blocked_dispatch_is_not_reported_as_success(self):
         class DenyPolicy:
             def authorize_tool(self, name):
