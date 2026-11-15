@@ -7,6 +7,7 @@ from core.auth import BuiltInAuthService
 from core.core_component_runtime import build_core_component_registry
 from core.conversation_application_runtime import build_conversation_application_runtime
 from core.conversation_store import ConversationStore
+from core.network_firewall import NetworkFirewall
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -47,6 +48,22 @@ class CoreComponentCompositionTests(unittest.TestCase):
             self.assertEqual(set(registry.start_all()), {"identity-access", "provider-runtime", "agent-execution"})
             self.assertEqual(registry.health(), {"identity-access": True, "provider-runtime": True, "agent-execution": True})
             self.assertEqual(registry.close(), ())
+            self.assertEqual(provider.closed, 1)
+
+    def test_network_firewall_is_registered_in_foundational_core_graph(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            provider = FakeProvider()
+            firewall = NetworkFirewall(allowed_hosts=("api.example.com",))
+            registry = build_core_component_registry(
+                auth_service=auth, provider=provider, agent_loop=self._loop(),
+                network_firewall=firewall,
+            )
+            self.assertIs(registry.resolve("network-firewall"), firewall)
+            started = registry.start_all()
+            self.assertLess(started.index("identity-access"), started.index("network-firewall"))
+            self.assertTrue(registry.health()["network-firewall"])
+            registry.close()
             self.assertEqual(provider.closed, 1)
 
     def test_unavailable_provider_rolls_back_started_dependencies(self):
