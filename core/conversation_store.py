@@ -973,9 +973,10 @@ class ConversationStore:
                     (conversation_id, owner, lease_token.strip(), time.time()),
                 ).fetchone()
                 if lease is None:
-                    raise ConversationConflict(
-                        "tool recovery requires the active generation lease."
-                    )
+                    # A stale recovery worker must never mutate execution state.
+                    # Treat the fenced-out attempt as no work performed.
+                    db.rollback()
+                    return 0
                 db.execute(
                     """UPDATE conversation_tool_executions SET status='uncertain', updated_at=?
                        WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='started'""",
