@@ -1,9 +1,11 @@
 """Guarded dispatch for explicitly registered CLI tools."""
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
-from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolCapabilityError
+from core.tool_action_context import ToolActionContext, ToolActionContextError
+from core.tool_capabilities import ToolCapabilityCatalog, ToolCapabilityError, ToolEffect
 
 
 class GuardedToolRuntime:
@@ -16,6 +18,7 @@ class GuardedToolRuntime:
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
         capabilities: ToolCapabilityCatalog | None = None,
+        require_action_context: bool = False,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -34,6 +37,10 @@ class GuardedToolRuntime:
             raise TypeError("policy must provide authorize_tool(name)")
         if audit is not None and not callable(audit):
             raise TypeError("audit must be callable when provided")
+        if type(require_action_context) is not bool:
+            raise TypeError("require_action_context must be a boolean")
+        if require_action_context and capabilities is None:
+            raise ValueError("action-context enforcement requires a capability catalog")
         if capabilities is not None:
             if not isinstance(capabilities, ToolCapabilityCatalog):
                 raise TypeError("capabilities must be a ToolCapabilityCatalog")
@@ -41,6 +48,7 @@ class GuardedToolRuntime:
                 raise ValueError("capability catalog must classify every registered tool exactly once")
         self._tools = dict(tools)
         self._capabilities = capabilities
+        self._require_action_context = require_action_context
         self._policy = policy
         self._audit = audit
         self._max_argument_chars = max_argument_chars
@@ -54,7 +62,11 @@ class GuardedToolRuntime:
                 # Telemetry failure must not bypass or broaden authorization.
                 pass
 
-    def invoke(self, name: str, argument: str = "") -> str:
+    def invoke(
+        self, name: str, argument: str = "", *,
+        action_context: ToolActionContext | None = None,
+        principal_id: str | None = None,
+    ) -> str:
         if not isinstance(name, str) or not name or len(name) > 128:
             self._record("invalid", "invalid_name")
             return "Invalid tool name."
@@ -70,6 +82,19 @@ class GuardedToolRuntime:
             except ToolCapabilityError:
                 self._record(name, "capability_denied")
                 return "Tool blocked: capability metadata is missing."
+            capability = self._capabilities.resolve(name)
+            if capability.effect is ToolEffect.SIDE_EFFECTING and self._require_action_context:
+                if not isinstance(action_context, ToolActionContext) or principal_id is None:
+                    self._record(name, "action_context_missing")
+                    return "Tool blocked: trusted action context is required."
+                try:
+                    request = json.loads(argument)
+                    if not isinstance(request, dict):
+                        raise ToolActionContextError("tool request must be an object.")
+                    action_context.verify(principal_id, name, request)
+                except (TypeError, ValueError, ToolActionContextError):
+                    self._record(name, "action_context_mismatch")
+                    return "Tool blocked: trusted action context does not match the request."
         try:
             authorized = self._policy.authorize_tool(name)
         except Exception:
