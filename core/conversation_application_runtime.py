@@ -31,6 +31,10 @@ class ConversationApplicationRuntime:
         # failing close hook is never called twice by nested shutdown paths.
         self._closed = True
         errors: list[Exception] = []
+        try:
+            self.conversations.close()
+        except Exception as exc:
+            errors.append(exc)
         close = getattr(self.store, "close", None)
         hooks = ((close,) if callable(close) else ()) + self.close_callbacks
         # The store is created after externally supplied resources, so close it
