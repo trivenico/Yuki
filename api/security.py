@@ -92,7 +92,7 @@ class APISecurityMiddleware:
         (b"x-content-type-options", b"nosniff"),
         (b"referrer-policy", b"no-referrer"),
         (b"x-frame-options", b"DENY"),
-        (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+        (b"permissions-policy", b"camera=(), microphone=(self), geolocation=()"),
         (b"cross-origin-resource-policy", b"same-origin"),
         (b"content-security-policy",
          b"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; "
