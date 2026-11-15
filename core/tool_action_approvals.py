@@ -149,7 +149,8 @@ class SQLiteToolActionApprovalStore:
                 action = db.execute(
                     "SELECT * FROM tool_actions WHERE idempotency_key=?",
                     (idempotency_key,),
-                ).fetchone()                if action is not None and action["state"] == "succeeded":
+                ).fetchone()
+                if action is not None and action["state"] == "succeeded":
                     if (action["action_id"] != context.action_id
                             or action["tool_name"] != context.tool_name
                             or action["request_digest"] != context.request_digest):
