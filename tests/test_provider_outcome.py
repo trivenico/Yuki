@@ -1358,6 +1358,114 @@ class ProviderOutcomeTests(unittest.TestCase):
             self.assertEqual(len(ledger), 1)
             self.assertEqual(ledger[0]["execution_id"], execution["execution_id"])
 
+    def test_real_store_does_not_persist_evidence_after_slow_lookup_heartbeat_failure(self):
+        import tempfile
+        import threading
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.conversation_store import ConversationConflict, ConversationStore
+        from core.provider_outcome import ProviderOutcomeReconciler, ProviderOutcomeRegistry
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationStore(Path(directory) / "heartbeat-loss.sqlite3")
+            conversation = store.create_conversation(owner_id="owner-heartbeat-loss")
+            conversation_id = conversation["conversation_id"]
+            request_id = "heartbeat-loss-request"
+            store.append_message(
+                owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                role="user", content="Check provider execution",
+                idempotency_key=request_id, expected_version=0,
+                generation_request_id=request_id,
+            )
+            generation_token = "generation-heartbeat-loss"
+            store.acquire_generation_lease(
+                owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                lease_token=generation_token, ttl_seconds=60,
+            )
+            try:
+                execution = store.begin_tool_execution(
+                    owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                    request_id=request_id, call_id="call-heartbeat-loss",
+                    tool_name="send_email", arguments_sha256="b" * 64,
+                    lease_token=generation_token,
+                )
+                store.mark_started_tool_executions_uncertain(
+                    owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                    request_id=request_id, lease_token=generation_token,
+                )
+            finally:
+                store.release_generation_lease(
+                    owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                    lease_token=generation_token,
+                )
+
+            lookup_started = threading.Event()
+            finish_lookup = threading.Event()
+            renewal_failed = threading.Event()
+            original_renew = store.renew_provider_reconciliation_lease
+
+            def fail_renewal(**kwargs):
+                renewal_failed.set()
+                raise OSError("simulated durable lease-store outage")
+
+            class SlowAdapter:
+                provider_id = "mail.example"
+
+                def lookup_tool_outcome(self, identity):
+                    lookup_started.set()
+                    if not finish_lookup.wait(10):
+                        raise TimeoutError("test did not release slow provider lookup")
+                    return ProviderOutcomeTests().evidence(
+                        execution_id=execution["execution_id"],
+                        idempotency_key=execution["idempotency_key"],
+                        arguments_sha256=execution["arguments_sha256"],
+                    )
+
+            reconciler = ProviderOutcomeReconciler(
+                store, ProviderOutcomeRegistry({"send_email": SlowAdapter()}),
+                lease_ttl_seconds=5, lease_renew_interval_seconds=1,
+            )
+            outcomes = []
+
+            def run_reconciliation():
+                try:
+                    outcomes.append(reconciler.reconcile(
+                        owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                        request_id=request_id, call_id="call-heartbeat-loss",
+                    ))
+                except Exception as exc:
+                    outcomes.append(exc)
+
+            worker = threading.Thread(target=run_reconciliation, daemon=True)
+            with patch.object(store, "renew_provider_reconciliation_lease", side_effect=fail_renewal):
+                worker.start()
+                try:
+                    self.assertTrue(lookup_started.wait(5), "provider lookup did not start")
+                    self.assertTrue(renewal_failed.wait(5), "heartbeat did not attempt renewal")
+                finally:
+                    finish_lookup.set()
+                    worker.join(timeout=10)
+
+            self.assertFalse(worker.is_alive(), "reconciliation worker did not finish")
+            self.assertEqual(len(outcomes), 1)
+            self.assertIsInstance(outcomes[0], ConversationConflict)
+            self.assertIn("renewal failed", str(outcomes[0]))
+            ledger = store.list_provider_outcome_evidence(
+                owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-heartbeat-loss",
+            )
+            self.assertEqual(ledger, [])
+            # The worker's finally block releases its own claim even after heartbeat loss.
+            store.acquire_provider_reconciliation_lease(
+                owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-heartbeat-loss",
+                lease_token="verification-worker", ttl_seconds=30,
+            )
+            self.assertTrue(store.release_provider_reconciliation_lease(
+                owner_id="owner-heartbeat-loss", execution_id=execution["execution_id"],
+                lease_token="verification-worker",
+            ))
+
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
             return ProviderOutcomeTests().evidence()
