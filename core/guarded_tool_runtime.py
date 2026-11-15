@@ -148,7 +148,7 @@ class GuardedToolRuntime:
         ):
             if self._approval_store is None or not isinstance(approval_id, str):
                 self._record(name, "confirmation_required")
-                return "Tool blocked: a durable, action-bound approval is required."
+                return "Tool blocked: explicit confirmation requires a durable, action-bound approval."
             try:
                 approved = self._approval_store.consume(
                     approval_id, action_context, principal_id=principal_id,
