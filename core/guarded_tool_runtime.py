@@ -94,6 +94,19 @@ class GuardedToolRuntime:
                 # Telemetry failure must not bypass or broaden authorization.
                 pass
 
+    def requires_user_confirmation(self, name: str) -> bool:
+        """Return whether a registered tool is a confirmation-gated side effect."""
+        if self._capabilities is None:
+            return False
+        try:
+            capability = self._capabilities.resolve(name)
+        except ToolCapabilityError:
+            return False
+        return (
+            capability.effect is ToolEffect.SIDE_EFFECTING
+            and capability.requires_user_confirmation
+        )
+
     def invoke(
         self, name: str, argument: str = "", *,
         action_context: ToolActionContext | None = None,
