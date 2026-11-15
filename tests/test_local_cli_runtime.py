@@ -52,6 +52,16 @@ class LocalCliRuntimeTests(unittest.TestCase):
             )
         self.assertEqual(provider.close_calls, 1)
 
+    def test_provider_is_closed_if_store_construction_fails(self):
+        provider = FakeProvider()
+        with self.assertRaisesRegex(RuntimeError, "store unavailable"):
+            build_local_conversation_runtime(
+                {"max_agent_steps": 3}, provider_factory=lambda config: provider,
+                store_factory=lambda config: (_ for _ in ()).throw(RuntimeError("store unavailable")),
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+            )
+        self.assertEqual(provider.close_calls, 1)
+
     def test_runtime_uses_guarded_agent_loop_and_persists_conversation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
