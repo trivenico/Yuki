@@ -46,7 +46,7 @@ class PlanSupervisor:
         """
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200:
             raise ValueError("actor_id must be bounded non-empty text.")
-        if not isinstance(plan_id, str) or not plan_id.strip() or len(plan_id) > 100 or "\\x00" in plan_id:
+        if not isinstance(plan_id, str) or not plan_id.strip() or len(plan_id) > 100 or "\x00" in plan_id:
             raise ValueError("plan_id must be bounded non-empty text.")
         if type(max_workers) is not int or not 1 <= max_workers <= 16:
             raise ValueError("max_workers must be an integer from 1 to 16.")
