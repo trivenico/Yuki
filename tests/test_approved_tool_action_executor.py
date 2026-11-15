@@ -100,6 +100,6 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(action.state, "outcome_unknown")
         self.assertEqual(self.proposals.get(
             self.proposal.proposal_id, principal_id="owner-a",
-        ).execution_state, "finished")
+        ).execution_state, "unknown")
 
 
