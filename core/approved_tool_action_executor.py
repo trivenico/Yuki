@@ -57,9 +57,9 @@ class ApprovedToolActionExecutor:
                 proposal_id, principal_id=principal_id, state="unknown",
             )
             return ApprovedToolActionExecution(proposal_id, state="unknown", result=None)
-        # Expired leases are fenced by the journal. Live leases remain executing.
-        journal.recover_expired_executions()
-        action = journal.get(proposal.idempotency_key)
+        # Recover only this proposal's action; an owner must not trigger
+        # maintenance transitions for another user's unrelated executions.
+        action = journal.recover_expired_execution(proposal.idempotency_key)
         if action is not None and action.state == "executing":
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         recovered_state = "finished" if action is not None and action.state == "succeeded" else "unknown"
