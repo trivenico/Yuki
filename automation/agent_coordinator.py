@@ -541,6 +541,8 @@ class SpecialistAgentCoordinator:
             task = self.runtime.enqueue(
                 actor_id=actor_id,
                 owner_id=plan_owner_id,
+                plan_id=plan_id,
+                subtask_id=row["subtask_id"],
                 idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
                 name=f"agent-{agent.agent_id}-{row['subtask_id']}",
                 steps=[{
