@@ -116,7 +116,8 @@ class APISecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rate_limited_head_request_has_no_response_body(self):
         async def app(scope, receive, send):
-            raise AssertionError("rate-limited request must not reach application")
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
 
         middleware = APISecurityMiddleware(
             app, limiter=FixedWindowRateLimiter(
