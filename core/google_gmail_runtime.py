@@ -22,6 +22,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_journal import ToolActionJournal
+from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_reconciliation import (
     ToolActionReconciliationRegistry,
     ToolActionReconciliationService,
@@ -34,6 +35,7 @@ class GmailToolRuntimeBundle:
     """Immutable publication of the guarded runtime and trusted Gmail surfaces."""
 
     guarded_runtime: GuardedToolRuntime
+    tool_protocol: StructuredToolProtocol
     tool_definitions: tuple[dict[str, Any], ...]
     reconciliation_service: ToolActionReconciliationService
 
@@ -124,6 +126,7 @@ def build_gmail_tool_runtime_bundle(
     )
     return GmailToolRuntimeBundle(
         guarded_runtime=guarded,
+        tool_protocol=StructuredToolProtocol(guarded),
         tool_definitions=definitions,
         reconciliation_service=reconciliation,
     )
