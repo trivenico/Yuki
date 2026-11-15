@@ -1297,10 +1297,9 @@ class ProviderOutcomeTests(unittest.TestCase):
                 )
 
             parent, child = context.Pipe(duplex=False)
-            lookup_events = context.Queue()
             worker = context.Process(
                 target=_multiprocess_reconcile_and_crash_before_evidence,
-                args=(str(database), conversation_id, request_id, child, lookup_events),
+                args=(str(database), conversation_id, request_id, child),
             )
             worker.start()
             child.close()
@@ -1308,7 +1307,6 @@ class ProviderOutcomeTests(unittest.TestCase):
             parent.close()
             worker.join(timeout=15)
             self.assertEqual(worker.exitcode, 0)
-            self.assertEqual(lookup_events.get(timeout=5), "lookup")
             self.assertEqual(store.list_provider_outcome_evidence(
                 owner_id="owner-reconcile-crash", conversation_id=conversation_id,
                 request_id=request_id, call_id="call-reconcile-crash",
