@@ -223,7 +223,13 @@ class WorkflowRunStore:
             subtask_id=row["subtask_id"] if "subtask_id" in row.keys() else None,
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], owner_id: str | None = None, plan_id: str | None = None, subtask_id: str | None = None) -> WorkflowRun:
+    def create(
+        self, *, idempotency_key: str, workflow_name: str,
+        definition: list[dict[str, Any]], owner_id: str | None = None,
+        plan_id: str | None = None, subtask_id: str | None = None,
+        created_event_actor_id: str | None = None,
+        created_event_payload: dict[str, Any] | None = None,
+    ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -232,6 +238,27 @@ class WorkflowRunStore:
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if (created_event_actor_id is None) != (created_event_payload is None):
+            raise ValueError("creation event actor and payload must be supplied together.")
+        event_actor = None
+        event_payload_json = None
+        if created_event_actor_id is not None:
+            if (
+                not isinstance(created_event_actor_id, str)
+                or not created_event_actor_id.strip()
+                or len(created_event_actor_id) > 200
+                or "\\x00" in created_event_actor_id
+            ):
+                raise ValueError("created_event_actor_id must be non-empty bounded text.")
+            if not isinstance(created_event_payload, dict):
+                raise ValueError("created_event_payload must be an object.")
+            from automation.task_runtime import _EVENT_KINDS
+            if "task.created" not in _EVENT_KINDS:
+                raise ValueError("task.created event is not supported.")
+            event_actor = created_event_actor_id.strip()
+            event_payload_json = _bounded_json(
+                created_event_payload, 8 * 1024, "task event payload",
+            )
         if owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or "\x00" in owner_id):
             raise ValueError("owner_id must be non-empty bounded text when supplied.")
         owner = owner_id.strip() if owner_id is not None else None
@@ -266,6 +293,31 @@ class WorkflowRunStore:
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                if event_actor is not None:
+                    prior = db.execute(
+                        "SELECT 1 FROM task_events WHERE task_id=? AND kind='task.created' LIMIT 1",
+                        (existing["run_id"],),
+                    ).fetchone()
+                    if prior is None:
+                        updated = db.execute(
+                            "UPDATE workflow_runs SET updated_at=?, version=version+1 "
+                            "WHERE run_id=? AND version=?",
+                            (now, existing["run_id"], existing["version"]),
+                        )
+                        if updated.rowcount != 1:
+                            raise WorkflowConflict("workflow changed while recording creation event.")
+                        sequence = db.execute(
+                            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                            (existing["run_id"],),
+                        ).fetchone()[0]
+                        db.execute(
+                            "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                            "VALUES (?, ?, 'task.created', ?, ?, ?)",
+                            (existing["run_id"], sequence, event_actor, event_payload_json, now),
+                        )
+                        existing = db.execute(
+                            "SELECT * FROM workflow_runs WHERE run_id=?", (existing["run_id"],)
+                        ).fetchone()
                 return self._row(existing)
             run_id = secrets.token_urlsafe(18)
             db.execute("""
@@ -274,6 +326,16 @@ class WorkflowRunStore:
                     definition_json, state, created_at, updated_at, owner_id, plan_id, subtask_id
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
             """, (run_id, key, digest, name, definition_json, now, now, owner, plan, subtask))
+            if event_actor is not None:
+                db.execute(
+                    "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=?",
+                    (now, run_id),
+                )
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, 1, 'task.created', ?, ?, ?)",
+                    (run_id, event_actor, event_payload_json, now),
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
