@@ -392,7 +392,9 @@ def build_delegated_specialist_handlers(
             audit=config.get("audit"),
         )
 
-        def handle(request: str, *, _runtime=runtime) -> str:
+        def handle(
+            request: str, *, cancellation_requested=None, _runtime=runtime,
+        ) -> str:
             if not isinstance(request, str) or not request.strip() or len(request) > _MAX_INPUT_CHARS or "\x00" in request:
                 raise ValueError("specialist input must be bounded non-empty text")
             if cancellation_requested is not None and not callable(cancellation_requested):
