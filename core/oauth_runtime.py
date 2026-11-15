@@ -8,6 +8,7 @@ from __future__ import annotations
 from core.oauth_aead import AESGCMCredentialCipher
 from core.oauth_credential_vault import SQLiteOAuthCredentialVault
 from core.oauth_os_key_provider import OSKeyringOAuthKeyProvider
+from core.oauth_lifecycle_coordinator import SQLiteOAuthLifecycleCoordinator
 
 
 def build_oauth_credential_vault(
@@ -23,4 +24,18 @@ def build_oauth_credential_vault(
         database_path,
         cipher=cipher,
         hmac_key=provider.hmac_key(),
+    )
+
+
+
+def build_oauth_lifecycle_coordinator(
+    database_path: str, *, busy_timeout_ms: int = 5000,
+) -> SQLiteOAuthLifecycleCoordinator:
+    """Build the shared process-safe lock used by all OAuth lifecycle services.
+
+    Every API/worker process that shares a credential vault must receive a
+    coordinator configured with the same local-filesystem database path.
+    """
+    return SQLiteOAuthLifecycleCoordinator(
+        database_path, busy_timeout_ms=busy_timeout_ms,
     )
