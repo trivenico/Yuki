@@ -8,7 +8,7 @@ from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 
 class FakeAuth:
     def resolve_session(self, token):
-        return SimpleNamespace(user_id="owner") if token == "valid-session" else None
+        return SimpleNamespace(user_id="owner") if token == "valid-session-token-123" else None
 
 
 class FakeRegistry:
@@ -66,8 +66,31 @@ class OAuthConnectionAPITests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(body["error"], "authentication_required")
 
+    def test_rejects_duplicate_authorization_headers(self):
+        sent = []
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        async def send(message):
+            sent.append(message)
+        scope = {
+            "type": "http", "method": "GET",
+            "path": "/v1/integrations/oauth/connections",
+            "headers": [
+                (b"authorization", b"Bearer valid-session-token-123"),
+                (b"authorization", b"Bearer attacker-controlled-token"),
+            ],
+        }
+        asyncio.run(self.app(scope, receive, send))
+        self.assertEqual(sent[0]["status"], 401)
+
+    def test_rejects_short_bearer_tokens(self):
+        status, _ = self.request(
+            "GET", "/v1/integrations/oauth/connections", "short"
+        )
+        self.assertEqual(status, 401)
+
     def test_lists_only_non_secret_owner_metadata(self):
-        status, body = self.request("GET", "/v1/integrations/oauth/connections", "valid-session")
+        status, body = self.request("GET", "/v1/integrations/oauth/connections", "valid-session-token-123")
         self.assertEqual(status, 200)
         self.assertEqual(body["connections"][0]["provider_id"], "provider")
         self.assertNotIn("access_token", str(body))
@@ -75,7 +98,7 @@ class OAuthConnectionAPITests(unittest.TestCase):
 
     def test_disconnects_locally_even_if_remote_revocation_failed(self):
         status, body = self.request(
-            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session"
+            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session-token-123"
         )
         self.assertEqual(status, 200)
         self.assertTrue(body["disconnected"])
@@ -84,7 +107,7 @@ class OAuthConnectionAPITests(unittest.TestCase):
 
     def test_unknown_owner_connection_is_not_disconnected(self):
         status, body = self.request(
-            "DELETE", "/v1/integrations/oauth/connections/provider/other", "valid-session"
+            "DELETE", "/v1/integrations/oauth/connections/provider/other", "valid-session-token-123"
         )
         self.assertEqual(status, 404)
         self.assertEqual(self.disconnect.calls, [])
@@ -99,7 +122,7 @@ class OAuthConnectionAPITests(unittest.TestCase):
             return {"disconnected": True, "revocation_attempted": True, "remote_revoked": True}
         self.disconnect.disconnect = reconnect_after_credential_delete
         status, body = self.request(
-            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session"
+            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session-token-123"
         )
         self.assertEqual(status, 200)
         self.assertTrue(body["disconnected"])
@@ -110,7 +133,7 @@ class OAuthConnectionAPITests(unittest.TestCase):
     def test_failed_disconnect_keeps_registry_entry(self):
         self.disconnect.result = {"disconnected": False}
         status, _ = self.request(
-            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session"
+            "DELETE", "/v1/integrations/oauth/connections/provider/account", "valid-session-token-123"
         )
         self.assertEqual(status, 502)
         self.assertTrue(self.registry.records)
