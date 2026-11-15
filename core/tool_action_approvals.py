@@ -197,16 +197,6 @@ class SQLiteToolActionApprovalStore:
                         "action journal record does not match the approved request"
                     )
 
-                if action["state"] == "succeeded":
-                    db.execute("DELETE FROM tool_action_approvals WHERE approval_id=?",
-                               (fingerprint,))
-                    self._audit(db, principal_id=principal_id,
-                        action_id=context.action_id, tool_name=context.tool_name,
-                        token_fingerprint=fingerprint, outcome="consumed",
-                        occurred_at=now)
-                    db.execute("COMMIT")
-                    return ToolActionJournal._record(action)
-
                 if (action["state"] != "authorizing" or lease_owner is None
                         or action["lease_owner"] != lease_owner
                         or action["lease_expires_at"] is None
