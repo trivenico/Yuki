@@ -155,6 +155,7 @@ class SpecialistTaskWorker:
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
         owner_handler_factory: Callable[[str, str], Callable[[str], str]] | None = None,
+        agent_ids: tuple[str, ...] = (),
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -162,7 +163,9 @@ class SpecialistTaskWorker:
             raise ValueError("worker_id must be bounded non-empty text.")
         if not isinstance(service_actor_id, str) or not service_actor_id.strip() or len(service_actor_id) > 200:
             raise ValueError("service_actor_id must be bounded non-empty text.")
-        if not isinstance(handlers, Mapping) or not handlers:
+        if not isinstance(handlers, Mapping):
+            raise TypeError("handlers must be a mapping.")
+        if owner_handler_factory is None and not handlers:
             raise ValueError("at least one explicit specialist handler is required.")
         validated = {}
         for agent_id, handler in handlers.items():
@@ -176,7 +179,17 @@ class SpecialistTaskWorker:
         self.service_actor_id = service_actor_id.strip()
         if owner_handler_factory is not None and not callable(owner_handler_factory):
             raise TypeError("owner_handler_factory must be callable when supplied.")
+        if not isinstance(agent_ids, tuple) or len(agent_ids) > 100:
+            raise ValueError("agent_ids must be a bounded tuple.")
+        registered_ids = set(validated)
+        for agent_id in agent_ids:
+            if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
+                raise ValueError("agent_ids must contain bounded identifiers.")
+            registered_ids.add(agent_id)
+        if owner_handler_factory is not None and not registered_ids:
+            raise ValueError("owner-scoped workers require explicit agent_ids or handlers.")
         self.handlers = validated
+        self.agent_ids = frozenset(registered_ids)
         self.owner_handler_factory = owner_handler_factory
 
     def run_concurrently(
@@ -207,6 +220,7 @@ class SpecialistTaskWorker:
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
                 owner_handler_factory=self.owner_handler_factory,
+                agent_ids=tuple(self.agent_ids),
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -228,7 +242,7 @@ class SpecialistTaskWorker:
         if claimed is None:
             return None
 
-        agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
+        agent_id = self._agent_id(claimed.workflow_name, self.agent_ids)
         handler = self.handlers.get(agent_id)
         if self.owner_handler_factory is not None:
             if not isinstance(claimed.owner_id, str) or not claimed.owner_id.strip():
