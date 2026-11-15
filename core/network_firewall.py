@@ -49,6 +49,12 @@ class NetworkFirewall:
             if not isinstance(host, str) or host != host.strip():
                 raise FirewallPolicyError("invalid_allowed_host")
             candidate = host.lower().rstrip(".")
+            try:
+                ipaddress.ip_address(candidate)
+            except ValueError:
+                pass
+            else:
+                raise FirewallPolicyError("ip_literal_hosts_are_not_allowed")
             if not _HOST.fullmatch(candidate):
                 raise FirewallPolicyError("invalid_allowed_host")
             normalized.add(candidate)
