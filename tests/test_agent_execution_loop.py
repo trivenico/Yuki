@@ -519,8 +519,6 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(self.invocations, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
     def test_confirmation_callback_is_not_invoked_for_read_only_tool(self):
         confirmation_calls = []
         approval_calls = []
@@ -547,3 +545,7 @@ if __name__ == "__main__":
         self.assertEqual(confirmation_calls, [])
         self.assertEqual(approval_calls, [])
         self.assertEqual(self.invocations, [{"value": "safe"}])
+
+
+if __name__ == "__main__":
+    unittest.main()
