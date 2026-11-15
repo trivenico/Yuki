@@ -26,7 +26,7 @@ class RemoteInferenceJob:
 class RemoteInferenceJobClient:
     def __init__(self, base_url: str, device_token: str, *, lease_seconds: int = 120,
                  timeout: float = 15, max_response_bytes: int = 128_000,
-                 firewall_policy=None, transport=None):
+                 firewall_policy=None):
         if not isinstance(base_url, str) or not base_url.strip():
             raise ValueError("invalid_api_url")
         parsed = urlsplit(base_url.strip().rstrip("/"))
@@ -44,18 +44,14 @@ class RemoteInferenceJobClient:
             raise ValueError("invalid_timeout")
         if type(max_response_bytes) is not int or not 1024 <= max_response_bytes <= 512_000:
             raise ValueError("invalid_response_limit")
-        if transport is not None and not callable(getattr(transport, "open", None)):
-            raise TypeError("transport must provide open(request, timeout=...)")
-        if transport is not None and firewall_policy is not None:
-            raise ValueError("provide a transport or firewall policy, not both")
         self.base_url = base_url.strip().rstrip("/")
         self.device_token = device_token
         self.lease_seconds = lease_seconds
         self.timeout = timeout
         self.max_response_bytes = max_response_bytes
-        self._transport = transport
         self._loopback_http = parsed.scheme == "http"
-        if self._transport is None and not self._loopback_http:
+        self._transport = None
+        if not self._loopback_http:
             self._transport = PinnedHTTPSProviderTransport(
                 allowed_hosts=(host,), timeout=timeout, firewall_policy=firewall_policy,
             )
