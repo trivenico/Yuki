@@ -64,6 +64,8 @@ class ComponentRegistry:
             raise ValueError(f"runtime contract is not registered: {component_id}")
         if component_id in self._runtimes:
             raise ValueError(f"component runtime already registered: {component_id}")
+        if runtime.instance is None:
+            raise ValueError(f"component runtime instance must not be None: {component_id}")
         if not all(callable(hook) for hook in (
             runtime.start, runtime.close, runtime.health_check
         )):
