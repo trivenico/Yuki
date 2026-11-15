@@ -55,7 +55,6 @@ class TaskRecord:
     updated_at: str
     lease_owner: str | None
     lease_expires_at: str | None
-    owner_id: str | None = None
 
 
 class TaskRuntime:
