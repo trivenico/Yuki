@@ -65,7 +65,10 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
         skill = build_skill(FakeTransport(), allowed_hosts=("EXAMPLE.COM.",))
         self.assertEqual(skill.allowed_hosts, frozenset({"example.com"}))
 
-    def test_fetch_uses_injected_firewall_transport_and_extracts_text(self):
+    def test_constructor_does_not_accept_caller_supplied_transport(self):
+        with self.assertRaises(TypeError):
+            WebSkill(allowed_hosts=("example.com",), transport=FakeTransport())
+    def test_fetch_uses_configured_pinned_transport_and_extracts_text(self):
         transport = FakeTransport()
         skill = build_skill(transport, allowed_hosts=("example.com",))
         result = skill.execute("https://example.com/docs")
@@ -105,7 +108,7 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
                 skill.execute(url)
         self.assertEqual(transport.calls, [])
 
-    def test_rejects_multiple_trailing_dots_before_injected_transport(self):
+    def test_rejects_multiple_trailing_dots_before_transport_dispatch(self):
         transport = FakeTransport()
         skill = build_skill(transport, allowed_hosts=("example.com",))
         with self.assertRaises(WebSkillError):
@@ -120,14 +123,14 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
 
     def test_rejects_oversized_and_non_text_responses(self):
         too_large = build_skill(
-            allowed_hosts=("example.com",), max_bytes=4,
             FakeTransport(FakeResponse(body=b"12345")),
+            allowed_hosts=("example.com",), max_bytes=4,
         )
         with self.assertRaisesRegex(WebSkillError, "size limit"):
             too_large.execute("https://example.com/")
         binary = build_skill(
-            allowed_hosts=("example.com",),
             FakeTransport(FakeResponse(content_type="application/octet-stream")),
+            allowed_hosts=("example.com",),
         )
         with self.assertRaisesRegex(WebSkillError, "HTML or plain-text"):
             binary.execute("https://example.com/")
