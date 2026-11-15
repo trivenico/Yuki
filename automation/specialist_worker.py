@@ -236,11 +236,11 @@ class SpecialistTaskWorker:
                 future.result()
         return tuple(results)
 
-    def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
+    def run_once(self, *, plan_id: str | None = None) -> TaskRecord | None:
+        """Claim at most one task, optionally fenced to one trusted plan ID."""
         prefixes = tuple("agent-" + agent_id + "-" for agent_id in self.agent_ids) or None
         claimed = self.runtime.store.claim_next(
-            worker_id=self.worker_id, workflow_prefixes=prefixes,
+            worker_id=self.worker_id, workflow_prefixes=prefixes, plan_id=plan_id,
         )
         if claimed is None:
             return None
