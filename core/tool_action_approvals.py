@@ -120,6 +120,98 @@ class SQLiteToolActionApprovalStore:
         return approval_id
 
 
+    def consume_and_begin_execution(
+        self, approval_id: str, context: ToolActionContext, *,
+        principal_id: str, action_journal, idempotency_key: str, lease_owner: str,
+    ):
+        """Consume approval and promote its journal claim in one SQLite commit."""
+        from core.tool_action_journal import ToolActionJournal, ToolActionTransitionError
+
+        self._validate_context(context, principal_id)
+        if not isinstance(action_journal, ToolActionJournal):
+            raise TypeError("action_journal must be a ToolActionJournal")
+        if self.database_path != action_journal.database_path:
+            raise ToolActionApprovalError(
+                "approval store and action journal must share one SQLite database"
+            )
+        if (not isinstance(approval_id, str) or not approval_id or len(approval_id) > 128
+                or not isinstance(idempotency_key, str) or not idempotency_key
+                or not isinstance(lease_owner, str) or not lease_owner):
+            return None
+
+        now = datetime.now(timezone.utc).isoformat()
+        fingerprint = self._fingerprint(approval_id)
+        with self._connect() as db:
+            db.row_factory = sqlite3.Row
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                approval = db.execute("""SELECT principal_id, action_id, tool_name,
+                    request_digest, expires_at FROM tool_action_approvals
+                    WHERE approval_id = ?""", (fingerprint,)).fetchone()
+                if approval is None:
+                    self._audit(db, principal_id=principal_id,
+                        action_id=context.action_id, tool_name=context.tool_name,
+                        token_fingerprint=fingerprint, outcome="not_found",
+                        occurred_at=now)
+                    db.execute("COMMIT")
+                    return None
+                matches = (
+                    approval["principal_id"] == principal_id
+                    and approval["action_id"] == context.action_id
+                    and approval["tool_name"] == context.tool_name
+                    and approval["request_digest"] == context.request_digest
+                    and approval["expires_at"] > now
+                )
+                if not matches:
+                    outcome = "expired" if approval["expires_at"] <= now else "binding_mismatch"
+                    if outcome == "expired":
+                        db.execute("DELETE FROM tool_action_approvals WHERE approval_id=?",
+                                   (fingerprint,))
+                    self._audit(db, principal_id=principal_id,
+                        action_id=context.action_id, tool_name=context.tool_name,
+                        token_fingerprint=fingerprint, outcome=outcome,
+                        occurred_at=now)
+                    db.execute("COMMIT")
+                    return None
+
+                action = db.execute(
+                    "SELECT * FROM tool_actions WHERE idempotency_key=?",
+                    (idempotency_key,),
+                ).fetchone()
+                if (action is None or action["action_id"] != context.action_id
+                        or action["tool_name"] != context.tool_name
+                        or action["request_digest"] != context.request_digest
+                        or action["state"] != "authorizing"
+                        or action["lease_owner"] != lease_owner
+                        or action["lease_expires_at"] is None
+                        or action["lease_expires_at"] <= now):
+                    raise ToolActionTransitionError(
+                        "authorization claim is no longer owned by this worker"
+                    )
+
+                db.execute("DELETE FROM tool_action_approvals WHERE approval_id=?",
+                           (fingerprint,))
+                self._audit(db, principal_id=principal_id,
+                    action_id=context.action_id, tool_name=context.tool_name,
+                    token_fingerprint=fingerprint, outcome="consumed",
+                    occurred_at=now)
+                db.execute("""UPDATE tool_actions
+                    SET state='executing', updated_at=?, version=version+1
+                    WHERE idempotency_key=? AND state='authorizing'
+                      AND lease_owner=? AND version=?""",
+                    (now, idempotency_key, lease_owner, action["version"]))
+                updated = db.execute(
+                    "SELECT * FROM tool_actions WHERE idempotency_key=?",
+                    (idempotency_key,),
+                ).fetchone()
+                if updated is None or updated["state"] != "executing":
+                    raise ToolActionTransitionError("authorization claim could not be promoted")
+                db.execute("COMMIT")
+                return ToolActionJournal._record(updated)
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
     def consume(self, approval_id: str, context: ToolActionContext, *,
                 principal_id: str) -> bool:
         """Atomically validate and consume an approval; retries cannot reuse it."""
