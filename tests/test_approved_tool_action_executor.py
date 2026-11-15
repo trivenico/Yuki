@@ -47,6 +47,27 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
             proposal.proposal_id, principal_id="owner-a", decision="approved",
         )
 
+    def test_executor_rejects_split_or_mismatched_atomic_store_wiring(self):
+        root = Path(self.temp.name)
+        other_approvals = SQLiteToolActionApprovalStore(str(root / "other-approvals.sqlite"))
+        with self.assertRaisesRegex(ValueError, "exact approval store"):
+            ApprovedToolActionExecutor(self.proposals, other_approvals, self.runtime)
+
+        split_journal = ToolActionJournal(str(root / "split-journal.sqlite"))
+        split_runtime = GuardedToolRuntime(
+            {"email.send": lambda raw: "sent"}, AllowPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=split_journal,
+            approval_store=self.approvals,
+        )
+        with self.assertRaisesRegex(ValueError, "share one SQLite database"):
+            ApprovedToolActionExecutor(self.proposals, self.approvals, split_runtime)
+
     def tearDown(self):
         self.temp.cleanup()
 
