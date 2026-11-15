@@ -86,7 +86,7 @@ class TaskRuntime:
     def _worker_id(worker_id: str) -> str:
         if (
             not isinstance(worker_id, str) or not worker_id.strip()
-            or len(worker_id) > 200 or "\\x00" in worker_id
+            or len(worker_id) > 200 or "\x00" in worker_id
         ):
             raise ValueError("worker_id must be non-empty bounded text.")
         return worker_id.strip()
@@ -184,8 +184,7 @@ class TaskRuntime:
             raise ValueError("message must be non-empty bounded text.")
         if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
             raise ValueError("percent must be an integer from 0 to 100.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
-            raise ValueError("worker_id must be non-empty bounded text.")
+        worker_id = self._worker_id(worker_id)
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
                                      payload={"message": message.strip(), "percent": percent},
                                      expected_version=expected_version,
@@ -200,8 +199,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:lease:renew", task_id):
             raise PermissionError("task lease renewal is not authorized.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
-            raise ValueError("worker_id must be non-empty bounded text.")
+        worker_id = self._worker_id(worker_id)
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         renewed = self.store.renew_lease(
@@ -225,8 +223,7 @@ class TaskRuntime:
             metadata = {}
         if not isinstance(metadata, dict):
             raise ValueError("metadata must be an object.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
-            raise ValueError("worker_id must be non-empty bounded text.")
+        worker_id = self._worker_id(worker_id)
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
                                      payload={"artifact_type": artifact_type, "reference": reference.strip(),
                                               "metadata": metadata},
