@@ -396,6 +396,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(recovered[0].state, "interrupted")
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(events[-1].kind, "task.interrupted")
+        self.assertEqual(events[-1].actor_id, "supervisor")
         self.assertFalse(events[-1].payload["automatic_replay"])
 
 
