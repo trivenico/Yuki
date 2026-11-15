@@ -84,7 +84,9 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
             provider_id="provider", client_id="client",
         )
         result = service.disconnect(owner_id="owner", account_id="account")
-        self.assertFalse(result["disconnected"])
+        self.assertTrue(result["disconnected"])
+        self.assertFalse(result["revocation_attempted"])
+        self.assertFalse(vault.deleted)
 
     def test_stale_disconnect_generation_does_not_claim_success(self):
         class VersionFencedVault(Vault):
