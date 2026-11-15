@@ -97,12 +97,13 @@ class ConversationServiceTests(unittest.TestCase):
         service = ConversationService(
             self.store, self.loop, agent_loop_for_owner=lambda owner_id: object(),
         )
-        with self.assertRaisesRegex(TypeError, "must return an AgentExecutionLoop"):
-            service.reply(
-                owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
-                user_text="Invalid owner loop", request_id="invalid-owner-loop",
-                expected_version=0, tools=[],
-            )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Invalid owner loop", request_id="invalid-owner-loop",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("AI service or a guarded operation failed", result["answer"])
 
     def test_owner_isolation_is_enforced_by_service(self):
         with self.assertRaises(ConversationNotFound):
