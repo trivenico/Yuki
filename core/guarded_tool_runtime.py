@@ -175,17 +175,39 @@ class GuardedToolRuntime:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
 
-        # Consume only after the current authorization policy allows the action.
-        # The approval is still bound to the exact immutable context and is single-use.
-        if (
+        requires_confirmation = (
             capability is not None
             and capability.effect is ToolEffect.SIDE_EFFECTING
             and self._require_action_context
             and capability.requires_user_confirmation
+        )
+        if requires_confirmation and (
+            self._approval_store is None or not isinstance(approval_id, str)
         ):
-            if self._approval_store is None or not isinstance(approval_id, str):
-                self._record(name, "confirmation_required")
-                return "Tool blocked: explicit confirmation requires a durable, action-bound approval."
+            self._record(name, "confirmation_required")
+            return "Tool blocked: explicit confirmation requires a durable, action-bound approval."
+
+        # Reserve the immutable action identity before consuming approval. A
+        # conflicting, already-running, or unreconciled journal record must not
+        # burn a valid one-time approval token. Reservation is non-dispatching;
+        # the execution lease is acquired only after approval is consumed.
+        side_effect = (
+            capability is not None
+            and capability.effect is ToolEffect.SIDE_EFFECTING
+            and self._require_action_context
+        )
+        reserved = None
+        if side_effect:
+            try:
+                reserved = self._action_journal.reserve(
+                    action_context.idempotency_key, name, action_request,
+                    action_id=action_context.action_id,
+                )
+            except (ToolActionJournalError, ValueError, TypeError):
+                self._record(name, "journal_blocked")
+                return "Tool blocked: action is already running or requires reconciliation."
+
+        if requires_confirmation:
             try:
                 approved = self._approval_store.consume(
                     approval_id, action_context, principal_id=principal_id,
@@ -197,16 +219,8 @@ class GuardedToolRuntime:
                 return "Tool blocked: approval is invalid, expired, or already used."
 
         lease_owner = None
-        if (
-            capability is not None
-            and capability.effect is ToolEffect.SIDE_EFFECTING
-            and self._require_action_context
-        ):
+        if side_effect:
             try:
-                reserved = self._action_journal.reserve(
-                    action_context.idempotency_key, name, action_request,
-                    action_id=action_context.action_id,
-                )
                 action = self._action_journal.begin_execution(
                     action_context.idempotency_key, reserved.request_digest,
                 )
