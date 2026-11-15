@@ -13,7 +13,6 @@ throughput until a database with keyed advisory locks is introduced.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from pathlib import Path
 import re
 import sqlite3
 from typing import Iterator
@@ -44,13 +43,17 @@ class SQLiteOAuthLifecycleCoordinator:
             raise ValueError("busy_timeout_ms must be between 1 and 30000")
         self.database_path = prepare_private_sqlite_path(database_path)
         self._busy_timeout_ms = busy_timeout_ms
+        db = None
         try:
-            with self._connect() as db:
-                db.execute("PRAGMA journal_mode=WAL")
-                db.execute("CREATE TABLE IF NOT EXISTS oauth_lifecycle_lock (singleton INTEGER PRIMARY KEY CHECK(singleton = 1))")
-                db.execute("INSERT OR IGNORE INTO oauth_lifecycle_lock(singleton) VALUES(1)")
+            db = self._connect()
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("CREATE TABLE IF NOT EXISTS oauth_lifecycle_lock (singleton INTEGER PRIMARY KEY CHECK(singleton = 1))")
+            db.execute("INSERT OR IGNORE INTO oauth_lifecycle_lock(singleton) VALUES(1)")
         except sqlite3.Error:
             raise OAuthLifecycleCoordinationError("coordinator_initialization_failed") from None
+        finally:
+            if db is not None:
+                db.close()
 
     def _connect(self):
         db = sqlite3.connect(
