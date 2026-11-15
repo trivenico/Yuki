@@ -93,6 +93,27 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
             with self.subTest(address=address), self.assertRaises(MCPPinnedTransportError):
                 transport.post_json("https://mcp.example.com/rpc", payload={}, headers={})
 
+
+    def test_rejects_more_than_32_dns_answers_before_connecting(self):
+        transport = PinnedMCPHTTPTransport(
+            allowed_hosts={"mcp.example.com"},
+            resolver=lambda *args, **kwargs: [record(f"8.8.8.{index}") for index in range(1, 34)],
+            connection_factory=lambda *args, **kwargs: self.fail("must not connect"),
+        )
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_resolution_failed"):
+            transport.post_json("https://mcp.example.com/rpc", payload={}, headers={})
+
+    def test_sanitizes_unexpected_resolver_errors(self):
+        def broken_resolver(*args, **kwargs):
+            raise TypeError("resolver internal details")
+        transport = PinnedMCPHTTPTransport(
+            allowed_hosts={"mcp.example.com"}, resolver=broken_resolver,
+            connection_factory=lambda *args, **kwargs: self.fail("must not connect"),
+        )
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_resolution_failed") as caught:
+            transport.post_json("https://mcp.example.com/rpc", payload={}, headers={})
+        self.assertNotIn("resolver internal details", str(caught.exception))
+
     def test_rejects_redirects(self):
         class Redirect(Response):
             status = 302
