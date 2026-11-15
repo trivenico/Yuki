@@ -460,6 +460,28 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(deltas, ["partial"])
 
+    def test_stream_event_arriving_after_deadline_is_never_forwarded(self):
+        clock_values = iter([0.0, 0.0, 0.0, 0.2, 0.2])
+        closed = []
+        deltas = []
+
+        def stream_model(**kwargs):
+            try:
+                yield {"type": "text_delta", "text": "too-late"}
+            finally:
+                closed.append(True)
+
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol, stream_model=stream_model,
+            max_duration_seconds=0.1, clock=lambda: next(clock_values),
+        )
+        result = loop.run("Respect the deadline", tools=[], on_text_delta=deltas.append)
+
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(deltas, [])
+        self.assertEqual(closed, [True])
+
     def test_streaming_enforces_duration_budget_and_closes_iterator(self):
         clock_calls = []
         closed = []
