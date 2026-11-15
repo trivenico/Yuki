@@ -8,6 +8,7 @@ from typing import Any
 
 from core.device_pairing import DevicePairingError, DevicePairingService
 from core.inference_jobs import InferenceJobService
+from core.request_body import RequestBodyTooLarge, read_json_object
 
 _MAX_BODY = 70_000
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -176,6 +177,8 @@ class AuthenticatedInferenceAPI:
                 return await self._respond(send, 200 if cancelled else 404,
                                            {"cancelled": True} if cancelled else {"error": "not_found"})
             return await self._respond(send, 404, {"error": "not_found"})
+        except RequestBodyTooLarge:
+            return await self._respond(send, 413, {"error": "request_body_too_large"})
         except (ValueError, TypeError):
             return await self._respond(send, 400, {"error": "invalid_request"})
         except Exception:
@@ -213,22 +216,7 @@ class AuthenticatedInferenceAPI:
 
     @staticmethod
     async def _body(receive):
-        chunks = bytearray()
-        while True:
-            event = await receive()
-            if event.get("type") == "http.disconnect":
-                raise ValueError("client disconnected")
-            if event.get("type") != "http.request":
-                continue
-            chunks.extend(event.get("body", b""))
-            if len(chunks) > _MAX_BODY:
-                raise ValueError("request body too large")
-            if not event.get("more_body", False):
-                break
-        value = json.loads(chunks.decode("utf-8") or "{}")
-        if not isinstance(value, dict):
-            raise ValueError("request body must be an object")
-        return value
+        return await read_json_object(receive, max_bytes=_MAX_BODY)
 
     @staticmethod
     async def _respond(send, status, payload):
