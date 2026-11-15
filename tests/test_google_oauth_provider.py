@@ -1,30 +1,42 @@
 import unittest
 from urllib.parse import parse_qs, urlsplit
+
 from core.google_oauth_provider import (
-    GOOGLE_GMAIL_SCOPES, GOOGLE_HOSTS, GOOGLE_ISSUER,
+    GOOGLE_GMAIL_SCOPES, GOOGLE_HOSTS,
     build_google_gmail_authorization_service, GoogleOAuthConfigurationError,
 )
 
+
 class Store:
-    def create(self, **kwargs): self.created = kwargs; return 1234
-    def consume(self, **kwargs): raise AssertionError("not used")
+    def create(self, **kwargs):
+        self.created = kwargs
+        return 1234
+    def consume(self, **kwargs):
+        raise AssertionError("not used")
+
+
 class Vault:
-    def store(self, **kwargs): raise AssertionError("not used")
+    def store(self, **kwargs):
+        raise AssertionError("not used")
+
+
 class Transport:
     allowed_hosts = frozenset(GOOGLE_HOSTS)
-    def request_form(self, *args, **kwargs): raise AssertionError("not used")
-class Identity:
-    def verify(self, **kwargs): return {}
-class OIDC:
-    def verify(self, **kwargs): return {"issuer": GOOGLE_ISSUER, "subject": "stable-subject"}
+    def request_form(self, *args, **kwargs):
+        raise AssertionError("not used")
+    def request_json(self, *args, **kwargs):
+        raise AssertionError("not used")
+
 
 class GoogleOAuthProviderTests(unittest.TestCase):
     def build(self, **overrides):
-        values = dict(client_id="client-id.apps.googleusercontent.com",
+        values = dict(
+            client_id="client-id.apps.googleusercontent.com",
             redirect_uri="https://yuki.example.com/oauth/callback/google",
-            transaction_store=Store(), credential_vault=Vault(), pinned_transport=Transport(),
-            identity_verifier=Identity(), oidc_verifier=OIDC(),
-            account_id_resolver=lambda claims: "google_" + "a" * 64)
+            transaction_store=Store(), credential_vault=Vault(),
+            pinned_transport=Transport(),
+            account_id_resolver=lambda claims: "google-" + "a" * 64,
+        )
         values.update(overrides)
         return build_google_gmail_authorization_service(**values)
 
@@ -42,24 +54,31 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         self.assertEqual(result["expires_at"], 1234)
 
     def test_requests_only_send_and_readonly_gmail_scopes(self):
-        self.assertEqual(GOOGLE_GMAIL_SCOPES, (
+        self.assertEqual(set(GOOGLE_GMAIL_SCOPES), {
             "https://www.googleapis.com/auth/gmail.send",
-            "https://www.googleapis.com/auth/gmail.readonly"))
+            "https://www.googleapis.com/auth/gmail.readonly",
+        })
         self.assertNotIn("https://mail.google.com/", GOOGLE_GMAIL_SCOPES)
         self.assertNotIn("https://www.googleapis.com/auth/gmail.modify", GOOGLE_GMAIL_SCOPES)
 
     def test_rejects_bad_callback_and_missing_identity_resolver(self):
-        for redirect in ("http://yuki.example.com/oauth/callback/google",
+        for redirect in (
+            "http://yuki.example.com/oauth/callback/google",
             "https://attacker.example/oauth/callback/google",
             "https://yuki.example.com/oauth/callback/other",
-            "https://yuki.example.com/oauth/callback/google?x=1"):
+            "https://yuki.example.com/oauth/callback/google?x=1",
+        ):
             with self.subTest(redirect=redirect), self.assertRaises(GoogleOAuthConfigurationError):
                 self.build(redirect_uri=redirect)
-        with self.assertRaises(GoogleOAuthConfigurationError): self.build(account_id_resolver=None)
+        with self.assertRaises(GoogleOAuthConfigurationError):
+            self.build(account_id_resolver=None)
 
-    def test_rejects_transport_without_both_google_hosts(self):
-        class Incomplete: allowed_hosts = frozenset({"accounts.google.com"})
+    def test_requires_every_google_oauth_and_oidc_host_on_pinned_transport(self):
+        class Incomplete:
+            allowed_hosts = frozenset({"accounts.google.com", "oauth2.googleapis.com"})
         with self.assertRaisesRegex(GoogleOAuthConfigurationError, "transport_host"):
             self.build(pinned_transport=Incomplete())
 
-if __name__ == "__main__": unittest.main()
+
+if __name__ == "__main__":
+    unittest.main()
