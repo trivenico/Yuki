@@ -58,8 +58,9 @@ class GmailRegistrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
-            approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
-            journal = ToolActionJournal(str(root / "journal.sqlite"))
+            shared_action_db = str(root / "tool-actions.sqlite")
+            approvals = SQLiteToolActionApprovalStore(shared_action_db)
+            journal = ToolActionJournal(shared_action_db)
             send_client = StubSendClient()
             bundle = build_gmail_tool_runtime_bundle(
                 existing_tools={}, existing_capabilities=ToolCapabilityCatalog({}),
