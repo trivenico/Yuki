@@ -130,6 +130,23 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
         self.assertEqual(self.calls, [])
 
+    def test_atomic_claim_rejects_matching_legacy_reservation(self):
+        legacy = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send",
+            self.arguments, action_id=self.proposal.action_id,
+        )
+        self.assertEqual(legacy.version, 0)
+        with self.assertRaises(ToolActionConflict):
+            self.executor._claim_proposal_and_reserve_action(
+                self.proposal, principal_id="owner-a",
+            )
+        proposal = self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(proposal.execution_state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).version, 0)
+        self.assertEqual(self.calls, [])
+
     def test_execution_is_single_claim_and_cannot_be_replayed(self):
         self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
         with self.assertRaisesRegex(ValueError, "already claimed"):
