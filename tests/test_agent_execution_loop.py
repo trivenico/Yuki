@@ -5,6 +5,9 @@ from core.agent_execution_loop import AgentExecutionError, AgentExecutionLoop
 from core.delegated_tool_policy import DelegatedToolPolicy
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.tool_action_context import ToolActionContext
+from core.tool_action_journal import ToolActionJournal
+from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
 class AllowPolicy:
@@ -392,6 +395,42 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "limit_reached")
         self.assertEqual(deltas, ["first"])
         self.assertEqual(closed, [True])
+
+
+    def test_agent_loop_uses_host_context_not_model_generated_call_id(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            journal = ToolActionJournal(str(Path(directory) / "actions.sqlite3"))
+            sent = []
+            runtime = GuardedToolRuntime(
+                {"email.send": lambda raw: sent.append(raw) or "sent"},
+                AllowPolicy(),
+                capabilities=ToolCapabilityCatalog({
+                    "email.send": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
+                }),
+                require_action_context=True,
+                action_journal=journal,
+            )
+            protocol = StructuredToolProtocol(runtime)
+            request = {"to": "person@example.com"}
+            context = ToolActionContext.create("authenticated-user", "email.send", request)
+            model = lambda **kwargs: {
+                "text": "",
+                "tool_calls": {"tool_calls": [{
+                    "id": "model-controlled-id", "name": "email.send", "arguments": request,
+                }]},
+            }
+            loop = AgentExecutionLoop(model, protocol, max_model_turns=1)
+            result = loop.run(
+                "Send the email", tools=[],
+                principal_id="authenticated-user",
+                action_context_factory=lambda principal, name, args: context,
+                confirmation_check=lambda call: True,
+            )
+            self.assertEqual(result.status, "limit_reached")
+            self.assertEqual(sent, ['{"to":"person@example.com"}'])
 
 if __name__ == "__main__":
     unittest.main()
