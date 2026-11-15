@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 import re
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Mapping
 
 
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
