@@ -45,7 +45,7 @@ class GmailSendClient:
             raise ValueError("pinned transport must explicitly allow Gmail API host")
         if (not isinstance(message_id_domain, str)
                 or not re.fullmatch(
-                    r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}",
+                    r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}",
                     message_id_domain)):
             raise ValueError("message_id_domain must be a trusted DNS domain")
         self._credentials = credential_resolver
