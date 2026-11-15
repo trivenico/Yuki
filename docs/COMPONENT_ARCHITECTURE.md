@@ -45,6 +45,9 @@ Infrastructure: providers, persistence, runtime, diagnostics
 | Memory | Approved memory persistence and retrieval | Cross-owner data access |
 | Business integrations | Platform policies and opportunity lifecycle | Secret storage or approval bypass |
 | Conversation API | Request validation and transport mapping | Duplicate service implementations |
+| MCP and external tools | Pinned transport, OAuth, tool discovery and allowlists | Unreviewed endpoints or tool-policy bypass |
+| Voice runtime | Speech input/output, wake-word and speaker primitives | Silent background recording or permission bypass |
+| Operator interface | Chat, task controls and approval presentation | Business rules or direct privileged actions |
 
 ## Rules for adding or changing components
 
