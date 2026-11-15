@@ -120,6 +120,23 @@ class SpecialistSupervisorTests(unittest.TestCase):
         self.assertEqual(len(report.worker_results), 1)
         self.assertEqual(report.worker_results[0].task_id, report.plan.subtasks[0].task_id)
 
+
+    def test_total_execution_budget_leaves_remaining_plan_tasks_queued(self):
+        report = self.supervisor.run(
+            actor_id="alice",
+            idempotency_key="supervisor-task-budget",
+            subtasks=[
+                SubtaskSpec("task-a", "first", ("research",), requires_approval=False),
+                SubtaskSpec("task-b", "second", ("research",), requires_approval=False),
+                SubtaskSpec("task-c", "third", ("research",), requires_approval=False),
+            ],
+            max_tasks=1,
+            max_rounds=5,
+        )
+        self.assertEqual(len(report.worker_results), 1)
+        self.assertFalse(report.complete)
+        self.assertEqual(len(report.remaining_subtasks), 2)
+
     def test_supervisor_requires_shared_runtime_and_bounded_budgets(self):
         other_store = WorkflowRunStore(str(Path(self.tmp.name) / "other.sqlite3"))
         other_runtime = TaskRuntime(other_store, authorize=lambda *_: True)
