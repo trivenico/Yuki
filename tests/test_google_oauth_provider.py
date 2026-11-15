@@ -1,0 +1,65 @@
+import unittest
+from urllib.parse import parse_qs, urlsplit
+from core.google_oauth_provider import (
+    GOOGLE_GMAIL_SCOPES, GOOGLE_HOSTS, GOOGLE_ISSUER,
+    build_google_gmail_authorization_service, GoogleOAuthConfigurationError,
+)
+
+class Store:
+    def create(self, **kwargs): self.created = kwargs; return 1234
+    def consume(self, **kwargs): raise AssertionError("not used")
+class Vault:
+    def store(self, **kwargs): raise AssertionError("not used")
+class Transport:
+    allowed_hosts = frozenset(GOOGLE_HOSTS)
+    def request_form(self, *args, **kwargs): raise AssertionError("not used")
+class Identity:
+    def verify(self, **kwargs): return {}
+class OIDC:
+    def verify(self, **kwargs): return {"issuer": GOOGLE_ISSUER, "subject": "stable-subject"}
+
+class GoogleOAuthProviderTests(unittest.TestCase):
+    def build(self, **overrides):
+        values = dict(client_id="client-id.apps.googleusercontent.com",
+            redirect_uri="https://yuki.example.com/oauth/callback/google",
+            transaction_store=Store(), credential_vault=Vault(), pinned_transport=Transport(),
+            identity_verifier=Identity(), oidc_verifier=OIDC(),
+            account_id_resolver=lambda claims: "google_" + "a" * 64)
+        values.update(overrides)
+        return build_google_gmail_authorization_service(**values)
+
+    def test_google_authorization_uses_pkce_offline_and_no_resource_parameter(self):
+        service = self.build()
+        result = service.begin(owner_id="owner-1", session_id="session-1")
+        params = parse_qs(urlsplit(result["authorization_url"]).query)
+        self.assertEqual(urlsplit(result["authorization_url"]).netloc, "accounts.google.com")
+        self.assertEqual(params["response_type"], ["code"])
+        self.assertEqual(params["code_challenge_method"], ["S256"])
+        self.assertEqual(params["scope"], [" ".join((*GOOGLE_GMAIL_SCOPES, "openid"))])
+        self.assertEqual(params["access_type"], ["offline"])
+        self.assertEqual(params["include_granted_scopes"], ["true"])
+        self.assertNotIn("resource", params)
+        self.assertEqual(result["expires_at"], 1234)
+
+    def test_requests_only_send_and_readonly_gmail_scopes(self):
+        self.assertEqual(GOOGLE_GMAIL_SCOPES, (
+            "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/gmail.readonly"))
+        self.assertNotIn("https://mail.google.com/", GOOGLE_GMAIL_SCOPES)
+        self.assertNotIn("https://www.googleapis.com/auth/gmail.modify", GOOGLE_GMAIL_SCOPES)
+
+    def test_rejects_bad_callback_and_missing_identity_resolver(self):
+        for redirect in ("http://yuki.example.com/oauth/callback/google",
+            "https://attacker.example/oauth/callback/google",
+            "https://yuki.example.com/oauth/callback/other",
+            "https://yuki.example.com/oauth/callback/google?x=1"):
+            with self.subTest(redirect=redirect), self.assertRaises(GoogleOAuthConfigurationError):
+                self.build(redirect_uri=redirect)
+        with self.assertRaises(GoogleOAuthConfigurationError): self.build(account_id_resolver=None)
+
+    def test_rejects_transport_without_both_google_hosts(self):
+        class Incomplete: allowed_hosts = frozenset({"accounts.google.com"})
+        with self.assertRaisesRegex(GoogleOAuthConfigurationError, "transport_host"):
+            self.build(pinned_transport=Incomplete())
+
+if __name__ == "__main__": unittest.main()
