@@ -2,16 +2,65 @@
 from __future__ import annotations
 
 import json
+import http.client
+import ipaddress
 import urllib.error
 import urllib.request
 import re
 from urllib.parse import urlsplit
 
+from core.pinned_https_provider_transport import PinnedHTTPSProviderTransport, PinnedHTTPTransportError
+
+
+class _LoopbackResponse:
+    def __init__(self, response, connection): self._response, self._connection = response, connection; self.status, self.reason, self.headers = response.status, response.reason, response.headers
+    def read(self, amount=-1): return self._response.read(amount)
+    def readline(self, amount=-1): return self._response.readline(amount)
+    def close(self):
+        try: self._response.close()
+        finally: self._connection.close()
+    def __enter__(self): return self
+    def __exit__(self, *_): self.close(); return False
+
+class _LoopbackHTTPTransport:
+    """Connect only to literal loopback IPs; never resolve hostnames."""
+    MAX_REQUEST_BYTES = 2_000_000
+    def __init__(self, allowed_host, port):
+        self.allowed_host, self.port = allowed_host, port
+        self._ip = "127.0.0.1" if allowed_host == "localhost" else str(ipaddress.ip_address(allowed_host))
+        if not ipaddress.ip_address(self._ip).is_loopback: raise ValueError("Local Ollama HTTP requires a loopback address.")
+    def open(self, request, timeout=None):
+        try:
+            parsed = urlsplit(request.full_url)
+            if parsed.scheme != "http" or parsed.hostname != self.allowed_host or (parsed.port or 80) != self.port or parsed.username or parsed.password or parsed.fragment: raise PinnedHTTPTransportError("ollama_loopback_destination_blocked")
+            method, body = request.get_method(), request.data
+            if not isinstance(method, str) or not re.fullmatch(r"[A-Z][A-Z0-9_-]{0,15}", method): raise PinnedHTTPTransportError("ollama_invalid_method")
+            if body is not None and (not isinstance(body, bytes) or len(body) > self.MAX_REQUEST_BYTES): raise PinnedHTTPTransportError("ollama_invalid_request_body")
+            headers = {}
+            for key, value in request.header_items():
+                if not isinstance(key, str) or not re.fullmatch(r"[!#$%&+.^_~0-9A-Za-z-]+", key) or not isinstance(value, str) or any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in value) or key.lower() in {"host", "connection", "transfer-encoding", "content-length"}: raise PinnedHTTPTransportError("ollama_invalid_headers")
+                headers[key] = value
+            host_header = "[" + self.allowed_host + "]" if ":" in self.allowed_host else self.allowed_host
+            if self.port != 80: host_header += ":" + str(self.port)
+            headers["Host"] = host_header
+            connection = http.client.HTTPConnection(self._ip, self.port, timeout=timeout or 45)
+            try:
+                target = parsed.path or "/"
+                if parsed.query: target += "?" + parsed.query
+                connection.request(method, target, body=body, headers=headers)
+                response = connection.getresponse()
+                if 300 <= response.status < 400: raise PinnedHTTPTransportError("ollama_redirect_rejected")
+                return _LoopbackResponse(response, connection)
+            except Exception:
+                connection.close()
+                raise
+        except PinnedHTTPTransportError: raise
+        except (OSError, http.client.HTTPException, ValueError, TypeError): raise PinnedHTTPTransportError("ollama_loopback_unavailable") from None
 
 class OllamaProvider:
     """Talk to a local or HTTPS Ollama endpoint; never silently routes to cloud."""
 
-    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45):
+    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45, transport=None):
         if not isinstance(base_url, str) or not base_url.strip():
             raise ValueError("Ollama base URL is required.")
         parsed = urlsplit(base_url.strip().rstrip("/"))
@@ -30,6 +79,9 @@ class OllamaProvider:
         if (parsed.scheme != "https" and not (parsed.scheme == "http" and loopback)
                 or not host or parsed.username or parsed.password or parsed.query or parsed.fragment):
             raise ValueError("Ollama must use HTTPS or loopback HTTP without URL credentials.")
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if parsed.scheme == "https" and port != 443: raise ValueError("Remote Ollama HTTPS must use port 443.")
+        if transport is not None and not callable(getattr(transport, "open", None)): raise TypeError("transport must provide an open(request, timeout=...) method")
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid Ollama model name.")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
@@ -37,6 +89,9 @@ class OllamaProvider:
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
         self.timeout = timeout
+        if transport is not None: self._transport = transport
+        elif parsed.scheme == "https": self._transport = PinnedHTTPSProviderTransport(allowed_hosts={host}, timeout=timeout)
+        else: self._transport = _LoopbackHTTPTransport(host, port)
 
     def is_available(self):
         """Return true only when the local server responds and the model is installed."""
@@ -46,9 +101,9 @@ class OllamaProvider:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout, 5)) as response:
+            with self._transport.open(request, timeout=min(self.timeout, 5)) as response:
                 raw = response.read(500_001)
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError):
             return False
         if len(raw) > 500_000:
             return False
@@ -117,14 +172,11 @@ class OllamaProvider:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
         )
-        class RejectRedirects(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         try:
-            opener = urllib.request.build_opener(RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama chat request failed; redirects are not followed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Ollama response exceeded the 2 MB limit.")
@@ -214,8 +266,6 @@ class OllamaProvider:
             headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
             method="POST",
         )
-        class RejectRedirects(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         text_parts = []
         text_size = 0
@@ -223,8 +273,7 @@ class OllamaProvider:
         total_bytes = 0
         done = False
         try:
-            opener = urllib.request.build_opener(RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 while True:
                     line = response.readline(65_537)
                     if not line:
@@ -271,7 +320,7 @@ class OllamaProvider:
                         done = True
                         finish_reason = chunk.get("done_reason", "stop")
                         break
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama streaming request failed; redirects are not followed.") from exc
         if not done:
             raise RuntimeError("Ollama stream ended before its final done event.")
@@ -305,9 +354,9 @@ class OllamaProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with self._transport.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (PinnedHTTPTransportError, urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama request failed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Ollama response exceeded the 2 MB limit.")
