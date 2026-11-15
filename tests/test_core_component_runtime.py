@@ -85,6 +85,28 @@ class CoreComponentCompositionTests(unittest.TestCase):
             registry.close()
             self.assertEqual(provider.closed, 1)
 
+    def test_owner_agent_factory_is_registered_as_separate_component(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            provider = FakeProvider()
+            factory = lambda owner_id: self._loop()
+            store = ConversationStore(Path(directory) / "conversations.sqlite3")
+            application = build_conversation_application_runtime(
+                {}, agent_loop=self._loop(), agent_loop_for_owner=factory,
+                store_factory=lambda config: store,
+            )
+            registry = build_core_component_registry(
+                auth_service=auth, provider=provider, agent_loop=application.conversations.agent_loop,
+                application_runtime=application,
+            )
+            self.assertIs(registry.resolve("owner-agent-execution"), factory)
+            started = registry.start_all()
+            self.assertLess(started.index("agent-execution"), started.index("owner-agent-execution"))
+            self.assertTrue(registry.health()["owner-agent-execution"])
+            registry.close()
+            self.assertTrue(application.closed)
+            self.assertEqual(provider.closed, 1)
+
     def test_invalid_provider_is_rejected_before_registry_is_returned(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)

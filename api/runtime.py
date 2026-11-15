@@ -16,6 +16,7 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.component_registry import ComponentRegistry
 from core.configuration_component_runtime import build_configuration_component_runtime
+from core.owner_agent_component_runtime import build_owner_agent_execution_component_runtime
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -189,6 +190,19 @@ def build_conversation_runtime(
             # The API composition root owns the supplied configuration snapshot.
             # Preserve legacy partial test/embedding configs, but register the
             # configuration component whenever the validated runtime config is complete.
+            owner_factory = application.conversations.agent_loop_for_owner
+            if owner_factory is not None:
+                try:
+                    registered_owner_factory = component_registry.resolve("owner-agent-execution")
+                except LookupError:
+                    component_registry.register(
+                        build_owner_agent_execution_component_runtime(owner_factory)
+                    )
+                else:
+                    if registered_owner_factory is not owner_factory:
+                        raise ValueError(
+                            "component registry owner-agent-execution factory does not match API runtime"
+                        )
             if (
                 isinstance(config.get("workspace"), str)
                 and isinstance(config.get("provider"), str)

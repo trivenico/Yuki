@@ -116,6 +116,15 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
         ("Native general-purpose tool-calling and complete multi-agent autonomy are not established.",),
     ),
     ComponentContract(
+        "owner-agent-execution", "Owner-scoped agent execution factory", "orchestration", "experimental",
+        "Resolves isolated agent execution loops for authenticated owners through the shared conversation service.",
+        ("core/conversation_service.py", "core/owner_agent_component_runtime.py"),
+        ("identity-access", "agent-execution"),
+        ("callable owner-to-loop resolver", "distinct loop instance per owner", "service-owned loop cleanup"),
+        ("tests/test_owner_agent_component_runtime.py", "tests/test_conversation_service.py"),
+        ("The resolver is process-local; distributed worker isolation and per-specialist policy composition remain incomplete.",),
+    ),
+    ComponentContract(
         "durable-conversations", "Durable conversation domain", "domain", "experimental",
         "Owns conversation lifecycle, persistence, execution identity and recovery state.",
         ("core/conversation_service.py", "core/conversation_store.py",
