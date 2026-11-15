@@ -82,8 +82,10 @@ class ComponentRegistry:
         try:
             for contract in ordered:
                 component_id = contract.component_id
-                self._runtimes[component_id].start()
+                # Include the in-flight component in rollback: start hooks may
+                # acquire resources before failing.
                 self._started.append(component_id)
+                self._runtimes[component_id].start()
         except Exception as exc:
             self.close()
             raise RuntimeError(f"component startup failed: {component_id}") from exc
