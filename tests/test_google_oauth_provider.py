@@ -73,6 +73,16 @@ class GoogleOAuthProviderTests(unittest.TestCase):
         self.assertTrue(callable(prepared.authorization_service.begin))
         self.assertTrue(callable(prepared.authorization_service.complete))
 
+    def test_default_account_resolver_hashes_verified_subject_without_email(self):
+        prepared = self.build(account_id_resolver=None)
+        self.assertTrue(callable(prepared._account_id_resolver))
+        account_id = prepared._account_id_resolver({
+            "issuer": "https://accounts.google.com", "subject": "stable-subject",
+            "audience": "client-id.apps.googleusercontent.com",
+        })
+        self.assertRegex(account_id, r"^google-[a-f0-9]{64}$")
+        self.assertNotIn("stable-subject", account_id)
+
     def test_requests_only_send_and_readonly_gmail_scopes(self):
         self.assertEqual(set(GOOGLE_GMAIL_SCOPES), {
             "https://www.googleapis.com/auth/gmail.send",
