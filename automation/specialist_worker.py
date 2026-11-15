@@ -318,8 +318,8 @@ def build_delegated_specialist_handlers(
     """
     from core.delegated_agent_runtime import build_delegated_agent_runtime
 
-    if not isinstance(specialist_configs, Mapping) or not specialist_configs or len(specialist_configs) > 32:
-        raise ValueError("specialist_configs must be a non-empty bounded mapping")
+    if not isinstance(specialist_configs, Mapping) or not specialist_configs or len(specialist_configs) > 100:
+        raise ValueError("specialist_configs must contain between 1 and 100 specialists")
     handlers: dict[str, Callable[[str], str]] = {}
     required = {"model", "tools", "tool_definitions", "parent_policy", "allowed_tools"}
     optional = {"stream_model", "loop_options", "audit"}
