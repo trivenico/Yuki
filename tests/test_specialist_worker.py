@@ -337,6 +337,19 @@ class SpecialistWorkerTests(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError, "bounded non-empty text"):
             handlers["research-agent"](" ")
+        with self.assertRaisesRegex(ValueError, "bounded non-empty text"):
+            handlers["research-agent"]("bad\\x00input")
+        with self.assertRaisesRegex(ValueError, "exceeds the delegated specialist budget"):
+            build_delegated_specialist_handlers({
+                "research-agent": {
+                    "model": lambda **_: {"text": "ok", "tool_calls": {"tool_calls": []}},
+                    "tools": {},
+                    "tool_definitions": [],
+                    "parent_policy": type("Policy", (), {"authorize_tool": lambda self, name: False})(),
+                    "allowed_tools": (),
+                    "loop_options": {"max_duration_seconds": 121},
+                },
+            })
 
 
 if __name__ == "__main__":
