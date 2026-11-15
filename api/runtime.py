@@ -34,6 +34,7 @@ from core.tool_action_context import ToolActionContext
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.approved_tool_action_executor import ApprovedToolActionExecutor
 from core.tool_action_reconciliation import ToolActionReconciliationService
+from core.google_gmail_runtime import GmailToolRuntimeBundle
 
 
 class ConversationRuntime:
@@ -108,6 +109,7 @@ def build_conversation_runtime(
     pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
     approved_tool_action_executor: ApprovedToolActionExecutor | None = None,
     tool_action_reconciler: ToolActionReconciliationService | None = None,
+    gmail_runtime_bundle: GmailToolRuntimeBundle | None = None,
     pending_proposal_factory: Callable | None = None,
     action_context_factory: Callable | None = None,
     confirmation_check: Callable | None = None,
@@ -124,6 +126,26 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if gmail_runtime_bundle is not None:
+        if not isinstance(gmail_runtime_bundle, GmailToolRuntimeBundle):
+            raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
+        if agent_loop.tool_protocol is not gmail_runtime_bundle.tool_protocol:
+            raise ValueError("agent_loop must use the Gmail bundle's exact structured tool protocol.")
+        if tools_for_user is not None:
+            raise ValueError("tools_for_user must be omitted when gmail_runtime_bundle supplies tool definitions.")
+        if tool_action_approvals is not None or pending_tool_action_proposals is not None:
+            raise ValueError("Gmail bundle owns the durable approval and proposal stores.")
+        if approved_tool_action_executor is not None or tool_action_reconciler is not None:
+            raise ValueError("Gmail bundle owns the approved executor and reconciliation service.")
+        tools_for_user = lambda _owner: [dict(item) for item in gmail_runtime_bundle.tool_definitions]
+        tool_action_approvals = gmail_runtime_bundle.approval_store
+        pending_tool_action_proposals = gmail_runtime_bundle.proposals
+        approved_tool_action_executor = ApprovedToolActionExecutor(
+            gmail_runtime_bundle.proposals,
+            gmail_runtime_bundle.approval_store,
+            gmail_runtime_bundle.guarded_runtime,
+        )
+        tool_action_reconciler = gmail_runtime_bundle.reconciliation_service
     if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
         raise TypeError("agent_loop_for_owner must be callable.")
     for callback, name in (
