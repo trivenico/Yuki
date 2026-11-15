@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 
 from core.agent_execution_loop import AgentExecutionError, AgentExecutionLoop
@@ -32,7 +33,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
         }]
 
     def test_confirmation_required_tool_creates_persisted_proposal_without_execution(self):
-        with __import__("tempfile").TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory:
             executed = []
             store = SQLitePendingToolActionProposalStore(directory + "/proposals.sqlite")
             catalog = ToolCapabilityCatalog({
