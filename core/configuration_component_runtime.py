@@ -28,7 +28,10 @@ def _freeze(value: Any) -> Any:
 class ConfigurationSnapshot:
     """Read-only configuration values for one runtime composition."""
 
-    values: Mapping[str, Any]
+    values: Mapping[str, Any] = field(repr=False)
+
+    def __repr__(self) -> str:
+        return f"ConfigurationSnapshot(fields={len(self.values)})"
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.values.get(key, default)
