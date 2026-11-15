@@ -53,6 +53,10 @@ class ComponentCatalogTests(unittest.TestCase):
         self.assertTrue(any("entrypoints must be a tuple" in error for error in errors))
         self.assertTrue(any("depends_on must contain only non-empty strings" in error for error in errors))
         self.assertTrue(any("test_evidence must be a tuple" in error for error in errors))
+        catalog_errors = validate_component_catalog(
+            [malformed], repository_root=Path(__file__).resolve().parents[1]
+        )
+        self.assertTrue(any("entrypoints must be a tuple" in error for error in catalog_errors))
 
     def test_non_contract_catalog_entry_is_reported_without_crashing(self):
         errors = validate_component_catalog(
