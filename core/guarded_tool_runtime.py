@@ -102,10 +102,15 @@ class GuardedToolRuntime:
             capability = self._capabilities.resolve(name)
         except ToolCapabilityError:
             return False
-        return (
+        if not (
             capability.effect is ToolEffect.SIDE_EFFECTING
             and capability.requires_user_confirmation
-        )
+        ):
+            return False
+        try:
+            return self._policy.authorize_tool(name) is True
+        except Exception:
+            return False
 
     def invoke(
         self, name: str, argument: str = "", *,
