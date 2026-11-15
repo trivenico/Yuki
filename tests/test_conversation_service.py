@@ -42,6 +42,19 @@ class ConversationServiceTests(unittest.TestCase):
             tools=[],
         )
 
+    def test_closed_service_rejects_new_operations(self):
+        self.service.close()
+        self.service.close()
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.service.create(owner_id="owner-a")
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.service.list(owner_id="owner-a")
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.service.history(owner_id="owner-a", conversation_id=self.conversation["conversation_id"])
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.send()
+        self.assertEqual(self.observed, [])
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
