@@ -389,7 +389,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
             connection_registry = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite"))
-            service = SimpleNamespace(begin=lambda **kwargs: {}, complete=lambda **kwargs: {})
+            service = SimpleNamespace(provider_id="example", begin=lambda **kwargs: {}, complete=lambda **kwargs: {})
             prepared = PreparedOAuthProvider(
                 provider_id="example", issuer="https://issuer.example",
                 resource="https://mcp.example", client_id="private-client",
