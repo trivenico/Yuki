@@ -104,6 +104,34 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
 
 
 
+
+    def test_blocked_dispatch_is_not_reported_as_success(self):
+        class DenyPolicy:
+            def authorize_tool(self, name):
+                return False
+
+        blocked = GuardedToolRuntime(
+            {"email.send": lambda raw: self.calls.append(raw) or "sent"},
+            DenyPolicy(),
+            capabilities=ToolCapabilityCatalog({
+                "email.send": ToolCapability(
+                    ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True,
+                ),
+            }),
+            require_action_context=True,
+            action_journal=self.journal,
+            approval_store=self.approvals,
+        )
+        executor = ApprovedToolActionExecutor(self.proposals, self.approvals, blocked)
+        result = executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(result.state, "unknown")
+        self.assertIn("blocked", result.result.lower())
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "unknown")
+
     def test_rejects_proposal_if_host_capability_no_longer_requires_confirmation(self):
         changed = GuardedToolRuntime(
             {"email.send": lambda raw: self.calls.append(raw) or "sent"},
