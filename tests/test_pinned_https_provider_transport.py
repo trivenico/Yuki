@@ -27,11 +27,19 @@ class FakeResponse:
         pass
 
 
+class FakeSocket:
+    def __init__(self):
+        self.timeouts = []
+    def settimeout(self, value):
+        self.timeouts.append(value)
+
+
 class FakeConnection:
     def __init__(self, host, ip, *, timeout, context, status=200):
         self.host, self.ip = host, ip
         self.timeout, self.context = timeout, context
         self.status = status
+        self.sock = FakeSocket()
         self.closed = False
         self.request_args = None
 
@@ -71,6 +79,22 @@ class PinnedHTTPSProviderTransportTests(unittest.TestCase):
                        headers={"Content-Type": "application/json",
                                 "Authorization": "Bearer test"},
                        method="POST")
+
+    def test_response_reads_fail_closed_after_total_deadline(self):
+        now = [10.0]
+        self.transport._clock = lambda: now[0]
+        with self.transport.open(self.request()) as response:
+            now[0] = 56.0
+            with self.assertRaises(TimeoutError):
+                response.read(1)
+
+    def test_remaining_deadline_is_applied_to_socket_before_response_read(self):
+        now = [10.0]
+        self.transport._clock = lambda: now[0]
+        with self.transport.open(self.request()) as response:
+            now[0] = 20.0
+            response.read(1)
+        self.assertEqual(self.connections[0].sock.timeouts[-1], 35.0)
 
     def test_connects_to_validated_ip_and_preserves_hostname(self):
         with self.transport.open(self.request()) as response:
