@@ -130,18 +130,18 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
             self.proposal.proposal_id, principal_id="owner-a",
         ).execution_state, "finished")
 
-    def test_recovers_claim_without_journal_record_as_unknown(self):
+    def test_keeps_claimed_execution_when_journal_reservation_is_not_yet_visible(self):
         self.assertTrue(self.proposals.claim_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         ))
         recovered = self.executor.recover_interrupted_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         )
-        self.assertEqual(recovered.state, "unknown")
+        self.assertEqual(recovered.state, "executing")
         self.assertEqual(self.calls, [])
         self.assertEqual(self.proposals.get(
             self.proposal.proposal_id, principal_id="owner-a",
-        ).execution_state, "unknown")
+        ).execution_state, "executing")
 
     def test_blocked_dispatch_is_not_reported_as_success(self):
         class DenyPolicy:
