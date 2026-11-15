@@ -154,6 +154,7 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        owner_handler_factory: Callable[[str, str], Callable[[str], str]] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -173,7 +174,10 @@ class SpecialistTaskWorker:
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
+        if owner_handler_factory is not None and not callable(owner_handler_factory):
+            raise TypeError("owner_handler_factory must be callable when supplied.")
         self.handlers = validated
+        self.owner_handler_factory = owner_handler_factory
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -202,6 +206,7 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                owner_handler_factory=self.owner_handler_factory,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -225,6 +230,17 @@ class SpecialistTaskWorker:
 
         agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
         handler = self.handlers.get(agent_id)
+        if self.owner_handler_factory is not None:
+            if not isinstance(claimed.owner_id, str) or not claimed.owner_id.strip():
+                return self.runtime.fail(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    error_code="missing_task_owner",
+                )
+            try:
+                handler = self.owner_handler_factory(claimed.owner_id, agent_id)
+            except Exception:
+                handler = None
         if handler is None:
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
