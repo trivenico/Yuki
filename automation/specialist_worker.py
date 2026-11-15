@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
-from threading import BoundedSemaphore, Lock
+from threading import BoundedSemaphore, Event, Lock
 from typing import Callable, Mapping
 from uuid import uuid4
 
@@ -194,13 +194,15 @@ class SpecialistTaskWorker:
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
-        plan_id: str | None = None,
+        plan_id: str | None = None, stop_event: Event | None = None,
     ) -> tuple[TaskRecord, ...]:
-        """Execute a bounded batch using independent leased worker identities.
+        """Execute a bounded batch, optionally stopping new claims cooperatively.
 
         SQLite's atomic claim operation arbitrates across workers. A shared permit
         budget caps total claims, while each worker gets its own lease owner so
-        completion and failure checks remain tied to the actual claimant.
+        completion and failure checks remain tied to the actual claimant. When
+        stop_event is set, pool workers stop claiming additional tasks; already
+        claimed handlers are allowed to finish and persist their outcomes.
         """
         if type(max_workers) is not int or not 1 <= max_workers <= 16:
             raise ValueError("max_workers must be an integer from 1 to 16.")
@@ -212,6 +214,8 @@ class SpecialistTaskWorker:
         ):
             raise ValueError("plan_id must be bounded non-empty text when supplied.")
         plan_id = plan_id.strip() if plan_id is not None else None
+        if stop_event is not None and not isinstance(stop_event, Event):
+            raise ValueError("stop_event must be a threading.Event when supplied.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -229,7 +233,12 @@ class SpecialistTaskWorker:
                 owner_handler_factory=self.owner_handler_factory,
                 agent_ids=tuple(self.agent_ids),
             )
-            while permits.acquire(blocking=False):
+            while stop_event is None or not stop_event.is_set():
+                if not permits.acquire(blocking=False):
+                    return
+                if stop_event is not None and stop_event.is_set():
+                    permits.release()
+                    return
                 result = worker.run_once(plan_id=plan_id)
                 if result is None:
                     permits.release()
@@ -279,7 +288,25 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
-            output = handler(argument)
+            supports_cancellation = (
+                getattr(handler, "supports_cancellation_callback", False) is True
+            )
+            if supports_cancellation:
+                def cancellation_requested() -> bool:
+                    # Read durable state at each cooperative checkpoint. This
+                    # propagates remote/operator cancellation into the agent loop
+                    # without trusting an in-process flag that other workers cannot see.
+                    current_task = self.runtime.store.get(claimed.run_id)
+                    return (
+                        current_task is None
+                        or current_task.state != "running"
+                        or current_task.lease_owner != self.worker_id
+                    )
+                output = handler(
+                    argument, cancellation_requested=cancellation_requested,
+                )
+            else:
+                output = handler(argument)
             # A running handler may not be interruptible (for example, an in-flight
             # provider request). If an operator cancels while it runs, do not try to
             # complete the now-terminal task or turn cancellation into a pool error.
@@ -374,13 +401,24 @@ def build_delegated_specialist_handlers(
             audit=config.get("audit"),
         )
 
-        def handle(request: str, *, _runtime=runtime) -> str:
+        def handle(
+            request: str, *, cancellation_requested=None, _runtime=runtime,
+        ) -> str:
             if not isinstance(request, str) or not request.strip() or len(request) > _MAX_INPUT_CHARS or "\x00" in request:
                 raise ValueError("specialist input must be bounded non-empty text")
-            result = _runtime.run(request)
+            if cancellation_requested is not None and not callable(cancellation_requested):
+                raise TypeError("cancellation_requested must be callable")
+            result = _runtime.run(
+                request, cancellation_requested=cancellation_requested,
+            )
+            if result.status == "cancelled":
+                return ""
             if result.status != "completed" or not isinstance(result.text, str) or not result.text.strip():
                 raise RuntimeError("delegated specialist execution did not complete")
             return result.text.strip()[:_MAX_OUTPUT_CHARS]
 
+        # SpecialistTaskWorker supplies a durable task-state callback only to
+        # handlers explicitly built for cooperative cancellation.
+        handle.supports_cancellation_callback = True
         handlers[agent_id] = handle
     return handlers

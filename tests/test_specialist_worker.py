@@ -227,6 +227,67 @@ class SpecialistWorkerTests(unittest.TestCase):
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
         self.assertEqual(events[-1].kind, "task.cancelled")
 
+    def test_durable_cancellation_reaches_delegated_agent_between_tool_calls(self):
+        task_id = self.create_task()
+        later_calls = []
+        observed = []
+
+        class ParentPolicy:
+            def authorize_tool(self, _name):
+                return True
+
+        def cancel_task(_arguments):
+            current = self.store.get(task_id)
+            self.runtime.cancel(
+                actor_id="alice", task_id=task_id,
+                expected_version=current.version,
+            )
+            return "cancellation accepted"
+
+        def later_tool(_arguments):
+            later_calls.append("executed")
+            return "should never run"
+
+        def model(**_kwargs):
+            if not observed:
+                observed.append("model")
+                return {
+                    "text": "",
+                    "tool_calls": {"tool_calls": [
+                        {"id": "cancel-call", "name": "cancel_task", "arguments": {}},
+                        {"id": "later-call", "name": "later_tool", "arguments": {}},
+                    ]},
+                }
+            return {"text": "unexpected continuation", "tool_calls": {"tool_calls": []}}
+
+        handlers = build_delegated_specialist_handlers({
+            "code-review": {
+                "model": model,
+                "tools": {
+                    "cancel_task": cancel_task,
+                    "later_tool": later_tool,
+                },
+                "tool_definitions": [
+                    {"type": "function", "function": {"name": "cancel_task"}},
+                    {"type": "function", "function": {"name": "later_tool"}},
+                ],
+                "parent_policy": ParentPolicy(),
+                "allowed_tools": ("cancel_task", "later_tool"),
+            },
+        })
+        result = self.worker(handlers).run_once()
+
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "cancelled")
+        self.assertEqual(later_calls, [])
+        self.assertEqual(self.store.get(task_id).state, "cancelled")
+        self.assertEqual(
+            [event.kind for event in self.runtime.events(
+                actor_id="worker-service", task_id=task_id,
+            )],
+            ["task.created", "task.cancelled"],
+        )
+
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()
         result = self.worker({
@@ -368,6 +429,56 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
+
+    def test_parallel_worker_pool_pre_set_stop_event_claims_nothing(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="pre-set-cooperative-stop-plan",
+            subtasks=[
+                SubtaskSpec("first", "First independent review", ("coding",), requires_approval=False),
+            ],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        stop = Event()
+        stop.set()
+
+        results = self.worker({"code-review": lambda _: "must not run"}).run_concurrently(
+            max_workers=2, max_tasks=2, stop_event=stop,
+        )
+        self.assertEqual(results, ())
+        remaining = [run for run in self.store.list_runs() if run.plan_id == plan.plan_id]
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0].state, "queued")
+        self.assertEqual(remaining[0].attempts, 0)
+
+    def test_parallel_worker_pool_stop_event_prevents_additional_claims(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="cooperative-stop-plan",
+            subtasks=[
+                SubtaskSpec("first", "First independent review", ("coding",), requires_approval=False),
+                SubtaskSpec("second", "Second independent review", ("coding",), requires_approval=False),
+            ],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        stop = Event()
+
+        def handler(argument):
+            stop.set()
+            return "finished: " + argument
+
+        results = self.worker({"code-review": handler}).run_concurrently(
+            max_workers=1, max_tasks=2, stop_event=stop,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].state, "succeeded")
+        remaining = [run for run in self.store.list_runs() if run.plan_id == plan.plan_id]
+        self.assertEqual(sum(run.state == "queued" for run in remaining), 1)
+        self.assertEqual(sum(run.state == "succeeded" for run in remaining), 1)
+
+    def test_parallel_worker_pool_stop_event_must_be_threading_event(self):
+        with self.assertRaisesRegex(ValueError, "threading.Event"):
+            self.worker({"code-review": lambda _: "ok"}).run_concurrently(
+                stop_event=True,
+            )
 
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(

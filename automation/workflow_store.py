@@ -50,6 +50,7 @@ _TRANSITIONS = {
     "cancelled": frozenset(),
     "interrupted": frozenset(),
 }
+_TASK_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.lease_renewed"})
 _MAX_DEFINITION_BYTES = 32 * 1024
 _MAX_RESULT_BYTES = 16 * 1024
 _MAX_KEY_CHARS = 200
@@ -69,6 +70,17 @@ def _bounded_json(value: Any, limit: int, field: str) -> str:
     if len(encoded.encode("utf-8")) > limit:
         raise ValueError(f"{field} exceeds the {limit}-byte limit.")
     return encoded
+
+
+@dataclass(frozen=True)
+class TaskEvent:
+    event_id: int
+    task_id: str
+    sequence: int
+    kind: str
+    actor_id: str
+    payload: dict[str, Any]
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -140,6 +152,13 @@ class WorkflowRunStore:
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_lease "
                 "ON workflow_runs(state, lease_expires_at)"
+            )
+            # The hot claim path filters by queued state and orders by
+            # creation time. A partial index keeps this scan bounded by queued
+            # work instead of walking the full historical task table.
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_runs_queued_order "
+                "ON workflow_runs(created_at, run_id) WHERE state='queued'"
             )
             db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_owner_created ON workflow_runs(owner_id, created_at)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_plan_state_created ON workflow_runs(plan_id, state, created_at)")
@@ -223,7 +242,13 @@ class WorkflowRunStore:
             subtask_id=row["subtask_id"] if "subtask_id" in row.keys() else None,
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], owner_id: str | None = None, plan_id: str | None = None, subtask_id: str | None = None) -> WorkflowRun:
+    def create(
+        self, *, idempotency_key: str, workflow_name: str,
+        definition: list[dict[str, Any]], owner_id: str | None = None,
+        plan_id: str | None = None, subtask_id: str | None = None,
+        created_event_actor_id: str | None = None,
+        created_event_payload: dict[str, Any] | None = None,
+    ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -232,6 +257,24 @@ class WorkflowRunStore:
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if (created_event_actor_id is None) != (created_event_payload is None):
+            raise ValueError("creation event actor and payload must be supplied together.")
+        event_actor = None
+        event_payload_json = None
+        if created_event_actor_id is not None:
+            if (
+                not isinstance(created_event_actor_id, str)
+                or not created_event_actor_id.strip()
+                or len(created_event_actor_id) > 200
+                or "\x00" in created_event_actor_id
+            ):
+                raise ValueError("created_event_actor_id must be non-empty bounded text.")
+            if not isinstance(created_event_payload, dict):
+                raise ValueError("created_event_payload must be an object.")
+            event_actor = created_event_actor_id.strip()
+            event_payload_json = _bounded_json(
+                created_event_payload, 8 * 1024, "task event payload",
+            )
         if owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or "\x00" in owner_id):
             raise ValueError("owner_id must be non-empty bounded text when supplied.")
         owner = owner_id.strip() if owner_id is not None else None
@@ -266,6 +309,31 @@ class WorkflowRunStore:
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                if event_actor is not None:
+                    prior = db.execute(
+                        "SELECT 1 FROM task_events WHERE task_id=? AND kind='task.created' LIMIT 1",
+                        (existing["run_id"],),
+                    ).fetchone()
+                    if prior is None:
+                        updated = db.execute(
+                            "UPDATE workflow_runs SET updated_at=?, version=version+1 "
+                            "WHERE run_id=? AND version=?",
+                            (now, existing["run_id"], existing["version"]),
+                        )
+                        if updated.rowcount != 1:
+                            raise WorkflowConflict("workflow changed while recording creation event.")
+                        sequence = db.execute(
+                            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                            (existing["run_id"],),
+                        ).fetchone()[0]
+                        db.execute(
+                            "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                            "VALUES (?, ?, 'task.created', ?, ?, ?)",
+                            (existing["run_id"], sequence, event_actor, event_payload_json, now),
+                        )
+                        existing = db.execute(
+                            "SELECT * FROM workflow_runs WHERE run_id=?", (existing["run_id"],)
+                        ).fetchone()
                 return self._row(existing)
             run_id = secrets.token_urlsafe(18)
             db.execute("""
@@ -274,6 +342,16 @@ class WorkflowRunStore:
                     definition_json, state, created_at, updated_at, owner_id, plan_id, subtask_id
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
             """, (run_id, key, digest, name, definition_json, now, now, owner, plan, subtask))
+            if event_actor is not None:
+                db.execute(
+                    "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=?",
+                    (now, run_id),
+                )
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, 1, 'task.created', ?, ?, ?)",
+                    (run_id, event_actor, event_payload_json, now),
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -342,7 +420,7 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            claim_sql = "SELECT * FROM workflow_runs WHERE state='queued'"
+            claim_sql = "SELECT * FROM workflow_runs INDEXED BY idx_workflow_runs_queued_order WHERE state='queued'"
             claim_params: list[Any] = []
             if plan_id is not None:
                 claim_sql += " AND plan_id=?"
@@ -353,18 +431,25 @@ class WorkflowRunStore:
                     predicates.append("substr(workflow_name, 1, ?) = ?")
                     claim_params.extend((len(prefix), prefix))
                 claim_sql += " AND (" + " OR ".join(predicates) + ")"
-            claim_sql += " ORDER BY created_at, run_id LIMIT 100"
-            rows = db.execute(claim_sql, claim_params).fetchall()
-            row = next((
-                candidate for candidate in rows
-                if (workflow_prefixes is None or any(candidate["workflow_name"].startswith(prefix) for prefix in workflow_prefixes))
-                and (not self._requires_approval(json.loads(candidate["definition_json"]))
-                or (
+            # Iterate the ordered queue until an eligible item is found. A fixed
+            # candidate limit can starve later runnable tasks behind an arbitrary
+            # number of approval-gated tasks.
+            claim_sql += " ORDER BY created_at, run_id"
+            row = None
+            for candidate in db.execute(claim_sql, claim_params):
+                if workflow_prefixes is not None and not any(
+                    candidate["workflow_name"].startswith(prefix)
+                    for prefix in workflow_prefixes
+                ):
+                    continue
+                if self._requires_approval(json.loads(candidate["definition_json"])) and not (
                     candidate["approved_by"] and candidate["approved_at"]
                     and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
-                ))
-            ), None)
+                ):
+                    continue
+                row = candidate
+                break
             if row is None:
                 return None
             updated = db.execute("""
@@ -483,13 +568,6 @@ class WorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
-        if expected_lease_owner is not None and (
-            not isinstance(expected_lease_owner, str)
-            or not expected_lease_owner.strip()
-            or len(expected_lease_owner) > 200
-            or "\x00" in expected_lease_owner
-        ):
-            raise ValueError("expected_lease_owner must be bounded non-empty text.")
         if error_code is not None and (
             not isinstance(error_code, str) or not error_code or len(error_code) > 100
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in error_code)
@@ -588,16 +666,26 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def mark_expired_running_as_interrupted(self, *, now: datetime | None = None, limit: int = 50) -> list[WorkflowRun]:
-        """Mark expired leases interrupted; never automatically replay side effects."""
+    def mark_expired_running_as_interrupted(
+        self, *, actor_id: str, now: datetime | None = None, limit: int = 50,
+    ) -> list[WorkflowRun]:
+        """Atomically interrupt expired leases and journal each recovery."""
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        actor_id = actor_id.strip()
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         current_time = now or datetime.now(timezone.utc)
         if current_time.tzinfo is None:
             raise ValueError("now must be timezone-aware.")
         cutoff = current_time.astimezone(timezone.utc).isoformat()
+        payload_json = _bounded_json(
+            {"state": "interrupted", "error_code": "lease_expired", "automatic_replay": False},
+            8 * 1024, "task event payload",
+        )
         changed: list[WorkflowRun] = []
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             rows = db.execute("""
                 SELECT * FROM workflow_runs
                 WHERE state='running' AND lease_expires_at IS NOT NULL
@@ -609,8 +697,18 @@ class WorkflowRunStore:
                     UPDATE workflow_runs SET state='interrupted', error_code='lease_expired',
                         updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
                     WHERE run_id=? AND version=? AND state='running'
-                """, (cutoff, row["run_id"], row["version"]))
+                        AND lease_expires_at IS NOT NULL AND lease_expires_at < ?
+                """, (cutoff, row["run_id"], row["version"], cutoff))
                 if updated.rowcount == 1:
+                    sequence = db.execute(
+                        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                        (row["run_id"],),
+                    ).fetchone()[0]
+                    db.execute(
+                        "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                        "VALUES (?, ?, 'task.interrupted', ?, ?, ?)",
+                        (row["run_id"], sequence, actor_id, payload_json, cutoff),
+                    )
                     changed_row = db.execute(
                         "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
                     ).fetchone()
@@ -621,10 +719,25 @@ class WorkflowRunStore:
     def append_task_event(
         self, task_id: str, *, kind: str, actor_id: str,
         payload: dict[str, Any], expected_version: int,
+        expected_lease_owner: str | None = None,
     ):
-        """Atomically append a bounded task event and increment the task version."""
-        from automation.task_runtime import TaskEvent, _EVENT_KINDS
-        if kind not in _EVENT_KINDS:
+        """Atomically append a bounded task event and increment the task version.
+
+        Worker-originated progress/artifact events may require a live lease; the
+        lease predicate is enforced in the same transaction as the journal write.
+        """
+        if kind in {"task.progress", "task.artifact"} and expected_lease_owner is None:
+            raise ValueError("worker progress and artifact events require an active lease owner.")
+        if expected_lease_owner is not None and (
+            not isinstance(expected_lease_owner, str)
+            or not expected_lease_owner.strip()
+            or len(expected_lease_owner) > 200
+            or "\x00" in expected_lease_owner
+        ):
+            raise ValueError("expected_lease_owner must be bounded non-empty text.")
+        if expected_lease_owner is not None and kind not in {"task.progress", "task.artifact"}:
+            raise ValueError("lease ownership is only valid for worker progress and artifact events.")
+        if kind not in _TASK_EVENT_KINDS:
             raise ValueError("Unknown task event kind.")
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
@@ -657,11 +770,20 @@ class WorkflowRunStore:
                 ).fetchone()
                 if prior_terminal:
                     raise WorkflowTransitionError("terminal event has already been recorded.")
-            updated = db.execute(
-                "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
-                (now, task_id, expected_version),
-            )
+            if expected_lease_owner is None:
+                updated = db.execute(
+                    "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
+                    (now, task_id, expected_version),
+                )
+            else:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET updated_at=?, version=version+1
+                    WHERE run_id=? AND version=? AND state='running'
+                        AND lease_owner=? AND lease_expires_at>?
+                """, (now, task_id, expected_version, expected_lease_owner.strip(), now))
             if updated.rowcount != 1:
+                if expected_lease_owner is not None:
+                    raise WorkflowConflict("worker lease is no longer active.")
                 raise WorkflowConflict("task changed concurrently.")
             sequence = db.execute(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
@@ -676,7 +798,6 @@ class WorkflowRunStore:
                              json.loads(payload_json), now)
 
     def list_task_events(self, task_id: str, *, after_sequence: int = 0, limit: int = 100):
-        from automation.task_runtime import TaskEvent
         if not isinstance(task_id, str) or not task_id:
             raise ValueError("task_id must be non-empty text.")
         if type(after_sequence) is not int or after_sequence < 0:

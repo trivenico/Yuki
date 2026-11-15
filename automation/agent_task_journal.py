@@ -85,6 +85,7 @@ class AgentTaskJournal:
             actor_id=self.actor_id,
             task_id=self.task_id,
             expected_version=self._version,
+            worker_id=self.worker_id,
             message=message[:1000],
             percent=percent,
         )

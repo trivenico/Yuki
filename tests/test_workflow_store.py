@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -85,6 +86,33 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 definition=self.definition, plan_id="plan-1",
             )
 
+    def test_queued_claim_order_uses_partial_index(self):
+        with self.store._connect() as db:
+            plan = db.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM workflow_runs "
+                "INDEXED BY idx_workflow_runs_queued_order "
+                "WHERE state='queued' ORDER BY created_at, run_id"
+            ).fetchall()
+        details = " ".join(row["detail"] for row in plan)
+        self.assertIn("idx_workflow_runs_queued_order", details)
+
+    def test_claim_skips_more_than_one_hundred_unapproved_tasks(self):
+        for index in range(101):
+            self.store.create(
+                idempotency_key=f"approval-backlog-{index}",
+                workflow_name="approval-gated",
+                definition=self.definition,
+            )
+        runnable = self.store.create(
+            idempotency_key="runnable-after-approval-backlog",
+            workflow_name="unblocked",
+            definition=[{"name": "work", "action": "emit", "argument": "run", "requires_approval": False}],
+        )
+        claimed = self.store.claim_next(worker_id="worker-after-backlog")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, runnable.run_id)
+        self.assertEqual(claimed.state, "running")
+
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)
@@ -110,6 +138,79 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(winners[0].run_id, queued.run_id)
         self.assertEqual(winners[0].state, "running")
         self.assertEqual(winners[0].attempts, 1)
+
+    def test_concurrent_workers_claim_distinct_queued_tasks(self):
+        queued = [
+            self.store.create(
+                idempotency_key=f"parallel-claim-{index}",
+                workflow_name="parallel-worker-task",
+                definition=[{"name": "work", "action": "emit", "argument": str(index),
+                             "requires_approval": False}],
+            )
+            for index in range(8)
+        ]
+        barrier = threading.Barrier(8)
+        claims = []
+        errors = []
+
+        def claim(worker):
+            try:
+                barrier.wait(timeout=3)
+                claims.append(self.store.claim_next(worker_id=worker))
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=claim, args=(f"parallel-worker-{i}",))
+                   for i in range(8)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=8)
+        self.assertEqual(errors, [])
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(len(claims), 8)
+        self.assertTrue(all(claim is not None for claim in claims))
+        claimed_ids = [claim.run_id for claim in claims]
+        self.assertEqual(len(set(claimed_ids)), 8)
+        self.assertEqual(set(claimed_ids), {run.run_id for run in queued})
+        self.assertTrue(all(claim.state == "running" and claim.attempts == 1 for claim in claims))
+
+    def test_concurrent_expired_lease_recovery_records_one_interruption(self):
+        run = self.create(key="parallel-recovery")
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        running = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=1,
+        )
+        cutoff = datetime.now(timezone.utc) + timedelta(seconds=5)
+        barrier = threading.Barrier(2)
+        recovered = []
+        errors = []
+
+        def recover(actor):
+            try:
+                barrier.wait(timeout=3)
+                recovered.extend(self.store.mark_expired_running_as_interrupted(
+                    actor_id=actor, now=cutoff,
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=recover, args=(f"recovery-{i}",))
+                   for i in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=8)
+        self.assertEqual(errors, [])
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual([item.run_id for item in recovered], [running.run_id])
+        self.assertEqual(self.store.get(run.run_id).state, "interrupted")
+        events = self.store.list_task_events(run.run_id)
+        self.assertEqual([event.kind for event in events], ["task.interrupted"])
 
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
@@ -224,6 +325,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
             lease_owner="worker-a", lease_seconds=1,
         )
         expired = self.store.mark_expired_running_as_interrupted(
+            actor_id="recovery-worker",
             now=datetime.now(timezone.utc) + timedelta(seconds=5)
         )
         self.assertEqual(len(expired), 1)
@@ -232,10 +334,47 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(expired[0].error_code, "lease_expired")
         self.assertIsNone(expired[0].lease_owner)
         self.assertEqual(self.store.get(run.run_id).state, "interrupted")
+        events = self.store.list_task_events(run.run_id)
+        self.assertEqual([event.kind for event in events], ["task.interrupted"])
+        self.assertEqual(events[-1].actor_id, "recovery-worker")
+        self.assertFalse(events[-1].payload["automatic_replay"])
+
+    def test_expired_lease_recovery_rolls_back_when_audit_insert_fails(self):
+        run = self.create("recovery-audit-rollback")
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        running = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=1,
+        )
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_interrupted_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.interrupted'
+                BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.mark_expired_running_as_interrupted(
+                actor_id="recovery-worker",
+                now=datetime.now(timezone.utc) + timedelta(seconds=5),
+            )
+        current = self.store.get(run.run_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, running.version)
+        self.assertEqual(current.lease_owner, "worker-a")
+        self.assertEqual(current.lease_expires_at, running.lease_expires_at)
+        # This test uses the low-level store API, whose create/approve path
+        # intentionally does not synthesize TaskRuntime audit events.
+        self.assertEqual(self.store.list_task_events(run.run_id), [])
 
     def test_lease_expiry_requires_timezone_aware_clock(self):
         with self.assertRaises(ValueError):
-            self.store.mark_expired_running_as_interrupted(now=datetime.now())
+            self.store.mark_expired_running_as_interrupted(
+                actor_id="recovery-worker", now=datetime.now()
+            )
 
     def test_definition_validation_happens_before_persistence(self):
         with self.assertRaises(ValueError):

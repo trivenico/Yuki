@@ -64,7 +64,8 @@ class AgentTaskJournalTests(unittest.TestCase):
         journal = self.journal()
         self.runtime.record_progress(
             actor_id="agent-worker", task_id=self.claimed.run_id,
-            expected_version=self.claimed.version, message="external update",
+            expected_version=self.claimed.version, worker_id="worker-1",
+            message="external update",
         )
         with self.assertRaises(WorkflowConflict):
             journal("agent.started", {})
