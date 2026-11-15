@@ -100,6 +100,35 @@ class ToolActionJournal:
             for column in ("lease_owner", "lease_expires_at"):
                 if column not in columns:
                     db.execute("ALTER TABLE tool_actions ADD COLUMN " + column + " TEXT")
+            schema_row = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_actions'"
+            ).fetchone()
+            if schema_row is not None and "'authorizing'" not in (schema_row["sql"] or ""):
+                # Upgrade the legacy CHECK constraint without dropping durable actions.
+                db.execute("DROP INDEX IF EXISTS idx_tool_actions_state_updated")
+                db.execute("ALTER TABLE tool_actions RENAME TO tool_actions_legacy_authorizing")
+                db.execute("""CREATE TABLE tool_actions (
+                    action_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN
+                        ('prepared','authorizing','executing','succeeded','outcome_unknown','not_executed')),
+                    result_json TEXT,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT
+                )""")
+                db.execute("""INSERT INTO tool_actions
+                    (action_id,idempotency_key,tool_name,request_digest,state,result_json,
+                     error_code,created_at,updated_at,version,lease_owner,lease_expires_at)
+                    SELECT action_id,idempotency_key,tool_name,request_digest,state,result_json,
+                     error_code,created_at,updated_at,version,lease_owner,lease_expires_at
+                    FROM tool_actions_legacy_authorizing""")
+                db.execute("DROP TABLE tool_actions_legacy_authorizing")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tool_actions_state_updated "
                 "ON tool_actions(state, updated_at)"
