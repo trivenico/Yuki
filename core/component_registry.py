@@ -52,6 +52,8 @@ class ComponentRegistry:
     def register(self, runtime: ComponentRuntime) -> None:
         if self._closed:
             raise RuntimeError("component registry is closed")
+        if self._started:
+            raise RuntimeError("cannot register components after startup")
         if not isinstance(runtime, ComponentRuntime):
             raise TypeError("runtime must be a ComponentRuntime")
         if not isinstance(runtime.contract, ComponentContract):
