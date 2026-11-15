@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from core.pinned_https_provider_transport import PinnedHTTPTransportError
 from skills.web_skill import WebSkill, WebSkillError
@@ -39,6 +40,11 @@ class FakeTransport:
         return self.response
 
 
+def build_skill(transport, **kwargs):
+    with patch("skills.web_skill.PinnedHTTPSProviderTransport", return_value=transport):
+        return WebSkill(**kwargs)
+
+
 class WebSkillFirewallTransportTests(unittest.TestCase):
     def test_rejects_malformed_allowlist_entries_instead_of_sanitizing_them(self):
         invalid_allowlists = (
@@ -53,15 +59,18 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
         )
         for hosts in invalid_allowlists:
             with self.subTest(hosts=hosts), self.assertRaises(ValueError):
-                WebSkill(allowed_hosts=hosts, transport=FakeTransport())
+                build_skill(FakeTransport(), allowed_hosts=hosts)
 
     def test_normalizes_one_terminal_root_dot_in_allowlist(self):
-        skill = WebSkill(allowed_hosts=("EXAMPLE.COM.",), transport=FakeTransport())
+        skill = build_skill(FakeTransport(), allowed_hosts=("EXAMPLE.COM.",))
         self.assertEqual(skill.allowed_hosts, frozenset({"example.com"}))
 
-    def test_fetch_uses_injected_firewall_transport_and_extracts_text(self):
+    def test_constructor_does_not_accept_caller_supplied_transport(self):
+        with self.assertRaises(TypeError):
+            WebSkill(allowed_hosts=("example.com",), transport=FakeTransport())
+    def test_fetch_uses_configured_pinned_transport_and_extracts_text(self):
         transport = FakeTransport()
-        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        skill = build_skill(transport, allowed_hosts=("example.com",))
         result = skill.execute("https://example.com/docs")
         self.assertEqual(transport.calls, [("https://example.com/docs", 8)])
         self.assertIn("Hello world", result["text"])
@@ -71,14 +80,14 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
 
     def test_rejects_host_before_transport_dispatch(self):
         transport = FakeTransport()
-        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        skill = build_skill(transport, allowed_hosts=("example.com",))
         with self.assertRaises(WebSkillError):
             skill.execute("https://attacker.example/docs")
         self.assertEqual(transport.calls, [])
 
     def test_rejects_non_https_and_non_default_ports(self):
         transport = FakeTransport()
-        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        skill = build_skill(transport, allowed_hosts=("example.com",))
         for url in ("http://example.com/", "https://example.com:8443/", "https://user@example.com/"):
             with self.subTest(url=url), self.assertRaises(WebSkillError):
                 skill.execute(url)
@@ -86,7 +95,7 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
 
     def test_rejects_surrounding_whitespace_and_control_characters_before_transport(self):
         transport = FakeTransport()
-        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        skill = build_skill(transport, allowed_hosts=("example.com",))
         invalid_urls = (
             " https://example.com/",
             "https://example.com/ ",
@@ -99,29 +108,29 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
                 skill.execute(url)
         self.assertEqual(transport.calls, [])
 
-    def test_rejects_multiple_trailing_dots_before_injected_transport(self):
+    def test_rejects_multiple_trailing_dots_before_transport_dispatch(self):
         transport = FakeTransport()
-        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        skill = build_skill(transport, allowed_hosts=("example.com",))
         with self.assertRaises(WebSkillError):
             skill.execute("https://example.com../")
         self.assertEqual(transport.calls, [])
 
     def test_firewall_transport_failure_is_reported_as_blocked(self):
         transport = FakeTransport(error=PinnedHTTPTransportError("cloud_destination_blocked"))
-        skill = WebSkill(allowed_hosts=("example.com",), transport=transport)
+        skill = build_skill(transport, allowed_hosts=("example.com",))
         with self.assertRaisesRegex(WebSkillError, "network firewall"):
             skill.execute("https://example.com/")
 
     def test_rejects_oversized_and_non_text_responses(self):
-        too_large = WebSkill(
+        too_large = build_skill(
+            FakeTransport(FakeResponse(body=b"12345")),
             allowed_hosts=("example.com",), max_bytes=4,
-            transport=FakeTransport(FakeResponse(body=b"12345")),
         )
         with self.assertRaisesRegex(WebSkillError, "size limit"):
             too_large.execute("https://example.com/")
-        binary = WebSkill(
+        binary = build_skill(
+            FakeTransport(FakeResponse(content_type="application/octet-stream")),
             allowed_hosts=("example.com",),
-            transport=FakeTransport(FakeResponse(content_type="application/octet-stream")),
         )
         with self.assertRaisesRegex(WebSkillError, "HTML or plain-text"):
             binary.execute("https://example.com/")
