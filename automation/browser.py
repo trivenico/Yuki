@@ -45,7 +45,7 @@ class SafeBrowser:
         if not isinstance(url, str) or not 1 <= len(url) <= 2048:
             raise BrowserAutomationError("URL must be a bounded string.")
         try:
-            parts = urlsplit(url.strip())
+            parts = urlsplit(url)
             port = parts.port
         except ValueError:
             raise BrowserAutomationError("URL is invalid.") from None
@@ -58,7 +58,7 @@ class SafeBrowser:
             raise BrowserAutomationError("Only public HTTPS URLs on port 443 are accepted.")
         if host not in self.allowed_hosts:
             raise BrowserAutomationError("Host is not on the explicit browser allow-list.")
-        return url.strip(), host
+        return url, host
 
     def _resolve_authorized_hosts(self):
         """Resolve every permitted browser origin and pin Chromium to a vetted IP."""
