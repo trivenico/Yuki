@@ -117,6 +117,8 @@ class StructuredToolProtocolTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             journal = ToolActionJournal(str(Path(directory) / "actions.sqlite3"))
+            from core.tool_action_approvals import SQLiteToolActionApprovalStore
+            approvals = SQLiteToolActionApprovalStore(str(Path(directory) / "approvals.sqlite3"))
             executions = []
             runtime = GuardedToolRuntime(
                 {"send": lambda raw: executions.append(raw) or "sent"},
@@ -126,6 +128,7 @@ class StructuredToolProtocolTests(unittest.TestCase):
                 }),
                 require_action_context=True,
                 action_journal=journal,
+                approval_store=approvals,
             )
             protocol = StructuredToolProtocol(runtime)
             request = {"to": "person@example.com"}
@@ -135,6 +138,7 @@ class StructuredToolProtocolTests(unittest.TestCase):
                 response, principal_id="user-1",
                 action_context_factory=lambda principal, name, args: context,
                 confirmation_check=lambda call: True,
+                approval_id_factory=lambda principal, action, call: approvals.issue(action, principal_id=principal),
             )
             self.assertEqual(result[0].output, "sent")
             self.assertEqual(len(executions), 1)
