@@ -265,8 +265,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(current.state, "running")
         self.assertEqual(current.version, running.version)
         self.assertEqual(current.lease_owner, "worker-a")
-        self.assertEqual([event.kind for event in self.store.list_task_events(run.run_id)],
-                         ["task.created"])
+        self.assertEqual(current.lease_expires_at, running.lease_expires_at)
+        # This test uses the low-level store API, whose create/approve path
+        # intentionally does not synthesize TaskRuntime audit events.
+        self.assertEqual(self.store.list_task_events(run.run_id), [])
 
     def test_lease_expiry_requires_timezone_aware_clock(self):
         with self.assertRaises(ValueError):
