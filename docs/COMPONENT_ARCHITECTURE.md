@@ -59,9 +59,12 @@ catalog contract. A runtime supplies explicit `start`, `close` and
 - Rejects unknown, mismatched and duplicate registrations.
 - Requires dependencies of each registered runtime to be registered too.
 - Starts runtimes in stable dependency-first order.
-- Rolls back already-started runtimes if a later start hook fails.
+- Rolls back already-started and in-flight runtimes if a later start hook fails.
 - Closes started runtimes in reverse order and continues cleanup if one close
   hook fails, reporting the component IDs whose cleanup failed.
+- Preserves rollback cleanup failures in `startup_cleanup_errors` and in
+  the sanitized startup exception without disclosing underlying exception text.
+- Rejects malformed contract IDs before using them as registry keys.
 - Exposes only explicitly registered instances through `resolve`.
 
 This is a lifecycle primitive, not automatic application wiring. The current
