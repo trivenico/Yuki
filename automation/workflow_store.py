@@ -285,12 +285,24 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
-        """Atomically claim the oldest queued run; never steals or replays running work."""
+    def claim_next(
+        self, *, worker_id: str, lease_seconds: int = 60,
+        workflow_prefixes: tuple[str, ...] | None = None,
+    ) -> WorkflowRun | None:
+        """Atomically claim the oldest eligible queued run.
+
+        Optional workflow prefixes let specialist pools claim only their own
+        agent task namespace instead of consuming unrelated workflow work.
+        """
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if workflow_prefixes is not None:
+            if (not isinstance(workflow_prefixes, tuple) or not workflow_prefixes
+                or len(workflow_prefixes) > 100
+                or any(not isinstance(prefix, str) or not prefix or len(prefix) > 200 or "\\x00" in prefix for prefix in workflow_prefixes)):
+                raise ValueError("workflow_prefixes must be a bounded tuple of non-empty prefixes.")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
@@ -304,12 +316,13 @@ class WorkflowRunStore:
             ).fetchall()
             row = next((
                 candidate for candidate in rows
-                if not self._requires_approval(json.loads(candidate["definition_json"]))
+                if (workflow_prefixes is None or any(candidate["workflow_name"].startswith(prefix) for prefix in workflow_prefixes))
+                and (not self._requires_approval(json.loads(candidate["definition_json"]))
                 or (
                     candidate["approved_by"] and candidate["approved_at"]
                     and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
-                )
+                ))
             ), None)
             if row is None:
                 return None
