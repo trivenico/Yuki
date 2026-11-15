@@ -41,6 +41,8 @@ class ApprovedToolActionExecutor:
             raise ValueError("approved execution requires a durable action journal")
         if guarded_runtime._action_journal.database_path != approvals.database_path:
             raise ValueError("approval store and guarded action journal must share one SQLite database")
+        if proposals.database_path != approvals.database_path:
+            raise ValueError("proposal store, approval store, and guarded action journal must share one SQLite database")
         self.proposals = proposals
         self.approvals = approvals
         self.guarded_runtime = guarded_runtime
