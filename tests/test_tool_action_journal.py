@@ -40,6 +40,24 @@ class ToolActionJournalTests(unittest.TestCase):
         self.assertEqual(recovered.error_code, "execution_lease_expired")
         self.assertEqual(self.journal.get("action-live").state, "executing")
 
+    def test_reserve_in_transaction_requires_and_uses_caller_transaction(self):
+        with closing(sqlite3.connect(self.path, isolation_level=None)) as db:
+            with self.assertRaisesRegex(RuntimeError, "active caller-owned transaction"):
+                self.journal.reserve_in_transaction(
+                    db, "atomic-action", "email.send", {"to": "a@example.com"},
+                    action_id="a" * 32,
+                )
+            self.assertIsNone(self.journal.get("atomic-action"))
+
+            db.execute("BEGIN IMMEDIATE")
+            reserved = self.journal.reserve_in_transaction(
+                db, "atomic-action", "email.send", {"to": "a@example.com"},
+                action_id="a" * 32,
+            )
+            self.assertEqual(reserved.version, 1)
+            db.execute("ROLLBACK")
+        self.assertIsNone(self.journal.get("atomic-action"))
+
     def test_reserve_is_idempotent_for_same_key_and_payload(self):
         first = self.journal.reserve("action-1", "calendar.create", {"title": "Review"})
         second = self.journal.reserve("action-1", "calendar.create", {"title": "Review"})
