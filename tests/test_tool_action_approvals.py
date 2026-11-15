@@ -4,7 +4,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from core.tool_action_approvals import SQLiteToolActionApprovalStore
+from core.tool_action_approvals import SQLiteToolActionApprovalStore, ToolActionApprovalError
 from core.tool_action_context import ToolActionContext
 
 
@@ -208,7 +208,7 @@ class SQLiteToolActionApprovalStoreTests(unittest.TestCase):
             claim = journal.claim_execution(
                 context.idempotency_key, reserved.request_digest,
             )
-            with self.assertRaises(Exception):
+            with self.assertRaises(ToolActionApprovalError):
                 approvals.consume_and_begin_execution(
                     token, context, principal_id="user-1",
                     action_journal=journal,
