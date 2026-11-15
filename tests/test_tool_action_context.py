@@ -6,6 +6,7 @@ from pathlib import Path
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.tool_action_context import ToolActionContext, ToolActionContextError
 from core.tool_action_journal import ToolActionJournal
+from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
@@ -18,6 +19,7 @@ class ToolActionContextTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.journal = ToolActionJournal(str(Path(self.temp_dir.name) / "actions.sqlite3"))
+        self.approvals = SQLiteToolActionApprovalStore(str(Path(self.temp_dir.name) / "approvals.sqlite3"))
         self.request = {"to": "person@example.com", "subject": "Hello"}
         self.context = ToolActionContext.create("user-123", "email.send", self.request)
 
@@ -35,6 +37,7 @@ class ToolActionContextTests(unittest.TestCase):
             }),
             require_action_context=True,
             action_journal=self.journal,
+            approval_store=self.approvals,
         )
 
     def test_context_binds_principal_tool_and_canonical_request(self):
@@ -104,7 +107,8 @@ class ToolActionContextTests(unittest.TestCase):
         kwargs = {"action_context": self.context, "principal_id": "user-123"}
         self.assertIn("confirmation", runtime.invoke("email.send", argument, **kwargs))
         self.assertIsNone(self.journal.get(self.context.idempotency_key))
-        self.assertEqual(runtime.invoke("email.send", argument, user_confirmed=True, **kwargs), "sent")
+        token = self.approvals.issue(self.context, principal_id="user-123")
+        self.assertEqual(runtime.invoke("email.send", argument, approval_id=token, **kwargs), "sent")
 
     def test_handler_failure_marks_outcome_unknown_and_prevents_replay(self):
         calls = []
