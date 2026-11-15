@@ -165,9 +165,9 @@ class AgentExecutionLoop:
                         messages=list(messages), tools=list(tools), tool_choice="auto"
                     ))
                     while True:
-                        # Check the duration budget before blocking for the next
-                        # provider event; this preserves the per-event deadline.
-                        stream_stop_reason = "cancelled" if cancel_check() else None
+                        # Enforce the duration budget before blocking for the next
+                        # provider event; cancellation is also checked at this boundary.
+                        stream_stop_reason = self._stop_reason(started, cancel_check)
                         if stream_stop_reason:
                             close_stream = getattr(stream_events, "close", None)
                             if callable(close_stream):
@@ -186,7 +186,7 @@ class AgentExecutionLoop:
                             break
                         # A provider may yield after cancellation while next() was
                         # blocked. Recheck before forwarding text or accepting tools.
-                        stream_stop_reason = self._stop_reason(started, cancel_check)
+                        stream_stop_reason = "cancelled" if cancel_check() else None
                         if stream_stop_reason:
                             close_stream = getattr(stream_events, "close", None)
                             if callable(close_stream):
