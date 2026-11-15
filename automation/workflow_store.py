@@ -382,15 +382,20 @@ class WorkflowRunStore:
 
     def renew_lease(
         self, run_id: str, *, worker_id: str, expected_version: int,
-        lease_seconds: int = 60,
+        lease_seconds: int = 60, event_actor_id: str | None = None,
     ) -> WorkflowRun:
-        """Renew only the active worker's unexpired lease using compare-and-swap."""
+        """Renew the active worker lease and journal it in the same transaction."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if (
+            not isinstance(event_actor_id, str) or not event_actor_id.strip()
+            or len(event_actor_id) > 200 or "\x00" in event_actor_id
+        ):
+            raise ValueError("event_actor_id must be non-empty bounded text.")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
@@ -414,6 +419,19 @@ class WorkflowRunStore:
             """, (lease_expires, now, run_id, expected_version, worker_id, now))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow lease changed concurrently or expired.")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            payload_json = _bounded_json(
+                {"worker_id": worker_id.strip(), "lease_expires_at": lease_expires},
+                8 * 1024, "task event payload",
+            )
+            db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, 'task.lease_renewed', ?, ?, ?)",
+                (run_id, sequence, event_actor_id.strip(), payload_json, now),
+            )
             renewed = db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone()
