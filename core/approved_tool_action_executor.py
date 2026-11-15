@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import json
 
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
+from core.guarded_tool_runtime import GuardedToolRuntime
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
 
@@ -32,8 +33,14 @@ class ApprovedToolActionExecutor:
             raise TypeError("approvals must be a SQLiteToolActionApprovalStore")
         if not callable(getattr(guarded_runtime, "invoke", None)):
             raise TypeError("guarded_runtime must provide invoke()")
-        if not callable(getattr(guarded_runtime, "requires_confirmation_by_capability", None)):
-            raise TypeError("guarded_runtime must classify confirmation-required capabilities")
+        if not isinstance(guarded_runtime, GuardedToolRuntime):
+            raise TypeError("guarded_runtime must be a GuardedToolRuntime")
+        if guarded_runtime._approval_store is not approvals:
+            raise ValueError("executor and guarded runtime must share the exact approval store")
+        if guarded_runtime._action_journal is None:
+            raise ValueError("approved execution requires a durable action journal")
+        if guarded_runtime._action_journal.database_path != approvals.database_path:
+            raise ValueError("approval store and guarded action journal must share one SQLite database")
         self.proposals = proposals
         self.approvals = approvals
         self.guarded_runtime = guarded_runtime
