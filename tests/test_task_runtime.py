@@ -190,6 +190,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertNotEqual(retried.task_id, task.task_id)
         self.assertEqual(retried.state, "queued")
         self.assertEqual(retried.attempts, 0)
+        self.assertEqual(self.store.get(retried.task_id).owner_id, "alice")
         events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
         self.assertEqual([event.kind for event in events], ["task.created"])
         self.assertEqual(events[0].payload["retry_of"], task.task_id)
