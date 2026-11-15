@@ -31,17 +31,17 @@ class IdentityAccessComponentRuntimeTests(unittest.TestCase):
         self.assertFalse(runtime.health_check())
 
     def test_unavailable_database_fails_startup(self):
-        runtime = build_identity_access_component_runtime(self.auth)
-        registry = ComponentRegistry()
-        registry.register(runtime)
         with patch.object(self.auth, "health_check", return_value=False):
+            runtime = build_identity_access_component_runtime(self.auth)
+            registry = ComponentRegistry()
+            registry.register(runtime)
             with self.assertRaisesRegex(RuntimeError, "identity/access storage"):
                 registry.start_all()
         self.assertEqual(registry.started_components, ())
 
     def test_health_probe_requires_strict_boolean(self):
-        runtime = build_identity_access_component_runtime(self.auth)
         with patch.object(self.auth, "health_check", return_value=1):
+            runtime = build_identity_access_component_runtime(self.auth)
             with self.assertRaisesRegex(TypeError, "must return bool"):
                 runtime.start()
 
