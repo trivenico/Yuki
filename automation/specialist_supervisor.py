@@ -140,8 +140,14 @@ class SpecialistSupervisor:
                 failed.append(item.subtask_id)
             if item.status not in _TERMINAL:
                 remaining.append(item.subtask_id)
-            if item.status == "queued" and item.requires_approval:
-                awaiting_approval = True
+            if item.status == "queued" and item.task_id:
+                pending_task = self.coordinator.runtime.get(
+                    actor_id=actor_id, task_id=item.task_id,
+                )
+                if pending_task.state == "queued" and any(
+                    step.get("requires_approval") is True for step in pending_task.steps
+                ):
+                    awaiting_approval = True
             if item.status != "succeeded":
                 continue
             if not item.task_id:
