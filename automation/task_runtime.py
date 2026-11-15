@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
+_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.lease_renewed"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -200,6 +200,7 @@ class TaskRuntime:
         renewed = self.store.renew_lease(
             task_id, worker_id=worker_id.strip(),
             expected_version=expected_version, lease_seconds=lease_seconds,
+            event_actor_id=actor,
         )
         return self._record(renewed)
 
