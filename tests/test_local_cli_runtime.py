@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.local_owner_identity import load_or_create_local_owner_id
@@ -114,6 +115,25 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 self.assertEqual(persisted[0]["version"], 2)
             finally:
                 pass
+
+    def test_provider_startup_failure_closes_provider_and_application_store_once(self):
+        class UnavailableProvider(FakeProvider):
+            def is_available(self):
+                return False
+
+        with tempfile.TemporaryDirectory() as directory:
+            provider = UnavailableProvider()
+            store = ConversationStore(Path(directory) / "conversations.sqlite3")
+            store.close = Mock(wraps=store.close)
+            with self.assertRaisesRegex(RuntimeError, "component startup failed: provider-runtime"):
+                build_local_conversation_runtime(
+                    {"max_agent_steps": 3},
+                    provider_factory=lambda config: provider,
+                    store_factory=lambda config: store,
+                    owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+                )
+            self.assertEqual(provider.close_calls, 1)
+            store.close.assert_called_once_with()
 
 
 if __name__ == "__main__":
