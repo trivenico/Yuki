@@ -74,6 +74,32 @@ class ComponentRegistryTests(unittest.TestCase):
         self.assertEqual(registry.health(), {"identity-access": True})
         self.assertEqual(calls, ["probe"])
 
+    def test_registration_is_frozen_after_startup_begins(self):
+        events = []
+        registry = ComponentRegistry()
+        registry.register(self.runtime("identity-access", events))
+        registry.start_all()
+
+        with self.assertRaisesRegex(RuntimeError, "registration is frozen"):
+            registry.register(self.runtime("configuration-runtime", events))
+
+        self.assertEqual(registry.start_all(), ("identity-access",))
+        self.assertEqual(events, [("start", "identity-access")])
+
+    def test_registration_remains_available_after_dependency_validation_failure(self):
+        events = []
+        registry = ComponentRegistry()
+        registry.register(self.runtime("agent-execution", events))
+        with self.assertRaisesRegex(RuntimeError, "missing runtime dependencies"):
+            registry.start_all()
+
+        registry.register(self.runtime("identity-access", events))
+        registry.register(self.runtime("provider-runtime", events))
+        self.assertEqual(
+            registry.start_all(),
+            ("identity-access", "provider-runtime", "agent-execution"),
+        )
+
     def test_starts_dependencies_before_dependents_and_closes_in_reverse(self):
         events = []
         registry = ComponentRegistry()
