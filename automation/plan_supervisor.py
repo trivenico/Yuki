@@ -76,7 +76,7 @@ class PlanSupervisor:
         # Reconcile the last completed wave even when the task/round budget was
         # reached. This may dispatch newly dependency-ready work but never runs it.
         plan = self.coordinator.advance(actor_id=actor_id, plan_id=plan_id)
-        budget_exhausted = executed >= max_tasks and any(
+        budget_exhausted = (executed >= max_tasks or rounds >= max_rounds) and any(
             item.status not in _TERMINAL for item in plan.subtasks
         )
         return PlanSupervisorResult(
