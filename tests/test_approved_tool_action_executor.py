@@ -114,6 +114,22 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(result.state, "finished")
         self.assertEqual(len(self.calls), 1)
 
+    def test_journal_reservation_conflict_rolls_back_proposal_claim(self):
+        self.journal.reserve(
+            self.proposal.idempotency_key, "email.send",
+            {"to": "different@example.com"}, action_id=self.proposal.action_id,
+        )
+        with self.assertRaises(Exception):
+            self.executor._claim_proposal_and_reserve_action(
+                self.proposal, principal_id="owner-a",
+            )
+        proposal = self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(proposal.execution_state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
+        self.assertEqual(self.calls, [])
+
     def test_execution_is_single_claim_and_cannot_be_replayed(self):
         self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
         with self.assertRaisesRegex(ValueError, "already claimed"):
