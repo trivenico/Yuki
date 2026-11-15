@@ -41,7 +41,7 @@ class GoogleOAuthConfigurationError(ValueError):
 
 def build_google_gmail_authorization_service(
     *, client_id: str, redirect_uri: str, transaction_store,
-    credential_vault, pinned_transport, account_id_resolver=None,
+    credential_vault, pinned_transport, trusted_redirect_hosts, account_id_resolver=None,
     clock=None, jwks_cache=None,
 ) -> OAuthAuthorizationService:
     """Build Google authorization-code + PKCE with cryptographic OIDC binding."""
@@ -49,6 +49,8 @@ def build_google_gmail_authorization_service(
         raise GoogleOAuthConfigurationError("invalid_google_client_id")
     if not isinstance(redirect_uri, str) or len(redirect_uri) > 2048:
         raise GoogleOAuthConfigurationError("invalid_google_redirect_uri")
+    if (not isinstance(trusted_redirect_hosts, (set, frozenset, tuple, list)) or not trusted_redirect_hosts or any(not isinstance(host, str) or not host or host != host.lower() for host in trusted_redirect_hosts)):
+        raise GoogleOAuthConfigurationError("trusted_google_redirect_hosts_required")
     try:
         callback = urlsplit(redirect_uri)
         port = callback.port
@@ -59,6 +61,7 @@ def build_google_gmail_authorization_service(
         or callback.username is not None or callback.password is not None
         or port not in (None, 443) or callback.query or callback.fragment
         or callback.path != "/oauth/callback/google"
+        or callback.hostname.lower() not in trusted_redirect_hosts
     ):
         raise GoogleOAuthConfigurationError("invalid_google_redirect_uri")
     if not set(GOOGLE_HOSTS).issubset(getattr(pinned_transport, "allowed_hosts", ())):
