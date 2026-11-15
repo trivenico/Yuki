@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import Mock
 from pathlib import Path
 
-from api.runtime import build_conversation_runtime
+from api.runtime import ConversationRuntime, build_conversation_runtime
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
