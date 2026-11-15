@@ -223,7 +223,12 @@ class ConversationService:
                 if system_text is not None:
                     kwargs["system_text"] = system_text
                 agent_loop = self._agent_loop_for_request(owner_id)
-                result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                result = agent_loop.run(
+                    user_text, principal_id=owner_id,
+                    on_text_delta=on_text_delta,
+                    cancellation_requested=cancellation_requested,
+                    **kwargs,
+                )
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls

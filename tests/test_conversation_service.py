@@ -55,6 +55,19 @@ class ConversationServiceTests(unittest.TestCase):
             self.send()
         self.assertEqual(self.observed, [])
 
+    def test_authenticated_owner_is_propagated_to_agent_execution(self):
+        captured = []
+        original_run = self.loop.run
+
+        def recording_run(*args, **kwargs):
+            captured.append(kwargs.get("principal_id"))
+            return original_run(*args, **kwargs)
+
+        self.loop.run = recording_run
+        result = self.send(owner="owner-a")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(captured, ["owner-a"])
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
