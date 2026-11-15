@@ -116,6 +116,10 @@ def build_local_conversation_runtime(
         registry = build_local_core_component_registry(
             owner_id=owner_id, provider=owned_provider,
             agent_loop=agent_loop, application_runtime=application,
+            config=(
+                config if isinstance(config.get("workspace"), str)
+                and isinstance(config.get("provider"), str) else None
+            ),
         )
         registry.start_all()
         return LocalConversationRuntime(application, registry)
