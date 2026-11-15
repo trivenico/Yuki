@@ -94,6 +94,12 @@ class ConversationStore:
                     ON conversation_generation_runs(owner_id, status, updated_at);
             """)
 
+    def health_check(self) -> bool:
+        """Verify the configured SQLite store can execute a read-only probe."""
+        with self._connect() as db:
+            row = db.execute("SELECT 1").fetchone()
+        return row is not None and row[0] == 1
+
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
