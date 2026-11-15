@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlsplit
 import secrets
+import re
 
 from core.oauth2_pkce import (
     OAuthAuthorizationError,
@@ -26,21 +27,32 @@ class OAuthAuthorizationService:
 
     def __init__(
         self, *, transaction_store, credential_vault, transport,
-        provider_id: str, account_id: str, client_id: str,
+        provider_id: str, account_id: str | None, client_id: str,
         authorization_endpoint: str, token_endpoint: str,
         allowed_authorization_hosts, redirect_uri: str,
         issuer: str, resource: str, scopes, identity_verifier,
         authorization_response_iss_parameter_supported: bool = False,
-        oidc_verifier=None,
+        oidc_verifier=None, account_id_resolver=None,
     ):
         required = {
-            "provider_id": provider_id, "account_id": account_id,
+            "provider_id": provider_id,
             "client_id": client_id, "authorization_endpoint": authorization_endpoint,
             "token_endpoint": token_endpoint, "redirect_uri": redirect_uri,
             "issuer": issuer, "resource": resource,
         }
         if any(not isinstance(value, str) or not value.strip() for value in required.values()):
             raise ValueError("trusted OAuth provider configuration is incomplete")
+        if account_id is not None and (
+            not isinstance(account_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", account_id)
+        ):
+            raise ValueError("account_id is invalid")
+        if account_id is None and not callable(account_id_resolver):
+            raise ValueError("dynamic account identity resolver is required")
+        if account_id_resolver is not None and (
+            not callable(account_id_resolver) or oidc_verifier is None
+        ):
+            raise ValueError("dynamic account identity requires verified OIDC")
         if not callable(getattr(transaction_store, "create", None)) or not callable(
             getattr(transaction_store, "consume", None)
         ):
@@ -61,6 +73,7 @@ class OAuthAuthorizationService:
         self._identity_verifier = identity_verifier
         self._provider_id = provider_id
         self._account_id = account_id
+        self._account_id_resolver = account_id_resolver
         self._client_id = client_id
         self._authorization_endpoint = authorization_endpoint
         self._token_endpoint = token_endpoint
@@ -172,25 +185,37 @@ class OAuthAuthorizationService:
             )
             # OIDC grants are verified against the nonce stored in the consumed,
             # owner/session-bound transaction before any credential is persisted.
+            oidc_identity = None
             if self._oidc_verifier is not None:
                 if "openid" not in grant.granted_scopes:
                     raise OAuthAuthorizationServiceError("oidc_scope_not_granted")
                 if grant.id_token is None or transaction.oidc_nonce is None:
                     raise OAuthAuthorizationServiceError("oidc_identity_token_missing")
-                self._oidc_verifier.verify(
+                oidc_identity = self._oidc_verifier.verify(
                     id_token=grant.id_token,
                     expected_nonce=transaction.oidc_nonce,
                     access_token=grant.access_token,
                 )
             elif grant.id_token is not None:
                 raise OAuthAuthorizationServiceError("unexpected_oidc_identity_token")
-            # Bind this authorization grant to the provider account selected by
-            # trusted host configuration before persisting any credential.
-            self._identity_verifier.verify(access_token=grant.access_token)
+            # Independently bind the access token to the same provider subject.
+            access_identity = self._identity_verifier.verify(access_token=grant.access_token)
+            if oidc_identity is not None and (
+                not isinstance(access_identity, dict)
+                or access_identity.get("subject") != oidc_identity.get("subject")
+                or access_identity.get("issuer") not in (None, oidc_identity.get("issuer"))
+            ):
+                raise OAuthAuthorizationServiceError("provider_identity_mismatch")
+            account_id = self._account_id
+            if self._account_id_resolver is not None:
+                account_id = self._account_id_resolver(oidc_identity)
+            if (not isinstance(account_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", account_id)):
+                raise OAuthAuthorizationServiceError("provider_account_id_invalid")
             version = self._vault.store(
                 owner_id=owner_id,
                 provider_id=self._provider_id,
-                account_id=self._account_id,
+                account_id=account_id,
                 access_token=grant.access_token,
                 refresh_token=grant.refresh_token,
                 expires_at=grant.expires_at,
@@ -201,7 +226,7 @@ class OAuthAuthorizationService:
 
         return {
             "provider_id": self._provider_id,
-            "account_id": self._account_id,
+            "account_id": account_id,
             "expires_at": grant.expires_at,
             "scopes": grant.granted_scopes,
             "credential_version": version,
