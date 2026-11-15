@@ -50,15 +50,25 @@ class ComponentContract:
             errors.append("at least one public contract is required")
         if self.status == "implemented" and not self.test_evidence:
             errors.append("implemented components require test evidence")
-        fields = (
-            self.entrypoints + self.depends_on + self.public_contract
-            + self.test_evidence + self.limitations
+        collection_names = (
+            "entrypoints", "depends_on", "public_contract", "test_evidence", "limitations"
         )
-        if any(not isinstance(value, str) or not value.strip() for value in fields):
-            errors.append("contract collections must contain non-empty strings")
-        if len(set(self.entrypoints)) != len(self.entrypoints):
+        valid_collections: dict[str, tuple[str, ...]] = {}
+        for name in collection_names:
+            value = getattr(self, name)
+            if not isinstance(value, tuple):
+                errors.append(f"{name} must be a tuple")
+                continue
+            valid_values = tuple(
+                item for item in value
+                if isinstance(item, str) and bool(item.strip())
+            )
+            if len(valid_values) != len(value):
+                errors.append(f"{name} must contain only non-empty strings")
+            valid_collections[name] = valid_values
+        if len(set(valid_collections.get("entrypoints", ()))) != len(valid_collections.get("entrypoints", ())):
             errors.append("duplicate entrypoint")
-        if len(set(self.depends_on)) != len(self.depends_on):
+        if len(set(valid_collections.get("depends_on", ()))) != len(valid_collections.get("depends_on", ())):
             errors.append("duplicate dependency")
         return errors
 
@@ -224,30 +234,47 @@ def validate_component_catalog(
     by_id: dict[str, ComponentContract] = {}
 
     for item in entries:
-        prefix = item.component_id or "<missing-id>"
+        if not isinstance(item, ComponentContract):
+            errors.append("catalog entries must be ComponentContract instances")
+            continue
+        prefix = item.component_id if isinstance(item.component_id, str) and item.component_id else "<missing-id>"
         for error in item.validate():
             errors.append(f"{prefix}: {error}")
+        if not isinstance(item.component_id, str) or not item.component_id:
+            continue
         if item.component_id in by_id:
             errors.append(f"{prefix}: duplicate component_id")
         by_id[item.component_id] = item
 
-        for relative in item.entrypoints + item.test_evidence:
-            path = Path(relative)
-            if path.is_absolute() or ".." in path.parts:
-                errors.append(f"{prefix}: unsafe repository path {relative!r}")
+        path_collections = (item.entrypoints, item.test_evidence)
+        for collection in path_collections:
+            if not isinstance(collection, tuple):
                 continue
-            candidate = root / path
-            try:
-                resolved = candidate.resolve(strict=True)
-                resolved.relative_to(root)
-            except (OSError, RuntimeError, ValueError):
-                errors.append(f"{prefix}: repository path escapes root or cannot be resolved: {relative}")
-                continue
-            if not resolved.is_file():
-                errors.append(f"{prefix}: repository file does not exist: {relative}")
+            for relative in collection:
+                if not isinstance(relative, str) or not relative.strip():
+                    continue
+                path = Path(relative)
+                if path.is_absolute() or ".." in path.parts:
+                    errors.append(f"{prefix}: unsafe repository path {relative!r}")
+                    continue
+                candidate = root / path
+                try:
+                    resolved = candidate.resolve(strict=True)
+                    resolved.relative_to(root)
+                except (OSError, RuntimeError, ValueError):
+                    errors.append(f"{prefix}: repository path escapes root or cannot be resolved: {relative}")
+                    continue
+                if not resolved.is_file():
+                    errors.append(f"{prefix}: repository file does not exist: {relative}")
 
     for item in entries:
+        if not isinstance(item, ComponentContract) or not isinstance(item.component_id, str):
+            continue
+        if not isinstance(item.depends_on, tuple):
+            continue
         for dependency in item.depends_on:
+            if not isinstance(dependency, str) or not dependency:
+                continue
             if dependency not in by_id:
                 errors.append(f"{item.component_id}: unknown dependency {dependency}")
 
@@ -262,8 +289,11 @@ def validate_component_catalog(
             errors.append(f"{component_id}: dependency cycle detected")
             return
         visiting.add(component_id)
-        for dependency in by_id[component_id].depends_on:
-            visit(dependency)
+        dependencies = by_id[component_id].depends_on
+        if isinstance(dependencies, tuple):
+            for dependency in dependencies:
+                if isinstance(dependency, str):
+                    visit(dependency)
         visiting.remove(component_id)
         visited.add(component_id)
 
