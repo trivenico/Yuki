@@ -120,7 +120,21 @@ class ToolActionReconciliationService:
         if proposal.status != "approved" or proposal.execution_state != "unknown":
             raise ValueError("proposal is not awaiting reconciliation")
         action = self.journal.get(proposal.idempotency_key)
-        if action is None or action.state != "outcome_unknown":
+        if action is None:
+            raise ValueError("journal action is not awaiting reconciliation")
+        # The journal and proposal store are separate durable transactions. If
+        # provider success committed but proposal finalization was interrupted,
+        # repair the proposal from the authoritative journal without querying or
+        # dispatching the provider again.
+        if action.state == "succeeded":
+            finished = self.proposals.finish_reconciliation(
+                proposal_id, principal_id=principal_id,
+            )
+            current = self.proposals.get(proposal_id, principal_id=principal_id)
+            if not finished and (current is None or current.execution_state != "finished"):
+                raise RuntimeError("confirmed journal success could not finalize its proposal")
+            return action
+        if action.state != "outcome_unknown":
             raise ValueError("journal action is not awaiting reconciliation")
         reconciled = self.reconcile(action=action, proposal=proposal)
         if reconciled.state == "succeeded":
