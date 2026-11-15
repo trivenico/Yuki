@@ -235,12 +235,16 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertIsNone(expired[0].lease_owner)
         self.assertEqual(self.store.get(run.run_id).state, "interrupted")
         events = self.store.list_task_events(run.run_id)
-        self.assertEqual([event.kind for event in events], ["task.created", "task.interrupted"])
+        self.assertEqual([event.kind for event in events], ["task.interrupted"])
         self.assertEqual(events[-1].actor_id, "recovery-worker")
         self.assertFalse(events[-1].payload["automatic_replay"])
 
     def test_expired_lease_recovery_rolls_back_when_audit_insert_fails(self):
         run = self.create("recovery-audit-rollback")
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
         running = self.store.transition(
             run.run_id, expected_version=run.version, to_state="running",
             lease_owner="worker-a", lease_seconds=1,
