@@ -79,6 +79,11 @@ class ToolActionJournal:
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
+            # Schema creation, legacy CHECK-constraint rebuild, row copy, and
+            # index recreation must commit as one unit. Closing an interrupted
+            # connection rolls back the entire migration rather than leaving a
+            # renamed or partially copied action table behind.
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS tool_actions (
                     action_id TEXT PRIMARY KEY,
@@ -133,6 +138,7 @@ class ToolActionJournal:
                 "CREATE INDEX IF NOT EXISTS idx_tool_actions_state_updated "
                 "ON tool_actions(state, updated_at)"
             )
+            db.execute("COMMIT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
