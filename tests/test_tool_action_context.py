@@ -126,7 +126,7 @@ class ToolActionContextTests(unittest.TestCase):
             "email.send", argument, action_context=self.context,
             principal_id="user-123", approval_id=token,
         )
-        self.assertIn("journal", result)
+        self.assertIn("blocked", result.lower())
         self.assertEqual(calls, [])
         # The failed reservation happened before token consumption.
         self.assertTrue(
