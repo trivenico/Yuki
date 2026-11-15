@@ -36,6 +36,16 @@ class Response:
         return self.body[:size]
 
 
+
+class FakeTransport:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def open(self, request, timeout=None):
+        self.calls.append((request, timeout))
+        return self.response
+
 class HybridProviderTests(unittest.TestCase):
     def test_defaults_to_local_and_only_named_tasks_route_to_cloud(self):
         local, cloud = FakeProvider("local"), FakeProvider("cloud")
@@ -87,17 +97,16 @@ class HybridProviderTests(unittest.TestCase):
             self.assertFalse(provider.is_available())
 
     def test_cloud_provider_uses_env_key_and_parses_response(self):
-        provider = OpenAICompatibleProvider("cloud-model")
+        transport = FakeTransport(Response(
+            json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
+        ))
+        provider = OpenAICompatibleProvider("cloud-model", transport=transport)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
-            with patch("urllib.request.build_opener") as mocked_builder:
-                mocked_builder.return_value.open.return_value = Response(
-                    json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
-                )
-                self.assertTrue(provider.is_available())
-                self.assertEqual(provider.generate("question"), "answer")
-        request = mocked_builder.return_value.open.call_args.args[0]
+            self.assertTrue(provider.is_available())
+            self.assertEqual(provider.generate("question"), "answer")
+        request, timeout = transport.calls[0]
         self.assertIn("Bearer test-secret", request.get_header("Authorization"))
-        self.assertEqual(mocked_builder.return_value.open.call_args.kwargs["timeout"], provider.timeout)
+        self.assertEqual(timeout, provider.timeout)
 
     def test_cloud_provider_missing_key_fails_closed(self):
         provider = OpenAICompatibleProvider("cloud-model", api_key_env="YUKI_TEST_MISSING_KEY")
