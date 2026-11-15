@@ -289,8 +289,11 @@ def validate_component_catalog(
             errors.append(f"{component_id}: dependency cycle detected")
             return
         visiting.add(component_id)
-        for dependency in by_id[component_id].depends_on:
-            visit(dependency)
+        dependencies = by_id[component_id].depends_on
+        if isinstance(dependencies, tuple):
+            for dependency in dependencies:
+                if isinstance(dependency, str):
+                    visit(dependency)
         visiting.remove(component_id)
         visited.add(component_id)
 
