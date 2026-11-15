@@ -191,6 +191,48 @@ class SQLitePendingToolActionProposalStoreTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_execution_state_migration_preserves_rows_and_allows_not_executed(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pending-proposals.sqlite3"
+            db = sqlite3.connect(path)
+            try:
+                db.execute("""CREATE TABLE pending_tool_action_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    principal_id TEXT NOT NULL,
+                    action_id TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    tool_name TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT,
+                    execution_state TEXT NOT NULL DEFAULT 'not_started'
+                        CHECK(execution_state IN ('not_started','executing','finished','unknown'))
+                )""")
+                db.execute("""INSERT INTO pending_tool_action_proposals VALUES
+                    ('proposal-1','user-1','action-1','idem-1','email.send',
+                     'digest','{}','approved','2026-01-01T00:00:00+00:00',
+                     '2099-01-01T00:00:00+00:00',NULL,'unknown')""")
+                db.commit()
+            finally:
+                db.close()
+
+            store = self.make_store(directory)
+            preserved = store.get("proposal-1", principal_id="user-1")
+            self.assertEqual(preserved.execution_state, "unknown")
+            self.assertTrue(store.finish_not_executed_reconciliation(
+                "proposal-1", principal_id="user-1",
+            ))
+            self.assertEqual(
+                store.get("proposal-1", principal_id="user-1").execution_state,
+                "not_executed",
+            )
+
     def test_invalid_ttl_and_limit_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             for ttl in (0, -1, True, 3601):
