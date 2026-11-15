@@ -38,6 +38,24 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(events[0].payload["step_count"], 1)
 
 
+    def test_enqueue_creation_and_audit_event_roll_back_together(self):
+        with self.store._connect() as db:
+            db.execute(
+                "CREATE TRIGGER reject_enqueue_creation_audit BEFORE INSERT ON task_events "
+                "WHEN NEW.kind='task.created' "
+                "BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END"
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.create("enqueue-atomic-failure")
+        with self.store._connect() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE idempotency_key=?",
+                    ("enqueue-atomic-failure",),
+                ).fetchone()[0],
+                0,
+            )
+
     def test_owner_identity_is_bound_to_task_idempotency_key(self):
         first = self.store.create(
             idempotency_key="owner-bound-key", workflow_name="owner-task",
