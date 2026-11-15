@@ -90,10 +90,12 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
     ComponentContract(
         "configuration-runtime", "Centralized runtime configuration", "infrastructure", "experimental",
         "Loads bounded YAML settings and environment overrides for portable storage, providers and integrations.",
-        ("core/config.py", "core/default_config.yaml", "core/portable_paths.py"),
+        ("core/config.py", "core/default_config.yaml", "core/portable_paths.py",
+         "core/configuration_component_runtime.py"),
         (), ("validated configuration schema", "safe environment overrides",
              "portable config and workspace resolution", "explicit integration allowlists"),
-        ("tests/test_config.py", "tests/test_portable_paths.py"),
+        ("tests/test_config.py", "tests/test_portable_paths.py",
+         "tests/test_configuration_component_runtime.py"),
         ("Configuration validation does not replace secret rotation, deployment policy or runtime health checks.",),
     ),
     ComponentContract(

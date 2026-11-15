@@ -64,6 +64,27 @@ class CoreComponentCompositionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "registry is closed"):
                 registry.health()
 
+    def test_configuration_runtime_is_registered_before_core_services(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            provider = FakeProvider()
+            config = {
+                "workspace": directory,
+                "provider": "mock",
+                "storage_backend": "sqlite",
+            }
+            registry = build_core_component_registry(
+                auth_service=auth, provider=provider, agent_loop=self._loop(),
+                config=config,
+            )
+            snapshot = registry.resolve("configuration-runtime")
+            self.assertEqual(snapshot.get("provider"), "mock")
+            started = registry.start_all()
+            self.assertLess(started.index("configuration-runtime"), started.index("provider-runtime"))
+            self.assertTrue(registry.health()["configuration-runtime"])
+            registry.close()
+            self.assertEqual(provider.closed, 1)
+
     def test_invalid_provider_is_rejected_before_registry_is_returned(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
