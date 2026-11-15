@@ -117,7 +117,7 @@ DEFAULT_COMPONENTS: tuple[ComponentContract, ...] = (
         ("core/conversation_application_runtime.py", "api/runtime.py"),
         ("agent-execution", "durable-conversations"),
         ("single shared service construction", "deterministic lifecycle and shutdown"),
-        ("tests/test_api_runtime.py",),
+        ("tests/test_api_runtime.py", "tests/test_conversation_application_runtime.py"),
         ("The composition layer does not itself provide network authentication or deployment.",),
     ),
     ComponentContract(
