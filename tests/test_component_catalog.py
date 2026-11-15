@@ -42,6 +42,24 @@ class ComponentCatalogTests(unittest.TestCase):
         )
         self.assertIn("implemented components require test evidence", contract.validate())
 
+    def test_malformed_contract_collections_fail_validation_without_crashing(self):
+        malformed = replace(
+            DEFAULT_COMPONENTS[0],
+            entrypoints=None,
+            depends_on=("configuration-runtime", None),
+            test_evidence=42,
+        )
+        errors = malformed.validate()
+        self.assertTrue(any("entrypoints must be a tuple" in error for error in errors))
+        self.assertTrue(any("depends_on must contain only non-empty strings" in error for error in errors))
+        self.assertTrue(any("test_evidence must be a tuple" in error for error in errors))
+
+    def test_non_contract_catalog_entry_is_reported_without_crashing(self):
+        errors = validate_component_catalog(
+            [object()], repository_root=Path(__file__).resolve().parents[1]
+        )
+        self.assertIn("catalog entries must be ComponentContract instances", errors)
+
     def test_unknown_dependency_is_rejected(self):
         item = replace(DEFAULT_COMPONENTS[0], depends_on=("missing-component",))
         errors = validate_component_catalog(
