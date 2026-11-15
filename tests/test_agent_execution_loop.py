@@ -436,5 +436,41 @@ class AgentExecutionLoopTests(unittest.TestCase):
             self.assertEqual(result.status, "limit_reached")
             self.assertEqual(sent, ['{"to":"person@example.com"}'])
 
+
+    def test_agent_does_not_request_approval_token_without_positive_confirmation(self):
+        minted = []
+        request = {"value": "safe"}
+        model = lambda **kwargs: {
+            "text": "",
+            "tool_calls": {"tool_calls": [{
+                "id": "approval-gate", "name": "echo", "arguments": request,
+            }]},
+        }
+        result = AgentExecutionLoop(model, self.protocol, max_model_turns=1).run(
+            "Run tool", tools=self.tools,
+            confirmation_check=lambda call: False,
+            approval_id_factory=lambda *args: minted.append(True) or "token",
+        )
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(minted, [])
+        self.assertEqual(self.invocations, [{"value": "safe"}])
+
+    def test_agent_rejects_non_boolean_confirmation_callback(self):
+        request = {"value": "safe"}
+        model = lambda **kwargs: {
+            "text": "",
+            "tool_calls": {"tool_calls": [{
+                "id": "bad-confirmation", "name": "echo", "arguments": request,
+            }]},
+        }
+        with self.assertRaises(AgentExecutionError):
+            AgentExecutionLoop(model, self.protocol, max_model_turns=1).run(
+                "Run tool", tools=self.tools,
+                confirmation_check=lambda call: 1,
+                approval_id_factory=lambda *args: "token",
+            )
+        self.assertEqual(self.invocations, [])
+
+
 if __name__ == "__main__":
     unittest.main()
