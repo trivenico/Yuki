@@ -408,6 +408,23 @@ class AgentExecutionLoopTests(unittest.TestCase):
             loop.run("Hi", tools=[], on_text_delta=broken_callback)
         self.assertEqual(closed, [True])
 
+    def test_stream_close_lookup_failure_does_not_mask_stream_error(self):
+        class BrokenCloseIterator:
+            def __iter__(self):
+                return self
+            def __next__(self):
+                return {"type": "unknown"}
+            @property
+            def close(self):
+                raise RuntimeError("broken close descriptor")
+
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "fallback", "tool_calls": {"tool_calls": []}},
+            self.protocol, stream_model=lambda **kwargs: BrokenCloseIterator(),
+        )
+        with self.assertRaisesRegex(AgentExecutionError, "unsupported stream event"):
+            loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
+
     def test_streamed_text_must_match_final_provider_text(self):
         def stream_model(**kwargs):
             yield {"type": "text_delta", "text": "visible"}
