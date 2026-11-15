@@ -112,6 +112,23 @@ class GuardedToolRuntime:
         except Exception:
             return False
 
+    def requires_confirmation_by_capability(self, name: str) -> bool:
+        """Classify the host capability independently of the current user policy.
+
+        Executors use this to validate that an already-approved proposal still
+        requires confirmation. Actual authorization remains enforced by invoke().
+        """
+        if self._capabilities is None:
+            return False
+        try:
+            capability = self._capabilities.resolve(name)
+        except ToolCapabilityError:
+            return False
+        return (
+            capability.effect is ToolEffect.SIDE_EFFECTING
+            and capability.requires_user_confirmation
+        )
+
     def invoke(
         self, name: str, argument: str = "", *,
         action_context: ToolActionContext | None = None,
