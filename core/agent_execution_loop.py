@@ -111,6 +111,7 @@ class AgentExecutionLoop:
         principal_id: str | None = None,
         action_context_factory: Callable[[str | None, str, Mapping[str, Any]], ToolActionContext | None] | None = None,
         confirmation_check: Callable[[Any], bool] | None = None,
+        approval_id_factory: Callable[[str | None, ToolActionContext | None, Any], str | None] | None = None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
@@ -118,6 +119,8 @@ class AgentExecutionLoop:
             raise TypeError("action_context_factory must be callable.")
         if confirmation_check is not None and not callable(confirmation_check):
             raise TypeError("confirmation_check must be callable.")
+        if approval_id_factory is not None and not callable(approval_id_factory):
+            raise TypeError("approval_id_factory must be callable.")
         if principal_id is not None and (
             not isinstance(principal_id, str) or not principal_id or len(principal_id) > 256
         ):
@@ -318,9 +321,14 @@ class AgentExecutionLoop:
                     user_confirmed = (
                         confirmation_check(call) if confirmation_check is not None else False
                     )
+                    approval_id = (
+                        approval_id_factory(principal_id, action_context, call)
+                        if approval_id_factory is not None else None
+                    )
                     result = self.tool_protocol.dispatch_call(
                         call, principal_id=principal_id,
                         action_context=action_context, user_confirmed=user_confirmed,
+                        approval_id=approval_id,
                     )
                 except Exception as exc:
                     self._event("agent.tool_dispatch_failed", error_type=type(exc).__name__)
