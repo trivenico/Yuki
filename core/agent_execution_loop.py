@@ -146,7 +146,7 @@ class AgentExecutionLoop:
         self._event("agent.started", user_chars=len(user_text), tool_count=len(tools))
 
         while turns < self.max_model_turns:
-            reason = self._stop_reason(started, cancel_check)
+            reason = "cancelled" if cancel_check() else None
             if reason:
                 self._event("agent.stopped", reason=reason, model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult(reason, "", turns, calls_total, max(0.0, self.clock() - started))
@@ -165,7 +165,7 @@ class AgentExecutionLoop:
                         messages=list(messages), tools=list(tools), tool_choice="auto"
                     ))
                     while True:
-                        stream_stop_reason = self._stop_reason(started, cancel_check)
+                        stream_stop_reason = "cancelled" if cancel_check() else None
                         if stream_stop_reason:
                             close_stream = getattr(stream_events, "close", None)
                             if callable(close_stream):
