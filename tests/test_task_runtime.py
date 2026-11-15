@@ -148,6 +148,28 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
                          "task.completed")
 
+    def test_terminal_state_and_audit_event_commit_atomically(self):
+        task = self.create("atomic-terminal-audit")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "CREATE TRIGGER reject_terminal_audit BEFORE INSERT ON task_events "
+                "WHEN NEW.kind='task.completed' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END"
+            )
+        with self.assertRaises(Exception):
+            self.runtime.complete(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                result={"ok": True},
+            )
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, claimed.version)
+        self.assertEqual(
+            [event.kind for event in self.runtime.events(actor_id="alice", task_id=task.task_id)],
+            ["task.created"],
+        )
+
     def test_expired_lease_cannot_complete(self):
         task = self.create()
         claimed = self.claim(task)
