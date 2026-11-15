@@ -375,6 +375,37 @@ class TaskRuntimeTests(unittest.TestCase):
                                           expected_version=failed.version)
         self.assertEqual(again.task_id, retried.task_id)
 
+    def test_retry_creation_and_audit_event_roll_back_together(self):
+        task = self.create("retry-atomic-source")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-a",
+            error_code="provider_error",
+        )
+        retry_key = f"retry:{task.task_id}:{failed.version}"
+        with self.store._connect() as db:
+            db.execute(
+                "CREATE TRIGGER reject_retry_creation_audit BEFORE INSERT ON task_events "
+                "WHEN NEW.kind='task.created' AND NEW.task_id IN "
+                "(SELECT run_id FROM workflow_runs WHERE idempotency_key=?) "
+                "BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+                (retry_key,),
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.retry_failed(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=failed.version,
+            )
+        with self.store._connect() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE idempotency_key=?",
+                    (retry_key,),
+                ).fetchone()[0],
+                0,
+            )
+
     def test_retry_rejects_stale_version_and_requires_fresh_approval(self):
         protected_steps = [{"name": "protected", "action": "emit", "argument": "work",
                             "requires_approval": True}]
