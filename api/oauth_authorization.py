@@ -165,7 +165,9 @@ class AuthenticatedOAuthAuthorizationAPI:
             return None
         raw = values[0].decode("latin-1")
         scheme, separator, token = raw.partition(" ")
-        if not separator or scheme.lower() != "bearer" or not 20 <= len(token) <= 256:
+        if (not separator or scheme.lower() != "bearer"
+                or not 20 <= len(token) <= 256 or token.strip() != token
+                or any(char.isspace() for char in token)):
             return None
         return token
 
