@@ -39,9 +39,13 @@ class AgentExecutionLoopTests(unittest.TestCase):
             catalog = ToolCapabilityCatalog({
                 "email.send": ToolCapability(ToolEffect.SIDE_EFFECTING, requires_user_confirmation=True),
             })
+            class AllowEmailPolicy:
+                def authorize_tool(self, name):
+                    return name == "email.send"
+
             runtime = GuardedToolRuntime(
                 {"email.send": lambda raw: executed.append(raw) or "sent"},
-                AllowPolicy(), capabilities=catalog,
+                AllowEmailPolicy(), capabilities=catalog,
             )
             protocol = StructuredToolProtocol(runtime)
             arguments = {"to": "person@example.com", "body": "Hello"}
