@@ -189,6 +189,52 @@ class ToolActionJournal:
             ).fetchone()
         return self._record(row) if row is not None else None
 
+    def reserve_in_transaction(
+        self, db: sqlite3.Connection, idempotency_key: str, tool_name: str,
+        request: Any, *, action_id: str,
+    ) -> ToolAction:
+        """Reserve an action inside a caller-owned transaction on this database.
+
+        The caller must hold a write transaction and commit/rollback it. This
+        lets higher-level coordinators atomically persist related state without
+        opening a second SQLite transaction.
+        """
+        if not isinstance(db, sqlite3.Connection):
+            raise TypeError("db must be a SQLite connection")
+        if not db.in_transaction:
+            raise RuntimeError("reserve_in_transaction requires an active caller-owned transaction")
+        self._validate_key(idempotency_key)
+        self._validate_tool(tool_name)
+        _, raw = _json_bytes(request, _MAX_REQUEST_BYTES, "request")
+        digest = hashlib.sha256(raw).hexdigest()
+        if not isinstance(action_id, str) or not re.fullmatch(r"[0-9a-f]{32}", action_id):
+            raise ValueError("action_id must be a 32-character lowercase hex identifier.")
+        now = _now()
+        db.row_factory = sqlite3.Row
+        db.execute(
+            """INSERT INTO tool_actions
+               (action_id,idempotency_key,tool_name,request_digest,state,
+                created_at,updated_at,version)
+               VALUES (?,?,?,?, 'prepared',?,?,1)
+               ON CONFLICT(idempotency_key) DO NOTHING""",
+            (action_id, idempotency_key, tool_name, digest, now, now),
+        )
+        row = db.execute(
+            "SELECT * FROM tool_actions WHERE idempotency_key=?",
+            (idempotency_key,),
+        ).fetchone()
+        if (
+            row["tool_name"] != tool_name
+            or row["request_digest"] != digest
+            or row["action_id"] != action_id
+        ):
+            raise ToolActionConflict("idempotency key is already bound to a different action.")
+        if row["version"] < 1 or row["state"] != "prepared":
+            raise ToolActionConflict(
+                "existing action is not a safely reusable atomic pre-dispatch reservation."
+            )
+        return self._record(row)
+
     def reserve(
         self, idempotency_key: str, tool_name: str, request: Any, *, action_id: str | None = None,
     ) -> ToolAction:

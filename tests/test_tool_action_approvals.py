@@ -149,10 +149,13 @@ class SQLiteToolActionApprovalStoreTests(unittest.TestCase):
             self.assertFalse(approvals.consume(
                 approvals_token, context, principal_id="user-1",
             ))
-            with sqlite3.connect(path) as db:
+            db = sqlite3.connect(path)
+            try:
                 remaining = db.execute(
                     "SELECT COUNT(*) FROM tool_action_approvals"
                 ).fetchone()[0]
+            finally:
+                db.close()
             self.assertEqual(remaining, 0)
 
     def test_failed_atomic_promotion_rolls_back_approval_consumption(self):

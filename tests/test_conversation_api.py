@@ -413,7 +413,7 @@ class ConversationAPITests(unittest.TestCase):
 
     def test_approved_proposal_executes_only_through_authenticated_endpoint(self):
         root = Path(self.tempdir.name)
-        proposals = SQLitePendingToolActionProposalStore(str(root / "api-proposals.sqlite"))
+        proposals = SQLitePendingToolActionProposalStore(str(root / "api-journal.sqlite"))
         approvals = SQLiteToolActionApprovalStore(str(root / "api-journal.sqlite"))
         journal = ToolActionJournal(str(root / "api-journal.sqlite"))
         calls = []
@@ -482,7 +482,7 @@ class ConversationAPITests(unittest.TestCase):
 
     def test_reconciliation_endpoint_is_authenticated_and_persists_provider_result(self):
         root = Path(self.tempdir.name)
-        proposals = SQLitePendingToolActionProposalStore(str(root / "reconcile-proposals.sqlite"))
+        proposals = SQLitePendingToolActionProposalStore(str(root / "reconcile-journal.sqlite"))
         approvals = SQLiteToolActionApprovalStore(str(root / "reconcile-journal.sqlite"))
         journal = ToolActionJournal(str(root / "reconcile-journal.sqlite"))
         arguments = {"to": "recipient@example.com", "subject": "Verify"}
@@ -551,7 +551,7 @@ class ConversationAPITests(unittest.TestCase):
 
     def test_recovery_endpoint_is_authenticated_and_owner_scoped(self):
         root = Path(self.tempdir.name)
-        proposals = SQLitePendingToolActionProposalStore(str(root / "recover-proposals.sqlite"))
+        proposals = SQLitePendingToolActionProposalStore(str(root / "recover-journal.sqlite"))
         approvals = SQLiteToolActionApprovalStore(str(root / "recover-journal.sqlite"))
         journal = ToolActionJournal(str(root / "recover-journal.sqlite"))
 

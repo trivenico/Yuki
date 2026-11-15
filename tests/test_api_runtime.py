@@ -70,7 +70,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
             approvals = SQLiteToolActionApprovalStore(str(root / "journal.sqlite"))
-            proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
+            proposals = SQLitePendingToolActionProposalStore(str(root / "journal.sqlite"))
             bundle = build_gmail_tool_runtime_bundle(
                 existing_tools={}, existing_capabilities=ToolCapabilityCatalog({}),
                 existing_tool_definitions=(), policy=_GmailPolicy(),
@@ -111,7 +111,7 @@ class ConversationRuntimeTests(unittest.TestCase):
                 existing_tool_definitions=(), policy=_GmailPolicy(),
                 action_journal=ToolActionJournal(str(root / "journal.sqlite")),
                 approval_store=SQLiteToolActionApprovalStore(str(root / "journal.sqlite")),
-                proposals=SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite")),
+                proposals=SQLitePendingToolActionProposalStore(str(root / "journal.sqlite")),
                 send_client=_GmailSendClient(), readonly_client=_GmailReadClient(),
                 message_id_domain="mail.example.com",
             )

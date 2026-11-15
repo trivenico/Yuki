@@ -154,11 +154,15 @@ class SQLitePendingToolActionProposalStoreTests(unittest.TestCase):
                 proposal.proposal_id, principal_id="user-1", decision="approved",
             )
             self.assertEqual(approved.status, "approved")
-            with sqlite3.connect(store.database_path) as db:
+            db = sqlite3.connect(store.database_path)
+            try:
                 db.execute(
                     "UPDATE pending_tool_action_proposals SET expires_at=? WHERE proposal_id=?",
                     ("2000-01-01T00:00:00+00:00", proposal.proposal_id),
                 )
+                db.commit()
+            finally:
+                db.close()
             self.assertFalse(store.claim_execution(
                 proposal.proposal_id, principal_id="user-1",
             ))

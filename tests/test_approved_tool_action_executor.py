@@ -8,7 +8,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
-from core.tool_action_journal import ToolActionJournal
+from core.tool_action_journal import ToolActionConflict, ToolActionJournal
 from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
 
 
@@ -21,8 +21,9 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
-        self.proposals = SQLitePendingToolActionProposalStore(str(root / "proposals.sqlite"))
-        self.approvals = SQLiteToolActionApprovalStore(str(root / "journal.sqlite"))
+        shared_db = str(root / "journal.sqlite")
+        self.proposals = SQLitePendingToolActionProposalStore(shared_db)
+        self.approvals = SQLiteToolActionApprovalStore(shared_db)
         self.journal = ToolActionJournal(str(root / "journal.sqlite"))
         self.calls = []
         self.runtime = GuardedToolRuntime(
@@ -48,6 +49,10 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         )
 
     def test_executor_rejects_split_or_mismatched_atomic_store_wiring(self):
+        root = Path(self.temp.name)
+        split_proposals = SQLitePendingToolActionProposalStore(str(root / "split-proposals.sqlite"))
+        with self.assertRaisesRegex(ValueError, "proposal store, approval store"):
+            ApprovedToolActionExecutor(split_proposals, self.approvals, self.runtime)
         root = Path(self.temp.name)
         other_approvals = SQLiteToolActionApprovalStore(str(root / "other-approvals.sqlite"))
         with self.assertRaisesRegex(ValueError, "exact approval store"):
@@ -82,6 +87,65 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(self.proposals.get(
             self.proposal.proposal_id, principal_id="owner-a",
         ).execution_state, "finished")
+
+    def test_proposal_claim_and_prepared_journal_reservation_are_atomic(self):
+        self.assertTrue(self.executor._claim_proposal_and_reserve_action(
+            self.proposal, principal_id="owner-a",
+        ))
+        proposal = self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        action = self.journal.get(self.proposal.idempotency_key)
+        self.assertEqual(proposal.execution_state, "executing")
+        self.assertEqual(action.state, "prepared")
+        self.assertEqual(action.version, 1)
+        self.assertEqual(action.action_id, self.proposal.action_id)
+
+        recovered = self.executor.recover_interrupted_execution(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(recovered.state, "not_started")
+        self.assertEqual(self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        ).execution_state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
+
+        result = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
+        self.assertEqual(result.state, "finished")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_journal_reservation_conflict_rolls_back_proposal_claim(self):
+        self.journal.reserve(
+            self.proposal.idempotency_key, "email.send",
+            {"to": "different@example.com"}, action_id=self.proposal.action_id,
+        )
+        with self.assertRaises(ToolActionConflict):
+            self.executor._claim_proposal_and_reserve_action(
+                self.proposal, principal_id="owner-a",
+            )
+        proposal = self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(proposal.execution_state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
+        self.assertEqual(self.calls, [])
+
+    def test_atomic_claim_rejects_matching_legacy_reservation(self):
+        legacy = self.journal.reserve(
+            self.proposal.idempotency_key, "email.send",
+            self.arguments, action_id=self.proposal.action_id,
+        )
+        self.assertEqual(legacy.version, 0)
+        with self.assertRaises(ToolActionConflict):
+            self.executor._claim_proposal_and_reserve_action(
+                self.proposal, principal_id="owner-a",
+            )
+        proposal = self.proposals.get(
+            self.proposal.proposal_id, principal_id="owner-a",
+        )
+        self.assertEqual(proposal.execution_state, "not_started")
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).version, 0)
+        self.assertEqual(self.calls, [])
 
     def test_execution_is_single_claim_and_cannot_be_replayed(self):
         self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
@@ -137,7 +201,9 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
 
         current = self.proposals.get(self.proposal.proposal_id, principal_id="owner-a")
         self.assertEqual(current.execution_state, "not_started")
-        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
+        reserved = self.journal.get(self.proposal.idempotency_key)
+        self.assertEqual(reserved.state, "prepared")
+        self.assertEqual(reserved.version, 1)
         self.assertEqual(self.calls, [])
 
         retried = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
@@ -199,6 +265,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertTrue(self.proposals.claim_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         ))
+        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
         recovered = self.executor.recover_interrupted_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         )
@@ -315,7 +382,7 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(result.state, "unknown")
         self.assertIn("blocked", result.result.lower())
         self.assertEqual(self.calls, [])
-        self.assertIsNone(self.journal.get(self.proposal.idempotency_key))
+        self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
         self.assertEqual(self.proposals.get(
             self.proposal.proposal_id, principal_id="owner-a",
         ).execution_state, "unknown")

@@ -41,6 +41,8 @@ class ApprovedToolActionExecutor:
             raise ValueError("approved execution requires a durable action journal")
         if guarded_runtime._action_journal.database_path != approvals.database_path:
             raise ValueError("approval store and guarded action journal must share one SQLite database")
+        if proposals.database_path != approvals.database_path:
+            raise ValueError("proposal store, approval store, and guarded action journal must share one SQLite database")
         self.proposals = proposals
         self.approvals = approvals
         self.guarded_runtime = guarded_runtime
@@ -72,10 +74,10 @@ class ApprovedToolActionExecutor:
             # claim and reservation. An active execution lease is also live.
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         if action.state == "prepared":
-            # Version 2+ proves an authorizing claim was acquired and then
-            # fenced/released back to prepared. No dispatch lease ever began,
-            # so the proposal claim can be made available for a safe retry.
-            if action.version >= 2:
+            # Version 1 marks the atomic proposal+journal reservation; later versions
+            # represent journal transitions. Legacy version-0 rows cannot prove that
+            # the proposal claim and reservation committed together.
+            if action.version >= 1:
                 released = self._release_pre_dispatch_claim(
                     proposal, principal_id=principal_id,
                 )
@@ -101,12 +103,40 @@ class ApprovedToolActionExecutor:
         journal = self.guarded_runtime._action_journal
         action = journal.get(proposal.idempotency_key)
         if action is not None and not (
-            action.state == "prepared" and action.version >= 2
+            action.state == "prepared" and (action.version >= 1)
         ):
             return False
         return self.proposals._release_recovered_pre_dispatch_claim(
             proposal.proposal_id, principal_id=principal_id,
         )
+
+    def _claim_proposal_and_reserve_action(self, proposal, *, principal_id: str) -> bool:
+        """Atomically claim the proposal and persist its prepared journal row."""
+        journal = self.guarded_runtime._action_journal
+        now = self.proposals._now().isoformat()
+        with self.proposals._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                changed = db.execute(
+                    """UPDATE pending_tool_action_proposals
+                       SET execution_state='executing'
+                       WHERE proposal_id=? AND principal_id=?
+                         AND status='approved' AND execution_state='not_started'
+                         AND expires_at>?""",
+                    (proposal.proposal_id, principal_id, now),
+                ).rowcount
+                if changed != 1:
+                    db.execute("ROLLBACK")
+                    return False
+                journal.reserve_in_transaction(
+                    db, proposal.idempotency_key, proposal.tool_name,
+                    proposal.arguments, action_id=proposal.action_id,
+                )
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+        return True
 
     def execute(self, proposal_id: str, *, principal_id: str) -> ApprovedToolActionExecution:
         """Execute only the exact owner-approved proposal; never accept replacement args."""
@@ -127,7 +157,9 @@ class ApprovedToolActionExecutor:
             request_digest=proposal.request_digest,
         )
         context.verify(principal_id, proposal.tool_name, proposal.arguments)
-        if not self.proposals.claim_execution(proposal_id, principal_id=principal_id):
+        if not self._claim_proposal_and_reserve_action(
+            proposal, principal_id=principal_id,
+        ):
             raise ValueError("proposal execution was already claimed or is not approved")
         try:
             approval_id = self.approvals.issue(context, principal_id=principal_id)
