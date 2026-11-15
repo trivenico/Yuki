@@ -37,12 +37,17 @@ class WebSkill:
     def execute(self, url):
         if not isinstance(url, str) or not 1 <= len(url) <= 2048:
             raise WebSkillError("URL must be a bounded string.")
+        if url != url.strip() or any(ord(char) < 0x20 or ord(char) == 0x7f for char in url):
+            raise WebSkillError("URL contains surrounding whitespace or control characters.")
         try:
-            parts = urlsplit(url.strip())
+            parts = urlsplit(url)
             port = parts.port
         except ValueError:
             raise WebSkillError("URL is invalid.") from None
-        host = (parts.hostname or "").lower().rstrip(".")
+        raw_host = (parts.hostname or "").lower()
+        if raw_host.endswith(".."):
+            raise WebSkillError("URL hostname is malformed.")
+        host = raw_host.rstrip(".")
         if (parts.scheme.lower() != "https" or not host or parts.username is not None
                 or parts.password is not None or port not in (None, 443) or parts.fragment):
             raise WebSkillError("Only public HTTPS URLs on the default port are accepted.")
@@ -51,7 +56,7 @@ class WebSkill:
         if self._transport is None:
             raise WebSkillError("Firewall-enforced web transport is unavailable.")
         request = urllib.request.Request(
-            url.strip(), headers={"User-Agent": "Yuki/0.1", "Accept": "text/html,text/plain"},
+            url, headers={"User-Agent": "Yuki/0.1", "Accept": "text/html,text/plain"},
         )
         try:
             with self._transport.open(request, timeout=self.timeout) as response:
@@ -64,10 +69,10 @@ class WebSkill:
                 if len(body) > self.max_bytes:
                     raise WebSkillError("Page exceeds the configured size limit.")
                 decoded = body.decode("utf-8", errors="replace")
-                decoded = re.sub(r"(?is)<(?:script|style|noscript)\b[^>]*>.*?</(?:script|style|noscript)\s*>", " ", decoded)
+                decoded = re.sub(r"(?is)<(?:script|style|noscript)\\b[^>]*>.*?</(?:script|style|noscript)\\s*>", " ", decoded)
                 decoded = re.sub(r"(?s)<[^>]+>", " ", decoded)
-                text = re.sub(r"[ \t\r\n]+", " ", html.unescape(decoded)).strip()
-                return {"url": url.strip(), "title": text[:160], "text": text[:12000]}
+                text = re.sub(r"[ \\t\\r\\n]+", " ", html.unescape(decoded)).strip()
+                return {"url": url, "title": text[:160], "text": text[:12000]}
         except PinnedHTTPTransportError:
             raise WebSkillError("Page fetch was blocked or failed by the network firewall.") from None
         except WebSkillError:
