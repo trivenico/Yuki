@@ -1296,8 +1296,6 @@ class ProviderOutcomeTests(unittest.TestCase):
             lookup_started = threading.Event()
             finish_lookup = threading.Event()
             renewal_observed = threading.Event()
-            original_renew = store.renew_provider_reconciliation_lease
-
             def observe_renewal(**kwargs):
                 result = original_renew(**kwargs)
                 renewal_observed.set()
@@ -1456,12 +1454,15 @@ class ProviderOutcomeTests(unittest.TestCase):
             )
             self.assertEqual(ledger, [])
             # The worker's finally block releases its own claim even after heartbeat loss.
-            with self.assertRaises(ConversationConflict):
-                store.acquire_provider_reconciliation_lease(
-                    owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
-                    request_id=request_id, call_id="call-heartbeat-loss",
-                    lease_token="verification-worker", ttl_seconds=30,
-                )
+            store.acquire_provider_reconciliation_lease(
+                owner_id="owner-heartbeat-loss", conversation_id=conversation_id,
+                request_id=request_id, call_id="call-heartbeat-loss",
+                lease_token="verification-worker", ttl_seconds=30,
+            )
+            self.assertTrue(store.release_provider_reconciliation_lease(
+                owner_id="owner-heartbeat-loss", execution_id=execution["execution_id"],
+                lease_token="verification-worker",
+            ))
 
     def test_sync_adapter_cannot_smuggle_awaitable_lookup_result(self):
         async def deferred_evidence():
