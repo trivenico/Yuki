@@ -247,14 +247,16 @@ class SQLitePendingToolActionProposalStore:
             raise ValueError("authenticated principal is required.")
         if not isinstance(proposal_id, str) or not proposal_id or len(proposal_id) > 128:
             return False
+        now = self._now().isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 changed = db.execute("""UPDATE pending_tool_action_proposals
                     SET execution_state = 'executing'
                     WHERE proposal_id = ? AND principal_id = ?
-                      AND status = 'approved' AND execution_state = 'not_started'""",
-                    (proposal_id, principal_id)).rowcount
+                      AND status = 'approved' AND execution_state = 'not_started'
+                      AND expires_at > ?""",
+                    (proposal_id, principal_id, now)).rowcount
                 db.execute("COMMIT")
             except Exception:
                 db.execute("ROLLBACK")
