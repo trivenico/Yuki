@@ -7,6 +7,7 @@ works; the report intentionally distinguishes availability from verification.
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 import os
 import platform
 import shutil
@@ -14,7 +15,7 @@ import sys
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -63,13 +64,18 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None =
             return Capability("unavailable", "Ollama endpoint must be an HTTP(S) URL with a hostname.")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             return Capability("unavailable", "Ollama endpoint must not contain credentials, query, or fragment.")
-        # This diagnostic is explicitly for a local model server. Do not let an
-        # environment variable turn a readiness check into a remote network probe.
-        if parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
+        # Require an IP literal, not "localhost": resolver configuration can
+        # redirect hostnames, and urllib's default opener can honor proxy env vars.
+        try:
+            address = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            return Capability("unavailable", "Ollama readiness requires a literal loopback IP address.")
+        if not address.is_loopback:
             return Capability("unavailable", "Only loopback Ollama endpoints are allowed for local readiness checks.")
         endpoint = base_url.rstrip("/") + "/api/tags"
         request = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
-        open_url = urlopen if opener is None else opener
+        # Never route a local health probe through HTTP(S)_PROXY settings.
+        open_url = opener if opener is not None else build_opener(ProxyHandler({})).open
         with open_url(request, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             if status != 200:
