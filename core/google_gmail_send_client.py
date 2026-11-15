@@ -36,7 +36,8 @@ class GmailSendClient:
     MAX_RESPONSE_BYTES = 64_000
 
     def __init__(self, *, credential_resolver: OAuthProviderCredentialResolver,
-                 transport, message_id_domain: str, provider_id: str = "google"):
+                 transport, message_id_domain: str, provider_id: str = "google",
+                 refresh_service=None):
         if not isinstance(credential_resolver, OAuthProviderCredentialResolver):
             raise TypeError("an owner-scoped OAuth credential resolver is required")
         if not callable(getattr(transport, "open", None)):
@@ -50,7 +51,13 @@ class GmailSendClient:
                     r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}",
                     message_id_domain)):
             raise ValueError("message_id_domain must be a trusted DNS domain")
+        if refresh_service is not None and (
+            not callable(getattr(refresh_service, "refresh_if_needed", None))
+            or getattr(refresh_service, "provider_id", None) != provider_id
+        ):
+            raise TypeError("a matching trusted OAuth refresh service is required")
         self._credentials = credential_resolver
+        self._refresh = refresh_service
         self._transport = transport
         self._provider_id = provider_id
         self._domain = message_id_domain.lower()
@@ -112,6 +119,17 @@ class GmailSendClient:
         subject = self._text(subject, "subject", 998)
         body = self._text(body, "body", 900_000, allow_empty=True)
 
+        # Refresh is a separate, host-owned credential lifecycle operation. It
+        # must complete before the email side effect is dispatched; an ambiguous
+        # refresh failure therefore blocks sending rather than risking an expired
+        # credential or a duplicate provider request.
+        if self._refresh is not None:
+            try:
+                self._refresh.refresh_if_needed(
+                    owner_id=owner_id, account_id=account_id,
+                )
+            except Exception:
+                raise GmailSendError("gmail_account_or_scope_unavailable") from None
         try:
             credential = self._credentials.resolve(
                 owner_id=owner_id, provider_id=self._provider_id,
