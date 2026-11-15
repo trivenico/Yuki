@@ -12,7 +12,7 @@ from core.tool_capabilities import ToolCapabilityCatalog, ToolCapabilityError, T
 
 def _bounded_tool_result(value: Any, limit: int) -> str:
     """Convert only bounded, predictable result types without arbitrary __str__ calls."""
-    if isinstance(value, str):
+    if type(value) is str:
         result = value
     elif value is None or type(value) in (bool, float):
         result = str(value)
