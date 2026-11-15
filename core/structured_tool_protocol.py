@@ -136,15 +136,20 @@ class StructuredToolProtocol:
                 action_context_factory(principal_id, call.name, call.arguments)
                 if action_context_factory is not None else None
             )
+            requires_confirmation = self.requires_user_confirmation(call.name)
+            # Match the agent loop: read-only and otherwise non-confirming tools
+            # must not trigger host approval UI or approval-token issuance.
             confirmed = (
-                confirmation_check(call) if confirmation_check is not None else False
+                confirmation_check(call)
+                if requires_confirmation and confirmation_check is not None else False
             )
             if type(confirmed) is not bool:
                 raise TypeError("confirmation_check must return a boolean.")
             # Token issuance is allowed only after a positive trusted-host decision.
             approval_id = (
                 approval_id_factory(principal_id, context, call)
-                if confirmed is True and context is not None and approval_id_factory is not None else None
+                if requires_confirmation and confirmed is True and context is not None
+                and approval_id_factory is not None else None
             )
             results.append(self.dispatch_call(
                 call, principal_id=principal_id, action_context=context,
