@@ -293,6 +293,7 @@ class TaskRuntime:
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
             definition=original.definition,
+            owner_id=original.owner_id,
         )
         existing_events = self.store.list_task_events(retried.run_id, limit=1)
         if not existing_events:
