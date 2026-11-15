@@ -136,6 +136,28 @@ class YukiConversationAPI:
                     "proposals": [self._proposal_view(item) for item in proposals]
                 })
 
+            recover_match = re.fullmatch(
+                r"/v1/tool-action-proposals/([A-Za-z0-9_-]{1,128})/recover", path,
+            )
+            if recover_match and method == "POST":
+                if self.approved_tool_action_executor is None:
+                    return await self._respond(send, 503, {"error": "proposal_execution_unavailable"})
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    recovered = await asyncio.to_thread(
+                        self.approved_tool_action_executor.recover_interrupted_execution,
+                        recover_match.group(1), principal_id=user.user_id,
+                    )
+                except LookupError:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                return await self._respond(send, 200, {
+                    "proposal_id": recovered.proposal_id,
+                    "execution_state": recovered.state,
+                    "result": recovered.result,
+                })
+
             execute_match = re.fullmatch(
                 r"/v1/tool-action-proposals/([A-Za-z0-9_-]{1,128})/execute", path,
             )
