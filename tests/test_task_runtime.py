@@ -236,6 +236,31 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(current.state, "running")
         self.assertEqual(current.lease_owner, "worker-a")
 
+    def test_cancelling_running_task_fences_stale_worker_completion(self):
+        task = self.create("cancel-running-worker")
+        claimed = self.claim(task)
+        self.assertEqual(claimed.state, "running")
+        cancelled = self.runtime.cancel(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version,
+        )
+        self.assertEqual(cancelled.state, "cancelled")
+        current = self.store.get(task.task_id)
+        self.assertIsNone(current.lease_owner)
+        self.assertIsNone(current.lease_expires_at)
+        with self.assertRaises(WorkflowTransitionError):
+            self.runtime.complete(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                result={"should_not_commit": True},
+            )
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(
+            [event.kind for event in events],
+            ["task.created", "task.cancelled"],
+        )
+        self.assertEqual(self.store.get(task.task_id).state, "cancelled")
+
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
         cancelled = self.runtime.cancel(actor_id="alice", task_id=task.task_id,
