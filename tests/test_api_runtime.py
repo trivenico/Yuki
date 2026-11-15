@@ -81,6 +81,35 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(service.approval_id_factory, approval_factory)
             runtime.close()
 
+    def test_durable_approval_store_gets_safe_default_context_and_token_adapters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            approvals = SQLiteToolActionApprovalStore(str(root / "approvals.sqlite"))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                tool_action_approvals=approvals,
+            )
+            service = runtime.application.conversations
+            self.assertTrue(callable(service.action_context_factory))
+            self.assertIsNone(service.confirmation_check)
+            self.assertTrue(callable(service.approval_id_factory))
+            context = service.action_context_factory(
+                "authenticated-user", "email.send",
+                {"to": "person@example.com", "subject": "Hello"},
+            )
+            token = service.approval_id_factory(
+                "authenticated-user", context, SimpleNamespace(name="email.send"),
+            )
+            self.assertIsInstance(token, str)
+            self.assertTrue(approvals.consume(
+                token, context, principal_id="authenticated-user",
+            ))
+            with self.assertRaises(Exception):
+                approvals.consume(token, context, principal_id="authenticated-user")
+            runtime.close()
+
     def test_concurrent_close_waits_for_api_component_shutdown(self):
         entered = threading.Event()
         release = threading.Event()
