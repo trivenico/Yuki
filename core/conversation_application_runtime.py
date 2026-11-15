@@ -5,8 +5,9 @@ construction, owner scoping and shutdown semantics do not diverge.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
+from threading import RLock
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
@@ -22,35 +23,38 @@ class ConversationApplicationRuntime:
     owner_id: str | None = None
     close_callbacks: tuple[Callable[[], None], ...] = ()
     _closed: bool = False
+    _lock: RLock = field(default_factory=RLock, repr=False, compare=False)
 
     @property
     def closed(self) -> bool:
         """Whether application shutdown has begun, including failed cleanup."""
-        return self._closed
+        with self._lock:
+            return self._closed
 
     def close(self) -> None:
-        """Close persistence exactly once; safe for repeated shutdown paths."""
-        if self._closed:
-            return
-        # Mark shutdown before invoking user/provider-owned cleanup so a
-        # failing close hook is never called twice by nested shutdown paths.
-        self._closed = True
-        errors: list[Exception] = []
-        try:
-            self.conversations.close()
-        except Exception as exc:
-            errors.append(exc)
-        close = getattr(self.store, "close", None)
-        hooks = ((close,) if callable(close) else ()) + self.close_callbacks
-        # The store is created after externally supplied resources, so close it
-        # first, then release those resources even if one cleanup hook fails.
-        for hook in hooks:
+        """Close persistence exactly once; concurrent callers share one cleanup."""
+        with self._lock:
+            if self._closed:
+                return
+            # Mark shutdown before invoking user/provider-owned cleanup so a
+            # failing close hook is never called twice by nested shutdown paths.
+            self._closed = True
+            errors: list[Exception] = []
             try:
-                hook()
+                self.conversations.close()
             except Exception as exc:
                 errors.append(exc)
-        if errors:
-            raise errors[0]
+            close = getattr(self.store, "close", None)
+            hooks = ((close,) if callable(close) else ()) + self.close_callbacks
+            # The store is created after externally supplied resources, so close it
+            # first, then release those resources even if one cleanup hook fails.
+            for hook in hooks:
+                try:
+                    hook()
+                except Exception as exc:
+                    errors.append(exc)
+            if errors:
+                raise errors[0]
 
 
 def build_conversation_application_runtime(
