@@ -33,6 +33,7 @@ from core.tool_action_approvals import SQLiteToolActionApprovalStore
 from core.tool_action_context import ToolActionContext
 from core.pending_tool_action_proposals import SQLitePendingToolActionProposalStore
 from core.approved_tool_action_executor import ApprovedToolActionExecutor
+from core.tool_action_reconciliation import ToolActionReconciliationService
 
 
 class ConversationRuntime:
@@ -106,6 +107,7 @@ def build_conversation_runtime(
     tool_action_approvals: SQLiteToolActionApprovalStore | None = None,
     pending_tool_action_proposals: SQLitePendingToolActionProposalStore | None = None,
     approved_tool_action_executor: ApprovedToolActionExecutor | None = None,
+    tool_action_reconciler: ToolActionReconciliationService | None = None,
     pending_proposal_factory: Callable | None = None,
     action_context_factory: Callable | None = None,
     confirmation_check: Callable | None = None,
@@ -174,6 +176,11 @@ def build_conversation_runtime(
             raise ValueError("executor must use the configured pending proposal store")
         if tool_action_approvals is None or approved_tool_action_executor.approvals is not tool_action_approvals:
             raise ValueError("executor must use the configured approval store")
+    if tool_action_reconciler is not None:
+        if not isinstance(tool_action_reconciler, ToolActionReconciliationService):
+            raise TypeError("tool_action_reconciler must be a ToolActionReconciliationService")
+        if pending_tool_action_proposals is None or tool_action_reconciler.proposals is not pending_tool_action_proposals:
+            raise ValueError("reconciler must use the configured pending proposal store")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -235,6 +242,7 @@ def build_conversation_runtime(
             tool_action_approvals=tool_action_approvals,
             pending_tool_action_proposals=pending_tool_action_proposals,
             approved_tool_action_executor=approved_tool_action_executor,
+            tool_action_reconciler=tool_action_reconciler,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
