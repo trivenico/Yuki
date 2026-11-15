@@ -37,6 +37,7 @@ Infrastructure: providers, persistence, runtime, diagnostics
 |---|---|---|
 | Identity and access | Principal resolution, roles, sessions | Product workflow logic |
 | Provider runtime | Model adapter construction and inference contract | Tool permissions |
+| Configuration runtime | Validated settings, environment overrides and portable paths | Secrets in source-controlled configuration |
 | Agent execution | Bounded model-guided turns and dispatch | Direct unreviewed side effects |
 | Durable conversations | Conversation state, execution journal, recovery | HTTP transport concerns |
 | Application composition | Shared service wiring and lifecycle | Authentication of network callers |
