@@ -38,8 +38,17 @@ def build_durable_conversations_component_runtime(
         with lock:
             if state["closed"]:
                 raise RuntimeError("durable conversations component is closed.")
-            if not probe():
-                raise RuntimeError("durable conversation storage is unavailable.")
+            try:
+                if not probe():
+                    raise RuntimeError("durable conversation storage is unavailable.")
+            except Exception:
+                # The application runtime is already constructed and owns the
+                # store. If this dependency cannot start, release that partially
+                # composed application even though its dependent adapter has not
+                # yet entered the registry startup sequence.
+                application.close()
+                state["closed"] = True
+                raise
             state["started"] = True
 
     def health_check() -> bool:
