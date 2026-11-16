@@ -356,6 +356,8 @@ class YukiConversationAPI:
                 query = self._query(scope)
                 if set(query) - {"limit"}:
                     return await self._respond(send, 400, {"error": "invalid_request"})
+                if query.get("category") not in (None, "note", "preference", "lesson"):
+                    return await self._respond(send, 400, {"error": "invalid_category"})
                 try:
                     limit = int(query.get("limit", "50"))
                     memories = await asyncio.to_thread(
