@@ -130,6 +130,13 @@ class StructuredToolProtocolTests(unittest.TestCase):
         self.assertEqual(result.call_id, "call_direct")
         self.assertEqual(json.loads(result.output), {"nested": [True, None, 3]})
 
+    def test_direct_dispatch_rejects_excessive_structure_before_serialization(self):
+        call = StructuredToolCall("call_large", "echo", {"items": [0] * 4097})
+        with self.assertRaises(ToolProtocolError):
+            self.protocol.dispatch_call(call)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
 
 
     def test_trusted_context_factory_and_confirmation_reach_guarded_runtime(self):
