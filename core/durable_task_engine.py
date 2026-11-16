@@ -236,6 +236,7 @@ class DurableTaskEngine:
             if task is None:
                 raise TaskConflict("submission receipt references a missing task")
             return self._decode(task)
+
     def claim(self, worker_id, *, lease_seconds=60, task_types=None):
         if not isinstance(worker_id,str) or not 1 <= len(worker_id) <= 256: raise ValueError("invalid worker_id")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600: raise ValueError("lease_seconds must be an integer in 1..3600")
