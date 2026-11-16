@@ -198,5 +198,48 @@ class PinnedHTTPSProviderTransportTests(unittest.TestCase):
         self.assertEqual(self.resolutions, [])
 
 
+    def test_shared_firewall_audit_runs_before_provider_connection(self):
+        decisions = []
+        firewall = NetworkFirewall(
+            allowed_hosts=("api.openai.com",),
+            audit=decisions.append,
+        )
+        transport = PinnedHTTPSProviderTransport(
+            allowed_hosts={"api.openai.com"},
+            resolver=lambda *args, **kwargs: [dns_record("8.8.8.8")],
+            connection_factory=lambda host, ip, **kwargs: self.connections.append(
+                FakeConnection(host, ip, **kwargs)
+            ) or self.connections[-1],
+            firewall_policy=firewall,
+        )
+
+        with transport.open(self.request()) as response:
+            self.assertEqual(response.status, 200)
+
+        self.assertEqual(len(decisions), 1)
+        self.assertTrue(decisions[0].allowed)
+        self.assertEqual(decisions[0].reason, "allowed")
+        self.assertEqual(len(self.connections), 1)
+
+    def test_shared_firewall_audit_failure_prevents_provider_connection(self):
+        firewall = NetworkFirewall(
+            allowed_hosts=("api.openai.com",),
+            audit=lambda decision: (_ for _ in ()).throw(RuntimeError("audit unavailable")),
+        )
+        transport = PinnedHTTPSProviderTransport(
+            allowed_hosts={"api.openai.com"},
+            resolver=lambda *args, **kwargs: [dns_record("8.8.8.8")],
+            connection_factory=lambda host, ip, **kwargs: self.connections.append(
+                FakeConnection(host, ip, **kwargs)
+            ) or self.connections[-1],
+            firewall_policy=firewall,
+        )
+
+        with self.assertRaises(PinnedHTTPTransportError):
+            transport.open(self.request())
+
+        self.assertEqual(self.connections, [])
+
+
 if __name__ == "__main__":
     unittest.main()
