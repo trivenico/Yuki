@@ -111,3 +111,17 @@ class ConversationMemoryIntegrationTests(unittest.TestCase):
             plain.remember(owner_id="alice", content="No implicit memory")
         with self.assertRaisesRegex(RuntimeError, "not enabled"):
             plain.memories(owner_id="alice")
+
+
+    def test_service_can_clear_only_authenticated_owners_memories(self):
+        alice = self.service.remember(owner_id="alice", content="Alice saved context")
+        self.memory.remember(owner_id="bob", content="Bob saved context")
+        self.assertEqual(self.service.clear_memories(owner_id="alice"), 1)
+        self.assertEqual(self.service.memories(owner_id="alice"), [])
+        self.assertEqual(self.service.memories(owner_id="bob")[0]["content"], "Bob saved context")
+        self.assertFalse(self.service.forget_memory(owner_id="bob", memory_id=alice["memory_id"]))
+
+    def test_unicode_memory_terms_are_searchable(self):
+        saved = self.memory.remember(owner_id="alice", content="東京のプロジェクト設定")
+        matches = self.memory.search(owner_id="alice", query="東京 プロジェクト")
+        self.assertEqual([item["memory_id"] for item in matches], [saved["memory_id"]])
