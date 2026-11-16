@@ -78,6 +78,43 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(winners[0].state, "running")
         self.assertEqual(winners[0].attempts, 1)
 
+    def test_session_revocation_cancels_approved_queued_and_running_tasks(self):
+        queued = self.create(key="revoke-queued")
+        queued = self.store.approve(
+            queued.run_id, actor_id="reviewer", session_id="logout-session",
+            expected_version=queued.version,
+        )
+        running = self.create(key="revoke-running")
+        running = self.store.approve(
+            running.run_id, actor_id="reviewer", session_id="logout-session",
+            expected_version=running.version,
+        )
+        running = self.store.transition(
+            running.run_id, expected_version=running.version,
+            to_state="running", lease_owner="worker-a",
+        )
+        cancelled = self.store.cancel_session_approved_runs("logout-session")
+        self.assertEqual({run.run_id for run in cancelled}, {queued.run_id, running.run_id})
+        for run in cancelled:
+            self.assertEqual(run.state, "cancelled")
+            self.assertEqual(run.error_code, "session_revoked")
+            self.assertIsNone(run.lease_owner)
+            events = self.store.list_task_events(run.run_id)
+            self.assertEqual(events[-1].kind, "task.cancelled")
+            self.assertEqual(events[-1].payload["reason"], "session_revoked")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+
+    def test_session_revocation_does_not_cancel_another_session(self):
+        first = self.create(key="revoke-own")
+        first = self.store.approve(first.run_id, actor_id="reviewer", session_id="session-own",
+                                   expected_version=first.version)
+        second = self.create(key="revoke-other")
+        second = self.store.approve(second.run_id, actor_id="reviewer", session_id="session-other",
+                                    expected_version=second.version)
+        cancelled = self.store.cancel_session_approved_runs("session-own")
+        self.assertEqual([run.run_id for run in cancelled], [first.run_id])
+        self.assertEqual(self.store.get(second.run_id).state, "queued")
+
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)
