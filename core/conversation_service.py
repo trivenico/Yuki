@@ -136,13 +136,13 @@ class ConversationService:
                 expires_in_seconds=expires_in_seconds,
             )
 
-    def memories(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    def memories(self, *, owner_id: str, limit: int = 50, category: str | None = None) -> list[dict[str, Any]]:
         """List only the authenticated owner's saved memories."""
         with self._lock:
             self._ensure_open()
             if self.memory_store is None:
                 raise RuntimeError("persistent memory is not enabled for this runtime.")
-            return self.memory_store.list(owner_id=owner_id, limit=limit)
+            return self.memory_store.list(owner_id=owner_id, limit=limit, category=category)
 
     def forget_memory(self, *, owner_id: str, memory_id: str) -> bool:
         """Delete one memory only when it belongs to the authenticated owner."""

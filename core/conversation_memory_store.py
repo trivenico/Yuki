@@ -273,17 +273,24 @@ class ConversationMemoryStore:
         )
         return matches[:limit]
 
-    def list(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    def list(self, *, owner_id: str, limit: int = 50, category: str | None = None) -> list[dict[str, Any]]:
         owner = self._owner(owner_id)
         if type(limit) is not int or not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200.")
+        if category is not None and (not isinstance(category, str) or category not in self.CATEGORIES):
+            raise ValueError("category must be note, preference, lesson, or None.")
         with self._connection() as db:
-            rows = db.execute(
+            sql = (
                 "SELECT memory_id, category, content, created_at, expires_at FROM conversation_memories "
-                "WHERE owner_id = ? AND (expires_at IS NULL OR expires_at > ?) "
-                "ORDER BY created_at DESC, memory_id DESC LIMIT ?",
-                (owner, datetime.now(timezone.utc).isoformat(), limit),
-            ).fetchall()
+                "WHERE owner_id = ? AND (expires_at IS NULL OR expires_at > ?)"
+            )
+            params: list[Any] = [owner, datetime.now(timezone.utc).isoformat()]
+            if category is not None:
+                sql += " AND category = ?"
+                params.append(category)
+            sql += " ORDER BY created_at DESC, memory_id DESC LIMIT ?"
+            params.append(limit)
+            rows = db.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
     def delete(self, *, owner_id: str, memory_id: str) -> bool:
