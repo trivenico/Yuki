@@ -482,6 +482,22 @@ class ConversationRuntimeTests(unittest.TestCase):
         self.assertEqual(json.loads(body), {"status": "not_ready", "component_runtime": "unavailable"})
         self.assertNotIn(b"sensitive", body)
 
+    def test_sandbox_runtime_closes_even_if_application_shutdown_fails(self):
+        closed = []
+        application = SimpleNamespace(
+            store=object(),
+            close=lambda: (_ for _ in ()).throw(RuntimeError("storage close failed")),
+        )
+        sandbox_runtime = SimpleNamespace(close=lambda: closed.append("sandbox"))
+        runtime = ConversationRuntime(
+            lambda *args: None, application,
+            sandbox_execution_runtime=sandbox_runtime,
+        )
+        with self.assertRaisesRegex(RuntimeError, "application"):
+            runtime.close()
+        self.assertEqual(closed, ["sandbox"])
+        self.assertTrue(runtime._closed)
+
     def test_asgi_lifespan_closes_storage_on_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
