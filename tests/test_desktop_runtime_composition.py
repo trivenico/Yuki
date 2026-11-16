@@ -64,6 +64,30 @@ class DesktopRuntimeCompositionTests(unittest.TestCase):
             )
         self.assertEqual(opened, [])
 
+    def test_external_lifecycle_can_retain_provider_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = _Provider()
+            runtime = build_desktop_conversation_runtime(
+                {"workspace": directory}, provider=provider,
+                owner_id="desktop-owner", close_provider=False,
+                store_factory=lambda config: ConversationStore(
+                    Path(config["workspace"]) / "conversations.sqlite3"
+                ),
+            )
+            runtime.close()
+            self.assertEqual(provider.closed, 0)
+            provider.close()
+            self.assertEqual(provider.closed, 1)
+
+    def test_close_provider_requires_explicit_boolean(self):
+        provider = _Provider()
+        with self.assertRaisesRegex(TypeError, "close_provider"):
+            build_desktop_conversation_runtime(
+                {}, provider=provider, owner_id="desktop-owner",
+                close_provider=1,
+            )
+        self.assertEqual(provider.closed, 0)
+
     def test_provider_is_closed_if_store_creation_fails(self):
         provider = _Provider()
 
