@@ -707,18 +707,32 @@ def run() -> int:
                 self.login_button.setEnabled(True)
 
         def _open_session(self, identity):
+            config = load_config()
+            memory = create_desktop_memory(self.sessions.keyring)
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
-                memory=create_desktop_memory(self.sessions.keyring),
+                memory=memory,
                 session=ConversationSession(self.provider),
                 agent_coordinator=self.coordinator,
                 task_runtime=self.runtime,
             )
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
-            self.controller = DesktopCompanionController(
+            specialist_controller = DesktopCompanionController(
                 context.application, context.identity, self.sessions
+            )
+            # Durable chat uses the canonical owner-scoped conversation runtime.
+            # The existing specialist controller remains the authority for task
+            # approvals, backups, restore and migration during this cutover.
+            from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
+            self.controller = build_shared_desktop_controller(
+                config,
+                provider=self.provider,
+                identity=context.identity,
+                sessions=self.sessions,
+                specialist_controller=specialist_controller,
+                memory=context.application.memory,
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
