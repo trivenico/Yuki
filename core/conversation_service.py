@@ -14,6 +14,10 @@ from core.conversation_store import ConversationConflict, ConversationStore
 from core.conversation_memory_store import ConversationMemoryStore
 
 
+class ConversationOverloaded(RuntimeError):
+    """Raised when the service has reached its configured request capacity."""
+
+
 class ConversationService:
     """Synchronous conversation orchestration for a single application worker.
 
@@ -26,7 +30,10 @@ class ConversationService:
         *, agent_loop_for_owner=None, action_context_factory=None,
         confirmation_check=None, approval_id_factory=None, pending_proposal_factory=None,
         memory_store: ConversationMemoryStore | None = None,
+        max_active_requests: int = 16,
     ):
+        if type(max_active_requests) is not int or max_active_requests < 1:
+            raise ValueError("max_active_requests must be a positive integer.")
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
@@ -55,6 +62,7 @@ class ConversationService:
         self._lock = threading.RLock()
         self._lifecycle = threading.Condition(self._lock)
         self._active_requests = 0
+        self.max_active_requests = max_active_requests
         self._conversation_locks: dict[tuple[str, str], threading.Lock] = {}
         self._conversation_lock_users: dict[tuple[str, str], int] = {}
         self._closed = False
@@ -157,6 +165,10 @@ class ConversationService:
         key = (owner_id, conversation_id)
         with self._lifecycle:
             self._ensure_open()
+            if self._active_requests >= self.max_active_requests:
+                raise ConversationOverloaded(
+                    "conversation service is at capacity; retry after an active request completes."
+                )
             self._active_requests += 1
             conversation_lock = self._conversation_locks.setdefault(key, threading.Lock())
             self._conversation_lock_users[key] = self._conversation_lock_users.get(key, 0) + 1
