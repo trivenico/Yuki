@@ -23,6 +23,20 @@ class NetworkFirewallConfigTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(audited, [decision])
 
+    def test_enabled_configuration_includes_explicit_provider_hosts(self):
+        firewall = build_network_firewall_from_config({
+            "firewall_enabled": True,
+            "provider_allowed_hosts": ["api.openai.com"],
+        })
+        self.assertEqual(firewall.allowed_hosts, frozenset({"api.openai.com"}))
+
+    def test_enabled_configuration_rejects_malformed_provider_host_list(self):
+        with self.assertRaisesRegex(FirewallPolicyError, "firewall_host_configuration_invalid"):
+            build_network_firewall_from_config({
+                "firewall_enabled": True,
+                "provider_allowed_hosts": "api.openai.com",
+            })
+
     def test_enabled_configuration_requires_explicit_hosts(self):
         with self.assertRaisesRegex(FirewallPolicyError, "requires_configured_hosts"):
             build_network_firewall_from_config({"firewall_enabled": True})

@@ -10,7 +10,7 @@ from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
 
-def create_provider(config=None, *, environ=None):
+def create_provider(config=None, *, environ=None, firewall_policy=None):
     """Build the configured real provider without implicit fallback.
 
     OpenAI is the default. Hybrid routing keeps general tasks local and only
@@ -30,6 +30,7 @@ def create_provider(config=None, *, environ=None):
             api_key_env="OPENAI_API_KEY",
             base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
             environ=env,
+            firewall_policy=firewall_policy,
         )
     if selected == "gemini":
         return GeminiCLIProvider(
@@ -52,6 +53,8 @@ def create_provider(config=None, *, environ=None):
             cloud_model,
             api_key_env=str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY")),
             base_url=str(env.get("YUKI_CLOUD_BASE_URL", "https://api.openai.com/v1")),
+            environ=env,
+            firewall_policy=firewall_policy,
         )
     raw_tasks = str(env.get("YUKI_CLOUD_TASKS", "")).strip()
     cloud_tasks = [item.strip() for item in raw_tasks.split(",") if item.strip()]

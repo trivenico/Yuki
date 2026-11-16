@@ -51,7 +51,7 @@ class OpenAICompatibleProvider:
     """Chat Completions adapter. API keys come from environment variables only."""
     def __init__(self, model, *, api_key_env="OPENAI_API_KEY",
                  base_url="https://api.openai.com/v1", timeout=45, allowed_hosts=None,
-                 environ=None, transport=None):
+                 environ=None, transport=None, firewall_policy=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid cloud model name.")
         if not isinstance(api_key_env, str) or not api_key_env.isidentifier():
@@ -67,6 +67,7 @@ class OpenAICompatibleProvider:
             raise TypeError("transport must provide an open(request, timeout=...) method")
         self._transport = transport or PinnedHTTPSProviderTransport(
             allowed_hosts={endpoint_host}, timeout=timeout,
+            firewall_policy=firewall_policy,
         )
         # Injectable environment mapping keeps provider construction deterministic in
         # tests while production defaults to the real process environment.
