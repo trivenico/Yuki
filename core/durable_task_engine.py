@@ -242,6 +242,31 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
+    def fail_unknown_outcome(self, task_id, worker_id):
+        """Terminally fail a task whose external side-effect outcome is uncertain.
+
+        This state is deliberately non-retryable: retrying could duplicate an
+        operation that completed despite a lost response or audit failure.
+        """
+        now = self.clock()
+        safe_error = "external side-effect outcome is unknown; manual reconciliation required"
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            r = self._owned(c, task_id, worker_id)
+            c.execute(
+                """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
+                   lease_until=NULL,updated_at=? WHERE id=?""",
+                (safe_error, now, task_id),
+            )
+            self._event(
+                c, r["goal_id"], task_id, "task.outcome_unknown",
+                {"attempt": r["attempts"], "error": safe_error},
+            )
+            self._fail_blocked_descendants(c, r["goal_id"], now)
+            self._complete_goal_if_terminal(c, r["goal_id"], now)
+            c.commit()
+        return self.get_task(task_id)
+
     def reject(self, task_id, worker_id, reason):
         """Terminally reject a claimed task without consuming retry attempts.
 
