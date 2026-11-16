@@ -64,6 +64,19 @@ class DesktopRuntimeCompositionTests(unittest.TestCase):
             )
         self.assertEqual(opened, [])
 
+    def test_provider_is_closed_if_store_creation_fails(self):
+        provider = _Provider()
+
+        def fail_store(config):
+            raise RuntimeError("storage unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "storage unavailable"):
+            build_desktop_conversation_runtime(
+                {}, provider=provider, owner_id="desktop-owner",
+                store_factory=fail_store,
+            )
+        self.assertEqual(provider.closed, 1)
+
     def test_provider_without_streaming_uses_non_streaming_loop(self):
         with tempfile.TemporaryDirectory() as directory:
             provider = _Provider()
