@@ -318,17 +318,18 @@ class DurableSandboxExecutionWorker:
                     current = None
                 if current is not None and current.get("state") == "succeeded":
                     return current
-                try:
-                    self.engine.fail_unknown_outcome(
-                        claimed["id"], self.worker_id
-                    )
-                except Exception:
-                    pass
                 raise ExecutionOutcomeUnknown(
                     "sandbox completed but its durable task result could not be confirmed"
                 ) from completion_error
         except ExecutionOutcomeUnknown:
-            self.engine.fail_unknown_outcome(claimed["id"], self.worker_id)
+            # Some paths (for example, a failed completion commit) may already
+            # have terminalized the task. Never terminalize it twice.
+            try:
+                current = self.engine.get_task(claimed["id"])
+                if current.get("state") == "running":
+                    self.engine.fail_unknown_outcome(claimed["id"], self.worker_id)
+            except Exception:
+                pass
             raise
         except Exception:
             self.engine.fail(
