@@ -175,6 +175,21 @@ class SandboxExecutionSubmissionServiceTests(unittest.TestCase):
         finally:
             reopened.close()
 
+
+    def test_rate_limit_cleanup_does_not_erase_other_action_windows(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.engine.db_path, clock=lambda: now[0])
+        self.assertTrue(engine.consume_rate_limit(
+            "owner-window", "sandbox.approval.create", limit=1, window_seconds=3600,
+        ))
+        now[0] += 100
+        self.assertTrue(engine.consume_rate_limit(
+            "owner-window", "sandbox.goal.create", limit=1, window_seconds=60,
+        ))
+        self.assertFalse(engine.consume_rate_limit(
+            "owner-window", "sandbox.approval.create", limit=1, window_seconds=3600,
+        ))
+
     def test_active_task_quota_is_atomic_and_owner_wide(self):
         goal = self.engine.create_owned_goal("owner-quota")
         self.engine.submit(
