@@ -44,11 +44,11 @@ model contract; the provider/model adapter must be explicitly verified before
 composition. Keep desktop login/session revocation, memory-consent behavior, and
 supervised task authorization intact during that migration.
 
-Memory-consent integration and Qt-thread-safe streaming delivery remain
-separate follow-up work. The legacy `ConversationSession` stores its transcript
-only in process memory, so there is no durable legacy transcript database to
-migrate; any still-running legacy session would need an explicit, bounded
-handoff policy rather than an assumed on-disk migration.
+Qt-thread-safe streaming delivery remains follow-up work. The legacy
+`ConversationSession` stores its transcript only in process memory, so there is
+no durable legacy transcript database to migrate; any still-running legacy
+session would need an explicit, bounded handoff policy rather than an assumed
+on-disk migration.
 
 
 ## Desktop runtime composition helper
@@ -86,14 +86,28 @@ specialist-task approval flows must remain separate and unchanged during the
 eventual bootstrap migration.
 
 
-## Memory-consent boundary (important)
+## Consent-gated memory context
 
-The shared conversation service currently has no consent-aware memory retrieval
-interface. The authenticated desktop facade therefore does not read, inject,
-write, migrate, or delete `CompanionMemory` entries. This is intentionally
-fail-closed: the existing desktop memory toggle must not be presented as active
-for shared-runtime chat until a canonical memory adapter carries the explicit
-session consent into retrieval and records provenance. The current legacy
-companion chat retains its existing consent behavior until that migration is
-implemented and tested. Do not silently enable memory or copy legacy memory
-into the durable conversation store.
+`core.memory_context.build_memory_context_system_text()` provides a bounded,
+backend-agnostic adapter for memory facades. It reads no entries unless the
+facade reports `context_enabled is True`; it requests at most ten ranked
+entries, accepts only the supported note/preference/lesson categories, bounds
+the serialized context, and marks every saved entry as untrusted reference
+data rather than instructions. If consent is enabled but retrieval or
+validation fails, the turn is stopped before the model is called.
+
+`DesktopConversationAdapter` accepts an optional memory facade and injects
+only that consented context into the current model turn. It does not write,
+migrate, or delete memories. `AuthenticatedDesktopConversation` exposes
+session-checked `set_memory_context_enabled()` and
+`memory_context_enabled()` controls. The local consent can still be revoked
+during logout after session revocation through `disable_memory_context()`.
+
+The desktop composition root must pass the existing encrypted
+`create_desktop_memory()` instance into this facade and wire the memory toggle
+to these methods. It must not construct a plaintext memory store or treat the
+toggle's UI state as proof of consent. Memory writes remain a separate explicit
+user action; this integration only controls whether saved entries may be
+retrieved for model context. The core adapter is deliberately storage-agnostic
+so other surfaces can reuse it with their own authenticated and consent-aware
+memory facade.
