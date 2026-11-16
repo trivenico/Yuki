@@ -4,11 +4,14 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 import json
+import logging
 import re
 from urllib.parse import parse_qs
 
 from evaluation.run_store import EvaluationRunConflict, EvaluationRunInProgress
 from evaluation.service import EvaluationCapacityError, EvaluationService
+
+_LOGGER = logging.getLogger(__name__)
 
 _MAX_BODY = 4_096
 _MAX_QUERY = 1_024
@@ -109,7 +112,11 @@ class AuthenticatedEvaluationAPI:
             return await self._respond(send, 404, {"error": "not_found"})
         except (ValueError, TypeError, UnicodeDecodeError):
             return await self._respond(send, 400, {"error": "invalid_request"})
-        except Exception:
+        except Exception as exc:
+            # Keep the public response generic; emit only the exception type so
+            # operators can correlate failures without logging request data,
+            # credentials, provider messages, or traceback locals.
+            _LOGGER.error("evaluation API request failed (%s)", type(exc).__name__)
             return await self._respond(send, 500, {"error": "internal_error"})
 
     @staticmethod

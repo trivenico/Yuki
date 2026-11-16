@@ -157,6 +157,28 @@ class AuthenticatedEvaluationAPITests(unittest.TestCase):
             )
 
 
+    def test_internal_failure_logs_only_exception_type_and_returns_generic_error(self):
+        payload = {
+            "benchmark_id": "api-smoke",
+            "benchmark_version": 1,
+            "benchmark_digest": self.benchmark.digest,
+            "candidate_id": "candidate-a",
+        }
+
+        def fail(**kwargs):
+            raise RuntimeError("secret provider response must not be logged")
+
+        self.api.evaluations.run = fail
+        with self.assertLogs("api.evaluations", level="ERROR") as captured:
+            status, body = self._request("POST", "/v1/evaluations/runs", payload)
+
+        self.assertEqual(status, 500)
+        self.assertEqual(body, {"error": "internal_error"})
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("RuntimeError", captured.output[0])
+        self.assertNotIn("secret provider response", captured.output[0])
+
+
 
 if __name__ == "__main__":
     unittest.main()
