@@ -1,4 +1,6 @@
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from providers.agent_adapter import ProviderAgentAdapter
 
@@ -98,6 +100,83 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             list(adapter.stream_model(
                 messages=[{"role": "user", "content": "Hello"}], tools=[]
             ))
+
+
+    def test_shared_provider_calls_are_serialized(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_entered = threading.Event()
+        active_lock = threading.Lock()
+        active = 0
+        maximum_active = 0
+
+        class ConcurrentProvider(FakeChatProvider):
+            def generate_chat(self, *, messages, tools, tool_choice):
+                nonlocal active, maximum_active
+                if messages[-1]["content"] == "second":
+                    second_entered.set()
+                with active_lock:
+                    active += 1
+                    maximum_active = max(maximum_active, active)
+                    entered.set()
+                try:
+                    if messages[-1]["content"] == "first" and not release.wait(timeout=5):
+                        raise TimeoutError("test did not release provider")
+                    return {"text": messages[-1]["content"], "tool_calls": {"tool_calls": []}}
+                finally:
+                    with active_lock:
+                        active -= 1
+
+        adapter = ProviderAgentAdapter(ConcurrentProvider())
+        def invoke(value):
+            return adapter(
+                messages=[{"role": "user", "content": value}], tools=[], tool_choice="auto"
+            )["text"]
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(invoke, "first")
+            self.assertTrue(entered.wait(timeout=3))
+            second = pool.submit(invoke, "second")
+            self.assertFalse(second_entered.wait(timeout=0.1))
+            release.set()
+            self.assertEqual(first.result(timeout=5), "first")
+            self.assertEqual(second.result(timeout=5), "second")
+        self.assertEqual(maximum_active, 1)
+        self.assertEqual(active, 0)
+
+    def test_provider_lock_covers_entire_stream_lifetime(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_entered = threading.Event()
+
+        class StreamingProvider(FakeChatProvider):
+            def generate_chat_stream(self, *, messages, tools, tool_choice):
+                if messages[-1]["content"] == "stream":
+                    entered.set()
+                    if not release.wait(timeout=5):
+                        raise TimeoutError("test did not release stream")
+                else:
+                    second_entered.set()
+                yield {"type": "text_delta", "text": "ok"}
+
+            def generate_chat(self, *, messages, tools, tool_choice):
+                second_entered.set()
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+
+        adapter = ProviderAgentAdapter(StreamingProvider())
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            stream = pool.submit(lambda: list(adapter.stream_model(
+                messages=[{"role": "user", "content": "stream"}], tools=[]
+            )))
+            self.assertTrue(entered.wait(timeout=3))
+            normal = pool.submit(lambda: adapter(
+                messages=[{"role": "user", "content": "normal"}], tools=[]
+            ))
+            self.assertFalse(second_entered.wait(timeout=0.1))
+            release.set()
+            self.assertEqual(stream.result(timeout=5)[0]["text"], "ok")
+            self.assertEqual(normal.result(timeout=5)["text"], "hello")
+        self.assertTrue(second_entered.is_set())
 
 if __name__ == "__main__":
     unittest.main()
