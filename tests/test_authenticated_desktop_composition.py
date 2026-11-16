@@ -1,6 +1,7 @@
 """Tests for authenticated durable desktop conversation composition."""
 from dataclasses import dataclass
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -92,6 +93,52 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
         session.close()
         with self.assertRaises(PermissionError):
             session.conversation.list_conversations()
+        self.assertTrue(session.runtime.closed)
+        self.assertEqual(self.provider.close_count, 0)
+
+
+    def test_session_expiry_during_model_response_suppresses_result(self):
+        entered_provider = threading.Event()
+        release_provider = threading.Event()
+
+        class BlockingProvider(Provider):
+            def generate_chat(self, *, messages, tools, tool_choice):
+                self.calls.append((messages, tools, tool_choice))
+                entered_provider.set()
+                if not release_provider.wait(timeout=5):
+                    raise TimeoutError("test did not release provider")
+                return {"text": "must not reach the expired desktop session", "tool_calls": {"tool_calls": []}}
+
+        self.provider = BlockingProvider()
+        session = self.build()
+        results = []
+        errors = []
+
+        def send():
+            try:
+                results.append(session.conversation.send("Hello during logout", request_id="desktop-expiry-race"))
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=send)
+        worker.start()
+        try:
+            self.assertTrue(entered_provider.wait(timeout=2), "provider was not entered")
+            # Simulate the session manager revoking the authenticated identity
+            # while inference is still running.
+            self.sessions.identity = None
+        finally:
+            release_provider.set()
+        worker.join(timeout=5)
+
+        try:
+            self.assertFalse(worker.is_alive(), "chat worker did not finish")
+            self.assertEqual(results, [], "a response escaped after session expiry")
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], PermissionError)
+            self.assertIn("expired", str(errors[0]).lower())
+        finally:
+            session.close()
         self.assertTrue(session.runtime.closed)
         self.assertEqual(self.provider.close_count, 0)
 
