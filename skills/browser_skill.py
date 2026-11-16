@@ -10,8 +10,11 @@ class BrowserSkill(Skill):
     risk = "medium"
     requires_approval = True
 
-    def __init__(self, allowed_hosts=()):
-        self.browser = SafeBrowser(allowed_hosts=allowed_hosts, headless=False)
+    def __init__(self, allowed_hosts=(), *, firewall_policy=None):
+        self.browser = SafeBrowser(
+            allowed_hosts=allowed_hosts, headless=False,
+            firewall_policy=firewall_policy,
+        )
 
     def run(self, argument=""):
         try:
