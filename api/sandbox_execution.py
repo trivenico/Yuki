@@ -11,7 +11,6 @@ from automation.execution_task import ExecutionApproval, SandboxExecutionTask
 from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 
 _MAX_BODY = 32_768
-_GOAL_ID = re.compile(r"^[0-9a-f]{32}$")
 _TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _APPROVAL_ID = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,127}$")
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -141,7 +140,7 @@ class AuthenticatedSandboxExecutionAPI:
         if not isinstance(image, str) or image not in self.allowed_images:
             raise ValueError("image is not allow-listed")
         if (not isinstance(argv, list) or not argv or len(argv) > 64
-                or any(not isinstance(arg, str) or not arg or len(arg.encode("utf-8")) > 4096 for arg in argv)
+                or any(not isinstance(arg, str) or not arg or len(arg.encode("utf-8")) > 500 for arg in argv)
                 or sum(len(arg.encode("utf-8")) for arg in argv) > 16_384):
             raise ValueError("invalid argv")
         timeout = payload.get("timeout_seconds", 30)
