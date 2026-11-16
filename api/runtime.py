@@ -212,6 +212,11 @@ def build_conversation_runtime(
         oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
     if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
+    if mcp_runtime is not None and network_firewall is not None:
+        if not mcp_runtime.uses_firewall_policy(network_firewall):
+            raise ValueError(
+                "MCP connection managers must use the exact API network firewall policy"
+            )
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
     if tool_action_approvals is not None and not isinstance(
