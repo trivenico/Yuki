@@ -81,6 +81,10 @@ def build_sandbox_execution_runtime(
         raise ValueError("sandbox execution image allow-list is invalid")
 
     database_root = root / "sandbox-execution-state"
+    if (sandbox_workspace == database_root
+            or database_root in sandbox_workspace.parents
+            or sandbox_workspace in database_root.parents):
+        raise ValueError("sandbox workspace must be isolated from private execution state")
     task_db = prepare_private_sqlite_path(database_root / "tasks.sqlite3")
     audit_db = prepare_private_sqlite_path(database_root / "audit.sqlite3")
     auth_db = str(Path(auth_service.database_path).resolve())
