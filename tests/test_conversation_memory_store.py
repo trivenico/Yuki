@@ -129,6 +129,23 @@ class ConversationMemoryStoreTests(unittest.TestCase):
         )
         self.assertEqual([item["memory_id"] for item in matches], [alice["memory_id"]])
 
+    def test_list_can_filter_by_category_without_cross_category_leakage(self):
+        preference = self.memory.remember(
+            owner_id="alice", content="Concise responses", category="preference",
+        )
+        note = self.memory.remember(owner_id="alice", content="Project launch date", category="note")
+        self.memory.remember(owner_id="bob", content="Concise responses", category="preference")
+        self.assertEqual(
+            [item["memory_id"] for item in self.memory.list(owner_id="alice", category="preference")],
+            [preference["memory_id"]],
+        )
+        self.assertEqual(
+            [item["memory_id"] for item in self.memory.list(owner_id="alice", category="note")],
+            [note["memory_id"]],
+        )
+        with self.assertRaises(ValueError):
+            self.memory.list(owner_id="alice", category="system")
+
     def test_memory_inputs_are_bounded_and_categories_are_allowlisted(self):
         for kwargs in (
             {"owner_id": "", "content": "text"},
