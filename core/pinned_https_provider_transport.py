@@ -41,25 +41,37 @@ class _Response:
         self._connection = connection
         self._deadline = deadline
         self._clock = clock
-
-    def _apply_remaining_timeout(self):
-        remaining = self._deadline - self._clock()
-        if remaining <= 0:
-            raise TimeoutError("provider request deadline exceeded")
-        sock = getattr(self._connection, "sock", None)
-        if sock is not None:
-            sock.settimeout(remaining)
         self.status = response.status
         self.reason = response.reason
         self.headers = response.headers
 
+    def _expire_if_needed(self):
+        if self._clock() >= self._deadline:
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise TimeoutError("provider request deadline exceeded")
+
+    def _apply_remaining_timeout(self):
+        remaining = self._deadline - self._clock()
+        if remaining <= 0:
+            self._expire_if_needed()
+        sock = getattr(self._connection, "sock", None)
+        if sock is not None:
+            sock.settimeout(remaining)
+
     def read(self, amount=-1):
         self._apply_remaining_timeout()
-        return self._response.read(amount)
+        data = self._response.read(amount)
+        self._expire_if_needed()
+        return data
 
     def readline(self, amount=-1):
         self._apply_remaining_timeout()
-        return self._response.readline(amount)
+        data = self._response.readline(amount)
+        self._expire_if_needed()
+        return data
 
     def close(self):
         try:
