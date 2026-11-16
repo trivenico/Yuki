@@ -49,3 +49,23 @@ separate follow-up work. The legacy `ConversationSession` stores its transcript
 only in process memory, so there is no durable legacy transcript database to
 migrate; any still-running legacy session would need an explicit, bounded
 handoff policy rather than an assumed on-disk migration.
+
+
+## Desktop runtime composition helper
+
+`ui.desktop.runtime.build_desktop_conversation_runtime()` now provides the
+Qt-independent composition seam for the desktop surface. It accepts the
+provider already created by the trusted desktop bootstrap and the authenticated
+account ID returned by `DesktopSessionManager`. That ID is the stable
+`AuthenticatedDesktopIdentity.actor_id` (which the session manager sources
+from `AuthenticatedUser.user_id`), not the username or session token.
+
+The helper builds the canonical `ProviderAgentAdapter`,
+`AgentExecutionLoop`, deny-all `StructuredToolProtocol`, and
+`ConversationApplicationRuntime`. It uses the configured conversation store,
+sets the runtime owner scope, and registers the provider's optional `close()`
+hook with runtime shutdown. Chat tools remain empty; this helper does not
+connect the supervised specialist task runtime or grant desktop chat new
+permissions. The desktop composition root still needs to call this helper,
+construct `DesktopConversationAdapter` from the same runtime and owner ID,
+and make the existing lifecycle close the resulting runtime exactly once.
