@@ -159,22 +159,58 @@ class ConversationMemoryStore:
         if not query_tokens:
             return []
         with self._connection() as db:
+            # The store has a hard per-owner cap, so ranking the complete active
+            # corpus is bounded and avoids silently missing older relevant facts.
             rows = db.execute(
                 "SELECT memory_id, category, content, created_at, expires_at FROM conversation_memories "
                 "WHERE owner_id = ? AND (expires_at IS NULL OR expires_at > ?) "
-                "ORDER BY created_at DESC, memory_id DESC LIMIT 200",
+                "ORDER BY memory_id ASC",
                 (owner, datetime.now(timezone.utc).isoformat()),
             ).fetchall()
-        ranked = []
+
+        documents = []
+        document_frequency = {token: 0 for token in query_tokens}
         for row in rows:
             item = dict(row)
             tokens = self._tokens(item["content"])
-            overlap = len(query_tokens & tokens)
-            if overlap:
-                score = overlap / max(1, len(query_tokens | tokens))
-                ranked.append((score, item))
-        ranked.sort(key=lambda item: (item[0], item[1]["created_at"], item[1]["memory_id"]), reverse=True)
-        return [{"score": round(score, 4), **item} for score, item in ranked[:limit]]
+            for token in query_tokens.intersection(tokens):
+                document_frequency[token] += 1
+            documents.append((item, tokens))
+
+        # A compact BM25-style lexical ranker: rare query terms carry more
+        # weight, repeated occurrences have diminishing returns, and a direct
+        # phrase match receives a small boost. No embeddings or external calls.
+        import math
+        corpus_size = max(1, len(documents))
+        average_length = sum(len(tokens) for _, tokens in documents) / corpus_size
+        normalized_query = " ".join(re.findall(r"[\\w]+", query.casefold(), flags=re.UNICODE))
+        ranked = []
+        for item, tokens in documents:
+            matched = query_tokens.intersection(tokens)
+            if not matched:
+                continue
+            length_norm = len(tokens) / max(1.0, average_length)
+            score = 0.0
+            for token in matched:
+                frequency = sum(1 for value in re.findall(
+                    r"[\\w]+", item["content"].casefold(), flags=re.UNICODE
+                ) if value == token)
+                inverse_frequency = math.log(
+                    1.0 + (corpus_size - document_frequency[token] + 0.5)
+                    / (document_frequency[token] + 0.5)
+                )
+                denominator = frequency + 1.2 * (0.25 + 0.75 * length_norm)
+                score += inverse_frequency * (frequency * 2.2 / max(0.01, denominator))
+            normalized_content = " ".join(re.findall(
+                r"[\\w]+", item["content"].casefold(), flags=re.UNICODE
+            ))
+            if normalized_query and normalized_query in normalized_content:
+                score += 1.0
+            ranked.append((score, item))
+        ranked.sort(
+            key=lambda pair: (-pair[0], pair[1]["created_at"], pair[1]["memory_id"]),
+        )
+        return [{"score": round(score, 6), **item} for score, item in ranked[:limit]]
 
     def list(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
         owner = self._owner(owner_id)
