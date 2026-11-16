@@ -8,8 +8,8 @@ class WikiSkill(Skill):
     description = "Look up Wikipedia pages through the configured allow-listed web reader."
     risk = "low"
     requires_approval = False
-    def __init__(self, allowed_hosts=()):
-        self.reader = WebSkill(allowed_hosts=allowed_hosts)
+    def __init__(self, allowed_hosts=(), *, firewall_policy=None):
+        self.reader = WebSkill(allowed_hosts=allowed_hosts, firewall_policy=firewall_policy)
     def run(self, argument=""):
         query = argument.strip()
         if not query or len(query) > 180:
