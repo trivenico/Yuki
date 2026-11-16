@@ -13,6 +13,9 @@ import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
+from core.sandbox_policy import SandboxPolicy
+from core.sandbox_runtime import SandboxRuntimeError, build_docker_argv
+
 
 class SandboxError(RuntimeError):
     pass
@@ -53,18 +56,30 @@ class DockerSandbox:
             raise SandboxError("Explicit approval was not granted.")
         if type(write_workspace) is not bool:
             raise SandboxError("write_workspace must be a boolean.")
-        mount_mode = "rw" if write_workspace else "ro"
+        capabilities = frozenset({"write_workspace"}) if write_workspace else frozenset()
+        policy = SandboxPolicy(
+            capabilities=capabilities,
+            timeout_seconds=timeout,
+            memory_mb=512,
+            cpu_millis=1000,
+            max_output_bytes=max_output_bytes,
+            max_processes=64,
+        ).validate()
         cid_dir = tempfile.TemporaryDirectory(prefix="yuki-docker-cid-")
         cid_file = str(Path(cid_dir.name) / "container.id")
-        command = [
-            self.docker_binary, "run", "--rm", "--pull=never", "--cidfile", cid_file,
-            "--network=none", "--read-only", "--cap-drop=ALL",
-            "--security-opt=no-new-privileges", "--pids-limit=64",
-            "--memory=512m", "--cpus=1", "--user=65534:65534",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",
-            "--mount", f"type=bind,src={self.workspace},dst=/workspace,{mount_mode}",
-            "--workdir", "/workspace", image, *argv,
-        ]
+        try:
+            command = build_docker_argv(
+                policy,
+                image=image,
+                workspace=str(self.workspace),
+                command=argv,
+                docker_binary=self.docker_binary,
+                runtime_user=(65534, 65534),
+                cidfile=cid_file,
+            )
+        except (SandboxRuntimeError, ValueError) as exc:
+            cid_dir.cleanup()
+            raise SandboxError("Sandbox policy could not be enforced.") from exc
         captured = {"stdout": bytearray(), "stderr": bytearray()}
         output_lock = threading.Lock()
         output_exceeded = threading.Event()
