@@ -103,6 +103,11 @@ class GeminiCLIProviderTests(unittest.TestCase):
         self.assertNotIn("secret-token", str(ctx.exception))
         self.assertNotIn("/private/path", str(ctx.exception))
 
+    def test_factory_rejects_gemini_when_shared_firewall_is_required(self):
+        from providers.factory import create_provider
+        with self.assertRaisesRegex(RuntimeError, "subprocess networking is not enforced"):
+            create_provider({"provider": "gemini"}, firewall_policy=object())
+
     def test_factory_and_registry_wiring(self):
         from providers.factory import create_provider
         from yuki_providers import ProviderManager
