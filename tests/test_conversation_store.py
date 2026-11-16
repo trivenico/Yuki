@@ -87,8 +87,12 @@ class ConversationStoreTests(unittest.TestCase):
             role="assistant", content="Legacy answer", idempotency_key="legacy-assistant",
             expected_version=0,
         )
-        with sqlite3.connect(self.store.database_path) as db:
+        db = sqlite3.connect(self.store.database_path)
+        try:
             db.execute("ALTER TABLE conversation_messages DROP COLUMN memory_references")
+            db.commit()
+        finally:
+            db.close()
         migrated = ConversationStore(self.store.database_path)
         history = migrated.list_messages(
             owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
