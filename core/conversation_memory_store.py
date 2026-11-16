@@ -183,7 +183,10 @@ class ConversationMemoryStore:
         import math
         corpus_size = max(1, len(documents))
         average_length = sum(len(tokens) for _, tokens in documents) / corpus_size
-        normalized_query = " ".join(re.findall(r"[\\w]+", query.casefold(), flags=re.UNICODE))
+        normalized_query = " ".join(re.findall(r"[\w]+", query.casefold(), flags=re.UNICODE))
+        cjk = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+                         r"\u3040-\u30ff\u31f0-\u31ff"
+                         r"\uac00-\ud7af]")
         ranked = []
         for item, tokens in documents:
             matched = query_tokens.intersection(tokens)
@@ -191,13 +194,11 @@ class ConversationMemoryStore:
                 continue
             length_norm = len(tokens) / max(1.0, average_length)
             score = 0.0
+            words = re.findall(r"[\w]+", item["content"].casefold(), flags=re.UNICODE)
             for token in matched:
-                cjk = re.compile(r"[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff"
-                                 r"\\u3040-\\u30ff\\u31f0-\\u31ff"
-                                 r"\\uac00-\\ud7af]")
                 frequency = sum(
                     word.count(token) if cjk.search(word) else int(word == token)
-                    for word in re.findall(r"[\\w]+", item["content"].casefold(), flags=re.UNICODE)
+                    for word in words
                 )
                 inverse_frequency = math.log(
                     1.0 + (corpus_size - document_frequency[token] + 0.5)
@@ -205,9 +206,7 @@ class ConversationMemoryStore:
                 )
                 denominator = frequency + 1.2 * (0.25 + 0.75 * length_norm)
                 score += inverse_frequency * (frequency * 2.2 / max(0.01, denominator))
-            normalized_content = " ".join(re.findall(
-                r"[\\w]+", item["content"].casefold(), flags=re.UNICODE
-            ))
+            normalized_content = " ".join(words)
             if normalized_query and normalized_query in normalized_content:
                 score += 1.0
             ranked.append((score, item))
