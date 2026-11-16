@@ -82,6 +82,36 @@ class SharedDesktopCompositionTests(unittest.TestCase):
         self.assertEqual(session.close_count, 1)
 
     @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
+    def test_failed_chat_composition_logs_out_existing_specialist_controller(self, build):
+        specialists = SpecialistController()
+        add_specialist_contract(specialists)
+        error = RuntimeError("store initialization failed")
+        build.side_effect = error
+
+        with self.assertRaisesRegex(RuntimeError, "store initialization failed"):
+            build_shared_desktop_controller(
+                {}, provider=object(), identity=object(), sessions=object(),
+                specialist_controller=specialists, memory=object(),
+            )
+
+        self.assertEqual(specialists.logout_count, 1)
+
+    @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
+    def test_bridge_validation_failure_closes_chat_and_logs_out_specialist(self, build):
+        session = FakeSession()
+        build.return_value = session
+        specialists = SpecialistController()
+
+        with self.assertRaises(TypeError):
+            build_shared_desktop_controller(
+                {}, provider=object(), identity=object(), sessions=object(),
+                specialist_controller=specialists, memory=object(),
+            )
+
+        self.assertEqual(session.close_count, 1)
+        self.assertEqual(specialists.logout_count, 1)
+
+    @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
     def test_composition_passes_owner_and_storage_dependencies_unchanged(self, build):
         session = FakeSession()
         build.return_value = session
