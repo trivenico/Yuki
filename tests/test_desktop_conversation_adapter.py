@@ -1,0 +1,108 @@
+"""Tests for the desktop adapter over the canonical conversation runtime."""
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.agent_execution_loop import AgentExecutionLoop
+from core.conversation_application_runtime import build_conversation_application_runtime
+from core.conversation_store import ConversationNotFound, ConversationStore
+from core.guarded_tool_runtime import GuardedToolRuntime
+from core.structured_tool_protocol import StructuredToolProtocol
+from ui.desktop.conversation_adapter import DesktopConversationAdapter
+
+
+class DenyAll:
+    def authorize_tool(self, name):
+        return False
+
+
+class DesktopConversationAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.observed = []
+
+        def model(*, messages, tools, tool_choice):
+            self.observed.append((messages, tools))
+            return {"text": "Canonical runtime reply", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            model, StructuredToolProtocol(GuardedToolRuntime({}, DenyAll()))
+        )
+        self.application = build_conversation_application_runtime(
+            {"workspace": self.tempdir.name},
+            agent_loop=loop,
+            store_factory=lambda config: ConversationStore(
+                Path(config["workspace"]) / "conversations.sqlite3"
+            ),
+        )
+        self.adapter = DesktopConversationAdapter(
+            self.application, owner_id="desktop-owner",
+        )
+
+    def tearDown(self):
+        self.application.close()
+        self.tempdir.cleanup()
+
+    def test_send_persists_turn_through_shared_runtime_without_tools(self):
+        result = self.adapter.send("Hello Yuki", request_id="desktop-request-1")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["answer"], "Canonical runtime reply")
+        self.assertEqual(result["version"], 2)
+        self.assertEqual(self.observed[0][1], [])
+        self.assertEqual(
+            [item["role"] for item in self.adapter.history()],
+            ["user", "assistant"],
+        )
+
+    def test_followup_uses_persisted_transcript(self):
+        self.adapter.send("First turn", request_id="desktop-request-1")
+        self.adapter.send("Second turn", request_id="desktop-request-2")
+        self.assertEqual(
+            self.observed[1][0][1:],
+            [
+                {"role": "user", "content": "First turn"},
+                {"role": "assistant", "content": "Canonical runtime reply"},
+                {"role": "user", "content": "Second turn"},
+            ],
+        )
+
+    def test_select_conversation_enforces_owner_scope(self):
+        conversation = self.application.conversations.create(owner_id="another-owner")
+        with self.assertRaises(ConversationNotFound):
+            self.adapter.select_conversation(conversation["conversation_id"])
+
+    def test_clear_selection_preserves_history_and_next_send_starts_new_conversation(self):
+        first = self.adapter.send("Keep this history", request_id="desktop-request-1")
+        first_id = first["conversation_id"]
+        self.adapter.clear_selection()
+        self.assertIsNone(self.adapter.conversation_id)
+        second = self.adapter.send("Start a new thread", request_id="desktop-request-2")
+        self.assertNotEqual(first_id, second["conversation_id"])
+        self.assertEqual(
+            self.application.conversations.history(
+                owner_id="desktop-owner", conversation_id=first_id,
+            )[0]["content"],
+            "Keep this history",
+        )
+
+    def test_stable_request_id_replays_without_second_model_call(self):
+        first = self.adapter.send("Retry safely", request_id="stable-request")
+        replay = self.adapter.send("Retry safely", request_id="stable-request")
+        self.assertEqual(replay["answer"], first["answer"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(len(self.observed), 1)
+
+    def test_closed_runtime_rejects_desktop_operations(self):
+        self.application.close()
+        with self.assertRaisesRegex(RuntimeError, "runtime is closed"):
+            self.adapter.send("Do not run")
+
+    def test_invalid_owner_and_message_are_rejected(self):
+        with self.assertRaises(ValueError):
+            DesktopConversationAdapter(self.application, owner_id="  ")
+        with self.assertRaises(ValueError):
+            self.adapter.send("  ")
+
+
+if __name__ == "__main__":
+    unittest.main()
