@@ -1,0 +1,291 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.agent_execution_loop import AgentExecutionLoop
+from core.conversation_service import ConversationService
+from core.conversation_store import ConversationConflict, ConversationNotFound, ConversationStore
+from core.guarded_tool_runtime import GuardedToolRuntime
+from core.structured_tool_protocol import StructuredToolProtocol
+
+
+class AllowNothing:
+    def authorize_tool(self, name):
+        return False
+
+
+class ConversationServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.store = ConversationStore(Path(self.tempdir.name) / "chat.sqlite3")
+        self.observed = []
+
+        def model(*, messages, tools, tool_choice):
+            self.observed.append(messages)
+            return {"text": "Yuki's answer", "tool_calls": {"tool_calls": []}}
+
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        self.loop = AgentExecutionLoop(model, protocol)
+        self.service = ConversationService(self.store, self.loop)
+        self.conversation = self.service.create(owner_id="owner-a")
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def send(self, *, owner="owner-a", text="Hello", request="request-1", version=0):
+        return self.service.reply(
+            owner_id=owner,
+            conversation_id=self.conversation["conversation_id"],
+            user_text=text,
+            request_id=request,
+            expected_version=version,
+            tools=[],
+        )
+
+    def test_closed_service_rejects_new_operations(self):
+        self.service.close()
+        self.service.close()
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.service.create(owner_id="owner-a")
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.service.list(owner_id="owner-a")
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.service.history(owner_id="owner-a", conversation_id=self.conversation["conversation_id"])
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            self.send()
+        self.assertEqual(self.observed, [])
+
+    def test_reply_persists_user_and_assistant_and_returns_version(self):
+        result = self.send()
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["answer"], "Yuki's answer")
+        self.assertEqual(result["version"], 2)
+        self.assertFalse(result["replayed"])
+        history = self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual([item["role"] for item in history], ["user", "assistant"])
+
+    def test_next_turn_receives_prior_persisted_transcript(self):
+        self.send()
+        second = self.send(text="Follow up", request="request-2", version=2)
+        self.assertEqual(second["version"], 4)
+        self.assertEqual(
+            self.observed[1][1:],
+            [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Yuki's answer"},
+                {"role": "user", "content": "Follow up"},
+            ],
+        )
+
+    def test_idempotent_retry_replays_answer_without_second_model_call(self):
+        first = self.send()
+        replay = self.send()
+        self.assertEqual(replay["answer"], first["answer"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(len(self.observed), 1)
+
+    def test_stale_version_fails_before_model_call(self):
+        self.send()
+        with self.assertRaises(ConversationConflict):
+            self.send(text="Stale", request="request-2", version=0)
+        self.assertEqual(len(self.observed), 1)
+
+    def test_owner_specific_agent_loop_is_cached_and_closed_on_service_shutdown(self):
+        selected = []
+        closed = []
+        def factory(owner_id):
+            selected.append(owner_id)
+            loop = AgentExecutionLoop(
+                lambda **kwargs: {"text": "owner answer", "tool_calls": {"tool_calls": []}},
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            )
+            loop.close = lambda: closed.append(owner_id)
+            return loop
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Owner-specific execution", request_id="owner-loop-request",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        followup = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Follow-up", request_id="owner-loop-followup",
+            expected_version=2, tools=[],
+        )
+        self.assertEqual(followup["status"], "completed")
+        self.assertEqual(selected, ["owner-a"])
+        service.close()
+        service.close()
+        self.assertEqual(closed, ["owner-a"])
+
+    def test_owner_factory_cannot_share_default_or_another_owners_loop(self):
+        service = ConversationService(
+            self.store, self.loop, agent_loop_for_owner=lambda owner_id: self.loop,
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Invalid shared loop", request_id="invalid-shared-loop",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "failed")
+        service.close()
+    def test_owner_specific_agent_loop_factory_must_return_agent_loop(self):
+        service = ConversationService(
+            self.store, self.loop, agent_loop_for_owner=lambda owner_id: object(),
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Invalid owner loop", request_id="invalid-owner-loop",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("AI service or a guarded operation failed", result["answer"])
+
+    def test_owner_isolation_is_enforced_by_service(self):
+        with self.assertRaises(ConversationNotFound):
+            self.send(owner="owner-b")
+        self.assertEqual(self.observed, [])
+
+    def test_model_failure_is_sanitized_and_persisted(self):
+        def failing_model(**kwargs):
+            raise RuntimeError("secret provider response and credentials")
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        failing = ConversationService(
+            self.store, AgentExecutionLoop(failing_model, protocol)
+        )
+        result = failing.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Try this", request_id="failed-request", expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertNotIn("secret", result["answer"])
+        self.assertEqual(result["version"], 2)
+        replay = failing.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Try this", request_id="failed-request", expected_version=0, tools=[],
+        )
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["answer"], result["answer"])
+
+
+
+    def test_cancelled_generation_persists_explicit_stopped_status(self):
+        result = self.service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Stop me",
+            request_id="cancelled-request",
+            expected_version=0,
+            tools=[],
+            cancellation_requested=lambda: True,
+        )
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["answer"], "Generation was stopped at your request.")
+        self.assertEqual(result["version"], 2)
+
+
+    def test_interrupted_generation_is_reconciled_without_replaying_model(self):
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Potentially side-effecting task",
+            idempotency_key="crashed-request", expected_version=0,
+            generation_request_id="crashed-request",
+        )
+        replay = self.service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Potentially side-effecting task", request_id="crashed-request",
+            expected_version=0, tools=[],
+        )
+        self.assertTrue(replay["replayed"])
+        self.assertIn("interrupted", replay["answer"])
+        self.assertEqual(self.observed, [])
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        ), [])
+        history = self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual([item["role"] for item in history], ["user", "assistant"])
+
+    def test_new_turn_recovers_previous_crash_before_calling_model(self):
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Previous interrupted task",
+            idempotency_key="old-request", expected_version=0,
+            generation_request_id="old-request",
+        )
+        result = self.service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Continue with a new task", request_id="new-request",
+            expected_version=1, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["version"], 4)
+        history = self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual(
+            [item["role"] for item in history],
+            ["user", "assistant", "user", "assistant"],
+        )
+        self.assertIn("interrupted", history[1]["content"])
+        self.assertEqual(len(self.observed), 1)
+
+
+    def test_recovery_marks_run_completed_if_assistant_was_already_persisted(self):
+        user = self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Already answered", idempotency_key="persisted-request",
+            expected_version=0, generation_request_id="persisted-request",
+        )
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="assistant", content="Persisted answer",
+            idempotency_key="assistant:persisted-request", expected_version=user["version"],
+        )
+        replay = self.service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Already answered", request_id="persisted-request",
+            expected_version=0, tools=[],
+        )
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["answer"], "Persisted answer")
+        self.assertEqual(self.observed, [])
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        ), [])
+    def test_shutdown_attempts_every_cached_owner_loop_if_one_close_fails(self):
+        created = []
+        closed = []
+        def factory(owner_id):
+            loop = AgentExecutionLoop(
+                lambda **kwargs: {"text": owner_id, "tool_calls": {"tool_calls": []}},
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            )
+            def close():
+                closed.append(owner_id)
+                if owner_id == "owner-a":
+                    raise RuntimeError("owner loop cleanup failed")
+            loop.close = close
+            created.append(loop)
+            return loop
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        for owner_id, request_id in (("owner-a", "owner-a-request"), ("owner-b", "owner-b-request")):
+            conversation = self.store.create_conversation(owner_id=owner_id)
+            result = service.reply(
+                owner_id=owner_id, conversation_id=conversation["conversation_id"],
+                user_text="Hello", request_id=request_id, expected_version=0, tools=[],
+            )
+            self.assertEqual(result["status"], "completed")
+        with self.assertRaisesRegex(RuntimeError, "owner loop cleanup failed"):
+            service.close()
+        service.close()
+        self.assertEqual(closed, ["owner-a", "owner-b"])
+
+if __name__ == "__main__":
+    unittest.main()
