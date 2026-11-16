@@ -11,20 +11,24 @@ def dns_record(address):
 
 
 class FakeResponse:
-    def __init__(self, status=200, body=b"ok"):
+    def __init__(self, status=200, body=b"ok", on_read=None):
         self.status = status
         self.reason = "OK"
         self.headers = {"content-type": "application/json"}
         self.body = body
+        self.on_read = on_read
+        self.closed = False
 
     def read(self, amount=-1):
+        if self.on_read is not None:
+            self.on_read()
         return self.body if amount < 0 else self.body[:amount]
 
     def readline(self, amount=-1):
         return self.read(amount)
 
     def close(self):
-        pass
+        self.closed = True
 
 
 class FakeSocket:
@@ -95,6 +99,46 @@ class PinnedHTTPSProviderTransportTests(unittest.TestCase):
             now[0] = 20.0
             response.read(1)
         self.assertEqual(self.connections[0].sock.timeouts[-1], 35.0)
+
+    def test_read_crossing_total_deadline_discards_data_and_closes_connection(self):
+        now = [10.0]
+        responses = []
+
+        def factory(host, ip, **kwargs):
+            connection = FakeConnection(host, ip, **kwargs)
+            response = FakeResponse(on_read=lambda: now.__setitem__(0, 56.0))
+            connection.getresponse = lambda: response
+            responses.append(response)
+            self.connections.append(connection)
+            return connection
+
+        self.transport._factory = factory
+        self.transport._clock = lambda: now[0]
+        response = self.transport.open(self.request())
+        with self.assertRaises(TimeoutError):
+            response.read(1)
+        self.assertTrue(responses[0].closed)
+        self.assertTrue(self.connections[0].closed)
+
+    def test_readline_crossing_total_deadline_discards_data_and_closes_connection(self):
+        now = [10.0]
+        responses = []
+
+        def factory(host, ip, **kwargs):
+            connection = FakeConnection(host, ip, **kwargs)
+            response = FakeResponse(on_read=lambda: now.__setitem__(0, 56.0))
+            connection.getresponse = lambda: response
+            responses.append(response)
+            self.connections.append(connection)
+            return connection
+
+        self.transport._factory = factory
+        self.transport._clock = lambda: now[0]
+        response = self.transport.open(self.request())
+        with self.assertRaises(TimeoutError):
+            response.readline(128)
+        self.assertTrue(responses[0].closed)
+        self.assertTrue(self.connections[0].closed)
 
     def test_connects_to_validated_ip_and_preserves_hostname(self):
         with self.transport.open(self.request()) as response:
