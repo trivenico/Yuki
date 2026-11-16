@@ -14,7 +14,7 @@ from ui.desktop.conversation_adapter import DesktopConversationAdapter
 class AuthenticatedDesktopConversation:
     """Session-checked facade for one authenticated desktop account."""
 
-    def __init__(self, application: Any, *, identity: Any, sessions: Any) -> None:
+    def __init__(self, application: Any, *, identity: Any, sessions: Any, memory: Any = None) -> None:
         actor_id = getattr(identity, "actor_id", None)
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 128:
             raise ValueError("identity must contain a valid authenticated actor_id.")
@@ -24,8 +24,9 @@ class AuthenticatedDesktopConversation:
             raise PermissionError("The desktop session is no longer authenticated.")
         self._identity = identity
         self._sessions = sessions
+        self._memory = memory
         self._conversation = DesktopConversationAdapter(
-            application, owner_id=actor_id,
+            application, owner_id=actor_id, memory=memory,
         )
 
     @property
@@ -89,6 +90,42 @@ class AuthenticatedDesktopConversation:
         # authenticated session was revoked while inference was in progress.
         self._require_live_session()
         return result
+
+    def set_memory_context_enabled(self, enabled: bool) -> None:
+        """Apply explicit, session-scoped consent to memory retrieval."""
+        self._require_live_session()
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be a boolean.")
+        if self._memory is None:
+            if enabled:
+                raise RuntimeError("No encrypted desktop memory store is configured.")
+            return
+        operation = (
+            getattr(self._memory, "enable_context", None)
+            if enabled else getattr(self._memory, "disable_context", None)
+        )
+        if not callable(operation):
+            raise RuntimeError("The configured memory facade does not support consent controls.")
+        operation()
+
+    def memory_context_enabled(self) -> bool:
+        """Report consent only while the authenticated session remains live."""
+        self._require_live_session()
+        if self._memory is None:
+            return False
+        enabled = getattr(self._memory, "context_enabled", False)
+        if type(enabled) is not bool:
+            raise RuntimeError("The configured memory consent state is invalid.")
+        return enabled
+
+    def disable_memory_context(self) -> None:
+        """Fail-safe local revocation, usable during logout after session revocation."""
+        if self._memory is None:
+            return
+        operation = getattr(self._memory, "disable_context", None)
+        if not callable(operation):
+            raise RuntimeError("The configured memory facade cannot revoke context consent.")
+        operation()
 
     def clear_selection(self) -> None:
         self._require_live_session()
