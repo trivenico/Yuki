@@ -292,6 +292,7 @@ class DurableSandboxExecutionWorker:
                 "approval_id": approval.approval_id,
                 "task_fingerprint": approval.task_fingerprint,
             },
+            owner_id=approval.actor_id, max_active_tasks=5,
         )
 
     def run_once(self, *, lease_seconds: int = 180) -> Mapping[str, object] | None:
