@@ -42,6 +42,7 @@ class ProviderRegistryTests(unittest.TestCase):
             "provider_id": "sample",
             "display_name": "Sample",
             "description": "Read-only integration",
+            "requested_scopes": ("jobs.read",),
             "available": True,
         })
         self.assertNotIn("client_id", item)

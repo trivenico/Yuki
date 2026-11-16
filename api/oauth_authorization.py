@@ -55,18 +55,26 @@ class AuthenticatedOAuthAuthorizationAPI:
                     provider_id = item.get("provider_id")
                     display_name = item.get("display_name", provider_id)
                     description = item.get("description", "")
+                    requested_scopes = item.get("requested_scopes", [])
                     if (not isinstance(provider_id, str)
                             or not _PROVIDER.fullmatch(provider_id)
                             or not isinstance(display_name, str)
                             or len(display_name) > 100
                             or not isinstance(description, str)
-                            or len(description) > 240):
+                            or len(description) > 240
+                            or not isinstance(requested_scopes, (tuple, list))
+                            or len(requested_scopes) > 64
+                            or any(not isinstance(value, str) or not value or len(value) > 128
+                                   or any(ord(char) < 0x21 or ord(char) > 0x7e for char in value)
+                                   for value in requested_scopes)
+                            or len(set(requested_scopes)) != len(requested_scopes)):
                         continue
                     safe.append({
                         "provider_id": provider_id,
                         "display_name": display_name,
                         "available": item.get("available") is True,
                         "description": description,
+                        "requested_scopes": list(requested_scopes),
                     })
                 return await self._respond(send, 200, {"providers": safe})
             except Exception:
