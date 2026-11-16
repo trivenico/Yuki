@@ -44,8 +44,9 @@ class ControllerTests(unittest.TestCase):
         self.identity = self.sessions.login("desktop.admin", "A strong desktop password 4!")
         self.memory = CompanionMemory()
         self.provider = FakeProvider()
+        self.store = WorkflowRunStore(str(Path(self.temp.name) / "tasks.sqlite3"))
         self.runtime = TaskRuntime(
-            WorkflowRunStore(str(Path(self.temp.name) / "tasks.sqlite3")),
+            self.store,
             authorize=lambda actor, action, resource: actor == self.identity.actor_id,
         )
         self.coordinator = SpecialistAgentCoordinator(
