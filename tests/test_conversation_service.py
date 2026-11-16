@@ -375,6 +375,52 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(service._conversation_locks, {})
         self.assertEqual(service._conversation_lock_users, {})
 
+    def test_same_conversation_requests_do_not_enter_model_concurrently(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_started = threading.Event()
+        calls = []
+
+        def serialized_model(*, messages, tools, tool_choice):
+            calls.append(messages[-1]["content"])
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release model")
+            return {"text": "serialized answer", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            serialized_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop)
+
+        def second_request():
+            second_started.set()
+            return service.reply(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="second request", request_id="same-chat-2",
+                expected_version=0, tools=[],
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="first request", request_id="same-chat-1",
+                expected_version=0, tools=[],
+            )
+            self.assertTrue(entered.wait(timeout=3))
+            second = pool.submit(second_request)
+            self.assertTrue(second_started.wait(timeout=3))
+            self.assertEqual(calls, ["first request"])
+            release.set()
+            self.assertEqual(first.result(timeout=5)["status"], "completed")
+            with self.assertRaises(ConversationConflict):
+                second.result(timeout=5)
+        self.assertEqual(calls, ["first request"])
+        self.assertEqual(service._conversation_locks, {})
+
     def test_close_waits_for_active_generation_before_returning(self):
         entered = threading.Event()
         release = threading.Event()
