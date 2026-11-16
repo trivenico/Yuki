@@ -223,6 +223,19 @@ class AgentExecutionLoop:
             except Exception as exc:
                 self._event("agent.model_failed", error_type=type(exc).__name__)
                 raise AgentExecutionError("model adapter request failed.") from exc
+            # A synchronous provider call cannot be forcibly interrupted by
+            # this loop. Re-check immediately on return so a revoked session
+            # never advances into tool dispatch or a completed model turn.
+            post_model_stop_reason = self._stop_reason(started, cancel_check)
+            if post_model_stop_reason:
+                self._event(
+                    "agent.stopped", reason=post_model_stop_reason,
+                    model_turns=turns, tool_calls=calls_total,
+                )
+                return AgentExecutionResult(
+                    post_model_stop_reason, "", turns, calls_total,
+                    max(0.0, self.clock() - started),
+                )
             turns += 1
             if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
                 raise AgentExecutionError("model response must contain only text, tool_calls, and optional finish_reason.")
