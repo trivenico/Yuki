@@ -43,7 +43,7 @@ def create_provider(config=None, *, environ=None):
     if selected == "gemini-api":
         return GeminiAPIProvider(
             model=str(env.get("YUKI_GEMINI_MODEL", cfg.get("gemini_model", "gemini-2.5-flash"))),
-            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
+            timeout=provider_timeout,
             environ=env,
         )
     if selected not in {"ollama", "hybrid"}:
