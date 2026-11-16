@@ -17,6 +17,7 @@ from core.auth import BuiltInAuthService
 from core.component_registry import ComponentRegistry
 from core.configuration_component_runtime import build_configuration_component_runtime
 from core.owner_agent_component_runtime import build_owner_agent_execution_component_runtime
+from core.conversation_memory_store import ConversationMemoryStore
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -116,6 +117,7 @@ def build_conversation_runtime(
     approval_id_factory: Callable | None = None,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
+    memory_store: ConversationMemoryStore | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -126,6 +128,8 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if memory_store is not None and not isinstance(memory_store, ConversationMemoryStore):
+        raise TypeError("memory_store must be a ConversationMemoryStore or None.")
     if gmail_runtime_bundle is not None:
         if not isinstance(gmail_runtime_bundle, GmailToolRuntimeBundle):
             raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
@@ -255,6 +259,7 @@ def build_conversation_runtime(
         confirmation_check=confirmation_check,
         approval_id_factory=approval_id_factory,
         pending_proposal_factory=pending_proposal_factory,
+        memory_store=memory_store,
     )
     try:
         app = YukiConversationAPI(
