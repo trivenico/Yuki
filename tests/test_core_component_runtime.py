@@ -185,6 +185,7 @@ class CoreComponentCompositionTests(unittest.TestCase):
             registry = build_core_component_registry(
                 auth_service=auth, provider=provider, agent_loop=self._loop(),
                 config={
+                    "workspace": directory, "provider": "mock",
                     "firewall_enabled": True,
                     "web_allowed_hosts": ["reader.example.com"],
                     "mcp_servers": [{"allowed_hosts": ["mcp.example.com"]}],
@@ -205,7 +206,8 @@ class CoreComponentCompositionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requires_configured_hosts"):
                 build_core_component_registry(
                     auth_service=auth, provider=FakeProvider(), agent_loop=self._loop(),
-                    config={"firewall_enabled": True, "web_allowed_hosts": [], "mcp_servers": []},
+                    config={"workspace": directory, "provider": "mock",
+                            "firewall_enabled": True, "web_allowed_hosts": [], "mcp_servers": []},
                 )
 
 
@@ -223,8 +225,8 @@ class CoreComponentCompositionTests(unittest.TestCase):
             registry = build_local_core_component_registry(
                 owner_id="local-firewall-owner", provider=provider, agent_loop=loop,
                 application_runtime=application,
-                config={"firewall_enabled": True,
-                        "web_allowed_hosts": ["reader.example.com"],
+                config={"workspace": directory, "provider": "mock",
+                        "firewall_enabled": True, "web_allowed_hosts": ["reader.example.com"],
                         "mcp_servers": [{"allowed_hosts": ["mcp.example.com"]}]},
             )
             firewall = registry.resolve("network-firewall")
