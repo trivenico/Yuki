@@ -103,6 +103,11 @@ class OAuthAuthorizationService:
         """Trusted provider identity used to bind host routing to this service."""
         return self._provider_id
 
+    @property
+    def firewall_policy(self):
+        """Expose the exact transport policy for trusted composition checks."""
+        return getattr(self._transport, "firewall_policy", None)
+
     def begin(self, *, owner_id: str, session_id: str) -> dict:
         """Create an owner/session-bound, short-lived S256 authorization request."""
         oidc_nonce = secrets.token_urlsafe(32) if self._oidc_verifier is not None else None
