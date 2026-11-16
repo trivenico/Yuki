@@ -1,10 +1,13 @@
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
 from providers.runtime_manager import ProviderRuntimeManager
+from providers.agent_adapter import ProviderAgentAdapter
 
 
 def _catalog(*, config, environ):
@@ -119,6 +122,49 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                     catalog_factory=_catalog,
                 )
 
+
+
+    def test_switch_waits_for_active_adapter_request_before_closing_old_provider(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class ManagedProvider:
+            def __init__(self, name, block=False):
+                self.name = name
+                self.block = block
+                self.closed = 0
+            def generate_chat(self, *, messages, tools, tool_choice):
+                if self.block:
+                    entered.set()
+                    if not release.wait(timeout=5):
+                        raise TimeoutError("test did not release provider")
+                return {"text": self.name, "tool_calls": {"tool_calls": []}}
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            previous = ManagedProvider("previous", block=True)
+            candidate = ManagedProvider("candidate")
+            adapter = ProviderAgentAdapter(previous)
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, adapter, Path(directory) / "selection.json",
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: candidate,
+                catalog_factory=_catalog,
+            )
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                request = pool.submit(
+                    adapter, messages=[{"role": "user", "content": "x"}], tools=[]
+                )
+                self.assertTrue(entered.wait(timeout=3))
+                switch = pool.submit(manager.select, "ollama")
+                self.assertFalse(switch.done())
+                self.assertEqual(previous.closed, 0)
+                release.set()
+                self.assertEqual(request.result(timeout=5)["text"], "previous")
+                self.assertEqual(switch.result(timeout=5)["name"], "ollama")
+            self.assertEqual(previous.closed, 1)
+            self.assertIs(adapter.provider, candidate)
 
 if __name__ == "__main__":
     unittest.main()

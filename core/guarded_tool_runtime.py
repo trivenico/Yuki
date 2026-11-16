@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any, Callable
 
 from core.tool_action_context import ToolActionContext, ToolActionContextError
@@ -95,6 +96,9 @@ class GuardedToolRuntime:
             if set(capabilities.names()) != set(tools):
                 raise ValueError("capability catalog must classify every registered tool exactly once")
         self._tools = dict(tools)
+        # Registered handlers may wrap clients/SDK objects that are not thread-safe.
+        # Serialize calls per tool while allowing unrelated tools to run concurrently.
+        self._handler_locks = {name: threading.RLock() for name in tools}
         self._capabilities = capabilities
         self._require_action_context = require_action_context
         self._action_journal = action_journal
@@ -279,12 +283,13 @@ class GuardedToolRuntime:
         try:
             handler = self._tools[name]
             action_handler = getattr(handler, "invoke_action", None)
-            if lease_owner is not None and callable(action_handler):
-                raw_result = action_handler(
-                    argument, action_context=action_context, principal_id=principal_id,
-                )
-            else:
-                raw_result = handler(argument)
+            with self._handler_locks[name]:
+                if lease_owner is not None and callable(action_handler):
+                    raw_result = action_handler(
+                        argument, action_context=action_context, principal_id=principal_id,
+                    )
+                else:
+                    raw_result = handler(argument)
             result = _bounded_tool_result(raw_result, self._max_result_chars)
         except Exception:
             if lease_owner is not None:

@@ -1,6 +1,7 @@
 """Adapt Yuki provider APIs to the message-based bounded agent loop."""
 from __future__ import annotations
 
+import threading
 from typing import Any, Mapping, Sequence
 
 
@@ -16,6 +17,21 @@ class ProviderAgentAdapter:
         if provider is None or not callable(getattr(provider, "generate_chat", None)):
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
         self.provider = provider
+        # Provider SDK clients are not uniformly thread-safe. Serialize access
+        # through this adapter; independent adapter instances remain independent.
+        self._provider_lock = threading.RLock()
+
+    def replace_provider(self, provider: Any) -> Any:
+        """Atomically replace the client after all current calls/streams finish.
+
+        Returns the previous provider so its owner can close it after the swap.
+        """
+        if provider is None or not callable(getattr(provider, "generate_chat", None)):
+            raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
+        with self._provider_lock:
+            previous = self.provider
+            self.provider = provider
+            return previous
 
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
@@ -25,10 +41,18 @@ class ProviderAgentAdapter:
         # Validate caller input before capability detection so malformed data
         # has the same deterministic contract for streaming and non-streaming.
         self._validate_inputs(messages, tools, tool_choice)
-        stream = getattr(self.provider, "generate_chat_stream", None)
-        if not callable(stream):
-            raise RuntimeError("configured provider does not support native streaming.")
-        return stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
+        def locked_events():
+            # Resolve the provider only after acquiring the lock. Otherwise a
+            # provider switch between iterator creation and first iteration
+            # could leave this stream holding a retired client.
+            with self._provider_lock:
+                stream = getattr(self.provider, "generate_chat_stream", None)
+                if not callable(stream):
+                    raise RuntimeError("configured provider does not support native streaming.")
+                yield from stream(
+                    messages=list(messages), tools=list(tools), tool_choice=tool_choice,
+                )
+        return locked_events()
 
     @staticmethod
     def _validate_inputs(messages, tools, tool_choice):
@@ -59,9 +83,10 @@ class ProviderAgentAdapter:
             {"role": message["role"], "content": message["content"]}
             for message in messages
         ]
-        response = self.provider.generate_chat(
-            messages=normalized, tools=list(tools), tool_choice=tool_choice,
-        )
+        with self._provider_lock:
+            response = self.provider.generate_chat(
+                messages=normalized, tools=list(tools), tool_choice=tool_choice,
+            )
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
             raise ValueError("provider returned an unsupported response envelope.")
         text = response.get("text", "")

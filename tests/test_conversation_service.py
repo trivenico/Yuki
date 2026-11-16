@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -335,6 +337,231 @@ class ConversationServiceTests(unittest.TestCase):
             service.close()
         service.close()
         self.assertEqual(closed, ["owner-a", "owner-b"])
+
+
+    def test_independent_conversations_generate_concurrently(self):
+        rendezvous = threading.Barrier(2, timeout=3)
+        calls = []
+
+        def concurrent_model(*, messages, tools, tool_choice):
+            calls.append(messages[-1]["content"])
+            rendezvous.wait()
+            return {"text": "parallel answer", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            concurrent_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop)
+        other = service.create(owner_id="owner-a")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="first independent request", request_id="parallel-1",
+                expected_version=0, tools=[],
+            )
+            second = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=other["conversation_id"],
+                user_text="second independent request", request_id="parallel-2",
+                expected_version=0, tools=[],
+            )
+            self.assertEqual(first.result(timeout=5)["status"], "completed")
+            self.assertEqual(second.result(timeout=5)["status"], "completed")
+        self.assertCountEqual(
+            calls, ["first independent request", "second independent request"]
+        )
+        self.assertEqual(service._conversation_locks, {})
+        self.assertEqual(service._conversation_lock_users, {})
+
+    def test_same_conversation_requests_do_not_enter_model_concurrently(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_started = threading.Event()
+        calls = []
+
+        def serialized_model(*, messages, tools, tool_choice):
+            calls.append(messages[-1]["content"])
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release model")
+            return {"text": "serialized answer", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            serialized_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop)
+
+        def second_request():
+            second_started.set()
+            return service.reply(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="second request", request_id="same-chat-2",
+                expected_version=0, tools=[],
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="first request", request_id="same-chat-1",
+                expected_version=0, tools=[],
+            )
+            self.assertTrue(entered.wait(timeout=3))
+            second = pool.submit(second_request)
+            self.assertTrue(second_started.wait(timeout=3))
+            self.assertEqual(calls, ["first request"])
+            release.set()
+            self.assertEqual(first.result(timeout=5)["status"], "completed")
+            with self.assertRaises(ConversationConflict):
+                second.result(timeout=5)
+        self.assertEqual(calls, ["first request"])
+        self.assertEqual(service._conversation_locks, {})
+
+    def test_close_waits_for_active_generation_before_returning(self):
+        entered = threading.Event()
+        release = threading.Event()
+        close_finished = threading.Event()
+
+        def blocking_model(*, messages, tools, tool_choice):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release model")
+            return {"text": "finished safely", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            blocking_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            request = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="hold open", request_id="close-race", expected_version=0,
+                tools=[],
+            )
+            self.assertTrue(entered.wait(timeout=3))
+            closing = pool.submit(lambda: (service.close(), close_finished.set()))
+            self.assertFalse(close_finished.wait(timeout=0.1))
+            release.set()
+            self.assertEqual(request.result(timeout=5)["status"], "completed")
+            closing.result(timeout=5)
+        self.assertTrue(close_finished.is_set())
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            service.create(owner_id="owner-a")
+
+
+    def test_request_capacity_rejects_overload_and_recovers_after_completion(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_model(*, messages, tools, tool_choice):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release model")
+            return {"text": "capacity recovered", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            blocking_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop, max_active_requests=1)
+        first_conversation = service.create(owner_id="owner-a")
+        second_conversation = service.create(owner_id="owner-a")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=first_conversation["conversation_id"],
+                user_text="occupy capacity", request_id="capacity-1",
+                expected_version=0, tools=[],
+            )
+            self.assertTrue(entered.wait(timeout=3))
+            with self.assertRaisesRegex(RuntimeError, "at capacity"):
+                service.reply(
+                    owner_id="owner-a",
+                    conversation_id=second_conversation["conversation_id"],
+                    user_text="over capacity", request_id="capacity-2",
+                    expected_version=0, tools=[],
+                )
+            self.assertEqual(service._active_requests, 1)
+            release.set()
+            self.assertEqual(first.result(timeout=5)["status"], "completed")
+        self.assertEqual(service._active_requests, 0)
+        recovered = service.reply(
+            owner_id="owner-a",
+            conversation_id=second_conversation["conversation_id"],
+            user_text="capacity is free", request_id="capacity-3",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(recovered["status"], "completed")
+        self.assertEqual(service._active_requests, 0)
+        self.assertEqual(service._conversation_locks, {})
+
+    def test_request_capacity_must_be_a_positive_integer(self):
+        for value in (0, -1, True, 1.5):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ConversationService(self.store, self.loop, max_active_requests=value)
+
+
+    def test_owner_loop_cleanup_runs_without_holding_service_lock(self):
+        service_holder = []
+        lock_acquired = threading.Event()
+        def factory(owner_id):
+            loop = AgentExecutionLoop(
+                lambda **kwargs: {"text": owner_id, "tool_calls": {"tool_calls": []}},
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            )
+            def close():
+                service = service_holder[0]
+                def acquire_service_lock():
+                    with service._lock:
+                        lock_acquired.set()
+                worker = threading.Thread(target=acquire_service_lock)
+                worker.start()
+                worker.join(timeout=2)
+                if worker.is_alive():
+                    raise RuntimeError("service lock held during owner loop cleanup")
+            loop.close = close
+            return loop
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        service_holder.append(service)
+        conversation = self.store.create_conversation(owner_id="owner-a")
+        result = service.reply(
+            owner_id="owner-a", conversation_id=conversation["conversation_id"],
+            user_text="Hello", request_id="lock-release", expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        service.close()
+        self.assertTrue(lock_acquired.is_set())
+
+    def test_concurrent_close_waits_for_first_cleanup_to_finish(self):
+        entered = threading.Event()
+        release = threading.Event()
+        service = ConversationService(self.store, self.loop)
+        def close_loop():
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release shutdown")
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "owner", "tool_calls": {"tool_calls": []}},
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        loop.close = close_loop
+        service._owner_agent_loops["owner-a"] = loop
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(service.close)
+            self.assertTrue(entered.wait(timeout=3))
+            second = pool.submit(service.close)
+            self.assertFalse(second.done())
+            release.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+        self.assertTrue(service._close_complete)
 
 if __name__ == "__main__":
     unittest.main()

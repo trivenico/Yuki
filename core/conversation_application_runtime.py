@@ -12,6 +12,10 @@ from threading import RLock
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
+from core.conversation_memory_store import ConversationMemoryStore
+from core.guarded_tool_runtime import GuardedToolRuntime
+from core.structured_tool_protocol import StructuredToolProtocol
+from providers.agent_adapter import ProviderAgentAdapter
 
 
 @dataclass
@@ -21,6 +25,7 @@ class ConversationApplicationRuntime:
     conversations: ConversationService
     store: Any
     owner_id: str | None = None
+    provider_adapter: ProviderAgentAdapter | None = None
     close_callbacks: tuple[Callable[[], None], ...] = ()
     _closed: bool = False
     _lock: RLock = field(default_factory=RLock, repr=False, compare=False)
@@ -69,6 +74,7 @@ def build_conversation_application_runtime(
     confirmation_check: Callable | None = None,
     approval_id_factory: Callable | None = None,
     pending_proposal_factory: Callable | None = None,
+    memory_store: ConversationMemoryStore | None = None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -84,6 +90,8 @@ def build_conversation_application_runtime(
         raise TypeError("agent_loop_for_owner must be callable.")
     if not callable(store_factory):
         raise TypeError("store_factory must be callable.")
+    if memory_store is not None and not isinstance(memory_store, ConversationMemoryStore):
+        raise TypeError("memory_store must be a ConversationMemoryStore or None.")
     for callback, name in (
         (action_context_factory, "action_context_factory"),
         (confirmation_check, "confirmation_check"),
@@ -116,6 +124,7 @@ def build_conversation_application_runtime(
             confirmation_check=confirmation_check,
             approval_id_factory=approval_id_factory,
             pending_proposal_factory=pending_proposal_factory,
+            memory_store=memory_store,
         )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,
@@ -134,3 +143,71 @@ def build_conversation_application_runtime(
             except Exception:
                 pass
         raise
+
+
+
+def build_provider_backed_conversation_application_runtime(
+    config: dict[str, Any],
+    *,
+    provider: Any,
+    guarded_runtime: GuardedToolRuntime,
+    owner_id: str | None = None,
+    store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    close_callbacks: tuple[Callable[[], None], ...] = (),
+    memory_store: ConversationMemoryStore | None = None,
+    max_model_turns: int = 8,
+    max_tool_calls: int = 20,
+    max_duration_seconds: float = 120,
+    max_transcript_chars: int = 80_000,
+) -> ConversationApplicationRuntime:
+    """Build the canonical provider -> bounded agent -> guarded tools -> durable chat stack.
+
+    The provider is owned by this runtime and is closed after conversations are
+    fenced and persistence is closed. Tool authorization remains the supplied
+    GuardedToolRuntime's responsibility; this factory never grants capabilities.
+    """
+    if not isinstance(guarded_runtime, GuardedToolRuntime):
+        raise TypeError("guarded_runtime must be a GuardedToolRuntime.")
+    adapter = ProviderAgentAdapter(provider)
+    loop = AgentExecutionLoop(
+        adapter, StructuredToolProtocol(guarded_runtime),
+        stream_model=adapter.stream_model,
+        max_model_turns=max_model_turns,
+        max_tool_calls=max_tool_calls,
+        max_duration_seconds=max_duration_seconds,
+        max_transcript_chars=max_transcript_chars,
+    )
+    provider_close = getattr(provider, "close", None)
+    if provider_close is not None and not callable(provider_close):
+        raise TypeError("provider close attribute must be callable when present.")
+    provider_close_lock = RLock()
+    provider_closed = False
+
+    def close_provider_once() -> None:
+        nonlocal provider_closed
+        with provider_close_lock:
+            if provider_closed:
+                return
+            provider_closed = True
+        if callable(provider_close):
+            provider_close()
+
+    callbacks = ((close_provider_once,) if callable(provider_close) else ()) + close_callbacks
+    try:
+        runtime = build_conversation_application_runtime(
+            config, agent_loop=loop, owner_id=owner_id, store_factory=store_factory,
+            agent_loop_for_owner=agent_loop_for_owner, close_callbacks=callbacks,
+            memory_store=memory_store,
+        )
+    except Exception:
+        # The lower-level builder invokes cleanup callbacks after resource
+        # construction failures; this idempotent guard also covers validation
+        # failures that happen before it takes ownership.
+        try:
+            close_provider_once()
+        except Exception:
+            pass
+        raise
+    runtime.provider_adapter = adapter
+    return runtime

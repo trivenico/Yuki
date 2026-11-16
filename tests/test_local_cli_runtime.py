@@ -8,6 +8,7 @@ from unittest.mock import Mock
 from core.local_cli_runtime import LocalConversationRuntime, build_local_conversation_runtime
 from core.local_owner_identity import load_or_create_local_owner_id
 from core.conversation_store import ConversationStore
+from core.conversation_memory_store import ConversationMemoryStore
 
 
 class FakeProvider:
@@ -243,6 +244,36 @@ class LocalCliRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "unavailable")
             self.assertEqual(provider.close_calls, 1)
+
+
+    def test_local_runtime_injects_opt_in_owner_scoped_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            provider = FakeProvider()
+            memory = ConversationMemoryStore(root / "memory.sqlite3")
+            runtime = build_local_conversation_runtime(
+                {"max_agent_steps": 3},
+                provider_factory=lambda config: provider,
+                store_factory=lambda config: ConversationStore(root / "conversations.sqlite3"),
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+                memory_store=memory,
+            )
+            try:
+                self.assertIs(runtime.conversations.memory_store, memory)
+                saved = runtime.conversations.remember(
+                    owner_id=runtime.owner_id,
+                    content="Prefer short actionable responses",
+                    category="preference",
+                )
+                self.assertEqual(
+                    runtime.conversations.memories(owner_id=runtime.owner_id)[0]["memory_id"],
+                    saved["memory_id"],
+                )
+                self.assertEqual(
+                    runtime.conversations.memories(owner_id="different-local-owner"), [],
+                )
+            finally:
+                runtime.close()
 
 
 if __name__ == "__main__":

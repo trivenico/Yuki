@@ -13,6 +13,7 @@ from typing import Any, Callable
 from core.agent_execution_loop import AgentExecutionLoop
 from core.core_component_runtime import build_local_core_component_registry
 from core.configuration_component_runtime import build_configuration_component_runtime
+from core.conversation_memory_store import ConversationMemoryStore
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -95,10 +96,13 @@ def build_local_conversation_runtime(
     provider_factory: Callable[..., Any] = create_provider,
     store_factory: Callable[[dict[str, Any]], Any] | None = None,
     owner_id_factory: Callable[[], str] | None = None,
+    memory_store: ConversationMemoryStore | None = None,
 ) -> LocalConversationRuntime:
     """Build the installed CLI's persistent chat service with fail-closed tools."""
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
+    if memory_store is not None and not isinstance(memory_store, ConversationMemoryStore):
+        raise TypeError("memory_store must be a ConversationMemoryStore or None.")
     # Freeze complete configuration before constructing dependent runtimes.
     configuration_runtime = None
     if (
@@ -144,6 +148,7 @@ def build_local_conversation_runtime(
         application = build_conversation_application_runtime(
             runtime_config, agent_loop=agent_loop, owner_id=owner_id,
             **({"store_factory": store_factory} if store_factory is not None else {}),
+            memory_store=memory_store,
         )
         registry = build_local_core_component_registry(
             owner_id=owner_id, provider=owned_provider,

@@ -1,5 +1,7 @@
 """Tests for guarded CLI tool dispatch."""
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.tool_capabilities import ToolCapability, ToolCapabilityCatalog, ToolEffect
@@ -199,6 +201,51 @@ class GuardedToolRuntimeTests(unittest.TestCase):
                 self.assertIn("blocked", result)
                 self.assertEqual(calls, [])
                 self.assertEqual(events[-1], ("tool:send", "denied"))
+
+
+    def test_shared_handler_invocations_are_serialized_per_tool(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_started = threading.Event()
+        second_entered = threading.Event()
+        state_lock = threading.Lock()
+        active = 0
+        maximum_active = 0
+
+        def handler(argument):
+            nonlocal active, maximum_active
+            if argument == "second":
+                second_entered.set()
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                entered.set()
+            try:
+                if argument == "first" and not release.wait(timeout=5):
+                    raise TimeoutError("test did not release handler")
+                return argument
+            finally:
+                with state_lock:
+                    active -= 1
+
+        runtime = GuardedToolRuntime({"shared": handler}, Policy())
+        def invoke(value):
+            if value == "second":
+                second_started.set()
+            return runtime.invoke("shared", value)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(invoke, "first")
+            self.assertTrue(entered.wait(timeout=3))
+            second = pool.submit(invoke, "second")
+            self.assertTrue(second_started.wait(timeout=3))
+            self.assertFalse(second_entered.wait(timeout=0.1))
+            release.set()
+            self.assertEqual(first.result(timeout=5), "first")
+            self.assertEqual(second.result(timeout=5), "second")
+
+        self.assertEqual(maximum_active, 1)
+        self.assertEqual(active, 0)
 
 if __name__ == "__main__":
     unittest.main()

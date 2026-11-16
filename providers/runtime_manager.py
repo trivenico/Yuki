@@ -79,7 +79,11 @@ class ProviderRuntimeManager:
                         except Exception:
                             pass
                 raise
-            self.adapter.provider = candidate
+            replace_provider = getattr(self.adapter, "replace_provider", None)
+            if callable(replace_provider):
+                previous = replace_provider(candidate)
+            else:
+                self.adapter.provider = candidate
             self.config["provider"] = name
             # Provider adapters may own HTTP clients, subprocesses or other
             # resources. Retire the old instance only after the new selection
@@ -124,7 +128,18 @@ class ProviderRuntimeManager:
             candidate = self.provider_factory(candidate_config, environ=self.environ)
         except Exception as exc:
             raise RuntimeError("Cannot initialize the persisted Yuki provider selection.") from exc
-        self.adapter.provider = candidate
+        replace_provider = getattr(self.adapter, "replace_provider", None)
+        if callable(replace_provider):
+            previous = replace_provider(candidate)
+            if previous is not candidate:
+                close_previous = getattr(previous, "close", None)
+                if callable(close_previous):
+                    try:
+                        close_previous()
+                    except Exception:
+                        pass
+        else:
+            self.adapter.provider = candidate
         self.config["provider"] = name
 
     def _persist(self, name: str) -> None:
