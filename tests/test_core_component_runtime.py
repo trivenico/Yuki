@@ -209,5 +209,32 @@ class CoreComponentCompositionTests(unittest.TestCase):
                 )
 
 
+    def test_local_core_registry_composes_configured_firewall(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from core.core_component_runtime import build_local_core_component_registry
+            from core.conversation_application_runtime import build_conversation_application_runtime
+            from core.conversation_store import ConversationStore
+            provider = FakeProvider()
+            loop = self._loop()
+            application = build_conversation_application_runtime(
+                {}, agent_loop=loop,
+                store_factory=lambda config: ConversationStore(Path(directory) / "local.sqlite3"),
+            )
+            registry = build_local_core_component_registry(
+                owner_id="local-firewall-owner", provider=provider, agent_loop=loop,
+                application_runtime=application,
+                config={"firewall_enabled": True,
+                        "web_allowed_hosts": ["reader.example.com"],
+                        "mcp_servers": [{"allowed_hosts": ["mcp.example.com"]}]},
+            )
+            firewall = registry.resolve("network-firewall")
+            self.assertEqual(firewall.allowed_hosts, frozenset({
+                "reader.example.com", "mcp.example.com",
+            }))
+            registry.start_all()
+            self.assertTrue(registry.health()["network-firewall"])
+            registry.close()
+
+
 if __name__ == "__main__":
     unittest.main()
