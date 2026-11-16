@@ -41,12 +41,14 @@ class ProviderAgentAdapter:
         # Validate caller input before capability detection so malformed data
         # has the same deterministic contract for streaming and non-streaming.
         self._validate_inputs(messages, tools, tool_choice)
-        stream = getattr(self.provider, "generate_chat_stream", None)
-        if not callable(stream):
-            raise RuntimeError("configured provider does not support native streaming.")
         def locked_events():
-            # Keep the lock for the entire stream lifetime, not just generator creation.
+            # Resolve the provider only after acquiring the lock. Otherwise a
+            # provider switch between iterator creation and first iteration
+            # could leave this stream holding a retired client.
             with self._provider_lock:
+                stream = getattr(self.provider, "generate_chat_stream", None)
+                if not callable(stream):
+                    raise RuntimeError("configured provider does not support native streaming.")
                 yield from stream(
                     messages=list(messages), tools=list(tools), tool_choice=tool_choice,
                 )
