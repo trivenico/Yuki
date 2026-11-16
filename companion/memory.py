@@ -26,9 +26,11 @@ class MemoryStore:
             raise ValueError("memory path is invalid.")
         self.path = requested.parent.resolve() / requested.name
         self._lock = RLock()
-        self._prepare_private_file()
+        created = self._prepare_private_file()
+        if created:
+            self._save([])
 
-    def _prepare_private_file(self) -> None:
+    def _prepare_private_file(self) -> bool:
         """Create or validate a private regular file without following symlinks."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -37,7 +39,12 @@ class MemoryStore:
                 flags |= getattr(os, "O_NOFOLLOW", 0)
             elif self.path.is_symlink():
                 raise RuntimeError("Memory path must not be a symbolic link.")
-            descriptor = os.open(self.path, flags, 0o600)
+            created = False
+            try:
+                descriptor = os.open(self.path, flags | os.O_EXCL, 0o600)
+                created = True
+            except FileExistsError:
+                descriptor = os.open(self.path, flags)
             try:
                 metadata = os.fstat(descriptor)
                 if not stat.S_ISREG(metadata.st_mode):
@@ -48,6 +55,7 @@ class MemoryStore:
                     os.fchmod(descriptor, 0o600)
             finally:
                 os.close(descriptor)
+            return created
         except RuntimeError:
             raise
         except OSError as exc:
