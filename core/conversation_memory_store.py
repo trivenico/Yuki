@@ -330,6 +330,32 @@ class ConversationMemoryStore:
         return cursor.rowcount
 
 
+    def inspect_import_conflicts(self, *, owner_id: str, memory_ids: tuple[str, ...]) -> int:
+        """Count IDs already owned by this user without changing the database."""
+        owner = self._owner(owner_id)
+        if not isinstance(memory_ids, tuple) or len(memory_ids) > self.MAX_ENTRIES_PER_OWNER:
+            raise ValueError("memory_ids must be a bounded tuple.")
+        if any(not isinstance(value, str) or not value for value in memory_ids):
+            raise ValueError("memory_ids must contain non-empty strings.")
+        if not memory_ids:
+            return 0
+        conflicts = 0
+        # Stay below SQLite's conservative 999-variable limit on older builds.
+        for offset in range(0, len(memory_ids), 500):
+            batch = memory_ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            with self._connection() as db:
+                # memory_id is a global primary key, so detect collisions
+                # across owners without returning any other owner's metadata.
+                row = db.execute(
+                    f"SELECT count(*) FROM conversation_memories "
+                    f"WHERE memory_id IN ({placeholders})",
+                    batch,
+                ).fetchone()
+            conflicts += int(row[0])
+        return conflicts
+
+
     def export_snapshot(self, *, owner_id: str) -> dict[str, Any]:
         """Return one consistent, bounded snapshot of this owner's active memories."""
         owner = self._owner(owner_id)

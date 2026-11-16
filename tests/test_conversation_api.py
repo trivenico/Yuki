@@ -702,5 +702,75 @@ class ConversationAPITests(unittest.TestCase):
         )
 
 
+    def test_memory_backup_preview_is_authenticated_owner_bound_and_read_only(self):
+        try:
+            import base64
+            import cryptography  # noqa: F401
+            from core.memory_backup_envelope import encrypt_backup
+        except ImportError:
+            self.skipTest("cryptography is not installed")
+
+        memory_store = ConversationMemoryStore(
+            Path(self.tempdir.name) / "memory-backup-preview.sqlite",
+        )
+        self.app.conversations.memory_store = memory_store
+        saved = memory_store.remember(
+            owner_id=self.user.user_id, content="private preview memory",
+            category="preference",
+        )
+        memory_store.remember(owner_id="other-owner", content="another owner's memory")
+        before = memory_store.list(owner_id=self.user.user_id)
+        password = "a sufficiently long backup passphrase"
+        envelope = self.app.conversations.export_memory_backup(
+            owner_id=self.user.user_id, password=password,
+        )
+        encoded = base64.b64encode(envelope).decode("ascii")
+
+        status, data, _ = self.request(
+            "POST", "/v1/memories/backup/preview",
+            {"password": password, "envelope_base64": encoded},
+        )
+        self.assertEqual(status, 401)
+
+        status, data, headers = self.request(
+            "POST", "/v1/memories/backup/preview",
+            {"password": password, "envelope_base64": encoded},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get(b"cache-control"), b"no-store")
+        preview = data["preview"]
+        self.assertEqual(preview["memory_count"], 1)
+        self.assertEqual(preview["category_counts"]["preference"], 1)
+        self.assertEqual(preview["existing_id_conflicts"], 1)
+        self.assertEqual(preview["new_memory_count"], 0)
+        self.assertFalse(preview["writes_performed"])
+        self.assertNotIn("private preview memory", json.dumps(data))
+        self.assertEqual(memory_store.list(owner_id=self.user.user_id), before)
+        self.assertEqual(before[0]["memory_id"], saved["memory_id"])
+
+        other_snapshot = memory_store.export_snapshot(owner_id="other-owner")
+        other_envelope = encrypt_backup(
+            json.dumps(other_snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            password,
+        )
+        status, data, _ = self.request(
+            "POST", "/v1/memories/backup/preview",
+            {"password": password, "envelope_base64": base64.b64encode(other_envelope).decode("ascii")},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "memory_backup_owner_mismatch")
+
+        status, data, _ = self.request(
+            "POST", "/v1/memories/backup/preview",
+            {"password": "wrong password is long enough", "envelope_base64": encoded},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "memory_backup_authentication_failed")
+        self.assertEqual(memory_store.list(owner_id=self.user.user_id), before)
+
+
 if __name__ == "__main__":
     unittest.main()

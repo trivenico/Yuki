@@ -465,3 +465,29 @@ class ConversationService:
             snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         ).encode("utf-8")
         return encrypt_backup(plaintext, password)
+
+    def preview_memory_backup(self, *, owner_id: str, password: str, envelope: bytes) -> dict[str, Any]:
+        """Validate an encrypted backup and report merge conflicts without writes."""
+        from core.memory_backup_validation import decrypt_and_validate_memory_backup
+
+        with self._lock:
+            self._ensure_open()
+            memory_store = self.memory_store
+        if memory_store is None:
+            raise RuntimeError("persistent memory is not enabled for this runtime.")
+        preview = decrypt_and_validate_memory_backup(
+            envelope, password, owner_id,
+        )
+        conflicts = memory_store.inspect_import_conflicts(
+            owner_id=owner_id, memory_ids=preview["memory_ids"],
+        )
+        return {
+            "format": "yuki-memory-snapshot",
+            "schema_version": 1,
+            "memory_count": preview["memory_count"],
+            "category_counts": preview["category_counts"],
+            "existing_id_conflicts": conflicts,
+            "new_memory_count": preview["memory_count"] - conflicts,
+            "writes_performed": False,
+        }
+

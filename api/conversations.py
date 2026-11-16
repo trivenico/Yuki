@@ -352,6 +352,53 @@ class YukiConversationAPI:
                 except Exception:
                     return await self._respond(send, 500, {"error": "provider_catalog_unavailable"})
 
+            if path == "/v1/memories/backup/preview" and method == "POST":
+                try:
+                    payload = await read_json_object(receive, 17 * 1024 * 1024)
+                except RequestBodyTooLarge:
+                    return await self._respond(send, 413, {"error": "request_body_too_large"})
+                if (set(payload) != {"password", "envelope_base64"}
+                        or not isinstance(payload.get("password"), str)
+                        or not isinstance(payload.get("envelope_base64"), str)
+                        or not payload["envelope_base64"]
+                        or len(payload["envelope_base64"]) > 16 * 1024 * 1024):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    import base64
+                    import binascii
+                    envelope = base64.b64decode(payload["envelope_base64"], validate=True)
+                    preview = await asyncio.to_thread(
+                        self.conversations.preview_memory_backup,
+                        owner_id=user.user_id, password=payload["password"],
+                        envelope=envelope,
+                    )
+                except (ValueError, binascii.Error) as exc:
+                    code = str(exc)
+                    allowed = {
+                        "invalid_backup_password",
+                        "memory_backup_crypto_unavailable",
+                        "memory_backup_key_derivation_failed",
+                        "memory_backup_authentication_failed",
+                        "invalid_memory_backup_envelope",
+                        "unsupported_memory_backup_envelope",
+                        "unsupported_memory_backup_kdf",
+                        "unsupported_memory_backup_cipher",
+                        "invalid_memory_backup_encoding",
+                        "invalid_memory_backup_parameters",
+                        "invalid_backup_payload_size",
+                        "invalid_memory_backup_snapshot",
+                        "unsupported_memory_backup_snapshot",
+                        "memory_backup_owner_mismatch",
+                        "duplicate_memory_backup_id",
+                    }
+                    if code not in allowed:
+                        code = "invalid_memory_backup"
+                    status = 503 if code == "memory_backup_crypto_unavailable" else 400
+                    return await self._respond(send, status, {"error": code})
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                return await self._respond(send, 200, {"preview": preview})
+
             if path == "/v1/memories/backup" and method == "POST":
                 payload = await self._body(receive)
                 if set(payload) != {"password"} or not isinstance(payload.get("password"), str):
