@@ -88,13 +88,9 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
             raise ToolProtocolError("tool name must be a valid registered-name identifier.")
         if not isinstance(arguments, dict):
             raise ToolProtocolError("tool arguments must be a JSON object.")
-        try:
-            encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
-            size = len(encoded.encode("utf-8"))
-        except (TypeError, ValueError, UnicodeEncodeError) as exc:
-            raise ToolProtocolError("tool arguments must be JSON-compatible.") from exc
-        if size > _MAX_ARGUMENT_BYTES:
-            raise ToolProtocolError("tool arguments exceed the size limit.")
+        # Use the same structural, numeric and byte limits for parsed and
+        # manually constructed calls so the parser cannot bypass dispatch bounds.
+        _validated_call_arguments(arguments)
         seen_ids.add(call_id)
         calls.append(StructuredToolCall(call_id, name, arguments))
     return tuple(calls)
