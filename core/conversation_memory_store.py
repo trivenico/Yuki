@@ -220,7 +220,7 @@ class ConversationMemoryStore:
         """Normalize text conservatively for duplicate inspection only."""
         import unicodedata
         normalized = unicodedata.normalize("NFKC", content).casefold()
-        return " ".join(re.findall(r"[^\\W_]+", normalized, flags=re.UNICODE))
+        return " ".join(re.findall(r"[^\W_]+", normalized, flags=re.UNICODE))
 
     def find_duplicates(
         self, *, owner_id: str, content: str, limit: int = 5, threshold: float = 0.8,
