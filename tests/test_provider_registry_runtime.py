@@ -3,6 +3,7 @@ from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from yuki_providers import ProviderManager
+from core.network_firewall import NetworkFirewall
 
 class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_registry_reports_only_factory_supported_integrations(self):
@@ -60,6 +61,29 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         message = manager.select("anthropic")
         self.assertIn("not implemented", message)
         self.assertEqual(manager.current().name, "openai")
+
+    def test_shared_firewall_policy_reaches_selected_cloud_provider(self):
+        firewall = NetworkFirewall(allowed_hosts={"api.openai.com"})
+        manager = ProviderManager(
+            environ={"OPENAI_API_KEY": "test-key"},
+            firewall_policy=firewall,
+        )
+        adapter = manager.create_selected_adapter()
+        self.assertIs(adapter._transport.firewall_policy, firewall)
+
+    def test_shared_firewall_policy_reaches_hybrid_cloud_provider(self):
+        firewall = NetworkFirewall(allowed_hosts={"api.openai.com"})
+        manager = ProviderManager(
+            {"provider": "hybrid"},
+            environ={
+                "YUKI_CLOUD_MODEL": "test-cloud-model",
+                "YUKI_OLLAMA_MODEL": "test-local-model",
+                "OPENAI_API_KEY": "test-key",
+            },
+            firewall_policy=firewall,
+        )
+        adapter = manager.create_selected_adapter()
+        self.assertIs(adapter.cloud_provider._transport.firewall_policy, firewall)
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
