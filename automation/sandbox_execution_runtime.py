@@ -11,6 +11,7 @@ from typing import Any
 
 from automation.execution_task import DurableSandboxExecutionWorker
 from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
+from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 from automation.sandbox_execution_approval import (
     SQLiteSandboxExecutionApprovalStore,
     SandboxExecutionAuditWriter,
@@ -36,6 +37,7 @@ class SandboxExecutionRuntime:
         self.audit_log = audit_log
         self.sandbox = sandbox
         self.worker = worker
+        self.submission_service = submission_service
         self._closed = False
 
     def close(self) -> None:
