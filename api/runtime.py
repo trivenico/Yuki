@@ -56,12 +56,17 @@ class ConversationRuntime:
             raise RuntimeError("conversation runtime is closed")
         if scope.get("type") == "http":
             if scope.get("path") == "/readyz" and scope.get("method", "GET").upper() in {"GET", "HEAD"}:
-                report = self.readiness_report()
-                component = report.capabilities["component_runtime"]
-                ready = component.status == "verified"
+                # A probe must fail closed even if report construction itself
+                # encounters an unexpected platform or diagnostic error.
+                try:
+                    report = self.readiness_report()
+                    component_status = report.capabilities["component_runtime"].status
+                except Exception:
+                    component_status = "unavailable"
+                ready = component_status == "verified"
                 payload = {
                     "status": "ready" if ready else "not_ready",
-                    "component_runtime": component.status,
+                    "component_runtime": component_status,
                 }
                 body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
                 await self.web.respond(
