@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import threading
@@ -112,6 +113,7 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["answer"], "Yuki's answer")
         self.assertEqual(result["version"], 2)
+        self.assertEqual(result["memory_references"], [])
         self.assertFalse(result["replayed"])
         history = self.service.history(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
