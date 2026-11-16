@@ -90,6 +90,20 @@ class DockerSandboxTests(unittest.TestCase):
         with self.assertRaises(SandboxError):
             DockerSandbox(Path(tempfile.gettempdir()).anchor)
 
+    @patch("hackback.sandbox.subprocess.Popen")
+    def test_legacy_wrapper_uses_canonical_runtime_builder(self, popen):
+        popen.return_value = FakeProcess()
+        sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=(self.image,), enabled=True,
+            approver=lambda _: True, docker_binary="/opt/docker",
+        )
+        sandbox.run(self.image, ["python", "--version"])
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], "/opt/docker")
+        self.assertEqual(command[command.index("--user") + 1], "65534:65534")
+        self.assertEqual(command[command.index("--network") + 1], "none")
+        self.assertIn("--pull=never", command)
+
 
 if __name__ == "__main__":
     unittest.main()
