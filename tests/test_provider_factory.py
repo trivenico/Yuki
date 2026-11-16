@@ -37,6 +37,28 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_shared_timeout_is_applied_to_openai_provider(self):
+        provider = create_provider({}, environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "12"})
+        self.assertEqual(provider.timeout, 12.0)
+
+    def test_shared_timeout_is_applied_to_local_ollama_provider(self):
+        provider = create_provider(
+            {"provider": "ollama", "ollama_model": "local-model"},
+            environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "13"},
+        )
+        self.assertEqual(provider.timeout, 13.0)
+
+    def test_shared_timeout_is_applied_to_both_hybrid_providers(self):
+        provider = create_provider(
+            {"provider": "hybrid", "ollama_model": "local-model"},
+            environ={
+                "YUKI_PROVIDER_TIMEOUT_SECONDS": "14",
+                "YUKI_CLOUD_MODEL": "cloud-model",
+                "OPENAI_API_KEY": "test-key",
+            },
+        )
+        self.assertEqual(provider.local_provider.timeout, 14.0)
+        self.assertEqual(provider.cloud_provider.timeout, 14.0)
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
