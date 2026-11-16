@@ -20,6 +20,11 @@ class Refresh:
         return {}
 
 
+class VaultWithRotation(Vault):
+    def rotate(self, **_kwargs):
+        return None
+
+
 class CapturingClient:
     def __init__(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
@@ -58,11 +63,23 @@ class MCPRuntimeServiceTests(unittest.TestCase):
 
     def test_shared_firewall_identity_is_verified_for_every_provider_manager(self):
         from core.network_firewall import NetworkFirewall
+        from core.oauth_http_transport import PinnedOAuthHTTPTransport
+        from core.oauth_refresh_service import OAuthTokenRefreshService
 
-        firewall = NetworkFirewall(allowed_hosts=("mcp.example",))
+        firewall = NetworkFirewall(allowed_hosts=("mcp.example", "token.example"))
+        vault = VaultWithRotation()
+        refresh = OAuthTokenRefreshService(
+            credential_vault=vault,
+            transport=PinnedOAuthHTTPTransport(
+                allowed_hosts=("token.example",), firewall_policy=firewall,
+            ),
+            token_endpoint="https://token.example/oauth/token",
+            provider_id="provider", client_id="client",
+            issuer="https://token.example", resource="https://mcp.example",
+        )
         manager = OAuthMCPConnectionManager(
-            provider_id="provider", credential_vault=Vault(),
-            refresh_service=Refresh(), client_factory=CapturingClient,
+            provider_id="provider", credential_vault=vault,
+            refresh_service=refresh, client_factory=CapturingClient,
             firewall_policy=firewall,
         )
         service = MCPRuntimeService(
@@ -72,11 +89,43 @@ class MCPRuntimeServiceTests(unittest.TestCase):
             )},
             policy_store=self.policy_store, audit_log=self.audit_log,
         )
-        manager._refresh.firewall_policy = firewall
         self.assertIs(manager.firewall_policy, firewall)
         self.assertIs(manager.refresh_firewall_policy, firewall)
         self.assertTrue(service.uses_firewall_policy(firewall))
-        self.assertFalse(service.uses_firewall_policy(NetworkFirewall(allowed_hosts=("mcp.example",))))
+        self.assertFalse(service.uses_firewall_policy(NetworkFirewall(
+            allowed_hosts=("mcp.example", "token.example"),
+        )))
+
+    def test_manager_rejects_firewall_identity_mismatch_with_refresh_transport(self):
+        from core.network_firewall import NetworkFirewall
+        from core.oauth_http_transport import PinnedOAuthHTTPTransport
+        from core.oauth_refresh_service import OAuthTokenRefreshService
+
+        manager_firewall = NetworkFirewall(allowed_hosts=("mcp.example", "token.example"))
+        refresh_firewall = NetworkFirewall(allowed_hosts=("mcp.example", "token.example"))
+        vault = VaultWithRotation()
+        refresh = OAuthTokenRefreshService(
+            credential_vault=vault,
+            transport=PinnedOAuthHTTPTransport(
+                allowed_hosts=("token.example",), firewall_policy=refresh_firewall,
+            ),
+            token_endpoint="https://token.example/oauth/token",
+            provider_id="provider", client_id="client",
+            issuer="https://token.example", resource="https://mcp.example",
+        )
+        manager = OAuthMCPConnectionManager(
+            provider_id="provider", credential_vault=vault,
+            refresh_service=refresh, client_factory=CapturingClient,
+            firewall_policy=manager_firewall,
+        )
+        service = MCPRuntimeService(
+            connection_managers={"provider": manager},
+            provider_configs={"provider": MCPProviderConnectionConfig(
+                endpoint="https://mcp.example/mcp", allowed_hosts=("mcp.example",),
+            )},
+            policy_store=self.policy_store, audit_log=self.audit_log,
+        )
+        self.assertFalse(service.uses_firewall_policy(manager_firewall))
 
     def test_manager_without_shared_firewall_fails_identity_check(self):
         from core.network_firewall import NetworkFirewall
