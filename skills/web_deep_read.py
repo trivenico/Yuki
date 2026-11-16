@@ -10,8 +10,11 @@ class DeepReadSkill(Skill):
     risk = "medium"
     requires_approval = True
 
-    def __init__(self, allowed_hosts=()):
-        self.reader = WebSkill(allowed_hosts=allowed_hosts, max_bytes=500000)
+    def __init__(self, allowed_hosts=(), *, firewall_policy=None):
+        self.reader = WebSkill(
+            allowed_hosts=allowed_hosts, max_bytes=500000,
+            firewall_policy=firewall_policy,
+        )
 
     def run(self, argument=""):
         try:

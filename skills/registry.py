@@ -87,18 +87,18 @@ class SkillRegistry:
 
     @classmethod
     def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
-                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None, github_allowed_roots=None, mcp_servers=()):
+                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None, github_allowed_roots=None, mcp_servers=(), firewall_policy=None):
         root = Path(workspace).expanduser().resolve()
         configured_github_roots = [root]
         if github_allowed_roots:
             configured_github_roots.extend(Path(item).expanduser().resolve() for item in github_allowed_roots)
         registry = cls((
-            TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
+            TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts, firewall_policy=firewall_policy),
             GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
-            DeepReadSkill(allowed_hosts=web_allowed_hosts),
+            DeepReadSkill(allowed_hosts=web_allowed_hosts, firewall_policy=firewall_policy),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
-            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
+            WikiSkill(allowed_hosts=web_allowed_hosts, firewall_policy=firewall_policy), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
             ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
             PredictionEngineSkill(), MultiModelCritiqueSkill(), AIMentorSkill(root), AIHumanizerSkill(),
             YouTubeShortsSkill(), SEOGEOOptimizerSkill(), ConversationAnalyzerSkill(root), VibeCoderSkill(), LongVideoGeneratorSkill(),
