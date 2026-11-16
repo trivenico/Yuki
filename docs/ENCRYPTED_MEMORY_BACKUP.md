@@ -3,7 +3,7 @@
 `core.memory_backup_envelope` provides a versioned, password-encrypted container for opaque memory backup bytes.
 
 - Format identifier: `yuki-memory-backup`; envelope version: `1`.
-- Key derivation: scrypt (`N=32768, r=8, p=1`) with a fresh 16-byte random salt.
+- Key derivation: scrypt (`N=16384, r=8, p=1`) with a fresh 16-byte random salt. The work factor stays within common OpenSSL backend memory ceilings.
 - Encryption: AES-256-GCM with a fresh 12-byte nonce and authenticated format/version data.
 - The encrypted payload is capped at 8 MiB; the encoded envelope is capped at 12 MiB.
 - Passwords must be 12–1024 UTF-8 bytes. A wrong password, altered ciphertext, unsupported version, or modified KDF parameters fails closed.
