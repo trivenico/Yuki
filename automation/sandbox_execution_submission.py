@@ -95,10 +95,9 @@ class SandboxExecutionSubmissionService:
         )
         if prior is not None:
             return prior
-        if not self.engine.consume_rate_limit(user.user_id, "sandbox.task.submit", limit=10, window_seconds=60):
-            raise RateLimitExceeded("task submission rate limit exceeded")
         return self.worker.submit(
             goal_id, task, approval, idempotency_key=idempotency_key,
+            rate_limit=(user.user_id, "sandbox.task.submit", 10, 60),
         )
 
     def get_task(self, task_id: str, *, session_token: str) -> Mapping[str, object]:
