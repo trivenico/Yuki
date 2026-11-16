@@ -16,8 +16,8 @@ from core.durable_task_engine import DurableTaskEngine
 from hackback.sandbox import DockerSandbox
 
 _TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-_ACTOR_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,199}$")
-_APPROVAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_ACTOR_ID = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.@:-]{0,199}$")
+_APPROVAL_ID = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,127}$")
 
 
 @dataclass(frozen=True)
