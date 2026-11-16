@@ -66,7 +66,7 @@ def build_sandbox_execution_runtime(
         raise ValueError("sandbox execution requires a configured workspace")
     root = Path(workspace_value).expanduser().resolve()
     sandbox_workspace = Path(
-        config.get("sandbox_execution_workspace", str(root / "sandbox-execution"))
+        config.get("sandbox_execution_workspace", str(root / "sandbox-execution-workspace"))
     ).expanduser().resolve()
     if sandbox_workspace == Path(sandbox_workspace.anchor) or sandbox_workspace == root:
         raise ValueError("sandbox execution requires a dedicated non-root workspace")
@@ -80,7 +80,7 @@ def build_sandbox_execution_runtime(
            for image in images) or len(set(images)) != len(images):
         raise ValueError("sandbox execution image allow-list is invalid")
 
-    database_root = root / "sandbox-execution"
+    database_root = root / "sandbox-execution-state"
     task_db = prepare_private_sqlite_path(database_root / "tasks.sqlite3")
     audit_db = prepare_private_sqlite_path(database_root / "audit.sqlite3")
     auth_db = str(Path(auth_service.database_path).resolve())
