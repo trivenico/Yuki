@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from automation.execution_task import DurableSandboxExecutionWorker
+from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 from automation.sandbox_execution_approval import (
     SQLiteSandboxExecutionApprovalStore,
     SandboxExecutionAuditWriter,
@@ -28,7 +29,7 @@ class SandboxExecutionRuntime:
                  approval_store: SQLiteSandboxExecutionApprovalStore,
                  audit_log: SQLiteApprovalAuditLog,
                  sandbox: DockerSandbox,
-                 worker: DurableSandboxExecutionWorker):
+                 worker: DurableSandboxExecutionWorker,\n                 submission_service: SandboxExecutionSubmissionService):
         self.engine = engine
         self.approval_store = approval_store
         self.audit_log = audit_log
