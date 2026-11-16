@@ -11,7 +11,7 @@ from automation.sandbox_execution_approval import (
 from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.auth import BuiltInAuthService
-from core.durable_task_engine import DurableTaskEngine
+from core.durable_task_engine import DurableTaskEngine, TaskConflict
 from hackback.sandbox import DockerSandbox
 
 
@@ -122,7 +122,7 @@ class SandboxExecutionSubmissionServiceTests(unittest.TestCase):
                 session_token=self.session_a.token,
             )
 
-    def test_duplicate_submission_is_idempotent_before_dispatch(self):
+    def test_duplicate_submission_remains_idempotent_after_approval_consumption(self):
         goal = self.service.create_goal(session_token=self.session_a.token)
         approval = self.service.approve_task(
             self.task, session_token=self.session_a.token,
@@ -131,6 +131,7 @@ class SandboxExecutionSubmissionServiceTests(unittest.TestCase):
             goal, self.task, approval, idempotency_key="same-request",
             session_token=self.session_a.token,
         )
+        self.assertTrue(self.store.consume(approval, self.task))
         second = self.service.submit(
             goal, self.task, approval, idempotency_key="same-request",
             session_token=self.session_a.token,
@@ -138,6 +139,15 @@ class SandboxExecutionSubmissionServiceTests(unittest.TestCase):
         self.assertEqual(first["id"], second["id"])
         self.assertEqual(len(self.engine.list_tasks(goal)), 1)
 
+    def test_idempotency_key_cannot_be_rebound_to_a_new_approval(self):
+        goal = self.service.create_goal(session_token=self.session_a.token)
+        first_approval = self.service.approve_task(self.task, session_token=self.session_a.token)
+        self.service.submit(goal, self.task, first_approval, idempotency_key="fixed-key",
+                            session_token=self.session_a.token)
+        second_approval = self.service.approve_task(self.task, session_token=self.session_a.token)
+        with self.assertRaises(TaskConflict):
+            self.service.submit(goal, self.task, second_approval, idempotency_key="fixed-key",
+                                session_token=self.session_a.token)
     def test_unprivileged_user_cannot_create_approval_or_submit(self):
         self.auth.create_account("ordinary.user", "A different secure password 5!")
         ordinary = self.auth.authenticate(
