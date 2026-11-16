@@ -354,7 +354,7 @@ class YukiConversationAPI:
 
             if path == "/v1/memories" and method == "GET":
                 query = self._query(scope)
-                if set(query) - {"limit"}:
+                if set(query) - {"limit", "category"}:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 if query.get("category") not in (None, "note", "preference", "lesson"):
                     return await self._respond(send, 400, {"error": "invalid_category"})
