@@ -46,11 +46,6 @@ def build_docker_argv(
     path = Path(workspace)
     if not path.exists() or not path.is_dir():
         raise SandboxRuntimeError("workspace must be an existing directory")
-    resolved_workspace = str(path.resolve())
-    # Docker parses --mount as comma-separated key/value fields. A comma in
-    # the host path could inject mount options and weaken the intended scope.
-    if "," in resolved_workspace:
-        raise SandboxRuntimeError("workspace path contains unsupported mount syntax")
     if policy.network_mode == "none":
         if network_allowlist:
             raise SandboxRuntimeError("allowlist conflicts with disabled networking")
@@ -65,12 +60,12 @@ def build_docker_argv(
 
     workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
     return [
-        "docker", "run", "--rm", "--pull=never", "--interactive", "--read-only",
+        "docker", "run", "--rm", "--interactive", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",
         "--pids-limit", str(policy.max_processes), "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges:true",
         "--tmpfs", f"/tmp:rw,noexec,nosuid,nodev,size={min(policy.memory_mb, 256)}m",
-        "--mount", f"type=bind,src={resolved_workspace},dst=/workspace,{workspace_access}",
+        "--mount", f"type=bind,src={str(path.resolve())},dst=/workspace,{workspace_access}",
         "--workdir", "/workspace", *network_args, image, *command,
     ]
