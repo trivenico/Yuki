@@ -1069,22 +1069,23 @@ def run() -> int:
                 elif self.sessions is not None:
                     self.sessions.logout()
             except Exception as exc:
+                # Cleanup may fail after the session has already been revoked.
+                # Never leave a sensitive transcript or stale controller visible
+                # while the authentication state is uncertain.
+                self.controller = None
+                self._return_to_login()
+                self.login_status.setText(
+                    "Sign-out cleanup was incomplete. Verify session status before continuing."
+                )
                 QMessageBox.warning(
                     self, "Sign out",
-                    "Session cleanup failed (" + type(exc).__name__ + ")."
+                    "Local conversation data was cleared and the login screen restored. "
+                    "Session revocation may not have completed; verify session status "
+                    "before continuing (" + type(exc).__name__ + ")."
                 )
                 return
             self.controller = None
             self._return_to_login()
-            self.transcript.clear()
-            self.specialist_list.clear()
-            self.task_list.clear()
-            self.task_progress_view.clear()
-            self.task_approve_button.setEnabled(False)
-            self.current_plan = None
-            self.plan_details.clear()
-            self.plan_dispatch_button.setEnabled(False)
-            self.plan_cancel_button.setEnabled(False)
             self.login_status.setText("You are signed out.")
 
         def closeEvent(self, event):
