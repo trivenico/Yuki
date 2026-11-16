@@ -141,25 +141,21 @@ def execute_approved_task(
             max_output_bytes=task.max_output_bytes,
         )
     except Exception as execution_error:
+        # Docker timeout/termination errors do not prove that the process had
+        # no side effects; conservatively persist an unknown outcome.
         try:
-            accepted = audit({**audit_base, "event": "execution.failed"})
+            accepted = audit({**audit_base, "event": "execution.unknown"})
         except Exception as audit_error:
-            try:
-                audit({**audit_base, "event": "execution.unknown"})
-            except Exception:
-                pass
             raise ExecutionOutcomeUnknown(
-                "sandbox execution failed and its failure audit could not be persisted"
+                "sandbox may have had side effects and its outcome audit could not be persisted"
             ) from audit_error
         if accepted is False:
-            try:
-                audit({**audit_base, "event": "execution.unknown"})
-            except Exception:
-                pass
             raise ExecutionOutcomeUnknown(
-                "sandbox execution failed but its failure audit was rejected"
+                "sandbox may have had side effects but its outcome audit was rejected"
             ) from execution_error
-        raise
+        raise ExecutionOutcomeUnknown(
+            "sandbox dispatch failed; side-effect outcome is not proven"
+        ) from execution_error
     if not isinstance(result, Mapping):
         try:
             audit({**audit_base, "event": "execution.unknown"})
