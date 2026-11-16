@@ -476,6 +476,33 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertNotIn("secret", str(records[0]))
         self.assertIn("unknown_at", records[0])
 
+
+    def test_submission_idempotency_and_rate_limit_are_atomic_together(self):
+        goal = self.engine.create_owned_goal("owner-idempotent-rate")
+        receipt = {
+            "actor_id": "owner-idempotent-rate",
+            "approval_id": "approval-atomic-1",
+            "task_fingerprint": "a" * 64,
+        }
+        first = self.engine.submit(
+            goal, "sandbox.execution.v1", {"task": "same"},
+            idempotency_key="atomic-idempotency", max_attempts=1,
+            submission_receipt=receipt, owner_id="owner-idempotent-rate",
+            max_active_tasks=5,
+            rate_limit=("owner-idempotent-rate", "sandbox.task.submit", 1, 60),
+        )
+        retry = self.engine.submit(
+            goal, "sandbox.execution.v1", {"task": "same"},
+            idempotency_key="atomic-idempotency", max_attempts=1,
+            submission_receipt=receipt, owner_id="owner-idempotent-rate",
+            max_active_tasks=5,
+            rate_limit=("owner-idempotent-rate", "sandbox.task.submit", 1, 60),
+        )
+        self.assertEqual(first["id"], retry["id"])
+        self.assertFalse(self.engine.consume_rate_limit(
+            "owner-idempotent-rate", "sandbox.task.submit", limit=1, window_seconds=60,
+        ))
+
     def test_worker_registry_heartbeat_and_stale_detection_persist(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
