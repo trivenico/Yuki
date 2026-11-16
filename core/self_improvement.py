@@ -7,6 +7,7 @@ separate, explicitly authorized workflow can test it in an isolated branch.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import ast
 import hashlib
 import re
 from pathlib import PurePosixPath
@@ -134,6 +135,13 @@ def validate_change_proposal(
             raise ProposalRejected(f"Proposed file exceeds the {MAX_FILE_BYTES}-byte limit.")
         if "\x00" in item.content:
             raise ProposalRejected("Binary content is not accepted.")
+        if path.lower().endswith((".py", ".pyi")):
+            try:
+                ast.parse(item.content, filename=path)
+            except SyntaxError as exc:
+                raise ProposalRejected(
+                    f"Python source for {path} is not syntactically valid."
+                ) from exc
         total_bytes += len(encoded)
         if total_bytes > MAX_TOTAL_BYTES:
             raise ProposalRejected("Proposal exceeds the total content-size limit.")
