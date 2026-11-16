@@ -1,10 +1,28 @@
 """Regression tests for the guarded Docker sandbox wrapper."""
+import io
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from hackback.sandbox import DockerSandbox, SandboxError
+
+
+class FakeProcess:
+    def __init__(self, stdout=b"ok", stderr=b""):
+        self.stdout = io.BytesIO(stdout)
+        self.stderr = io.BytesIO(stderr)
+        self.returncode = 0
+        self.terminated = False
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.terminated = True
 
 
 class DockerSandboxTests(unittest.TestCase):
@@ -17,25 +35,33 @@ class DockerSandboxTests(unittest.TestCase):
         return DockerSandbox(self.tmp.name, allowed_images=(self.image,),
                              enabled=True, approver=approver or (lambda _: True))
 
-    @patch("hackback.sandbox.subprocess.run")
-    def test_workspace_is_read_only_by_default(self, run):
-        run.return_value.returncode = 0
-        run.return_value.stdout = "ok"
-        run.return_value.stderr = ""
+    @patch("hackback.sandbox.subprocess.Popen")
+    def test_workspace_is_read_only_by_default(self, popen):
+        popen.return_value = FakeProcess()
         self.make_sandbox().run(self.image, ["python", "-c", "print('ok')"])
-        command = run.call_args.args[0]
+        command = popen.call_args.args[0]
         mount = command[command.index("--mount") + 1]
         self.assertTrue(mount.endswith(",ro"))
 
-    @patch("hackback.sandbox.subprocess.run")
-    def test_workspace_write_requires_explicit_opt_in(self, run):
-        run.return_value.returncode = 0
-        run.return_value.stdout = "ok"
-        run.return_value.stderr = ""
+    @patch("hackback.sandbox.subprocess.Popen")
+    def test_workspace_write_requires_explicit_opt_in(self, popen):
+        popen.return_value = FakeProcess()
         self.make_sandbox().run(self.image, ["python", "-c", "pass"], write_workspace=True)
-        command = run.call_args.args[0]
+        command = popen.call_args.args[0]
         mount = command[command.index("--mount") + 1]
         self.assertTrue(mount.endswith(",rw"))
+
+    @patch("hackback.sandbox.subprocess.Popen")
+    def test_output_is_bounded_and_process_terminated(self, popen):
+        process = FakeProcess(stdout=b"x" * 128)
+        popen.return_value = process
+        with self.assertRaisesRegex(SandboxError, "output exceeded"):
+            self.make_sandbox().run(self.image, ["python", "-c", "pass"], max_output_bytes=32)
+        self.assertTrue(process.terminated)
+
+    def test_invalid_output_limit_is_rejected(self):
+        with self.assertRaisesRegex(SandboxError, "max_output_bytes"):
+            self.make_sandbox().run(self.image, ["python"], max_output_bytes=True)
 
     def test_comma_in_workspace_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as parent:
