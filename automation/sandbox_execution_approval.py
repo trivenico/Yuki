@@ -150,6 +150,7 @@ class SandboxExecutionAuditWriter:
         "execution.started": "execution_started",
         "execution.completed": "executed",
         "execution.failed": "execution_failed",
+        "execution.unknown": "outcome_unknown",
     }
 
     def __init__(self, audit_log):
