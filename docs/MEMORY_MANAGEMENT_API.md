@@ -43,3 +43,18 @@ operation through `POST /v1/memories`.
 ## Category filtering
 
 `GET /v1/memories?category=preference` filters the authenticated owner's active memories by one allowlisted category: `note`, `preference`, or `lesson`. The existing `limit` parameter remains supported. Unknown query parameters and invalid categories are rejected; owner identity always comes from the authenticated session.
+
+## Memory provenance in replies
+
+Successful, newly generated `POST /v1/conversations/{conversation_id}/messages` replies include
+a `memory_references` array. Each entry contains only the saved `memory_id`,
+`category`, and retrieval `score`; memory text is deliberately omitted from
+this metadata. The array includes only entries whose text was actually added to
+the bounded prompt context. If memory is disabled, no matches exist, or retrieval
+fails, the array is empty.
+
+The streaming endpoint sends the same reply object in its final `completed` or
+`cancelled` event. Replayed responses return `memory_references: null` because
+provenance is not yet persisted for historical turns; clients should distinguish
+that from an empty array. This is response-time transparency, not a durable audit
+record.
