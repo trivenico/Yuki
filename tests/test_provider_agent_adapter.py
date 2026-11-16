@@ -178,5 +178,33 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             self.assertEqual(normal.result(timeout=5)["text"], "hello")
         self.assertTrue(second_entered.is_set())
 
+
+    def test_provider_replacement_waits_for_inflight_request(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingProvider(FakeChatProvider):
+            def generate_chat(self, *, messages, tools, tool_choice):
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("test did not release provider")
+                return {"text": "old", "tool_calls": {"tool_calls": []}}
+
+        old = BlockingProvider()
+        new = FakeChatProvider({"text": "new", "tool_calls": {"tool_calls": []}})
+        adapter = ProviderAgentAdapter(old)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            request = pool.submit(adapter, messages=[{"role": "user", "content": "x"}], tools=[])
+            self.assertTrue(entered.wait(timeout=3))
+            swap = pool.submit(adapter.replace_provider, new)
+            self.assertFalse(swap.done())
+            release.set()
+            self.assertEqual(request.result(timeout=5)["text"], "old")
+            self.assertIs(swap.result(timeout=5), old)
+        self.assertIs(adapter.provider, new)
+        self.assertEqual(adapter(
+            messages=[{"role": "user", "content": "x"}], tools=[]
+        )["text"], "new")
+
 if __name__ == "__main__":
     unittest.main()
