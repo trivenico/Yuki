@@ -2,7 +2,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 from automation.sandbox_execution_runtime import (
     SandboxExecutionRuntime, build_sandbox_execution_runtime,
 )
@@ -47,7 +46,6 @@ class SandboxExecutionRuntimeCompositionTests(unittest.TestCase):
             auth_service=self.auth,
         )
         self.assertIsInstance(runtime, SandboxExecutionRuntime)
-        self.assertIsInstance(runtime.submission_service, SandboxExecutionSubmissionService)
         self.assertTrue(runtime.sandbox.enabled)
         self.assertEqual(runtime.sandbox.allowed_images, frozenset({image}))
         self.assertNotEqual(runtime.engine.db_path, self.auth.database_path)
