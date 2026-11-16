@@ -2,11 +2,13 @@ import unittest
 
 from core.mcp_oauth_provider_bootstrap import MCPProviderOAuthBootstrap, OAuthProviderBootstrapConfig
 from core.mcp_oauth_metadata import OAuthMetadataError
+from core.network_firewall import NetworkFirewall
 
 
 class Metadata:
-    def __init__(self):
+    def __init__(self, firewall_policy=None):
         self.calls = []
+        self.firewall_policy = firewall_policy
     def request_json(self, method, url, *, payload=None):
         self.calls.append((method, url, payload))
         if "oauth-protected-resource" in url:
@@ -22,14 +24,17 @@ class Metadata:
 
 
 class Registration:
-    def __init__(self):
+    def __init__(self, firewall_policy=None):
         self.calls = []
+        self.firewall_policy = firewall_policy
     def request_json(self, method, url, *, payload=None):
         self.calls.append((method, url, payload))
         return {"client_id": "public-client", "token_endpoint_auth_method": "none"}
 
 
 class OAuthTransport:
+    def __init__(self, firewall_policy=None):
+        self.firewall_policy = firewall_policy
     def request_form(self, *args, **kwargs):
         raise AssertionError("prepare must not exchange authorization codes")
 
@@ -110,6 +115,36 @@ class BootstrapTests(unittest.TestCase):
     def test_host_allowlists_reject_duplicate_entries(self):
         with self.assertRaisesRegex(ValueError, "duplicate host"):
             config(allowed_metadata_hosts=("api.example.com", "api.example.com"))
+
+    def test_shared_firewall_requires_exact_policy_on_all_bootstrap_transports(self):
+        policy = NetworkFirewall(allowed_hosts=("api.example.com",))
+        metadata = Metadata(policy)
+        registration = Registration(policy)
+        oauth = OAuthTransport(policy)
+        bootstrap = MCPProviderOAuthBootstrap(
+            metadata_transport=metadata, registration_transport=registration,
+            oauth_transport=oauth, transaction_store=Transactions(),
+            credential_vault=Vault(), identity_verifier_for_provider=lambda _: Verifier(),
+            firewall_policy=policy,
+        )
+        self.assertIs(bootstrap.firewall_policy, policy)
+        with self.assertRaisesRegex(ValueError, "exact shared firewall policy"):
+            MCPProviderOAuthBootstrap(
+                metadata_transport=metadata, registration_transport=registration,
+                oauth_transport=OAuthTransport(NetworkFirewall(allowed_hosts=("api.example.com",))),
+                transaction_store=Transactions(), credential_vault=Vault(),
+                identity_verifier_for_provider=lambda _: Verifier(), firewall_policy=policy,
+            )
+
+    def test_shared_firewall_rejects_unbound_bootstrap_transport(self):
+        policy = NetworkFirewall(allowed_hosts=("api.example.com",))
+        with self.assertRaisesRegex(ValueError, "exact shared firewall policy"):
+            MCPProviderOAuthBootstrap(
+                metadata_transport=Metadata(policy), registration_transport=Registration(policy),
+                oauth_transport=OAuthTransport(), transaction_store=Transactions(),
+                credential_vault=Vault(), identity_verifier_for_provider=lambda _: Verifier(),
+                firewall_policy=policy,
+            )
 
     def test_cimd_does_not_post_registration(self):
         def response(method, url, **kwargs):
