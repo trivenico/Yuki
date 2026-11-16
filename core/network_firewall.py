@@ -139,7 +139,7 @@ def build_network_firewall_from_config(
     """Build the application firewall from explicitly configured integration hosts.
 
     The policy is disabled unless firewall_enabled is exactly true. When
-    enabled, web and MCP host scopes form the shared policy; each transport
+    enabled, web, provider, and MCP host scopes form the shared policy; each transport
     must still enforce its own narrower host allow-list.
     """
     if not isinstance(config, Mapping):
@@ -150,11 +150,13 @@ def build_network_firewall_from_config(
     if not enabled:
         return None
     web_hosts = config.get("web_allowed_hosts", [])
+    provider_hosts = config.get("provider_allowed_hosts", [])
     mcp_servers = config.get("mcp_servers", [])
-    if not isinstance(web_hosts, (list, tuple)) or not isinstance(mcp_servers, (list, tuple)):
+    if (not isinstance(web_hosts, (list, tuple)) or not isinstance(provider_hosts, (list, tuple))
+            or not isinstance(mcp_servers, (list, tuple))):
         raise FirewallPolicyError("firewall_host_configuration_invalid")
     hosts: dict[str, str] = {}
-    for host in web_hosts:
+    for host in (*web_hosts, *provider_hosts):
         if not isinstance(host, str):
             raise FirewallPolicyError("firewall_host_configuration_invalid")
         hosts.setdefault(host.lower(), host.lower())
