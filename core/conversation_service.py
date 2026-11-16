@@ -274,9 +274,14 @@ class ConversationService:
                 if self.memory_store is not None:
                     # Memory is injected only when the host explicitly configures
                     # a store. Treat retrieved content as untrusted reference data.
-                    matches = self.memory_store.search(
-                        owner_id=owner_id, query=user_text, limit=5,
-                    )
+                    try:
+                        matches = self.memory_store.search(
+                            owner_id=owner_id, query=user_text, limit=5,
+                        )
+                    except Exception:
+                        # Memory is optional context. A storage failure must not
+                        # prevent the primary conversation from completing.
+                        matches = []
                     if matches:
                         memory_lines = []
                         remaining_chars = 4000
