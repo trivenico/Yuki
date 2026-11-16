@@ -96,8 +96,8 @@ are implemented.
 `{password, envelope_base64}`. It authenticates and decrypts the envelope,
 strictly validates the versioned snapshot (including duplicate JSON keys,
 unknown fields, record bounds, categories, timestamps, duplicate IDs, and
-owner binding), and compares incoming memory IDs with the authenticated
-owner's existing records. The response contains only counts and category
+owner binding), and checks incoming memory IDs against the database's globally unique primary keys. It
+reports collision counts only and never reveals which owner holds a conflicting ID. The response contains only counts and category
 totals; it never returns memory content.
 
 The preview performs no database writes. It does not import, overwrite, merge,
