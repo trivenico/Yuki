@@ -472,14 +472,15 @@ class ConversationService:
 
         with self._lock:
             self._ensure_open()
-            if self.memory_store is None:
-                raise RuntimeError("persistent memory is not enabled for this runtime.")
-            preview = decrypt_and_validate_memory_backup(
-                envelope, password, owner_id,
-            )
-            conflicts = self.memory_store.inspect_import_conflicts(
-                owner_id=owner_id, memory_ids=preview["memory_ids"],
-            )
+            memory_store = self.memory_store
+        if memory_store is None:
+            raise RuntimeError("persistent memory is not enabled for this runtime.")
+        preview = decrypt_and_validate_memory_backup(
+            envelope, password, owner_id,
+        )
+        conflicts = memory_store.inspect_import_conflicts(
+            owner_id=owner_id, memory_ids=preview["memory_ids"],
+        )
         return {
             "format": "yuki-memory-snapshot",
             "schema_version": 1,
