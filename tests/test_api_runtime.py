@@ -381,7 +381,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.app._service_for_provider("example"), service)
             self.assertEqual(runtime.app._provider_catalog(), ({
                 "provider_id": "example", "display_name": "Example",
-                "description": "Trusted integration", "available": True,
+                "description": "Trusted integration", "requested_scopes": ("read",), "available": True,
             },))
             self.assertIsNone(runtime.app._service_for_provider("unknown"))
             runtime.close()
