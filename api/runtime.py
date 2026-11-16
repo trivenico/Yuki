@@ -1,6 +1,7 @@
 """Composable ASGI runtime for authenticated Yuki conversations."""
 from __future__ import annotations
 
+import json
 from threading import RLock
 from typing import Any, Callable
 
