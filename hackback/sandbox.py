@@ -6,7 +6,9 @@ untrusted code safe; use a disposable host/workspace.
 """
 from __future__ import annotations
 
+import re
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Callable, Sequence
@@ -52,8 +54,10 @@ class DockerSandbox:
         if type(write_workspace) is not bool:
             raise SandboxError("write_workspace must be a boolean.")
         mount_mode = "rw" if write_workspace else "ro"
+        cid_dir = tempfile.TemporaryDirectory(prefix="yuki-docker-cid-")
+        cid_file = str(Path(cid_dir.name) / "container.id")
         command = [
-            self.docker_binary, "run", "--rm", "--pull=never",
+            self.docker_binary, "run", "--rm", "--pull=never", "--cidfile", cid_file,
             "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--pids-limit=64",
             "--memory=512m", "--cpus=1", "--user=65534:65534",
@@ -70,7 +74,25 @@ class DockerSandbox:
                 command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
         except OSError as exc:
+            cid_dir.cleanup()
             raise SandboxError("Docker could not be started.") from exc
+
+        def cleanup_container() -> None:
+            try:
+                container_id = Path(cid_file).read_text(encoding="ascii").strip()
+            except (OSError, UnicodeError):
+                container_id = ""
+            if re.fullmatch(r"[0-9a-f]{64}", container_id):
+                try:
+                    subprocess.run(
+                        [self.docker_binary, "rm", "--force", container_id],
+                        shell=False, stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=5, check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            cid_dir.cleanup()
 
         def drain(stream, key: str) -> None:
             nonlocal total_captured
@@ -106,9 +128,11 @@ class DockerSandbox:
             process.wait()
             for reader in readers:
                 reader.join()
+            cleanup_container()
             raise SandboxError("Sandbox process timed out.") from exc
         for reader in readers:
             reader.join()
+        cleanup_container()
         if output_exceeded.is_set():
             raise SandboxError("Sandbox output exceeded the configured byte limit.")
         return {
