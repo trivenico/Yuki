@@ -6,6 +6,7 @@ construction, owner scoping and shutdown semantics do not diverge.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 from threading import RLock
 
@@ -92,6 +93,13 @@ def build_conversation_application_runtime(
         raise TypeError("store_factory must be callable.")
     if memory_store is not None and not isinstance(memory_store, ConversationMemoryStore):
         raise TypeError("memory_store must be a ConversationMemoryStore or None.")
+    memory_enabled = config.get("conversation_memory_enabled", False)
+    if not isinstance(memory_enabled, bool):
+        raise ValueError("conversation_memory_enabled must be true or false.")
+    if memory_enabled and memory_store is None:
+        workspace = config.get("workspace")
+        if not isinstance(workspace, str) or not workspace.strip():
+            raise ValueError("enabled conversation memory requires a workspace path.")
     for callback, name in (
         (action_context_factory, "action_context_factory"),
         (confirmation_check, "confirmation_check"),
@@ -118,6 +126,10 @@ def build_conversation_application_runtime(
                 pass
         raise
     try:
+        if memory_enabled and memory_store is None:
+            memory_store = ConversationMemoryStore(
+                Path(workspace).expanduser().resolve() / "conversation-memory.sqlite3"
+            )
         conversations = ConversationService(
             store, agent_loop, agent_loop_for_owner=agent_loop_for_owner,
             action_context_factory=action_context_factory,

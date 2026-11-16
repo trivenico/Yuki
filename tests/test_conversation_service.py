@@ -335,7 +335,8 @@ class ConversationServiceTests(unittest.TestCase):
             self.assertEqual(result["status"], "completed")
         with self.assertRaisesRegex(RuntimeError, "owner loop cleanup failed"):
             service.close()
-        service.close()
+        with self.assertRaisesRegex(RuntimeError, "owner loop cleanup failed"):
+            service.close()
         self.assertEqual(closed, ["owner-a", "owner-b"])
 
 
