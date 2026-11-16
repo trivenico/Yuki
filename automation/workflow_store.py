@@ -292,7 +292,7 @@ class WorkflowRunStore:
         state and cannot claim the task. In-flight text generation may finish,
         but its worker cannot persist a result after this transition.
         """
-        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or "\\x00" in session_id:
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or "\x00" in session_id:
             raise ValueError("session_id must be non-empty bounded text.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         now = _now()
