@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Callable, Mapping
 
+from core.durable_task_engine import DurableTaskEngine
 from hackback.sandbox import DockerSandbox
 
 _TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -140,3 +141,116 @@ def execute_approved_task(
     if not isinstance(result, Mapping):
         raise RuntimeError("sandbox returned an invalid execution result")
     return result
+
+
+EXECUTION_TASK_TYPE = "sandbox.execution.v1"
+
+
+class DurableSandboxExecutionWorker:
+    """Dedicated lease-owning worker for approved sandbox tasks only.
+
+    It never claims specialist text tasks. Execution tasks are submitted with
+    one attempt so lease recovery cannot silently replay a possibly side-effecting
+    command. A recovered task requires a fresh, explicit submission/approval.
+    """
+
+    def __init__(
+        self,
+        engine: DurableTaskEngine,
+        *,
+        worker_id: str,
+        sandbox: DockerSandbox,
+        verify_approval: ApprovalVerifier,
+        audit: AuditWriter,
+    ) -> None:
+        if not isinstance(engine, DurableTaskEngine):
+            raise TypeError("engine must be a DurableTaskEngine")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 256:
+            raise ValueError("worker_id must be bounded non-empty text")
+        if not isinstance(sandbox, DockerSandbox):
+            raise TypeError("sandbox must be a configured DockerSandbox")
+        if not callable(verify_approval) or not callable(audit):
+            raise TypeError("trusted approval verifier and durable audit writer are required")
+        self.engine = engine
+        self.worker_id = worker_id.strip()
+        self.sandbox = sandbox
+        self.verify_approval = verify_approval
+        self.audit = audit
+
+    def submit(
+        self,
+        goal_id: str,
+        task: SandboxExecutionTask,
+        approval: ExecutionApproval,
+        *,
+        idempotency_key: str,
+    ) -> Mapping[str, object]:
+        task.validate()
+        if not isinstance(approval, ExecutionApproval) or approval.approved is not True:
+            raise PermissionError("an approved execution record is required")
+        if approval.task_id != task.task_id or approval.task_fingerprint != task.fingerprint():
+            raise PermissionError("approval does not bind to this exact execution task")
+        if not callable(self.verify_approval) or self.verify_approval(approval, task) is not True:
+            raise PermissionError("execution approval was not verified at submission")
+        if str(self.sandbox.workspace) != str(Path(task.workspace).expanduser().resolve()):
+            raise PermissionError("task workspace does not match the configured sandbox workspace")
+        payload = {
+            "task": {
+                "task_id": task.task_id,
+                "image": task.image,
+                "argv": list(task.argv),
+                "workspace": task.workspace,
+                "timeout_seconds": task.timeout_seconds,
+                "write_workspace": task.write_workspace,
+                "max_output_bytes": task.max_output_bytes,
+            },
+            "approval": {
+                "approval_id": approval.approval_id,
+                "actor_id": approval.actor_id,
+                "task_id": approval.task_id,
+                "task_fingerprint": approval.task_fingerprint,
+                "approved": approval.approved,
+            },
+        }
+        return self.engine.submit(
+            goal_id, EXECUTION_TASK_TYPE, payload,
+            idempotency_key=idempotency_key, max_attempts=1,
+        )
+
+    def run_once(self, *, lease_seconds: int = 180) -> Mapping[str, object] | None:
+        claimed = self.engine.claim(
+            self.worker_id, lease_seconds=lease_seconds,
+            task_types=(EXECUTION_TASK_TYPE,),
+        )
+        if claimed is None:
+            return None
+        try:
+            payload = claimed["payload"]
+            if not isinstance(payload, dict) or set(payload) != {"task", "approval"}:
+                raise ValueError("invalid execution task payload")
+            raw_task, raw_approval = payload["task"], payload["approval"]
+            if not isinstance(raw_task, dict) or not isinstance(raw_approval, dict):
+                raise ValueError("invalid execution task payload")
+            task = SandboxExecutionTask(
+                task_id=raw_task["task_id"], image=raw_task["image"],
+                argv=tuple(raw_task["argv"]), workspace=raw_task["workspace"],
+                timeout_seconds=raw_task["timeout_seconds"],
+                write_workspace=raw_task["write_workspace"],
+                max_output_bytes=raw_task["max_output_bytes"],
+            )
+            approval = ExecutionApproval(**raw_approval)
+            result = execute_approved_task(
+                task, approval, sandbox=self.sandbox,
+                verify_approval=self.verify_approval, audit=self.audit,
+            )
+            return self.engine.complete(claimed["id"], self.worker_id, dict(result))
+        except Exception:
+            self.engine.fail(
+                claimed["id"], self.worker_id, "sandbox execution failed",
+                retry_delay_seconds=0,
+            )
+            raise
+
+    def cancel(self, task_id: str) -> Mapping[str, object]:
+        """Cancel queued work; the durable engine refuses unsafe live cancellation."""
+        return self.engine.cancel_task(task_id)
