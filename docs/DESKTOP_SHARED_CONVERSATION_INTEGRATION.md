@@ -84,3 +84,16 @@ The facade does not own or close the shared runtime; the desktop lifecycle
 remains its single shutdown owner. The existing desktop memory-consent and
 specialist-task approval flows must remain separate and unchanged during the
 eventual bootstrap migration.
+
+
+## Memory-consent boundary (important)
+
+The shared conversation service currently has no consent-aware memory retrieval
+interface. The authenticated desktop facade therefore does not read, inject,
+write, migrate, or delete `CompanionMemory` entries. This is intentionally
+fail-closed: the existing desktop memory toggle must not be presented as active
+for shared-runtime chat until a canonical memory adapter carries the explicit
+session consent into retrieval and records provenance. The current legacy
+companion chat retains its existing consent behavior until that migration is
+implemented and tested. Do not silently enable memory or copy legacy memory
+into the durable conversation store.
