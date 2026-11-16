@@ -39,6 +39,17 @@ Set `sandbox_execution_poll_interval_seconds` to a number from 0.1 through 30 to
 - The current worker is serial. Do not scale replicas until concurrency limits, lease behavior, host isolation, and operational monitoring have been reviewed.
 - The worker records a durable process-presence heartbeat in the task database. Operators can inspect active and stale worker records through the engine's `list_workers(stale_after_seconds=...)` interface; this is not exposed as an unauthenticated network endpoint. A crashed process remains `active` in storage but is marked `stale` by the query after its heartbeat deadline. A graceful shutdown marks it `stopped`.
 
+## Operator reconciliation endpoints
+
+Administrators with the users:manage permission can inspect:
+
+- GET /v1/sandbox/operator/unknown-outcomes — metadata-only list of failed sandbox tasks carrying a durable task.outcome_unknown event
+- GET /v1/sandbox/operator/workers — worker process-presence records, including the derived stale flag (30-second threshold)
+
+These endpoints require an authenticated administrator session. They do not return task payloads, command arguments, environment variables, approval tokens, or credentials. The unknown-outcome list is read-only: it does not convert a failed task to success or authorize a retry.
+
+For each unknown outcome, an operator should correlate the task ID and fingerprint from the protected audit log with the external system's authoritative state. Record the investigation and evidence in the incident/change-management system. Only submit a replacement task after independently establishing that the original side effect did not occur or that repeating it is safe. Do not alter durable task state manually.
+
 ## Validation boundary
 
 The presence of this entrypoint does not mean sandbox execution is enabled or production-ready. Keep the feature disabled until the deployment-specific host, Docker, identity, storage, network, and incident-response controls have been tested.
