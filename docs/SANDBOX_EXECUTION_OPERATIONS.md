@@ -33,7 +33,7 @@ Set `sandbox_execution_poll_interval_seconds` to a number from 0.1 through 30 to
 
 ## Recovery and incident handling
 
-- Each sandbox task has one execution attempt. Expired leases are terminally failed rather than automatically replayed because a previous worker may have completed an external side effect before losing its lease.
+- Sandbox execution tasks are terminally failed when their worker lease expires, regardless of the configured retry count. Recovery also emits `task.outcome_unknown`, making the task visible in the operator reconciliation queue; it is never automatically replayed because the previous worker may have completed an external side effect before losing its lease.
 - Inspect the durable task state and hash-chained audit events before deciding whether to submit a new task.
 - An `outcome_unknown` event requires manual reconciliation. Do not blindly retry the command.
 - The current worker is serial. Do not scale replicas until concurrency limits, lease behavior, host isolation, and operational monitoring have been reviewed.
