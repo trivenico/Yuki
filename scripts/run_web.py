@@ -76,15 +76,20 @@ def create_app():
     sandbox_execution_runtime = build_sandbox_execution_runtime(
         config, auth_service=auth,
     )
-    return build_conversation_runtime(
-        config, auth_service=auth, agent_loop=agent_loop,
-        provider_catalog=provider_manager.catalog,
-        provider_selector=provider_manager.select,
-        device_pairing=device_pairing, inference_jobs=inference_jobs,
-        income_opportunities=income_opportunities,
-        network_firewall=network_firewall,
-        sandbox_execution_runtime=sandbox_execution_runtime,
-    )
+    try:
+        return build_conversation_runtime(
+            config, auth_service=auth, agent_loop=agent_loop,
+            provider_catalog=provider_manager.catalog,
+            provider_selector=provider_manager.select,
+            device_pairing=device_pairing, inference_jobs=inference_jobs,
+            income_opportunities=income_opportunities,
+            network_firewall=network_firewall,
+            sandbox_execution_runtime=sandbox_execution_runtime,
+        )
+    except Exception:
+        if sandbox_execution_runtime is not None:
+            sandbox_execution_runtime.close()
+        raise
 
 
 def main():
