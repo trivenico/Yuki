@@ -109,6 +109,12 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertEqual(events, ["cloud", "local"])
         provider.close()
         self.assertEqual(events, ["cloud", "local"])
+    def test_closed_hybrid_provider_rejects_new_requests(self):
+        provider = HybridProvider(OllamaProvider(model="local-model"), owns_providers=False)
+        provider.close()
+        self.assertFalse(provider.is_available())
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            provider.generate("hello")
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
