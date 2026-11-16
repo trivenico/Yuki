@@ -44,7 +44,8 @@ class DurableTaskEngine:
             CREATE TABLE IF NOT EXISTS goals(
               id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('active','paused','cancelled','completed')),
               created_at REAL NOT NULL, updated_at REAL NOT NULL);
-            CREATE TABLE IF NOT EXISTS goal_owners(\n              goal_id TEXT PRIMARY KEY REFERENCES goals(id) ON DELETE CASCADE,\n              owner_id TEXT NOT NULL, created_at REAL NOT NULL);\n            CREATE TABLE IF NOT EXISTS tasks(
+            CREATE TABLE IF NOT EXISTS goal_owners(
+              goal_id TEXT PRIMARY KEY REFERENCES goals(id) ON DELETE CASCADE,\n              owner_id TEXT NOT NULL, created_at REAL NOT NULL);\n            CREATE TABLE IF NOT EXISTS tasks(
               id TEXT PRIMARY KEY, goal_id TEXT NOT NULL REFERENCES goals(id),
               task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
               state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
