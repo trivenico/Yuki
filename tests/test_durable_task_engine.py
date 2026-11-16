@@ -464,8 +464,9 @@ class DurableTaskEngineTests(unittest.TestCase):
         )
         self.engine.claim("reconcile-worker", task_types=("sandbox.execution.v1",))
         self.engine.fail_unknown_outcome(unknown["id"], "reconcile-worker")
+        ordinary_goal = self.engine.create_goal()
         ordinary = self.engine.submit(
-            self.goal, "sandbox.execution.v1", {"argv": ["false"]},
+            ordinary_goal, "sandbox.execution.v1", {"argv": ["false"]},
             idempotency_key="ordinary-failure", max_attempts=1,
         )
         self.engine.claim("ordinary-worker", task_types=("sandbox.execution.v1",))
