@@ -68,6 +68,10 @@ This is the target layout, not a claim that the migration is already complete.
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
 
+## Approval-bound sandbox execution
+
+The sandbox execution path is opt-in and split across the authenticated web API and a separately supervised worker process. The API queues approved tasks; it does not launch Docker commands itself. Keep the feature disabled until the host and Docker daemon are isolated and the deployment controls are reviewed. See [Sandbox execution operations](docs/SANDBOX_EXECUTION_OPERATIONS.md) for prerequisites, startup, recovery, and known production-hardening gaps.
+
 ## Course and interview coaching
 
 The registered `course_coach` skill provides bounded workflows for `explain TOPIC`, `lab TASK`, `quiz TOPIC`, `study_plan GOAL`, and `interview ROLE`. It is a workflow scaffold, not a connected AI tutor: it does not execute lab commands, access course accounts, or submit assessments. Tailored explanations, interactive quiz evaluation, and adaptive interview feedback require a real LLM provider integration.
