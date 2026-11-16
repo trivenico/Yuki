@@ -206,5 +206,24 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             messages=[{"role": "user", "content": "x"}], tools=[]
         )["text"], "new")
 
+
+    def test_stream_uses_provider_active_when_iteration_begins(self):
+        class StreamingProvider(FakeChatProvider):
+            def __init__(self, value):
+                super().__init__()
+                self.value = value
+            def generate_chat_stream(self, *, messages, tools, tool_choice):
+                yield {"type": "text_delta", "text": self.value}
+
+        old = StreamingProvider("old")
+        new = StreamingProvider("new")
+        adapter = ProviderAgentAdapter(old)
+        pending_stream = adapter.stream_model(
+            messages=[{"role": "user", "content": "x"}], tools=[]
+        )
+        self.assertIs(adapter.replace_provider(new), old)
+        events = list(pending_stream)
+        self.assertEqual(events, [{"type": "text_delta", "text": "new"}])
+
 if __name__ == "__main__":
     unittest.main()
