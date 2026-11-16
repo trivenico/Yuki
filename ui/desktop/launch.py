@@ -1195,6 +1195,8 @@ def run() -> int:
             self._logout_worker = None
             self.controller = None
             self._return_to_login()
+            if not self._shutdown_started:
+                self.setEnabled(True)
             if error is not None:
                 self.login_status.setText(
                     "Sign-out cleanup was incomplete. Verify session status before continuing."
