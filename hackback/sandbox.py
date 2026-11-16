@@ -7,6 +7,7 @@ untrusted code safe; use a disposable host/workspace.
 from __future__ import annotations
 
 import subprocess
+import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -29,7 +30,8 @@ class DockerSandbox:
         self.approver = approver
         self.docker_binary = docker_binary
 
-    def run(self, image: str, argv: Sequence[str], *, timeout: int = 30, write_workspace: bool = False) -> dict:
+    def run(self, image: str, argv: Sequence[str], *, timeout: int = 30, write_workspace: bool = False,
+            max_output_bytes: int = 24_000) -> dict:
         if not self.enabled:
             raise SandboxError("Sandbox execution is disabled by configuration.")
         if image not in self.allowed_images or not image or "@sha256:" not in image:
@@ -42,6 +44,8 @@ class DockerSandbox:
             raise SandboxError("Container security flags cannot be supplied as program arguments.")
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 120:
             raise SandboxError("timeout must be between 1 and 120 seconds.")
+        if isinstance(max_output_bytes, bool) or not isinstance(max_output_bytes, int) or not 1 <= max_output_bytes <= 1_048_576:
+            raise SandboxError("max_output_bytes must be between 1 and 1048576.")
         self.workspace.mkdir(parents=True, exist_ok=True)
         if self.approver is None or self.approver(f"Run approved image {image} with argv {list(argv)!r}") is not True:
             raise SandboxError("Explicit approval was not granted.")
@@ -57,12 +61,58 @@ class DockerSandbox:
             "--mount", f"type=bind,src={self.workspace},dst=/workspace,{mount_mode}",
             "--workdir", "/workspace", image, *argv,
         ]
+        captured = {"stdout": bytearray(), "stderr": bytearray()}
+        output_lock = threading.Lock()
+        output_exceeded = threading.Event()
+        total_captured = 0
         try:
-            result = subprocess.run(command, shell=False, capture_output=True, text=True,
-                                    timeout=timeout, check=False)
-        except subprocess.TimeoutExpired as exc:
-            raise SandboxError("Sandbox process timed out.") from exc
+            process = subprocess.Popen(
+                command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
         except OSError as exc:
             raise SandboxError("Docker could not be started.") from exc
-        return {"returncode": result.returncode, "stdout": result.stdout[-12000:],
-                "stderr": result.stderr[-12000:]}
+
+        def drain(stream, key: str) -> None:
+            nonlocal total_captured
+            try:
+                while True:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        return
+                    with output_lock:
+                        remaining = max_output_bytes - total_captured
+                        if remaining > 0:
+                            captured[key].extend(chunk[:remaining])
+                            total_captured += min(len(chunk), remaining)
+                        if len(chunk) > remaining and not output_exceeded.is_set():
+                            output_exceeded.set()
+                            try:
+                                process.terminate()
+                            except OSError:
+                                pass
+            finally:
+                stream.close()
+
+        readers = [
+            threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.wait()
+            for reader in readers:
+                reader.join()
+            raise SandboxError("Sandbox process timed out.") from exc
+        for reader in readers:
+            reader.join()
+        if output_exceeded.is_set():
+            raise SandboxError("Sandbox output exceeded the configured byte limit.")
+        return {
+            "returncode": returncode,
+            "stdout": captured["stdout"].decode("utf-8", errors="replace"),
+            "stderr": captured["stderr"].decode("utf-8", errors="replace"),
+        }
