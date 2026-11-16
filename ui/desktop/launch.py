@@ -198,6 +198,30 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit(None, exc)
 
+    class LogoutWorkerSignals(QObject):
+        finished = Signal(object)
+
+    class LogoutWorker(QRunnable):
+        """Revoke the current session after preceding desktop work drains."""
+
+        def __init__(self, controller, sessions):
+            super().__init__()
+            self.controller = controller
+            self.sessions = sessions
+            self.signals = LogoutWorkerSignals()
+
+        @Slot()
+        def run(self):
+            error = None
+            try:
+                if self.controller is not None:
+                    self.controller.logout()
+                elif self.sessions is not None:
+                    self.sessions.logout()
+            except Exception as exc:
+                error = exc
+            self.signals.finished.emit(error)
+
     class ShutdownWorkerSignals(QObject):
         finished = Signal(object)
 
@@ -235,6 +259,8 @@ def run() -> int:
             self.lifecycle = None
             self.controller = None
             self.busy = False
+            self._logout_started = False
+            self._logout_worker = None
             self._shutdown_started = False
             self._shutdown_complete = False
             self._shutdown_worker = None
@@ -1163,37 +1189,38 @@ def run() -> int:
                     + type(cleanup_error).__name__ + ")."
                 )
 
-        def _logout(self):
-            if self.busy:
-                QMessageBox.information(
-                    self, "Request in progress",
-                    "Wait for the current response before signing out."
-                )
-                return
-            try:
-                if self.controller is not None:
-                    self.controller.logout()
-                elif self.sessions is not None:
-                    self.sessions.logout()
-            except Exception as exc:
-                # Cleanup may fail after the session has already been revoked.
-                # Never leave a sensitive transcript or stale controller visible
-                # while the authentication state is uncertain.
-                self.controller = None
-                self._return_to_login()
+        @Slot(object)
+        def _logout_finished(self, error: Any):
+            self._logout_started = False
+            self._logout_worker = None
+            self.controller = None
+            self._return_to_login()
+            if error is not None:
                 self.login_status.setText(
                     "Sign-out cleanup was incomplete. Verify session status before continuing."
                 )
                 QMessageBox.warning(
                     self, "Sign out",
-                    "Local conversation data was cleared and the login screen restored. "
-                    "Session revocation may not have completed; verify session status "
-                    "before continuing (" + type(exc).__name__ + ")."
+                    "Local cleanup was attempted, but session revocation may not have "
+                    "completed (" + type(error).__name__ + "). Verify session status."
                 )
+            else:
+                self.login_status.setText("You are signed out.")
+
+        def _logout(self):
+            if self._logout_started or self._shutdown_started:
                 return
-            self.controller = None
-            self._return_to_login()
-            self.login_status.setText("You are signed out.")
+            self._logout_started = True
+            self.setEnabled(False)
+            self.login_status.setText(
+                "Yuki is finishing active work before signing out…"
+            )
+            worker = LogoutWorker(self.controller, self.sessions)
+            worker.signals.finished.connect(self._logout_finished)
+            self._logout_worker = worker
+            # The single-thread pool guarantees this runs after the active
+            # request, so logout cannot close its runtime underneath inference.
+            self.pool.start(worker)
 
         @Slot(object)
         def _shutdown_finished(self, error: Any):
