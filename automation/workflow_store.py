@@ -15,6 +15,8 @@ import secrets
 import sqlite3
 from typing import Any
 
+from core.sqlite_file_security import prepare_private_sqlite_path
+
 
 class WorkflowStoreError(RuntimeError):
     """Base error for workflow persistence operations."""
@@ -91,8 +93,7 @@ class WorkflowRunStore:
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
