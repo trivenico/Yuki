@@ -251,6 +251,15 @@ class DurableSandboxExecutionWorker:
             raise PermissionError("an approved execution record is required")
         if approval.task_id != task.task_id or approval.task_fingerprint != task.fingerprint():
             raise PermissionError("approval does not bind to this exact execution task")
+        # A durable receipt is checked before approval verification so a
+        # legitimate retry still returns the original task after approval
+        # consumption. The receipt is bound to actor, approval and task.
+        prior = self.engine.get_submission_receipt(
+            goal_id, idempotency_key, actor_id=approval.actor_id,
+            approval_id=approval.approval_id, task_fingerprint=task.fingerprint(),
+        )
+        if prior is not None:
+            return prior
         if not callable(self.verify_approval) or self.verify_approval(approval, task) is not True:
             raise PermissionError("execution approval was not verified at submission")
         if str(self.sandbox.workspace) != str(Path(task.workspace).expanduser().resolve()):
@@ -276,6 +285,11 @@ class DurableSandboxExecutionWorker:
         return self.engine.submit(
             goal_id, EXECUTION_TASK_TYPE, payload,
             idempotency_key=idempotency_key, max_attempts=1,
+            submission_receipt={
+                "actor_id": approval.actor_id,
+                "approval_id": approval.approval_id,
+                "task_fingerprint": task.fingerprint(),
+            },
         )
 
     def run_once(self, *, lease_seconds: int = 180) -> Mapping[str, object] | None:
