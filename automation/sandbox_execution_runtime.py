@@ -11,7 +11,6 @@ from typing import Any
 
 from automation.execution_task import DurableSandboxExecutionWorker
 from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
-from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 from automation.sandbox_execution_approval import (
     SQLiteSandboxExecutionApprovalStore,
     SandboxExecutionAuditWriter,
