@@ -290,5 +290,32 @@ class ControllerTests(unittest.TestCase):
             self.controller.respond("after logout")
 
 
+    def test_logout_cancels_tasks_approved_by_the_revoked_session(self):
+        task = self.runtime.enqueue(
+            actor_id=self.identity.actor_id,
+            idempotency_key="desktop-logout-revokes-task",
+            name="approved background work",
+            steps=[{
+                "name": "research",
+                "action": "emit",
+                "argument": "prepare a research summary",
+                "requires_approval": True,
+            }],
+        )
+        approved = self.controller.approve_task(
+            task.task_id, expected_version=task.version,
+        )
+        self.assertEqual(approved.state, "queued")
+        self.assertTrue(self.controller.logout())
+        persisted = self.store.get(task.task_id)
+        self.assertEqual(persisted.state, "cancelled")
+        self.assertEqual(persisted.error_code, "session_revoked")
+        self.assertEqual(
+            self.store.list_task_events(task.task_id)[-1].payload["reason"],
+            "session_revoked",
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()
