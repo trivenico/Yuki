@@ -175,7 +175,7 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
         queued = worker.submit(
             goal, self.task, self.approval, idempotency_key="single-attempt",
         )
-        with self.assertRaisesRegex(RuntimeError, "simulated sandbox failure"):
+        with self.assertRaisesRegex(ExecutionOutcomeUnknown, "outcome is not proven"):
             worker.run_once()
         failed = engine.get_task(queued["id"])
         self.assertEqual(failed["state"], "failed")
