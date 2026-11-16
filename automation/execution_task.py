@@ -306,6 +306,9 @@ class DurableSandboxExecutionWorker:
                 consume_approval=self.consume_approval,
             )
             return self.engine.complete(claimed["id"], self.worker_id, dict(result))
+        except ExecutionOutcomeUnknown:
+            self.engine.fail_unknown_outcome(claimed["id"], self.worker_id)
+            raise
         except Exception:
             self.engine.fail(
                 claimed["id"], self.worker_id, "sandbox execution failed",
