@@ -493,7 +493,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             lambda *args: None, application,
             sandbox_execution_runtime=sandbox_runtime,
         )
-        with self.assertRaisesRegex(RuntimeError, "application"):
+        with self.assertRaisesRegex(RuntimeError, "storage close failed"):
             runtime.close()
         self.assertEqual(closed, ["sandbox"])
         self.assertTrue(runtime._closed)
