@@ -70,6 +70,8 @@ class ConversationMemoryStore:
         import uuid
         memory_id = uuid.uuid4().hex
         with self._connection() as db:
+            # Serialize per-database capacity checks across independent workers.
+            db.execute("BEGIN IMMEDIATE")
             count = db.execute(
                 "SELECT count(*) FROM conversation_memories WHERE owner_id = ?", (owner,)
             ).fetchone()[0]
