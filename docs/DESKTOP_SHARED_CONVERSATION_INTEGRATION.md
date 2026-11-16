@@ -28,10 +28,23 @@ surface adapter for that integration:
   marshal UI updates onto the Qt main thread.
 
 This is an integration seam, not yet a complete desktop bootstrap migration.
-The desktop composition root must still construct the shared runtime with the
-same reviewed provider/model adapter and store configuration as the other
-surfaces, pass the authenticated owner ID to the adapter, and close the
-application runtime exactly once during shutdown. Memory-consent integration and Qt-thread-safe streaming delivery remain
+The existing desktop launcher on the separate desktop-architecture branch still
+creates a fresh `CompanionApplicationService` and in-memory `ConversationSession`
+inside each `_open_session()` call. It does not construct
+`ConversationApplicationRuntime`. Replacing only the controller call would
+therefore leave two competing conversation engines and duplicate session state.
+
+The migration must be performed at the composition root: establish the
+relationship between the authenticated desktop `actor_id` and the runtime's
+`owner_id`, construct the canonical runtime with its reviewed agent loop and
+store, inject the adapter into the desktop controller, and make the lifecycle
+close that runtime exactly once. The existing provider's `generate_chat()`
+interface is not by itself proof that it satisfies the canonical agent-loop
+model contract; the provider/model adapter must be explicitly verified before
+composition. Keep desktop login/session revocation, memory-consent behavior, and
+supervised task authorization intact during that migration.
+
+Memory-consent integration and Qt-thread-safe streaming delivery remain
 separate follow-up work. The legacy `ConversationSession` stores its transcript
 only in process memory, so there is no durable legacy transcript database to
 migrate; any still-running legacy session would need an explicit, bounded
