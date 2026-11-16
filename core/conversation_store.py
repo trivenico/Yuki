@@ -219,11 +219,13 @@ class ConversationStore:
                     raise ValueError("each memory reference must contain memory_id, category, and score.")
                 if not isinstance(item["memory_id"], str) or not item["memory_id"].strip() or len(item["memory_id"]) > 128:
                     raise ValueError("memory reference ID is invalid.")
-                if item["category"] not in {"note", "preference", "lesson"}:
+                if not isinstance(item["category"], str) or item["category"] not in {"note", "preference", "lesson"}:
                     raise ValueError("memory reference category is invalid.")
                 score = item["score"]
-                if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
-                    raise ValueError("memory reference score must be finite numeric data.")
+                if (isinstance(score, bool) or not isinstance(score, (int, float))
+                        or (isinstance(score, float) and not math.isfinite(score))
+                        or abs(score) > 1_000_000_000_000):
+                    raise ValueError("memory reference score must be finite bounded numeric data.")
             encoded_references = json.dumps(memory_references, ensure_ascii=True, separators=(",", ":"))
             if len(encoded_references) > 4096:
                 raise ValueError("memory references exceed the storage limit.")
