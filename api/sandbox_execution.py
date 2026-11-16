@@ -9,6 +9,7 @@ from typing import Any
 from api.request_body import RequestBodyTooLarge, read_json_object
 from automation.execution_task import ExecutionApproval, SandboxExecutionTask
 from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
+from core.durable_task_engine import TaskConflict, TaskNotFound
 
 _MAX_BODY = 32_768
 _TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -126,8 +127,10 @@ class AuthenticatedSandboxExecutionAPI:
             return await self._respond(send, 403, {"error": "forbidden"})
         except (ValueError, TypeError, KeyError):
             return await self._respond(send, 400, {"error": "invalid_request"})
-        except LookupError:
+        except TaskNotFound:
             return await self._respond(send, 404, {"error": "not_found"})
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "task_conflict"})
 
     def _task(self, payload: dict) -> SandboxExecutionTask:
         required = {"task_id", "image", "argv"}
