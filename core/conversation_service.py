@@ -408,6 +408,7 @@ class ConversationService:
             role="assistant", content=answer,
             idempotency_key=f"assistant:{request_id}",
             expected_version=user_result["version"],
+            memory_references=memory_references,
         )
         self.store.finish_generation(
             owner_id=owner_id, conversation_id=conversation_id,
@@ -421,9 +422,8 @@ class ConversationService:
             "version": assistant_result["version"],
             "model_turns": model_turns,
             "tool_calls": tool_calls,
-            # IDs/categories/scores explain which saved facts informed this
-            # generated turn without echoing their potentially sensitive text.
-            "memory_references": memory_references,
+            # Read committed metadata back so the reply and history agree.
+            "memory_references": assistant_result["message"].get("memory_references"),
             "replayed": False,
         }
 
@@ -443,7 +443,7 @@ class ConversationService:
                 "model_turns": 0,
                 "tool_calls": 0,
                 # Older/replayed turns do not have persisted provenance yet.
-                "memory_references": None,
+                "memory_references": following[0].get("memory_references"),
                 "replayed": True,
             }
         raise ConversationConflict(
