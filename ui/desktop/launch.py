@@ -1095,30 +1095,26 @@ def run() -> int:
                 )
                 event.ignore()
                 return
-            cleanup_errors = []
-            try:
+            def revoke_active_session():
                 if self.controller is not None:
                     self.controller.logout()
                 elif self.sessions is not None:
                     self.sessions.logout()
+
+            try:
+                if self.lifecycle is not None:
+                    self.lifecycle.close(before_close=revoke_active_session)
+                else:
+                    revoke_active_session()
             except Exception as exc:
-                cleanup_errors.append(exc)
-            finally:
-                self.controller = None
-
-            if self.lifecycle is not None:
-                try:
-                    self.lifecycle.close()
-                except Exception as exc:
-                    cleanup_errors.append(exc)
-
-            if cleanup_errors:
                 QMessageBox.warning(
                     self, "Yuki shutdown",
                     "Yuki could not complete every cleanup operation ("
-                    + type(cleanup_errors[0]).__name__
+                    + type(exc).__name__
                     + "). Remaining cleanup was attempted; check the application logs."
                 )
+            finally:
+                self.controller = None
             event.accept()
 
     app = QApplication.instance() or QApplication(sys.argv)
