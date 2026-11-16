@@ -1,6 +1,7 @@
 """Adapt Yuki provider APIs to the message-based bounded agent loop."""
 from __future__ import annotations
 
+import threading
 from typing import Any, Mapping, Sequence
 
 
@@ -16,6 +17,9 @@ class ProviderAgentAdapter:
         if provider is None or not callable(getattr(provider, "generate_chat", None)):
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
         self.provider = provider
+        # Provider SDK clients are not uniformly thread-safe. Serialize access
+        # through this adapter; independent adapter instances remain independent.
+        self._provider_lock = threading.RLock()
 
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
@@ -28,7 +32,13 @@ class ProviderAgentAdapter:
         stream = getattr(self.provider, "generate_chat_stream", None)
         if not callable(stream):
             raise RuntimeError("configured provider does not support native streaming.")
-        return stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
+        def locked_events():
+            # Keep the lock for the entire stream lifetime, not just generator creation.
+            with self._provider_lock:
+                yield from stream(
+                    messages=list(messages), tools=list(tools), tool_choice=tool_choice,
+                )
+        return locked_events()
 
     @staticmethod
     def _validate_inputs(messages, tools, tool_choice):
@@ -59,9 +69,10 @@ class ProviderAgentAdapter:
             {"role": message["role"], "content": message["content"]}
             for message in messages
         ]
-        response = self.provider.generate_chat(
-            messages=normalized, tools=list(tools), tool_choice=tool_choice,
-        )
+        with self._provider_lock:
+            response = self.provider.generate_chat(
+                messages=normalized, tools=list(tools), tool_choice=tool_choice,
+            )
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
             raise ValueError("provider returned an unsupported response envelope.")
         text = response.get("text", "")
