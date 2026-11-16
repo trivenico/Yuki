@@ -221,6 +221,22 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "workspace does not match"):
             worker.submit(goal, changed, approval, idempotency_key="wrong-workspace")
 
+    def test_execution_worker_cannot_cancel_other_task_types(self):
+        engine = DurableTaskEngine(":memory:")
+        self.addCleanup(engine.close)
+        goal = engine.create_goal()
+        text_task = engine.submit(
+            goal, "specialist.text", {}, idempotency_key="unrelated-task",
+        )
+        worker = DurableSandboxExecutionWorker(
+            engine, worker_id="sandbox-worker", sandbox=self.sandbox,
+            verify_approval=lambda _approval, _task: True,
+            audit=lambda _event: True,
+        )
+        with self.assertRaisesRegex(PermissionError, "different task type"):
+            worker.cancel(text_task["id"])
+        self.assertEqual(engine.get_task(text_task["id"])["state"], "queued")
+
 
 if __name__ == "__main__":
     unittest.main()
