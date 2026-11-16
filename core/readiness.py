@@ -130,20 +130,30 @@ def build_readiness_report(
     # The canonical component catalog is a read-only architecture contract.
     # Report its validation separately from runtime feature detection.
     catalog = component_catalog()
-    catalog_errors = validate_component_catalog(
-        catalog, repository_root=Path(__file__).resolve().parents[1]
-    )
-    capabilities["architecture_catalog"] = (
-        Capability(
-            "verified",
-            f"{len(catalog)} component contracts and dependency references validated.",
+    repository_root = Path(__file__).resolve().parents[1]
+    # Source-file evidence is intentionally excluded from published wheels.
+    # Do not misreport an installed distribution as a broken architecture
+    # when the repository's test/evidence tree is simply not shipped.
+    if not (repository_root / "tests" / "test_component_catalog.py").is_file():
+        capabilities["architecture_catalog"] = Capability(
+            "not_verified",
+            "Component contracts are bundled, but repository source/test evidence is not installed; run validation from a source checkout.",
         )
-        if not catalog_errors
-        else Capability(
-            "unavailable",
-            f"Component catalog validation failed ({len(catalog_errors)} issue(s)).",
+    else:
+        catalog_errors = validate_component_catalog(
+            catalog, repository_root=repository_root
         )
-    )
+        capabilities["architecture_catalog"] = (
+            Capability(
+                "verified",
+                f"{len(catalog)} component contracts and dependency references validated.",
+            )
+            if not catalog_errors
+            else Capability(
+                "unavailable",
+                f"Component catalog validation failed ({len(catalog_errors)} issue(s)).",
+            )
+        )
 
     if component_registry is None:
         capabilities["component_runtime"] = Capability(
