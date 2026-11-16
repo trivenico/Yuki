@@ -82,6 +82,10 @@ ApprovalVerifier = Callable[[ExecutionApproval, SandboxExecutionTask], bool]
 AuditWriter = Callable[[Mapping[str, object]], object]
 
 
+class ExecutionOutcomeUnknown(RuntimeError):
+    """A sandbox side effect may have occurred but durable outcome recording failed."""
+
+
 def execute_approved_task(
     task: SandboxExecutionTask,
     approval: ExecutionApproval,
@@ -136,14 +140,50 @@ def execute_approved_task(
             write_workspace=task.write_workspace,
             max_output_bytes=task.max_output_bytes,
         )
-    except Exception:
-        if audit({**audit_base, "event": "execution.failed"}) is False:
-            raise RuntimeError("execution failure audit was not durably accepted")
+    except Exception as execution_error:
+        try:
+            accepted = audit({**audit_base, "event": "execution.failed"})
+        except Exception as audit_error:
+            try:
+                audit({**audit_base, "event": "execution.unknown"})
+            except Exception:
+                pass
+            raise ExecutionOutcomeUnknown(
+                "sandbox execution failed and its failure audit could not be persisted"
+            ) from audit_error
+        if accepted is False:
+            try:
+                audit({**audit_base, "event": "execution.unknown"})
+            except Exception:
+                pass
+            raise ExecutionOutcomeUnknown(
+                "sandbox execution failed but its failure audit was rejected"
+            ) from execution_error
         raise
-    if audit({**audit_base, "event": "execution.completed"}) is False:
-        raise RuntimeError("execution completion audit was not durably accepted")
     if not isinstance(result, Mapping):
-        raise RuntimeError("sandbox returned an invalid execution result")
+        try:
+            audit({**audit_base, "event": "execution.unknown"})
+        except Exception:
+            pass
+        raise ExecutionOutcomeUnknown("sandbox returned an invalid result after dispatch")
+    try:
+        accepted = audit({**audit_base, "event": "execution.completed"})
+    except Exception as audit_error:
+        try:
+            audit({**audit_base, "event": "execution.unknown"})
+        except Exception:
+            pass
+        raise ExecutionOutcomeUnknown(
+            "sandbox may have completed but its completion audit could not be persisted"
+        ) from audit_error
+    if accepted is False:
+        try:
+            audit({**audit_base, "event": "execution.unknown"})
+        except Exception:
+            pass
+        raise ExecutionOutcomeUnknown(
+            "sandbox may have completed but its completion audit was rejected"
+        )
     return result
 
 
