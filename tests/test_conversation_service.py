@@ -454,5 +454,57 @@ class ConversationServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "service is closed"):
             service.create(owner_id="owner-a")
 
+
+    def test_request_capacity_rejects_overload_and_recovers_after_completion(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_model(*, messages, tools, tool_choice):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release model")
+            return {"text": "capacity recovered", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            blocking_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop, max_active_requests=1)
+        first_conversation = service.create(owner_id="owner-a")
+        second_conversation = service.create(owner_id="owner-a")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=first_conversation["conversation_id"],
+                user_text="occupy capacity", request_id="capacity-1",
+                expected_version=0, tools=[],
+            )
+            self.assertTrue(entered.wait(timeout=3))
+            with self.assertRaisesRegex(RuntimeError, "at capacity"):
+                service.reply(
+                    owner_id="owner-a",
+                    conversation_id=second_conversation["conversation_id"],
+                    user_text="over capacity", request_id="capacity-2",
+                    expected_version=0, tools=[],
+                )
+            self.assertEqual(service._active_requests, 1)
+            release.set()
+            self.assertEqual(first.result(timeout=5)["status"], "completed")
+        self.assertEqual(service._active_requests, 0)
+        recovered = service.reply(
+            owner_id="owner-a",
+            conversation_id=second_conversation["conversation_id"],
+            user_text="capacity is free", request_id="capacity-3",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(recovered["status"], "completed")
+        self.assertEqual(service._active_requests, 0)
+        self.assertEqual(service._conversation_locks, {})
+
+    def test_request_capacity_must_be_a_positive_integer(self):
+        for value in (0, -1, True, 1.5):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ConversationService(self.store, self.loop, max_active_requests=value)
+
 if __name__ == "__main__":
     unittest.main()
