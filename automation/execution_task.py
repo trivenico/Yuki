@@ -287,6 +287,11 @@ class DurableSandboxExecutionWorker:
         return self.engine.submit(
             goal_id, EXECUTION_TASK_TYPE, payload,
             idempotency_key=idempotency_key, max_attempts=1,
+            submission_receipt={
+                "actor_id": approval.actor_id,
+                "approval_id": approval.approval_id,
+                "task_fingerprint": approval.task_fingerprint,
+            },
         )
 
     def run_once(self, *, lease_seconds: int = 180) -> Mapping[str, object] | None:
