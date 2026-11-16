@@ -155,8 +155,14 @@ class DesktopCompanionController:
         errors: list[Exception] = []
         revoked = False
         try:
-            # Revoke first: a local cleanup failure must never leave credentials
-            # active merely because clearing UI/session state raised an error.
+            # Cancel work authorized by this exact session before revoking its
+            # credentials. The store serializes this against worker claims.
+            self.application.revoke_session_tasks(session_id=self.identity.session_id)
+        except Exception as exc:
+            errors.append(exc)
+
+        try:
+            # Revoke credentials even if durable task cleanup failed.
             revoked = self.sessions.logout()
         except Exception as exc:
             errors.append(exc)
