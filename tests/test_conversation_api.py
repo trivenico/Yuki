@@ -659,5 +659,47 @@ class ConversationAPITests(unittest.TestCase):
             proposal.proposal_id, principal_id=self.user.user_id,
         ).execution_state, "executing")
 
+    def test_memory_backup_export_is_authenticated_encrypted_and_owner_scoped(self):
+        try:
+            from core.memory_backup_envelope import decrypt_backup
+            import base64
+        except ImportError:
+            self.skipTest("cryptography is not installed")
+
+        memory_store = ConversationMemoryStore(
+            Path(self.tempdir.name) / "memory-backup.sqlite",
+        )
+        self.app.conversations.memory_store = memory_store
+        memory_store.remember(owner_id=self.user.user_id, content="private owner memory")
+        memory_store.remember(owner_id="another-owner", content="must not be exported")
+        password = "a sufficiently long backup passphrase"
+
+        status, _, _ = self.request("POST", "/v1/memories/backup", {"password": password})
+        self.assertEqual(status, 401)
+
+        status, data, _ = self.request(
+            "POST", "/v1/memories/backup",
+            {"password": password, "owner_id": "another-owner"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "invalid_request")
+
+        status, data, headers = self.request(
+            "POST", "/v1/memories/backup", {"password": password}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get(b"cache-control"), b"no-store")
+        envelope = base64.b64decode(data["envelope_base64"], validate=True)
+        self.assertNotIn(b"private owner memory", envelope)
+        snapshot = json.loads(decrypt_backup(envelope, password).decode("utf-8"))
+        self.assertEqual(snapshot["owner_id"], self.user.user_id)
+        self.assertEqual(snapshot["memory_count"], 1)
+        self.assertEqual(
+            [item["content"] for item in snapshot["memories"]],
+            ["private owner memory"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
