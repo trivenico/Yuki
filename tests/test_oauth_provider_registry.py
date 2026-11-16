@@ -1,4 +1,5 @@
 import unittest
+from core.network_firewall import NetworkFirewall
 
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from core.oauth_provider_registry import (
@@ -9,11 +10,12 @@ from core.oauth_provider_registry import (
 
 class Service:
     provider_id = "sample"
+    def __init__(self, firewall_policy=None): self.firewall_policy = firewall_policy
     def begin(self, **kwargs): return {}
     def complete(self, **kwargs): return {}
 
 
-def prepared(provider_id="sample"):
+def prepared(provider_id="sample", firewall_policy=None):
     return PreparedOAuthProvider(
         provider_id=provider_id,
         issuer="https://auth.example.com",
@@ -22,7 +24,7 @@ def prepared(provider_id="sample"):
         registration_method="dynamic_client_registration",
         redirect_uri=f"https://yuki.example.com/oauth/callback/{provider_id}",
         scopes=("jobs.read",),
-        authorization_service=Service(),
+        authorization_service=Service(firewall_policy),
     )
 
 
@@ -92,6 +94,24 @@ class ProviderRegistryTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             registry._services["other"] = Service()
         self.assertIsNone(registry.authorization_service_for_provider("../sample"))
+
+    def test_shared_firewall_is_enforced_for_all_registered_services(self):
+        policy = NetworkFirewall(allowed_hosts=("auth.example.com",))
+        registry = PreparedOAuthProviderRegistry(
+            {"sample": prepared(firewall_policy=policy)},
+            {"sample": OAuthProviderPresentation("Sample")},
+            firewall_policy=policy,
+        )
+        self.assertTrue(registry.uses_firewall_policy(policy))
+        self.assertFalse(registry.uses_firewall_policy(NetworkFirewall(
+            allowed_hosts=("auth.example.com",)
+        )))
+        with self.assertRaisesRegex(ValueError, "exact shared firewall policy"):
+            PreparedOAuthProviderRegistry(
+                {"sample": prepared()},
+                {"sample": OAuthProviderPresentation("Sample")},
+                firewall_policy=policy,
+            )
 
     def test_presentation_rejects_control_characters(self):
         with self.assertRaisesRegex(ValueError, "display_name"):
