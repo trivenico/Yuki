@@ -89,6 +89,7 @@ def execute_approved_task(
     sandbox: DockerSandbox,
     verify_approval: ApprovalVerifier,
     audit: AuditWriter,
+    consume_approval: Callable[[ExecutionApproval, SandboxExecutionTask], bool] | None = None,
 ) -> Mapping[str, object]:
     """Verify exact-task approval, audit, then invoke the guarded sandbox once.
 
@@ -115,6 +116,9 @@ def execute_approved_task(
         raise PermissionError("task workspace does not match the configured sandbox workspace")
     if not callable(audit):
         raise TypeError("a durable audit writer is required")
+    if consume_approval is not None:
+        if not callable(consume_approval) or consume_approval(approval, task) is not True:
+            raise PermissionError("execution approval could not be atomically consumed")
 
     audit_base = {
         "task_id": task.task_id,
@@ -162,6 +166,7 @@ class DurableSandboxExecutionWorker:
         sandbox: DockerSandbox,
         verify_approval: ApprovalVerifier,
         audit: AuditWriter,
+        consume_approval: Callable[[ExecutionApproval, SandboxExecutionTask], bool] | None = None,
     ) -> None:
         if not isinstance(engine, DurableTaskEngine):
             raise TypeError("engine must be a DurableTaskEngine")
@@ -176,6 +181,7 @@ class DurableSandboxExecutionWorker:
         self.sandbox = sandbox
         self.verify_approval = verify_approval
         self.audit = audit
+        self.consume_approval = consume_approval
 
     @classmethod
     def from_trusted_stores(
@@ -193,6 +199,7 @@ class DurableSandboxExecutionWorker:
         return cls(
             engine, worker_id=worker_id, sandbox=sandbox,
             verify_approval=approval_store.verify, audit=audit_writer,
+            consume_approval=approval_store.consume,
         )
 
     def submit(
@@ -260,6 +267,7 @@ class DurableSandboxExecutionWorker:
             result = execute_approved_task(
                 task, approval, sandbox=self.sandbox,
                 verify_approval=self.verify_approval, audit=self.audit,
+                consume_approval=self.consume_approval,
             )
             return self.engine.complete(claimed["id"], self.worker_id, dict(result))
         except Exception:
