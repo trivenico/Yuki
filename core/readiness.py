@@ -96,6 +96,7 @@ def build_readiness_report(
     module_finder: Callable[[str], object] = importlib.util.find_spec,
     ollama_probe: Callable[[str, float], Capability] = _probe_ollama,
     component_registry: ComponentRegistry | None = None,
+    repository_root: str | Path | None = None,
 ) -> ReadinessReport:
     """Build a deterministic, side-effect-free report of locally detectable features."""
     env = os.environ if environ is None else environ
@@ -130,18 +131,18 @@ def build_readiness_report(
     # The canonical component catalog is a read-only architecture contract.
     # Report its validation separately from runtime feature detection.
     catalog = component_catalog()
-    repository_root = Path(__file__).resolve().parents[1]
+    catalog_root = Path(repository_root).resolve() if repository_root is not None else Path(__file__).resolve().parents[1]
     # Source-file evidence is intentionally excluded from published wheels.
     # Do not misreport an installed distribution as a broken architecture
     # when the repository's test/evidence tree is simply not shipped.
-    if not (repository_root / "tests" / "test_component_catalog.py").is_file():
+    if not (catalog_root / "tests" / "test_component_catalog.py").is_file():
         capabilities["architecture_catalog"] = Capability(
             "not_verified",
             "Component contracts are bundled, but repository source/test evidence is not installed; run validation from a source checkout.",
         )
     else:
         catalog_errors = validate_component_catalog(
-            catalog, repository_root=repository_root
+            catalog, repository_root=catalog_root
         )
         capabilities["architecture_catalog"] = (
             Capability(
