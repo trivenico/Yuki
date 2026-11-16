@@ -9,6 +9,17 @@ class _Engine:
     def __init__(self, recovered=0):
         self.recovered = recovered
         self.recovery_calls = 0
+        self.registered = []
+        self.stopped = []
+
+    def register_worker(self, worker_id, process_id):
+        self.registered.append((worker_id, process_id))
+
+    def heartbeat_worker(self, worker_id):
+        return True
+
+    def stop_worker(self, worker_id):
+        self.stopped.append(worker_id)
 
     def recover_expired_leases(self):
         self.recovery_calls += 1
@@ -20,6 +31,7 @@ class _Worker:
         self.event = event
         self.results = list(results)
         self.calls = 0
+        self.worker_id = "test-worker"
 
     def run_once(self, *, lease_seconds):
         assert lease_seconds == 180
@@ -60,6 +72,7 @@ def test_worker_process_finishes_current_task_before_stopping():
     run_worker(_runtime(engine, worker), stop_event=event, poll_interval=0.1)
     assert worker.calls == 1
     assert engine.recovery_calls == 1
+    assert engine.stopped == ["test-worker"]
 
 
 def test_worker_poll_interval_rejects_invalid_values():
