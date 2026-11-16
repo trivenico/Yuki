@@ -143,3 +143,79 @@ class ConversationMemoryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "completed")
         self.assertNotIn("untrusted user memory", self.observed[0][0]["content"])
+
+
+class ConversationMemoryRetentionTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.path = Path(self.tempdir.name) / "memory.sqlite3"
+        self.memory = ConversationMemoryStore(self.path)
+
+    def test_expiring_memory_is_hidden_from_list_and_search_then_pruned(self):
+        expiring = self.memory.remember(
+            owner_id="alice", content="Temporary project context",
+            expires_in_seconds=60,
+        )
+        permanent = self.memory.remember(
+            owner_id="alice", content="Permanent project preference",
+        )
+        with self.memory._connection() as db:
+            db.execute(
+                "UPDATE conversation_memories SET expires_at = ? WHERE memory_id = ?",
+                ("2000-01-01T00:00:00+00:00", expiring["memory_id"]),
+            )
+        self.assertEqual(
+            [item["memory_id"] for item in self.memory.list(owner_id="alice")],
+            [permanent["memory_id"]],
+        )
+        self.assertEqual(self.memory.search(owner_id="alice", query="Temporary project"), [])
+        self.assertEqual(self.memory.prune_expired(owner_id="alice"), 1)
+        self.assertEqual(self.memory.prune_expired(owner_id="alice"), 0)
+
+    def test_expiry_pruning_can_be_scoped_to_owner(self):
+        alice = self.memory.remember(
+            owner_id="alice", content="Alice temporary", expires_in_seconds=60,
+        )
+        bob = self.memory.remember(
+            owner_id="bob", content="Bob temporary", expires_in_seconds=60,
+        )
+        with self.memory._connection() as db:
+            db.execute(
+                "UPDATE conversation_memories SET expires_at = ?",
+                ("2000-01-01T00:00:00+00:00",),
+            )
+        self.assertEqual(self.memory.prune_expired(owner_id="alice"), 1)
+        self.assertTrue(self.memory.delete(owner_id="bob", memory_id=bob["memory_id"]))
+        self.assertFalse(self.memory.delete(owner_id="alice", memory_id=alice["memory_id"]))
+
+    def test_expiration_bounds_reject_bool_and_unreasonable_values(self):
+        for value in (True, False, 0, 59, 315_360_001, "3600"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.memory.remember(
+                    owner_id="alice", content="bounded", expires_in_seconds=value,
+                )
+
+    def test_existing_memory_database_is_migrated_without_losing_rows(self):
+        import sqlite3
+        legacy = Path(self.tempdir.name) / "legacy.sqlite3"
+        db = sqlite3.connect(legacy)
+        db.execute("""
+            CREATE TABLE conversation_memories (
+                memory_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )
+        """)
+        db.execute(
+            "INSERT INTO conversation_memories(memory_id, owner_id, category, content) "
+            "VALUES ('legacy-id', 'alice', 'note', 'preserve me')"
+        )
+        db.commit()
+        db.close()
+        migrated = ConversationMemoryStore(legacy)
+        item = migrated.list(owner_id="alice")[0]
+        self.assertEqual(item["memory_id"], "legacy-id")
+        self.assertIsNone(item["expires_at"])
