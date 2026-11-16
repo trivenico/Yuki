@@ -13,6 +13,9 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
 from core.conversation_memory_store import ConversationMemoryStore
+from core.guarded_tool_runtime import GuardedToolRuntime
+from core.structured_tool_protocol import StructuredToolProtocol
+from providers.agent_adapter import ProviderAgentAdapter
 
 
 @dataclass
@@ -22,6 +25,7 @@ class ConversationApplicationRuntime:
     conversations: ConversationService
     store: Any
     owner_id: str | None = None
+    provider_adapter: ProviderAgentAdapter | None = None
     close_callbacks: tuple[Callable[[], None], ...] = ()
     _closed: bool = False
     _lock: RLock = field(default_factory=RLock, repr=False, compare=False)
@@ -139,3 +143,59 @@ def build_conversation_application_runtime(
             except Exception:
                 pass
         raise
+
+
+
+def build_provider_backed_conversation_application_runtime(
+    config: dict[str, Any],
+    *,
+    provider: Any,
+    guarded_runtime: GuardedToolRuntime,
+    owner_id: str | None = None,
+    store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    close_callbacks: tuple[Callable[[], None], ...] = (),
+    memory_store: ConversationMemoryStore | None = None,
+    max_model_turns: int = 8,
+    max_tool_calls: int = 20,
+    max_duration_seconds: float = 120,
+    max_transcript_chars: int = 80_000,
+) -> ConversationApplicationRuntime:
+    """Build the canonical provider -> bounded agent -> guarded tools -> durable chat stack.
+
+    The provider is owned by this runtime and is closed after conversations are
+    fenced and persistence is closed. Tool authorization remains the supplied
+    GuardedToolRuntime's responsibility; this factory never grants capabilities.
+    """
+    if not isinstance(guarded_runtime, GuardedToolRuntime):
+        raise TypeError("guarded_runtime must be a GuardedToolRuntime.")
+    adapter = ProviderAgentAdapter(provider)
+    loop = AgentExecutionLoop(
+        adapter, StructuredToolProtocol(guarded_runtime),
+        stream_model=adapter.stream_model,
+        max_model_turns=max_model_turns,
+        max_tool_calls=max_tool_calls,
+        max_duration_seconds=max_duration_seconds,
+        max_transcript_chars=max_transcript_chars,
+    )
+    provider_close = getattr(provider, "close", None)
+    if provider_close is not None and not callable(provider_close):
+        raise TypeError("provider close attribute must be callable when present.")
+    callbacks = ((provider_close,) if callable(provider_close) else ()) + close_callbacks
+    try:
+        runtime = build_conversation_application_runtime(
+            config, agent_loop=loop, owner_id=owner_id, store_factory=store_factory,
+            agent_loop_for_owner=agent_loop_for_owner, close_callbacks=callbacks,
+            memory_store=memory_store,
+        )
+    except Exception:
+        # The lower-level builder cleans its own resources; this factory owns
+        # the provider even if store/service composition fails.
+        if callable(provider_close):
+            try:
+                provider_close()
+            except Exception:
+                pass
+        raise
+    runtime.provider_adapter = adapter
+    return runtime
