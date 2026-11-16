@@ -8,6 +8,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+import json
+import math
 import sqlite3
 
 from core.sqlite_file_security import prepare_private_sqlite_path
@@ -64,6 +66,7 @@ class ConversationStore:
                     content TEXT NOT NULL,
                     idempotency_key TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    memory_references TEXT,
                     UNIQUE(conversation_id, sequence),
                     UNIQUE(conversation_id, idempotency_key)
                 );
@@ -93,6 +96,16 @@ class ConversationStore:
                 CREATE INDEX IF NOT EXISTS idx_generation_runs_owner_status
                     ON conversation_generation_runs(owner_id, status, updated_at);
             """)
+            # Serialize additive schema upgrades across concurrent application starts.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                columns = {row["name"] for row in db.execute("PRAGMA table_info(conversation_messages)")}
+                if "memory_references" not in columns:
+                    db.execute("ALTER TABLE conversation_messages ADD COLUMN memory_references TEXT")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
 
     def health_check(self) -> bool:
         """Verify the configured SQLite store can execute a read-only probe."""
@@ -131,6 +144,7 @@ class ConversationStore:
             "role": row["role"],
             "content": row["content"],
             "created_at": row["created_at"],
+            **({"memory_references": json.loads(row["memory_references"])} if row["role"] == "assistant" and row["memory_references"] is not None else ({"memory_references": None} if row["role"] == "assistant" else {})),
         }
 
     @contextmanager
@@ -191,6 +205,7 @@ class ConversationStore:
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
         generation_request_id: str | None = None,
+        memory_references: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -202,6 +217,25 @@ class ConversationStore:
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         if generation_request_id is not None and (role != "user" or not isinstance(generation_request_id, str) or not generation_request_id.strip() or len(generation_request_id) > 160):
             raise ValueError("generation_request_id must be non-empty text for user messages.")
+        encoded_references = None
+        if memory_references is not None:
+            if role != "assistant" or not isinstance(memory_references, list) or len(memory_references) > 5:
+                raise ValueError("memory_references must be a list of at most five assistant references.")
+            for item in memory_references:
+                if not isinstance(item, dict) or set(item) != {"memory_id", "category", "score"}:
+                    raise ValueError("each memory reference must contain memory_id, category, and score.")
+                if not isinstance(item["memory_id"], str) or not item["memory_id"].strip() or len(item["memory_id"]) > 128:
+                    raise ValueError("memory reference ID is invalid.")
+                if not isinstance(item["category"], str) or item["category"] not in {"note", "preference", "lesson"}:
+                    raise ValueError("memory reference category is invalid.")
+                score = item["score"]
+                if (isinstance(score, bool) or not isinstance(score, (int, float))
+                        or (isinstance(score, float) and not math.isfinite(score))
+                        or abs(score) > 1_000_000_000_000):
+                    raise ValueError("memory reference score must be finite bounded numeric data.")
+            encoded_references = json.dumps(memory_references, ensure_ascii=True, separators=(",", ":"))
+            if len(encoded_references) > 4096:
+                raise ValueError("memory references exceed the storage limit.")
         if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise ValueError("expected_version must be a non-negative integer.")
         now, message_id = self._now(), str(uuid.uuid4())
@@ -237,9 +271,9 @@ class ConversationStore:
                 sequence = conversation["version"] + 1
                 db.execute(
                     """INSERT INTO conversation_messages
-                       (message_id, conversation_id, sequence, role, content, idempotency_key, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (message_id, conversation_id, sequence, role, content, idempotency_key.strip(), now),
+                       (message_id, conversation_id, sequence, role, content, idempotency_key, created_at, memory_references)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (message_id, conversation_id, sequence, role, content, idempotency_key.strip(), now, encoded_references),
                 )
                 title = conversation["title"]
                 if role == "user" and sequence == 1 and title == "New conversation":

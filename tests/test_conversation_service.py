@@ -145,6 +145,33 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIn("untrusted user memory", system_message["content"])
         self.assertIn("I prefer concise answers", system_message["content"])
 
+    def test_memory_provenance_survives_restart_and_idempotent_replay(self):
+        memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories-durable.sqlite3")
+        saved = memory_store.remember(
+            owner_id="owner-a", category="preference",
+            content="I prefer concise answers with practical examples.",
+        )
+        service = ConversationService(self.store, self.loop, memory_store=memory_store)
+        first = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="I prefer concise answers, please", request_id="durable-memory",
+            expected_version=0, tools=[],
+        )
+        reopened_store = ConversationStore(Path(self.tempdir.name) / "chat.sqlite3")
+        reopened_service = ConversationService(reopened_store, self.loop, memory_store=memory_store)
+        replay = reopened_service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="I prefer concise answers, please", request_id="durable-memory",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(first["memory_references"][0]["memory_id"], saved["memory_id"])
+        self.assertEqual(replay["memory_references"], first["memory_references"])
+        self.assertTrue(replay["replayed"])
+        history = reopened_service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual(history[-1]["memory_references"], first["memory_references"])
+
     def test_saved_memory_is_never_retrieved_across_owners(self):
         memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories-isolation.sqlite3")
         memory_store.remember(

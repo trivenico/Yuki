@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 
@@ -40,6 +41,64 @@ class ConversationStoreTests(unittest.TestCase):
         )
         self.assertEqual([m["role"] for m in messages], ["user", "assistant"])
         self.assertEqual([m["sequence"] for m in messages], [1, 2])
+
+    def test_assistant_memory_provenance_persists_and_is_owner_scoped(self):
+        references = [{"memory_id": "memory-1", "category": "preference", "score": 1.25}]
+        saved = self.store.append_message(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            role="assistant", content="A grounded answer", idempotency_key="assistant-provenance",
+            expected_version=0, memory_references=references,
+        )
+        self.assertEqual(saved["message"]["memory_references"], references)
+        reopened = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+        history = reopened.list_messages(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual(history[0]["memory_references"], references)
+        with self.assertRaises(ConversationNotFound):
+            reopened.list_messages(
+                owner_id=self.other_owner, conversation_id=self.conversation["conversation_id"],
+            )
+
+    def test_memory_provenance_rejects_user_messages_and_invalid_metadata(self):
+        invalid = [
+            [{"memory_id": "x", "category": "system", "score": 1.0}],
+            [{"memory_id": "x", "category": "note", "score": float("nan")}],
+            [{"memory_id": "x", "category": "note", "score": True}],
+            [{"memory_id": "x", "category": "note"}],
+        ]
+        for index, references in enumerate(invalid):
+            with self.subTest(references=references), self.assertRaises(ValueError):
+                self.store.append_message(
+                    owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+                    role="assistant", content="answer", idempotency_key=f"bad-provenance-{index}",
+                    memory_references=references,
+                )
+        with self.assertRaises(ValueError):
+            self.store.append_message(
+                owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+                role="user", content="question", idempotency_key="user-with-provenance",
+                memory_references=[],
+            )
+
+    def test_memory_provenance_schema_migration_preserves_existing_messages(self):
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            role="assistant", content="Legacy answer", idempotency_key="legacy-assistant",
+            expected_version=0,
+        )
+        db = sqlite3.connect(self.store.database_path)
+        try:
+            db.execute("ALTER TABLE conversation_messages DROP COLUMN memory_references")
+            db.commit()
+        finally:
+            db.close()
+        migrated = ConversationStore(self.store.database_path)
+        history = migrated.list_messages(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual(history[0]["content"], "Legacy answer")
+        self.assertIsNone(history[0]["memory_references"])
 
     def test_owner_scope_hides_conversation_and_messages(self):
         conversation_id = self.conversation["conversation_id"]
