@@ -1,5 +1,6 @@
 """Tests for the desktop adapter over the canonical conversation runtime."""
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -116,6 +117,44 @@ class DesktopConversationAdapterTests(unittest.TestCase):
         self.assertEqual(replay["answer"], first["answer"])
         self.assertTrue(replay["replayed"])
         self.assertEqual(len(self.observed), 1)
+
+    def test_selection_can_change_while_model_generation_is_running(self):
+        started = threading.Event()
+        release = threading.Event()
+        results = []
+        errors = []
+        original_reply = self.application.conversations.reply
+
+        def blocking_reply(**kwargs):
+            started.set()
+            if not release.wait(timeout=3):
+                raise TimeoutError("test generation was not released")
+            return original_reply(**kwargs)
+
+        self.application.conversations.reply = blocking_reply
+
+        def send_turn():
+            try:
+                results.append(self.adapter.send("Background turn", request_id="background-request"))
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=send_turn)
+        worker.start()
+        self.assertTrue(started.wait(timeout=1))
+        try:
+            # This used to block until model inference completed because send()
+            # held the same lock used by clear_selection().
+            self.adapter.clear_selection()
+            self.assertIsNone(self.adapter.conversation_id)
+        finally:
+            release.set()
+            worker.join(timeout=3)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["answer"], "Canonical runtime reply")
 
     def test_closed_runtime_rejects_desktop_operations(self):
         self.application.close()
