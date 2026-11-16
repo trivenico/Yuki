@@ -75,7 +75,7 @@ class AuthenticatedSandboxExecutionAPI:
                     "task_fingerprint": approval.task_fingerprint,
                 })
 
-            goal_match = re.fullmatch(r"/v1/sandbox/goals/([0-9a-f]{32})/tasks", path)
+            goal_match = re.fullmatch(r"/v1/sandbox/goals/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/tasks", path)
             if goal_match and method == "POST":
                 payload = await self._body(receive)
                 if set(payload) != {"task", "approval_id"} or not isinstance(payload["task"], dict):
@@ -98,7 +98,7 @@ class AuthenticatedSandboxExecutionAPI:
                 )
                 return await self._respond(send, 202, {"task": self._summary(queued)})
 
-            goal_list = re.fullmatch(r"/v1/sandbox/goals/([0-9a-f]{32})/tasks", path)
+            goal_list = re.fullmatch(r"/v1/sandbox/goals/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/tasks", path)
             if goal_list and method == "GET":
                 tasks = await asyncio.to_thread(
                     self.submissions.list_tasks, goal_list.group(1), session_token=token
