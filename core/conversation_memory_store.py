@@ -192,9 +192,13 @@ class ConversationMemoryStore:
             length_norm = len(tokens) / max(1.0, average_length)
             score = 0.0
             for token in matched:
-                frequency = sum(1 for value in re.findall(
-                    r"[\\w]+", item["content"].casefold(), flags=re.UNICODE
-                ) if value == token)
+                cjk = re.compile(r"[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff"
+                                 r"\\u3040-\\u30ff\\u31f0-\\u31ff"
+                                 r"\\uac00-\\ud7af]")
+                frequency = sum(
+                    word.count(token) if cjk.search(word) else int(word == token)
+                    for word in re.findall(r"[\\w]+", item["content"].casefold(), flags=re.UNICODE)
+                )
                 inverse_frequency = math.log(
                     1.0 + (corpus_size - document_frequency[token] + 0.5)
                     / (document_frequency[token] + 0.5)
