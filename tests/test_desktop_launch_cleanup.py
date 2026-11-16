@@ -1,7 +1,7 @@
 """Tests for fail-closed desktop session-expiry cleanup."""
 import unittest
 
-from ui.desktop.launch import _close_expired_controller
+from ui.desktop.launch import _close_expired_controller, _close_startup_resources
 
 
 class Controller:
@@ -16,6 +16,25 @@ class Controller:
 
 
 class DesktopLaunchCleanupTests(unittest.TestCase):
+    def test_partial_startup_cleanup_is_reverse_order_deduplicated_and_best_effort(self):
+        events = []
+
+        class Resource:
+            def __init__(self, name, fail=False):
+                self.name = name
+                self.fail = fail
+
+            def close(self):
+                events.append(self.name)
+                if self.fail:
+                    raise RuntimeError("cleanup failed")
+
+        first = Resource("first")
+        broken = Resource("broken", fail=True)
+        last = Resource("last")
+        _close_startup_resources((first, broken, last, first, None))
+        self.assertEqual(events, ["last", "broken", "first"])
+
     def test_no_controller_is_a_noop(self):
         self.assertIsNone(_close_expired_controller(None))
 
