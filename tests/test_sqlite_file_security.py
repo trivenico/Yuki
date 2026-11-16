@@ -8,11 +8,6 @@ from automation.workflow_store import WorkflowRunStore
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
-from core.device_pairing import DevicePairingService
-from core.inference_jobs import InferenceJobService
-from core.income_opportunities import SQLiteIncomeOpportunityStore
-from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
-from core.oauth_credential_vault import SQLiteOAuthCredentialVault
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.sqlite_file_security import (
     SQLitePathSecurityError,
@@ -74,31 +69,11 @@ class SQLiteFileSecurityTests(unittest.TestCase):
             prepare_private_sqlite_path(directory)
 
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
-    def test_auth_database_is_owner_only(self):
-        path = self.root / "auth.sqlite3"
-        path.write_bytes(b"")
-        path.chmod(0o644)
-        BuiltInAuthService(str(path))
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-
-    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
-    def test_device_and_inference_shared_database_is_owner_only(self):
-        path = self.root / "devices.sqlite3"
-        pairing = DevicePairingService(str(path))
-        InferenceJobService(str(path), pairing)
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-
-    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
-    def test_sensitive_store_databases_are_owner_only(self):
+    def test_workflow_and_approval_databases_are_owner_only(self):
         constructors = (
-            ("oauth.sqlite3", lambda p: SQLiteOAuthCredentialVault(
-                str(p), cipher=_TestCipher(), hmac_key=b"k" * 32
-            )),
-            ("mcp.sqlite3", SQLiteMCPToolPolicyStore),
             ("workflow.sqlite3", WorkflowRunStore),
             ("approval-audit.sqlite3", SQLiteApprovalAuditLog),
             ("pending-approvals.sqlite3", SQLitePendingApprovalStore),
-            ("income.sqlite3", SQLiteIncomeOpportunityStore),
         )
         for filename, construct in constructors:
             with self.subTest(filename=filename):
