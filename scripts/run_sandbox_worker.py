@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import secrets
 import threading
 from pathlib import Path
 from typing import Any
@@ -86,7 +87,7 @@ def main() -> None:
     # The worker uses the same auth database as the web process, but is a
     # distinct OS process. It never binds a network listener.
     auth = BuiltInAuthService(str(Path(workspace_value).expanduser() / "auth.sqlite3"))
-    runtime = build_sandbox_execution_runtime(config, auth_service=auth)
+    # A process-unique lease owner prevents an expired old process from\n    # committing against a replacement process that reused the configured ID.\n    worker_config = dict(config)\n    base_worker_id = str(config.get("sandbox_execution_worker_id", "yuki-sandbox-worker"))\n    worker_config["sandbox_execution_worker_id"] = f"{base_worker_id[:220]}-{os.getpid()}-{secrets.token_hex(8)}"\n    runtime = build_sandbox_execution_runtime(worker_config, auth_service=auth)
     if runtime is None:
         raise SystemExit(
             "Sandbox execution is disabled. Set sandbox_execution_enabled: true "
