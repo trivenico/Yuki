@@ -42,3 +42,15 @@ Set `sandbox_execution_poll_interval_seconds` to a number from 0.1 through 30 to
 ## Validation boundary
 
 The presence of this entrypoint does not mean sandbox execution is enabled or production-ready. Keep the feature disabled until the deployment-specific host, Docker, identity, storage, network, and incident-response controls have been tested.
+
+## Submission quotas
+
+The authenticated sandbox API currently applies persistent per-user limits in the durable task database:
+
+- Goal creation: 10 requests per rolling 60-second window
+- Task approvals: 20 requests per rolling 60-minute window
+- New task submissions: 10 requests per rolling 60-second window
+- Active sandbox tasks: at most 5 queued or running tasks across all goals owned by one user
+
+Exact idempotent retries return the original durable task and do not consume another submission slot. Rate-limit events store only the actor ID, action name, and timestamp; they do not store command arguments or credentials. Exceeding a request or active-task quota returns HTTP 429. These are conservative code defaults in this release, not yet operator-configurable policy. Monitor rejected requests before considering any increase.
+
