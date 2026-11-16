@@ -58,3 +58,14 @@ The streaming endpoint sends the same reply object in its final `completed` or
 provenance is not yet persisted for historical turns; clients should distinguish
 that from an empty array. This is response-time transparency, not a durable audit
 record.
+## Durable conversation memory provenance
+
+Assistant message records persist a bounded `memory_references` field alongside
+the assistant message in the same SQLite transaction. Authenticated conversation
+history therefore exposes the same references after process restart, and
+idempotent retries return the committed provenance instead of re-running retrieval.
+Each entry contains only `memory_id`, `category`, and `score`; memory text is
+never copied into this audit metadata. Older assistant messages without recorded
+provenance return `null`, while newly generated turns with no injected memories
+record an empty array. The field is owner-scoped through the conversation store.
+The additive SQLite migration preserves existing message rows.
