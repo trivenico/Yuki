@@ -126,6 +126,24 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         ])
         self.assertFalse(self.store.verify(approval, self.task))
 
+
+    def test_docker_dispatch_exception_is_a_non_replayable_unknown_outcome(self):
+        approval = self.store.approve(self.task, session_token=self.session.token)
+        sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=(self.task.image,), enabled=True,
+            approver=lambda _reason: True,
+        )
+        sandbox.run = Mock(side_effect=TimeoutError("docker client timed out"))
+        events = []
+        with self.assertRaises(ExecutionOutcomeUnknown):
+            execute_approved_task(
+                self.task, approval, sandbox=sandbox,
+                verify_approval=self.store.verify, consume_approval=self.store.consume,
+                audit=lambda event: events.append(event["event"]) or True,
+            )
+        self.assertEqual(events, ["execution.started", "execution.unknown"])
+        self.assertFalse(self.store.verify(approval, self.task))
+
     def test_audit_writer_persists_hash_chained_metadata_events(self):
         log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "audit.sqlite3"))
         writer = SandboxExecutionAuditWriter(log)
