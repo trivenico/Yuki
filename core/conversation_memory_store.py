@@ -104,10 +104,10 @@ class ConversationMemoryStore:
         for CJK runs so a query term can match inside a longer saved sentence.
         """
         tokens: set[str] = set()
-        cjk = re.compile(r"[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff"
-                         r"\\u3040-\\u30ff\\u31f0-\\u31ff"
-                         r"\\uac00-\\ud7af]")
-        for word in re.findall(r"[\\w]+", text.casefold(), flags=re.UNICODE):
+        cjk = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+                         r"\u3040-\u30ff\u31f0-\u31ff"
+                         r"\uac00-\ud7af]")
+        for word in re.findall(r"[\w]+", text.casefold(), flags=re.UNICODE):
             if cjk.search(word):
                 if len(word) >= 2:
                     tokens.update(word[index:index + 2] for index in range(len(word) - 1))
