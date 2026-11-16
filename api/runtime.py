@@ -142,6 +142,7 @@ def build_conversation_runtime(
     component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
     memory_store: ConversationMemoryStore | None = None,
     network_firewall: NetworkFirewall | None = None,
+    sandbox_execution_runtime=None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
