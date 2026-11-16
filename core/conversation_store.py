@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+import json
+import math
 
 from core.sqlite_file_security import prepare_private_sqlite_path
 import time
@@ -64,6 +66,7 @@ class ConversationStore:
                     content TEXT NOT NULL,
                     idempotency_key TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    memory_references TEXT,
                     UNIQUE(conversation_id, sequence),
                     UNIQUE(conversation_id, idempotency_key)
                 );
@@ -93,6 +96,9 @@ class ConversationStore:
                 CREATE INDEX IF NOT EXISTS idx_generation_runs_owner_status
                     ON conversation_generation_runs(owner_id, status, updated_at);
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(conversation_messages)")}
+            if "memory_references" not in columns:
+                db.execute("ALTER TABLE conversation_messages ADD COLUMN memory_references TEXT")
 
     def health_check(self) -> bool:
         """Verify the configured SQLite store can execute a read-only probe."""
@@ -191,6 +197,7 @@ class ConversationStore:
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
         generation_request_id: str | None = None,
+        memory_references: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -237,9 +244,9 @@ class ConversationStore:
                 sequence = conversation["version"] + 1
                 db.execute(
                     """INSERT INTO conversation_messages
-                       (message_id, conversation_id, sequence, role, content, idempotency_key, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (message_id, conversation_id, sequence, role, content, idempotency_key.strip(), now),
+                       (message_id, conversation_id, sequence, role, content, idempotency_key, created_at, memory_references)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (message_id, conversation_id, sequence, role, content, idempotency_key.strip(), now, encoded_references),
                 )
                 title = conversation["title"]
                 if role == "user" and sequence == 1 and title == "New conversation":
