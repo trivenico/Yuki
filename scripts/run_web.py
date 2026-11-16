@@ -15,6 +15,7 @@ from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
+from core.network_firewall import build_network_firewall_from_config
 from core.inference_jobs import InferenceJobService
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
@@ -35,6 +36,9 @@ def create_app():
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
 
+    # One policy instance must govern provider egress and API/MCP components.
+    network_firewall = build_network_firewall_from_config(config)
+
     auth = BuiltInAuthService(str(workspace / "auth.sqlite3"))
     bootstrap_username = os.environ.get("YUKI_BOOTSTRAP_ADMIN_USERNAME", "").strip()
     bootstrap_password = os.environ.get("YUKI_BOOTSTRAP_ADMIN_PASSWORD", "")
@@ -47,10 +51,11 @@ def create_app():
             if str(exc) != "Initial administrator already exists.":
                 raise
 
-    provider = create_provider(config)
+    provider = create_provider(config, firewall_policy=network_firewall)
     adapter = ProviderAgentAdapter(provider)
     provider_manager = ProviderRuntimeManager(
         config, adapter, workspace / "provider-selection.json", environ=os.environ,
+        firewall_policy=network_firewall,
     )
     protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
     agent_loop = AgentExecutionLoop(
@@ -73,6 +78,7 @@ def create_app():
         provider_selector=provider_manager.select,
         device_pairing=device_pairing, inference_jobs=inference_jobs,
         income_opportunities=income_opportunities,
+        network_firewall=network_firewall,
     )
 
 
