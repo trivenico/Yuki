@@ -1,4 +1,5 @@
 """Tests for the legacy-specialist/shared-chat desktop bridge."""
+import threading
 import unittest
 from ui.desktop.shared_desktop_controller import SharedDesktopControllerBridge
 
@@ -82,6 +83,39 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "logout"):
             bridge.logout()
         self.assertEqual(chat.close_count, 1)
+
+
+    def test_concurrent_logout_closes_authorization_gate_and_runs_once(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingSpecialists(Specialists):
+            def logout(self):
+                self.calls.append(("logout", (), {}))
+                entered.set()
+                if not release.wait(timeout=2):
+                    raise TimeoutError("test did not release logout")
+                return True
+
+        chat = Chat()
+        specialists = BlockingSpecialists()
+        add_methods(specialists)
+        bridge = SharedDesktopControllerBridge(chat, specialists)
+        results = []
+        worker = threading.Thread(target=lambda: results.append(bridge.logout()))
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        self.assertFalse(bridge.logout())
+        with self.assertRaises(RuntimeError):
+            bridge.respond("must be rejected during logout")
+        release.set()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results, [True])
+        self.assertEqual(chat.close_count, 1)
+        self.assertEqual(
+            [call[0] for call in specialists.calls].count("logout"), 1,
+        )
 
     def test_bridge_rejects_missing_specialist_contract(self):
         with self.assertRaises(TypeError):
