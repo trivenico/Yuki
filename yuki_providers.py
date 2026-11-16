@@ -7,21 +7,33 @@ from typing import Callable, Optional
 from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
 
+
 @dataclass(frozen=True)
 class ProviderInfo:
     name: str
     auth_methods: tuple[str, ...]
     implemented: bool = False
 
+
 class ProviderManager:
     """Provider capability registry; availability is checked separately from construction."""
-    def __init__(self, config=None, *, environ=None):
+
+    def __init__(self, config=None, *, environ=None, firewall_policy=None):
         self._config = dict(config or {})
         self._environ = os.environ if environ is None else environ
+        self._firewall_policy = firewall_policy
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
-            "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
-            "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            "openai": lambda: create_provider(
+                {**self._config, "provider": "openai"},
+                environ=self._environ,
+                firewall_policy=self._firewall_policy,
+            ),
+            "gemini": lambda: create_provider(
+                {**self._config, "provider": "gemini"},
+                environ=self._environ,
+                firewall_policy=self._firewall_policy,
+            ),
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
@@ -66,7 +78,11 @@ class ProviderManager:
 
     def _build_adapter(self, name: str):
         if name in {"ollama", "hybrid"}:
-            adapter = create_provider({**self._config, "provider": name}, environ=self._environ)
+            adapter = create_provider(
+                {**self._config, "provider": name},
+                environ=self._environ,
+                firewall_policy=self._firewall_policy,
+            )
         else:
             factory = self._factories.get(name)
             if factory is None:
