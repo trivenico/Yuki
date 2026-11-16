@@ -74,17 +74,12 @@ class ApprovedToolActionExecutor:
             # claim and reservation. An active execution lease is also live.
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         if action.state == "prepared":
-            # Version 1 marks the atomic proposal+journal reservation; later versions
-            # represent journal transitions. Legacy version-0 rows cannot prove that
-            # the proposal claim and reservation committed together.
-            if action.version >= 1:
-                released = self._release_pre_dispatch_claim(
-                    proposal, principal_id=principal_id,
-                )
-                if released:
-                    return ApprovedToolActionExecution(
-                        proposal_id, state="not_started", result=None,
-                    )
+            # A prepared reservation proves the proposal claim was committed
+            # atomically, but it does not prove the worker has stopped. The live
+            # executor may still be issuing its approval token before dispatch.
+            # Releasing here could let a second worker dispatch the same action.
+            # Only the worker that observes its own pre-dispatch failure may release
+            # this claim; crash recovery must leave it fenced for operator review.
             return ApprovedToolActionExecution(proposal_id, state="executing", result=None)
         recovered_state = "finished" if action.state == "succeeded" else "unknown"
         self.proposals.recover_execution_state(

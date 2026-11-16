@@ -41,6 +41,21 @@ class StructuredToolResult:
     output: str
 
 
+def _reject_json_constant(value: str) -> None:
+    """Reject JavaScript-style numeric constants that are not valid JSON."""
+    raise ValueError(f"non-standard JSON numeric constant: {value}")
+
+
+def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous objects instead of silently keeping the last duplicate key."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key.")
+        result[key] = value
+    return result
+
+
 def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
     """Parse and validate every call before any tool can be invoked."""
     if not isinstance(response, str) or not response.strip():
@@ -48,9 +63,13 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
     if len(response) > _MAX_RESPONSE_CHARS or "\x00" in response:
         raise ToolProtocolError("tool response exceeds the protocol size limit.")
     try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as exc:
-        raise ToolProtocolError("tool response must be valid JSON.") from exc
+        payload = json.loads(
+            response,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
+        )
+    except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise ToolProtocolError("tool response must be valid, unambiguous JSON.") from exc
     if not isinstance(payload, dict) or set(payload) != {"tool_calls"}:
         raise ToolProtocolError("response must contain only the tool_calls field.")
     raw_calls = payload["tool_calls"]
@@ -69,13 +88,9 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
             raise ToolProtocolError("tool name must be a valid registered-name identifier.")
         if not isinstance(arguments, dict):
             raise ToolProtocolError("tool arguments must be a JSON object.")
-        try:
-            encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
-            size = len(encoded.encode("utf-8"))
-        except (TypeError, ValueError, UnicodeEncodeError) as exc:
-            raise ToolProtocolError("tool arguments must be JSON-compatible.") from exc
-        if size > _MAX_ARGUMENT_BYTES:
-            raise ToolProtocolError("tool arguments exceed the size limit.")
+        # Use the same structural, numeric and byte limits for parsed and
+        # manually constructed calls so the parser cannot bypass dispatch bounds.
+        _validated_call_arguments(arguments)
         seen_ids.add(call_id)
         calls.append(StructuredToolCall(call_id, name, arguments))
     return tuple(calls)
