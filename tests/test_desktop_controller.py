@@ -258,7 +258,7 @@ class ControllerTests(unittest.TestCase):
         with patch.object(
             self.app, "reset_conversation", side_effect=RuntimeError("reset failed")
         ):
-            with self.assertRaisesRegex(RuntimeError, "logout operations"):
+            with self.assertRaisesRegex(RuntimeError, "logout operation"):
                 self.controller.logout()
         self.assertIsNone(self.auth.resolve_session(self.identity.session_id))
         self.assertFalse(self.memory.context_enabled)
@@ -275,7 +275,7 @@ class ControllerTests(unittest.TestCase):
         ), patch.object(self.app, "reset_conversation", side_effect=lambda: calls.append("conversation")), patch.object(
             self.memory, "disable", side_effect=record_disable
         ):
-            with self.assertRaisesRegex(RuntimeError, "logout operations"):
+            with self.assertRaisesRegex(RuntimeError, "logout operation"):
                 self.controller.logout()
         self.assertEqual(calls, ["conversation", "memory"])
         self.assertFalse(self.memory.context_enabled)
