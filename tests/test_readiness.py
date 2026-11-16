@@ -73,6 +73,29 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertEqual(architecture.status, "verified")
         self.assertIn("component contracts", architecture.detail)
 
+    def test_installed_distribution_does_not_claim_source_catalog_is_broken(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = build_readiness_report(
+                environ={}, executable_finder=lambda name: None,
+                module_finder=lambda name: None, repository_root=Path(directory),
+            )
+        architecture = report.capabilities["architecture_catalog"]
+        self.assertEqual(architecture.status, "not_verified")
+        self.assertIn("source/test evidence is not installed", architecture.detail)
+
+    def test_source_checkout_still_verifies_component_catalog(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        report = build_readiness_report(
+            environ={}, executable_finder=lambda name: None,
+            module_finder=lambda name: None, repository_root=root,
+        )
+        self.assertEqual(report.capabilities["architecture_catalog"].status, "verified")
+
     def test_component_runtime_readiness_requires_started_healthy_registry(self):
         report = build_readiness_report(
             environ={}, executable_finder=lambda name: None,

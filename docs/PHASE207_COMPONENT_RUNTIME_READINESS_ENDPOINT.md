@@ -26,6 +26,12 @@ component diagnostics to unauthenticated callers.
 - Preserve `GET /healthz` as a liveness check. Liveness means the process can
   answer; readiness means the configured component runtime is started and
   healthy.
+- The architecture catalog is fully validated when running from a source
+  checkout with its repository evidence files. In an installed wheel, the
+  repository test tree is intentionally absent; the catalog is therefore
+  reported as `not_verified`, not `unavailable`. Run the source-checkout
+  validation suite to verify the catalog evidence. This status does not
+  affect the independent component-runtime readiness decision.
 
 ## Operational behavior
 
