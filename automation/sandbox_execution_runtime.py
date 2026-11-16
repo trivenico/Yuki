@@ -124,9 +124,14 @@ def build_sandbox_execution_runtime(
             approval_store=approval_store,
             audit_writer=audit_writer,
         )
+        submission_service = SandboxExecutionSubmissionService(
+            auth_service=auth_service, engine=engine, worker=worker,
+            approval_store=approval_store,
+        )
         return SandboxExecutionRuntime(
             engine=engine, approval_store=approval_store,
             audit_log=audit_log, sandbox=sandbox, worker=worker,
+            submission_service=submission_service,
         )
     except Exception:
         engine.close()
