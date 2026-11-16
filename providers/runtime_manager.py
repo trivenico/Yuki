@@ -134,7 +134,7 @@ class ProviderRuntimeManager:
         candidate_config = dict(self.config)
         candidate_config["provider"] = name
         try:
-            candidate = self.provider_factory(candidate_config, environ=self.environ)
+            candidate = self._create_provider(candidate_config)
         except Exception as exc:
             raise RuntimeError("Cannot initialize the persisted Yuki provider selection.") from exc
         replace_provider = getattr(self.adapter, "replace_provider", None)
