@@ -8,6 +8,7 @@ implement an autonomous model/tool loop or provider-specific API transport.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -80,6 +81,55 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
     return tuple(calls)
 
 
+def _validated_call_arguments(arguments: Any) -> str:
+    """Serialize a manually supplied call only after enforcing parser-equivalent bounds."""
+    if type(arguments) is not dict:
+        raise ToolProtocolError("tool arguments must be a plain JSON object.")
+    pending = [(arguments, 0)]
+    nodes = 0
+    while pending:
+        value, depth = pending.pop()
+        nodes += 1
+        if nodes > 4096 or depth > 32:
+            raise ToolProtocolError("tool arguments exceed structural limits.")
+        value_type = type(value)
+        if value is None or value_type is bool or value_type is str:
+            if value_type is str:
+                try:
+                    if len(value.encode("utf-8")) > _MAX_ARGUMENT_BYTES:
+                        raise ToolProtocolError("tool arguments exceed the size limit.")
+                except UnicodeEncodeError as exc:
+                    raise ToolProtocolError("tool arguments contain invalid Unicode.") from exc
+            continue
+        if value_type is int:
+            if value.bit_length() > 4096:
+                raise ToolProtocolError("tool arguments contain an oversized integer.")
+            continue
+        if value_type is float:
+            if not math.isfinite(value):
+                raise ToolProtocolError("tool arguments contain a non-finite number.")
+            continue
+        if value_type is list:
+            pending.extend((item, depth + 1) for item in value)
+            continue
+        if value_type is dict:
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ToolProtocolError("tool argument keys must be strings.")
+                pending.append((key, depth + 1))
+                pending.append((item, depth + 1))
+            continue
+        raise ToolProtocolError("tool arguments must contain only plain JSON values.")
+    try:
+        encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        size = len(encoded.encode("utf-8"))
+    except (TypeError, ValueError, UnicodeEncodeError, RecursionError) as exc:
+        raise ToolProtocolError("tool arguments must be bounded JSON-compatible data.") from exc
+    if size > _MAX_ARGUMENT_BYTES:
+        raise ToolProtocolError("tool arguments exceed the size limit.")
+    return encoded
+
+
 class StructuredToolProtocol:
     """Dispatch validated model proposals exclusively through guarded tools."""
 
@@ -102,11 +152,14 @@ class StructuredToolProtocol:
         """Dispatch one proposal with host-supplied identity and confirmation state."""
         if not isinstance(call, StructuredToolCall):
             raise TypeError("call must be a validated StructuredToolCall.")
+        if (type(call.call_id) is not str or not _ID.fullmatch(call.call_id)
+                or type(call.name) is not str or not _NAME.fullmatch(call.name)):
+            raise ToolProtocolError("tool call ID or name is invalid.")
         if action_context is not None and not isinstance(action_context, ToolActionContext):
             raise TypeError("action_context must be a host-created ToolActionContext.")
         if type(user_confirmed) is not bool:
             raise TypeError("user_confirmed must be a boolean.")
-        argument = json.dumps(call.arguments, ensure_ascii=False, separators=(",", ":"))
+        argument = _validated_call_arguments(call.arguments)
         output = self._runtime.invoke(
             call.name, argument, principal_id=principal_id,
             action_context=action_context, user_confirmed=user_confirmed,
