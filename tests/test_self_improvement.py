@@ -106,5 +106,22 @@ class SelfImprovementProposalTests(unittest.TestCase):
         self.assertEqual(a.sha256, b.sha256)
 
 
+
+    def test_python_source_is_ast_validated_without_execution(self):
+        proposal = validate_change_proposal(
+            title="Valid Python",
+            rationale="Syntax validation only; no generated code is executed.",
+            files=[ProposedFile("skills/example.py", "def answer():\n    return 42\n")],
+        )
+        self.assertEqual(proposal.status, "proposal_only")
+
+    def test_invalid_python_source_is_rejected(self):
+        with self.assertRaisesRegex(ProposalRejected, "not syntactically valid"):
+            validate_change_proposal(
+                title="Invalid Python",
+                rationale="Reject malformed generated source before review.",
+                files=[ProposedFile("skills/example.py", "def answer(:\n    return 42\n")],
+            )
+
 if __name__ == "__main__":
     unittest.main()
