@@ -10,6 +10,7 @@ from core.mcp_oauth_client_registration import PublicOAuthClientRegistrar
 from core.mcp_oauth_discovery import TrustedMCPOAuthDiscovery
 from core.mcp_oauth_metadata import OAuthMetadataError
 from core.oauth_authorization_service import OAuthAuthorizationService
+from core.network_firewall import NetworkFirewall
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
 _SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
@@ -138,6 +139,7 @@ class MCPProviderOAuthBootstrap:
         self, *, metadata_transport, registration_transport, oauth_transport,
         transaction_store, credential_vault, identity_verifier_for_provider,
         oidc_verifier_for_provider=None,
+        firewall_policy: NetworkFirewall | None = None,
     ):
         for transport, method, label in (
             (metadata_transport, "request_json", "metadata"),
@@ -156,6 +158,15 @@ class MCPProviderOAuthBootstrap:
             raise TypeError("trusted identity verifier resolver is required")
         if oidc_verifier_for_provider is not None and not callable(oidc_verifier_for_provider):
             raise TypeError("OIDC verifier resolver must be callable")
+        if firewall_policy is not None:
+            if not isinstance(firewall_policy, NetworkFirewall):
+                raise TypeError("firewall_policy must be a NetworkFirewall or None")
+            # Discovery, registration, and code exchange carry OAuth metadata
+            # or credentials, so require one exact application policy.
+            for transport in (metadata_transport, registration_transport, oauth_transport):
+                if getattr(transport, "firewall_policy", None) is not firewall_policy:
+                    raise ValueError("OAuth bootstrap transports must use the exact shared firewall policy")
+        self._firewall_policy = firewall_policy
         self._metadata_transport = metadata_transport
         self._registration_transport = registration_transport
         self._oauth_transport = oauth_transport
@@ -163,6 +174,11 @@ class MCPProviderOAuthBootstrap:
         self._vault = credential_vault
         self._identity_for = identity_verifier_for_provider
         self._oidc_for = oidc_verifier_for_provider
+
+    @property
+    def firewall_policy(self):
+        """Return the exact shared egress policy, when configured."""
+        return self._firewall_policy
 
     def prepare(self, config: OAuthProviderBootstrapConfig) -> PreparedOAuthProvider:
         if not isinstance(config, OAuthProviderBootstrapConfig):
