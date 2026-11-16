@@ -131,7 +131,11 @@ def build_readiness_report(
     # The canonical component catalog is a read-only architecture contract.
     # Report its validation separately from runtime feature detection.
     catalog = component_catalog()
-    catalog_root = Path(repository_root).resolve() if repository_root is not None else Path(__file__).resolve().parents[1]
+    catalog_root = (
+        Path(repository_root).resolve()
+        if repository_root is not None
+        else Path(__file__).resolve().parents[1]
+    )
     # Source-file evidence is intentionally excluded from published wheels.
     # Do not misreport an installed distribution as a broken architecture
     # when the repository's test/evidence tree is simply not shipped.
