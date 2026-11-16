@@ -178,5 +178,36 @@ class CoreComponentCompositionTests(unittest.TestCase):
             self.assertTrue(application._closed)
 
 
+    def test_configured_firewall_is_composed_automatically_from_web_and_mcp_hosts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            provider = FakeProvider()
+            registry = build_core_component_registry(
+                auth_service=auth, provider=provider, agent_loop=self._loop(),
+                config={
+                    "firewall_enabled": True,
+                    "web_allowed_hosts": ["reader.example.com"],
+                    "mcp_servers": [{"allowed_hosts": ["mcp.example.com"]}],
+                },
+            )
+            firewall = registry.resolve("network-firewall")
+            self.assertEqual(
+                firewall.allowed_hosts,
+                frozenset({"reader.example.com", "mcp.example.com"}),
+            )
+            registry.start_all()
+            self.assertTrue(registry.health()["network-firewall"])
+            registry.close()
+
+    def test_enabled_firewall_without_explicit_hosts_fails_core_composition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            with self.assertRaisesRegex(ValueError, "requires_configured_hosts"):
+                build_core_component_registry(
+                    auth_service=auth, provider=FakeProvider(), agent_loop=self._loop(),
+                    config={"firewall_enabled": True, "web_allowed_hosts": [], "mcp_servers": []},
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
