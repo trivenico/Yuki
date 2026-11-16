@@ -117,6 +117,7 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
             provider_catalog=lambda: [{
                 "provider_id": "provider", "display_name": "Example",
                 "available": True, "description": "Read-only access",
+                "requested_scopes": ["profile", "repo:read"],
                 "authorization_url": "https://untrusted.invalid",
             }],
         )
@@ -136,6 +137,7 @@ class OAuthAuthorizationAPITests(unittest.TestCase):
         self.assertEqual(payload["providers"], [{
             "provider_id": "provider", "display_name": "Example",
             "available": True, "description": "Read-only access",
+            "requested_scopes": ["profile", "repo:read"],
         }])
         sent.clear()
         asyncio.run(invoke(""))
