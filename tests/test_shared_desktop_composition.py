@@ -42,7 +42,7 @@ def add_specialist_contract(target):
         "preview_migration", "migrate_data", "create_backup", "restore_backup",
     )
     for name in names:
-        setattr(target, name, lambda *args, **kwargs: name)
+        setattr(target, name, lambda *args, _name=name, **kwargs: _name)
 
 
 class SharedDesktopCompositionTests(unittest.TestCase):
