@@ -288,7 +288,7 @@ class AgentExecutionLoop:
                 encoded_envelope = json.dumps(dict(envelope), ensure_ascii=False, separators=(",", ":"))
                 from core.structured_tool_protocol import parse_tool_calls
                 parsed = parse_tool_calls(encoded_envelope)
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, RecursionError) as exc:
                 raise AgentExecutionError("model returned an invalid structured tool-call envelope.") from exc
 
             if not parsed:
