@@ -17,6 +17,21 @@ class DurableTaskEngineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+
+    def test_owned_goal_creation_persists_owner_atomically(self):
+        goal = self.engine.create_owned_goal("user-123")
+        self.assertEqual(self.engine.goal_owner(goal), "user-123")
+        self.assertEqual(self.engine.get_goal(goal)["state"], "active")
+
+    def test_legacy_unowned_goal_has_no_owner(self):
+        self.assertIsNone(self.engine.goal_owner(self.goal))
+
+    def test_owned_goal_rejects_invalid_owner(self):
+        for owner in ("", "  ", None, "x" * 201):
+            with self.subTest(owner=owner):
+                with self.assertRaises(ValueError):
+                    self.engine.create_owned_goal(owner)
+
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
         goal = engine.create_goal()

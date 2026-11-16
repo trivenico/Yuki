@@ -9,6 +9,7 @@ from automation.sandbox_execution_runtime import SandboxExecutionRuntime
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
+from api.sandbox_execution import AuthenticatedSandboxExecutionAPI
 from api.evaluations import AuthenticatedEvaluationAPI
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
@@ -348,6 +349,12 @@ def build_conversation_runtime(
         if mcp_runtime is not None:
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
+            )
+        if sandbox_execution_runtime is not None:
+            app = AuthenticatedSandboxExecutionAPI(
+                app, auth_service, sandbox_execution_runtime.submission_service,
+                workspace=str(sandbox_execution_runtime.sandbox.workspace),
+                allowed_images=tuple(sandbox_execution_runtime.sandbox.allowed_images),
             )
         component_registry = None
         if component_registry_factory is not None:
