@@ -103,6 +103,15 @@ class DockerSandboxArgvTests(unittest.TestCase):
                 command=["python"], cidfile="relative/cid",
             )
 
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=0, create=True)
+    def test_explicit_container_identity_does_not_bypass_host_root_refusal(self, _uid, _gid):
+        with self.assertRaisesRegex(SandboxRuntimeError, "root service"):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                command=["python", "--version"], runtime_user=(65534, 65534),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
