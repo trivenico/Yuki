@@ -100,8 +100,9 @@ def run() -> int:
             "Install them with: python -m pip install -r requirements-desktop.txt"
         ) from exc
 
+    from core.config import load_config
     from companion.conversation import ConversationSession
-    from companion.memory_consent import CompanionMemory
+    from ui.desktop.memory import create_desktop_memory
     from ui.desktop.bootstrap import DesktopStartupError, build_desktop_context
     from ui.desktop.controller import DesktopCompanionController
 
