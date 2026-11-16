@@ -72,6 +72,18 @@ class AuthenticatedEvaluationAPITests(unittest.TestCase):
         body = json.loads(sent[1].get("body", b"{}") or b"{}")
         return status, body
 
+    def test_evaluation_service_records_on_current_platform(self):
+        run = self.api.evaluations.run(
+            owner_id="owner-a",
+            idempotency_key="platform-smoke",
+            benchmark_id="api-smoke",
+            benchmark_version=1,
+            benchmark_digest=self.benchmark.digest,
+            candidate_id="candidate-a",
+        )
+        self.assertEqual(run.provider_id, "provider-internal")
+        self.assertEqual(run.model_id, "model-internal")
+
     def test_post_runs_only_server_configured_adapter_and_get_is_owner_scoped(self):
         payload = {
             "benchmark_id": "api-smoke",
