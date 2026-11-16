@@ -142,6 +142,65 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
         self.assertTrue(session.runtime.closed)
         self.assertEqual(self.provider.close_count, 0)
 
+
+    def test_shutdown_waits_for_active_send_before_closing_runtime(self):
+        entered_provider = threading.Event()
+        release_provider = threading.Event()
+
+        class BlockingProvider(Provider):
+            def generate_chat(self, *, messages, tools, tool_choice):
+                self.calls.append((messages, tools, tool_choice))
+                entered_provider.set()
+                if not release_provider.wait(timeout=5):
+                    raise TimeoutError("test did not release provider")
+                return {"text": "reply during shutdown", "tool_calls": {"tool_calls": []}}
+
+        self.provider = BlockingProvider()
+        session = self.build()
+        send_errors = []
+        close_errors = []
+
+        def send():
+            try:
+                session.conversation.send("in flight", request_id="desktop-close-race")
+            except Exception as exc:
+                send_errors.append(exc)
+
+        worker = threading.Thread(target=send)
+        worker.start()
+        self.assertTrue(entered_provider.wait(timeout=2), "provider was not entered")
+
+        def close():
+            try:
+                session.close()
+            except Exception as exc:
+                close_errors.append(exc)
+
+        closer = threading.Thread(target=close)
+        closer.start()
+        try:
+            # Shutdown must invalidate the facade but must not close SQLite
+            # while the provider call still owns an active conversation turn.
+            for _ in range(100):
+                if session.conversation._invalidated:
+                    break
+                threading.Event().wait(0.01)
+            self.assertTrue(session.conversation._invalidated)
+            self.assertFalse(session.runtime.closed)
+            self.assertTrue(closer.is_alive())
+        finally:
+            release_provider.set()
+
+        worker.join(timeout=5)
+        closer.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertTrue(session.runtime.closed)
+        self.assertEqual(close_errors, [])
+        self.assertEqual(len(send_errors), 1)
+        self.assertIsInstance(send_errors[0], PermissionError)
+        self.assertEqual(self.provider.close_count, 0)
+
     def test_memory_context_is_bound_to_verified_desktop_session(self):
         class Memory:
             context_enabled = True
