@@ -207,12 +207,15 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
         second_started = threading.Event()
+        second_entered = threading.Event()
         state_lock = threading.Lock()
         active = 0
         maximum_active = 0
 
         def handler(argument):
             nonlocal active, maximum_active
+            if argument == "second":
+                second_entered.set()
             with state_lock:
                 active += 1
                 maximum_active = max(maximum_active, active)
@@ -236,6 +239,7 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             self.assertTrue(entered.wait(timeout=3))
             second = pool.submit(invoke, "second")
             self.assertTrue(second_started.wait(timeout=3))
+            self.assertFalse(second_entered.wait(timeout=0.1))
             release.set()
             self.assertEqual(first.result(timeout=5), "first")
             self.assertEqual(second.result(timeout=5), "second")
