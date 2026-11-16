@@ -83,6 +83,22 @@ The UI thread must never perform provider calls, filesystem indexing, or worker 
 - Redact provider exceptions and task event payloads at the application boundary. Do not display raw stack traces by default.
 - Do not expose a local network server in the first slice. If a future process boundary is required, design authenticated IPC, origin restrictions, replay protection, and lifecycle ownership as a separate security review.
 
+## Runtime shutdown and session cleanup
+
+The desktop composition root owns process-scoped resources through
+`DesktopServiceLifecycle`. On normal window close it first revokes the active
+local desktop session, then closes unique closable resources in reverse
+construction order. Cleanup is idempotent, and a failure in one cleanup hook
+does not prevent later hooks from running. Closing the desktop while a provider
+request is active remains blocked until that request finishes; forced process
+termination cannot guarantee graceful cleanup.
+
+This lifecycle is currently a desktop-specific boundary. The desktop chat
+service still needs integration with the canonical
+`ConversationApplicationRuntime` used by the API/CLI runtime chain; do not
+treat the current companion session as the final shared durable conversation
+architecture.
+
 ## Packaging and platform strategy
 
 - Keep PySide6 in a dedicated optional dependency manifest; core and CLI installs remain lightweight.
