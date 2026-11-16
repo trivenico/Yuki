@@ -38,7 +38,7 @@ class AuthenticatedDesktopConversationTests(unittest.TestCase):
             self.application.close()
         self.tempdir.cleanup()
 
-    def build(self, model):
+    def build(self, model, *, stream_model=None):
         class DenyAll:
             @staticmethod
             def authorize_tool(name):
@@ -46,6 +46,7 @@ class AuthenticatedDesktopConversationTests(unittest.TestCase):
 
         loop = AgentExecutionLoop(
             model, StructuredToolProtocol(GuardedToolRuntime({}, DenyAll())),
+            stream_model=stream_model,
         )
         self.application = build_conversation_application_runtime(
             {"workspace": self.tempdir.name},
@@ -87,6 +88,33 @@ class AuthenticatedDesktopConversationTests(unittest.TestCase):
         facade = self.build(model)
         with self.assertRaises(PermissionError):
             facade.send("Run while session expires", request_id="expires-mid-turn")
+
+    def test_revocation_is_polled_during_streaming_and_cancels_turn(self):
+        stream_started = []
+        def stream_model(**kwargs):
+            stream_started.append(True)
+            yield {"type": "text_delta", "text": "must not be delivered"}
+            yield {"type": "response", "response": {
+                "text": "must not be delivered",
+                "tool_calls": {"tool_calls": []},
+            }}
+
+        facade = self.build(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            stream_model=stream_model,
+        )
+        def revoke_during_first_cancel_poll():
+            self.sessions.identity = None
+            return False
+
+        with self.assertRaises(PermissionError):
+            facade.send(
+                "Cancel after session revocation",
+                request_id="revoked-stream",
+                cancellation_requested=revoke_during_first_cancel_poll,
+                on_text_delta=lambda _delta: self.fail("revoked output must not be delivered"),
+            )
+        self.assertEqual(stream_started, [])
 
     def test_constructor_rejects_unverified_identity(self):
         class ForgedSessions:
