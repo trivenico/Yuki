@@ -66,4 +66,4 @@ def create_provider(config=None, *, environ=None):
         )
     raw_tasks = str(env.get("YUKI_CLOUD_TASKS", "")).strip()
     cloud_tasks = [item.strip() for item in raw_tasks.split(",") if item.strip()]
-    return HybridProvider(local, cloud, cloud_tasks=cloud_tasks)
+    return HybridProvider(local, cloud, cloud_tasks=cloud_tasks, owns_providers=True)
