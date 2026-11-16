@@ -2,6 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 from skills.connector_management import ConnectorManagementSkill
+from core.network_firewall import NetworkFirewall
 
 SERVER = {"name":"docs","endpoint":"https://mcp.example.com/mcp",
           "allowed_hosts":["mcp.example.com"],"allowed_tools":["search_docs"]}
@@ -26,6 +27,17 @@ class ConnectorManagementTests(unittest.TestCase):
         self.assertEqual(result.data["missing_allowlisted_tools"], [])
         self.assertEqual(result.data["unexpected_tools_not_executable"], ["delete_all"])
         client.call_tool.assert_not_called()
+
+    @patch("skills.connector_management.MCPHTTPClient")
+    def test_shared_firewall_policy_is_passed_to_mcp_transport(self, factory):
+        policy = NetworkFirewall(allowed_hosts={"mcp.example.com"})
+        factory.return_value.initialize.return_value = {"server_info": {}, "protocol_version": "2025-03-26"}
+        factory.return_value.list_tools.return_value = [{"name": "search_docs"}]
+        result = ConnectorManagementSkill([SERVER], firewall_policy=policy).run(
+            json.dumps({"action": "check", "server": "docs"})
+        )
+        self.assertTrue(result.ok)
+        self.assertIs(factory.call_args.kwargs["firewall_policy"], policy)
 
     def test_unknown_connector_fails_closed(self):
         result = ConnectorManagementSkill([SERVER]).run(json.dumps({"action":"check","server":"unknown"}))
