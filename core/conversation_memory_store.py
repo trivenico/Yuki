@@ -98,7 +98,22 @@ class ConversationMemoryStore:
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
-        return set(re.findall(r"[\w]{2,}", text.casefold(), flags=re.UNICODE))
+        """Tokenize Unicode words, including unspaced CJK text.
+
+        CJK scripts commonly omit spaces between words. Add character bigrams
+        for CJK runs so a query term can match inside a longer saved sentence.
+        """
+        tokens: set[str] = set()
+        cjk = re.compile(r"[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff"
+                         r"\\u3040-\\u30ff\\u31f0-\\u31ff"
+                         r"\\uac00-\\ud7af]")
+        for word in re.findall(r"[\\w]+", text.casefold(), flags=re.UNICODE):
+            if cjk.search(word):
+                if len(word) >= 2:
+                    tokens.update(word[index:index + 2] for index in range(len(word) - 1))
+            elif len(word) >= 2:
+                tokens.add(word)
+        return tokens
 
     def search(self, *, owner_id: str, query: str, limit: int = 5) -> list[dict[str, Any]]:
         owner = self._owner(owner_id)
