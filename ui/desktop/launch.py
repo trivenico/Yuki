@@ -9,6 +9,23 @@ import sys
 from typing import Any
 
 
+def _close_expired_controller(controller: Any) -> Exception | None:
+    """Best-effort revoke and close a controller before returning to login.
+
+    Authorization failures can arrive from background workers after the
+    authenticated session has already expired. Detach the controller from the
+    window first, then run its complete logout path so memory and conversation
+    state are not left alive behind the login screen.
+    """
+    if controller is None:
+        return None
+    try:
+        controller.logout()
+    except Exception as exc:
+        return exc
+    return None
+
+
 def _build_services():
     from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
@@ -1030,7 +1047,9 @@ def run() -> int:
                 self.chat_status.setText("Ready")
 
         def _return_to_login(self):
+            controller = self.controller
             self.controller = None
+            cleanup_error = _close_expired_controller(controller)
             self.memory_toggle.blockSignals(True)
             self.memory_toggle.setChecked(False)
             self.memory_toggle.blockSignals(False)
@@ -1055,6 +1074,12 @@ def run() -> int:
             self.plan_dispatch_button.setEnabled(False)
             self.plan_cancel_button.setEnabled(False)
             self.pages.setCurrentIndex(0)
+            if cleanup_error is not None:
+                self.login_status.setText(
+                    "The session expired, but local cleanup was incomplete. "
+                    "Verify session status before signing in again ("
+                    + type(cleanup_error).__name__ + ")."
+                )
 
         def _logout(self):
             if self.busy:
