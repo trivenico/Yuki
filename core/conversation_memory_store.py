@@ -23,7 +23,7 @@ class ConversationMemoryStore:
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
             raise ValueError("database_path must be a non-empty path.")
         self.database_path = prepare_private_sqlite_path(database_path)
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS conversation_memories (
                     memory_id TEXT PRIMARY KEY,
