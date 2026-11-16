@@ -524,18 +524,42 @@ class DurableTaskEngine:
         return self.get_task(task_id)
 
     def recover_expired_leases(self):
-        now,count=self.clock(),0
+        now, count = self.clock(), 0
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            rows=c.execute("SELECT * FROM tasks WHERE state='running' AND lease_until<=?",(now,)).fetchall()
-            for r in rows:
-                retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-                c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
-                self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
+            rows = c.execute(
+                "SELECT * FROM tasks WHERE state='running' AND lease_until<=?",
+                (now,),
+            ).fetchall()
+            for row in rows:
+                # A sandbox command may already have caused an external side
+                # effect before its worker disappeared. Never replay it after
+                # lease expiry, even if a future caller changes max_attempts.
+                unknown = row["task_type"] == "sandbox.execution.v1"
+                retry = (not unknown) and row["attempts"] < row["max_attempts"]
+                state = "queued" if retry else "failed"
+                error = (
+                    "execution outcome unknown; manual reconciliation required"
+                    if unknown else "worker lease expired"
+                )
+                c.execute(
+                    """UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,
+                       last_error=?,updated_at=? WHERE id=?""",
+                    (state, error, now, row["id"]),
+                )
+                self._event(
+                    c, row["goal_id"], row["id"], "task.lease_expired",
+                    {"attempt": row["attempts"], "retry": retry},
+                )
+                if unknown:
+                    self._event(
+                        c, row["goal_id"], row["id"], "task.outcome_unknown",
+                        {"reason": "sandbox_worker_lease_expired"},
+                    )
                 if not retry:
-                    self._fail_blocked_descendants(c, r["goal_id"], now)
-                    self._complete_goal_if_terminal(c,r["goal_id"],now)
-                count+=1
+                    self._fail_blocked_descendants(c, row["goal_id"], now)
+                    self._complete_goal_if_terminal(c, row["goal_id"], now)
+                count += 1
             c.commit()
         return count
 
