@@ -64,7 +64,7 @@ class ConversationRuntime:
                     "component_runtime": component.status,
                 }
                 body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-                await self.web._respond(
+                await self.web.respond(
                     send, 200 if ready else 503, body,
                     "application/json; charset=utf-8",
                     scope.get("method", "GET").upper(),
