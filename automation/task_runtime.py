@@ -322,6 +322,13 @@ class TaskRuntime:
             )
         return self._record(self.store.get(retried.run_id))
 
+    def revoke_session_approvals(self, session_id: str) -> list[TaskRecord]:
+        """Cancel outstanding tasks approved by a session during trusted logout."""
+        return [
+            self._record(run)
+            for run in self.store.cancel_session_approved_runs(session_id)
+        ]
+
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
         """Mark expired worker leases interrupted and journal each recovery; never replay them."""
         actor = self._actor(actor_id)
