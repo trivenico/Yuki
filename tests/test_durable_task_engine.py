@@ -456,6 +456,26 @@ class DurableTaskEngineTests(unittest.TestCase):
 
 
 
+
+    def test_unknown_outcome_listing_is_metadata_only_and_excludes_other_failures(self):
+        unknown = self.engine.submit(
+            self.goal, "sandbox.execution.v1", {"secret": "do-not-return"},
+            idempotency_key="unknown-list", max_attempts=1,
+        )
+        self.engine.claim("reconcile-worker", task_types=("sandbox.execution.v1",))
+        self.engine.fail_unknown_outcome(unknown["id"], "reconcile-worker")
+        ordinary = self.engine.submit(
+            self.goal, "sandbox.execution.v1", {"argv": ["false"]},
+            idempotency_key="ordinary-failure", max_attempts=1,
+        )
+        self.engine.claim("ordinary-worker", task_types=("sandbox.execution.v1",))
+        self.engine.fail(ordinary["id"], "ordinary-worker", "sandbox execution failed")
+        records = self.engine.list_unknown_outcomes()
+        self.assertEqual([item["id"] for item in records], [unknown["id"]])
+        self.assertNotIn("payload", records[0])
+        self.assertNotIn("secret", str(records[0]))
+        self.assertIn("unknown_at", records[0])
+
     def test_worker_registry_heartbeat_and_stale_detection_persist(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
