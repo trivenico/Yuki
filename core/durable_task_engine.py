@@ -221,7 +221,10 @@ class DurableTaskEngine:
         cutoff = now - window_seconds
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            c.execute("DELETE FROM rate_limit_events WHERE occurred_at<=?", (cutoff,))
+            c.execute(
+                "DELETE FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at<=?",
+                (actor_id, action, cutoff),
+            )
             count = c.execute(
                 "SELECT COUNT(*) AS n FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at>?",
                 (actor_id, action, cutoff),
@@ -331,8 +334,8 @@ class DurableTaskEngine:
                     raise ValueError("max_active_tasks must be 1..1000")
                 active = c.execute(
                     "SELECT COUNT(*) AS n FROM tasks t JOIN goal_owners o ON o.goal_id=t.goal_id "
-                    "WHERE o.owner_id=? AND t.state IN ('queued','running')",
-                    (owner_id,),
+                    "WHERE o.owner_id=? AND t.task_type=? AND t.state IN ('queued','running')",
+                    (owner_id, task_type),
                 ).fetchone()["n"]
                 if active >= max_active_tasks:
                     raise RateLimitExceeded("owner active sandbox task quota exceeded")
