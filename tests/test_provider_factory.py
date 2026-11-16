@@ -35,6 +35,26 @@ class ProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
 
+    def test_shared_firewall_is_injected_into_default_cloud_provider_transport(self):
+        from core.network_firewall import NetworkFirewall
+
+        firewall = NetworkFirewall(allowed_hosts=("api.openai.com",))
+        provider = create_provider({}, environ={}, firewall_policy=firewall)
+        self.assertIs(provider._transport.firewall_policy, firewall)
+        self.assertEqual(provider._transport.allowed_hosts, frozenset({"api.openai.com"}))
+
+    def test_shared_firewall_is_injected_into_hybrid_cloud_provider(self):
+        from core.network_firewall import NetworkFirewall
+
+        firewall = NetworkFirewall(allowed_hosts=("api.openai.com",))
+        provider = create_provider(
+            {"provider": "hybrid", "ollama_model": "local-model"},
+            environ={"YUKI_CLOUD_MODEL": "cloud-model", "OPENAI_API_KEY": "test-key"},
+            firewall_policy=firewall,
+        )
+        self.assertIs(provider.cloud_provider._transport.firewall_policy, firewall)
+        self.assertEqual(provider.cloud_provider._transport.allowed_hosts, frozenset({"api.openai.com"}))
+
 
 if __name__ == "__main__":
     unittest.main()
