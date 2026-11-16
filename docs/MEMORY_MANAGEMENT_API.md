@@ -80,6 +80,8 @@ stable ordering of that owner's active memories. Expired memories and other
 owners' records are excluded. The snapshot is encrypted before it is returned;
 the API response is marked `Cache-Control: no-store`.
 
+Export snapshots are bounded before serialization: at most 2,000 active memories per owner and at most 8 MiB of combined UTF-8 memory content. The encrypted-envelope layer independently enforces its serialized payload and envelope size limits.
+
 The passphrase must be at least 12 UTF-8 bytes and is not recoverable by Yuki.
 Keep it separate from the backup file. The endpoint requires the optional
 `production-storage` dependency extra for AES-GCM support and returns
