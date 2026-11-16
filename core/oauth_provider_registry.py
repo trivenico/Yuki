@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
+from core.network_firewall import NetworkFirewall
 
 _PROVIDER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
 
@@ -39,7 +40,10 @@ class PreparedOAuthProviderRegistry:
         self,
         providers: Mapping[str, PreparedOAuthProvider],
         presentations: Mapping[str, OAuthProviderPresentation],
+        *, firewall_policy: NetworkFirewall | None = None,
     ):
+        if firewall_policy is not None and not isinstance(firewall_policy, NetworkFirewall):
+            raise TypeError("firewall_policy must be a NetworkFirewall or None")
         if not isinstance(providers, Mapping) or not isinstance(presentations, Mapping):
             raise TypeError("provider and presentation mappings are required")
         if not providers or set(providers) != set(presentations):
@@ -63,6 +67,8 @@ class PreparedOAuthProviderRegistry:
                 raise TypeError("prepared provider authorization service is invalid")
             if getattr(service, "provider_id", None) != provider_id:
                 raise ValueError("authorization service provider identity does not match registry key")
+            if firewall_policy is not None and getattr(service, "firewall_policy", None) is not firewall_policy:
+                raise ValueError("OAuth authorization service must use the exact shared firewall policy")
             services[provider_id] = service
             catalog.append({
                 "provider_id": provider_id,
@@ -70,6 +76,7 @@ class PreparedOAuthProviderRegistry:
                 "description": presentation.description,
                 "available": True,
             })
+        self._firewall_policy = firewall_policy
         self._services = MappingProxyType(services)
         self._catalog = tuple(
             MappingProxyType(item) for item in sorted(catalog, key=lambda item: item["provider_id"])
@@ -84,6 +91,11 @@ class PreparedOAuthProviderRegistry:
     def provider_catalog(self):
         """Return safe catalog projections; no URLs, issuer, client ID, or secrets."""
         return tuple(dict(item) for item in self._catalog)
+
+    def uses_firewall_policy(self, policy: NetworkFirewall) -> bool:
+        if not isinstance(policy, NetworkFirewall) or self._firewall_policy is not policy:
+            return False
+        return all(getattr(service, "firewall_policy", None) is policy for service in self._services.values())
 
     def provider_ids(self) -> tuple[str, ...]:
         return tuple(item["provider_id"] for item in self._catalog)
