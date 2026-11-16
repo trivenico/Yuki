@@ -156,6 +156,45 @@ class DesktopConversationAdapterTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["answer"], "Canonical runtime reply")
 
+    def test_memory_is_injected_only_when_context_consent_is_enabled(self):
+        class Memory:
+            context_enabled = True
+            def context_entries(self, *, query, limit):
+                return [{"category": "preference", "text": "Prefer concise replies"}]
+
+        adapter = DesktopConversationAdapter(
+            self.application, owner_id="desktop-owner", memory=Memory(),
+        )
+        adapter.send("How should you answer?", request_id="memory-enabled")
+        system_message = self.observed[-1][0][0]["content"]
+        self.assertIn("Prefer concise replies", system_message)
+        self.assertIn("untrusted reference data", system_message)
+
+    def test_memory_retrieval_failure_prevents_model_request(self):
+        class Memory:
+            context_enabled = True
+            def context_entries(self, *, query, limit):
+                raise OSError("memory unavailable")
+
+        adapter = DesktopConversationAdapter(
+            self.application, owner_id="desktop-owner", memory=Memory(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "no model request was sent"):
+            adapter.send("Do not send without memory", request_id="memory-failure")
+        self.assertEqual(self.observed, [])
+
+    def test_memory_is_not_read_without_consent(self):
+        class Memory:
+            context_enabled = False
+            def context_entries(self, **kwargs):
+                raise AssertionError("disabled memory must not be read")
+
+        adapter = DesktopConversationAdapter(
+            self.application, owner_id="desktop-owner", memory=Memory(),
+        )
+        adapter.send("No memory", request_id="memory-disabled")
+        self.assertNotIn("user-saved memory notes", self.observed[-1][0][0]["content"])
+
     def test_closed_runtime_rejects_desktop_operations(self):
         self.application.close()
         with self.assertRaisesRegex(RuntimeError, "runtime is closed"):
