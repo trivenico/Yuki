@@ -20,6 +20,7 @@ from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
 from core.approval_audit import MCPExecutionAudit, MCPToolPolicyAudit, SQLiteApprovalAuditLog
 from core.mcp_tool_policy_store import MCPToolPolicyConflict, SQLiteMCPToolPolicyStore
 from core.oauth_mcp_connection import OAuthMCPConnectionManager
+from core.network_firewall import NetworkFirewall
 
 
 @dataclass(frozen=True)
