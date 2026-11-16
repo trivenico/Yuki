@@ -305,7 +305,28 @@ class DurableSandboxExecutionWorker:
                 verify_approval=self.verify_approval, audit=self.audit,
                 consume_approval=self.consume_approval,
             )
-            return self.engine.complete(claimed["id"], self.worker_id, dict(result))
+            try:
+                return self.engine.complete(
+                    claimed["id"], self.worker_id, dict(result)
+                )
+            except Exception as completion_error:
+                # A database/connection error can occur after COMMIT reached
+                # SQLite. Read back before classifying the durable result.
+                try:
+                    current = self.engine.get_task(claimed["id"])
+                except Exception:
+                    current = None
+                if current is not None and current.get("state") == "succeeded":
+                    return current
+                try:
+                    self.engine.fail_unknown_outcome(
+                        claimed["id"], self.worker_id
+                    )
+                except Exception:
+                    pass
+                raise ExecutionOutcomeUnknown(
+                    "sandbox completed but its durable task result could not be confirmed"
+                ) from completion_error
         except ExecutionOutcomeUnknown:
             self.engine.fail_unknown_outcome(claimed["id"], self.worker_id)
             raise
