@@ -223,3 +223,11 @@ legacy authenticated session first and then always closes the shared chat
 bundle, even if revocation reports an error. The Qt launcher and its lifecycle
 must be ported only after the canonical runtime branch is integrated; do not
 mix the diverged desktop foundation branch into this branch with a blind merge.
+
+## Shared desktop composition factory
+
+The `ui.desktop.shared_desktop_composition.build_shared_desktop_controller()` factory now centralizes the cutover wiring. It creates the authenticated durable conversation bundle, wraps it in `SharedDesktopChatController`, and combines that with the existing authenticated specialist controller through the allowlisted `SharedDesktopControllerBridge`.
+
+The desktop composition root should call this factory after local login and pass the same verified identity, session manager, provider, and encrypted memory facade used by the existing desktop services. The returned bridge owns the conversation bundle and delegates logout to the specialist controller; the outer process lifecycle continues to own the provider and must not also register the inner conversation runtime. The factory rejects an incomplete specialist contract and closes the newly-created conversation bundle if bridge construction fails.
+
+This isolates the remaining launcher port to replacing `_open_session()`'s controller construction and registering the returned bridge as the authenticated session resource. The desktop launcher itself is still on the separate, diverged desktop-foundation branch; no claim is made that its Qt entrypoint has already been migrated.
