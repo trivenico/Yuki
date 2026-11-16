@@ -104,15 +104,14 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         recovered = self.executor.recover_interrupted_execution(
             self.proposal.proposal_id, principal_id="owner-a",
         )
-        self.assertEqual(recovered.state, "not_started")
+        # Prepared v1 is atomic, but a concurrent worker may still be between
+        # reservation and approval issuance. Recovery must not release its claim.
+        self.assertEqual(recovered.state, "executing")
         self.assertEqual(self.proposals.get(
             self.proposal.proposal_id, principal_id="owner-a",
-        ).execution_state, "not_started")
+        ).execution_state, "executing")
         self.assertEqual(self.journal.get(self.proposal.idempotency_key).state, "prepared")
-
-        result = self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
-        self.assertEqual(result.state, "finished")
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls, [])
 
     def test_journal_reservation_conflict_rolls_back_proposal_claim(self):
         self.journal.reserve(
