@@ -33,6 +33,13 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
             workspace=self.tmp.name,
         )
 
+
+    def test_approval_store_requires_shared_auth_database(self):
+        with self.assertRaisesRegex(ValueError, "share the authentication database"):
+            SQLiteSandboxExecutionApprovalStore(
+                str(Path(self.tmp.name) / "separate.sqlite3"), auth_service=self.auth,
+            )
+
     def test_approval_is_persisted_and_verified_after_store_reopen(self):
         approval = self.store.approve(self.task, session_token=self.session.token)
         reopened = SQLiteSandboxExecutionApprovalStore(
