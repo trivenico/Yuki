@@ -352,6 +352,62 @@ class YukiConversationAPI:
                 except Exception:
                     return await self._respond(send, 500, {"error": "provider_catalog_unavailable"})
 
+            if path == "/v1/memories" and method == "GET":
+                query = self._query(scope)
+                if set(query) - {"limit"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    limit = int(query.get("limit", "50"))
+                    memories = await asyncio.to_thread(
+                        self.conversations.memories, owner_id=user.user_id, limit=limit,
+                    )
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                except (TypeError, ValueError):
+                    return await self._respond(send, 400, {"error": "invalid_limit"})
+                return await self._respond(send, 200, {"memories": memories})
+
+            if path == "/v1/memories" and method == "POST":
+                payload = await self._body(receive)
+                if set(payload) - {"content", "category", "expires_in_seconds"} or "content" not in payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    memory = await asyncio.to_thread(
+                        self.conversations.remember, owner_id=user.user_id,
+                        content=payload["content"], category=payload.get("category", "note"),
+                        expires_in_seconds=payload.get("expires_in_seconds"),
+                    )
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                except (TypeError, ValueError):
+                    return await self._respond(send, 400, {"error": "invalid_memory"})
+                return await self._respond(send, 201, {"memory": memory})
+
+            if path == "/v1/memories" and method == "DELETE":
+                payload = await self._body(receive)
+                if payload != {"confirm": True}:
+                    return await self._respond(send, 400, {"error": "explicit_confirmation_required"})
+                try:
+                    deleted = await asyncio.to_thread(
+                        self.conversations.clear_memories, owner_id=user.user_id,
+                    )
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                return await self._respond(send, 200, {"deleted": deleted})
+
+            memory_match = re.fullmatch(r"/v1/memories/([A-Za-z0-9_-]{1,128})", path)
+            if memory_match and method == "DELETE":
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    deleted = await asyncio.to_thread(
+                        self.conversations.forget_memory,
+                        owner_id=user.user_id, memory_id=memory_match.group(1),
+                    )
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                return await self._respond(send, 200, {"deleted": deleted})
             if method == "GET" and path == "/v1/conversations":
                 items = await asyncio.to_thread(
                     self.conversations.list, owner_id=user.user_id, limit=50
