@@ -181,7 +181,19 @@ def build_provider_backed_conversation_application_runtime(
     provider_close = getattr(provider, "close", None)
     if provider_close is not None and not callable(provider_close):
         raise TypeError("provider close attribute must be callable when present.")
-    callbacks = ((provider_close,) if callable(provider_close) else ()) + close_callbacks
+    provider_close_lock = RLock()
+    provider_closed = False
+
+    def close_provider_once() -> None:
+        nonlocal provider_closed
+        with provider_close_lock:
+            if provider_closed:
+                return
+            provider_closed = True
+        if callable(provider_close):
+            provider_close()
+
+    callbacks = ((close_provider_once,) if callable(provider_close) else ()) + close_callbacks
     try:
         runtime = build_conversation_application_runtime(
             config, agent_loop=loop, owner_id=owner_id, store_factory=store_factory,
@@ -189,13 +201,13 @@ def build_provider_backed_conversation_application_runtime(
             memory_store=memory_store,
         )
     except Exception:
-        # The lower-level builder cleans its own resources; this factory owns
-        # the provider even if store/service composition fails.
-        if callable(provider_close):
-            try:
-                provider_close()
-            except Exception:
-                pass
+        # The lower-level builder invokes cleanup callbacks after resource
+        # construction failures; this idempotent guard also covers validation
+        # failures that happen before it takes ownership.
+        try:
+            close_provider_once()
+        except Exception:
+            pass
         raise
     runtime.provider_adapter = adapter
     return runtime
