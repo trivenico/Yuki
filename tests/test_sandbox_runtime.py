@@ -66,8 +66,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
 
     def test_workspace_path_cannot_inject_docker_mount_options(self):
         with tempfile.TemporaryDirectory(prefix="yuki,ro") as directory:
-            with patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True), \\
-                 patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True):
+            with patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True), patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True):
                 with self.assertRaisesRegex(SandboxRuntimeError, "mount syntax"):
                     build_docker_argv(SandboxPolicy(), image="python:3.12",
                         workspace=directory, command=["python", "--version"])
