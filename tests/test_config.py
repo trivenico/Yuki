@@ -23,6 +23,7 @@ class ConfigContractTests(unittest.TestCase):
             self.assertEqual(config["workspace"], str(workspace.resolve()))
             self.assertEqual(config["mcp_servers"], [])
             self.assertFalse(config["voice_enabled"])
+            self.assertFalse(config["conversation_memory_enabled"])
             self.assertTrue(config["firewall_dry_run"])
 
     def test_rejects_non_loopback_plain_http_provider_endpoint(self):
@@ -78,6 +79,13 @@ class ConfigContractTests(unittest.TestCase):
             self.assertEqual(config["storage_backend"], "postgres")
             self.assertEqual(config["database_url"].split("@", 1)[1],
                              "db.example.com/yuki?sslmode=verify-full")
+
+    def test_conversation_memory_can_be_enabled_by_environment_override(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"YUKI_CONVERSATION_MEMORY_ENABLED": "true"}, clear=True
+        ):
+            config = self._load(directory, {"workspace": directory})
+            self.assertTrue(config["conversation_memory_enabled"])
 
 
 if __name__ == "__main__":
