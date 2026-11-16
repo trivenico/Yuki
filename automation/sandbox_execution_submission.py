@@ -6,7 +6,6 @@ at the edge and call these methods; the raw worker is never a public API.
 from __future__ import annotations
 
 from contextlib import closing
-import sqlite3
 from typing import Mapping
 
 from automation.execution_task import (
@@ -16,7 +15,7 @@ from automation.execution_task import (
 )
 from automation.sandbox_execution_approval import SQLiteSandboxExecutionApprovalStore
 from core.auth import BuiltInAuthService, AuthenticatedUser
-from core.durable_task_engine import DurableTaskEngine, TaskNotFound
+from core.durable_task_engine import DurableTaskEngine
 
 
 class SandboxExecutionSubmissionService:
