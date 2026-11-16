@@ -20,7 +20,7 @@ _FORMAT = "yuki-memory-backup"
 _VERSION = 1
 _KDF = "scrypt"
 _CIPHER = "AES-256-GCM"
-_SCRYPT_N = 1 << 15
+_SCRYPT_N = 1 << 14
 _SCRYPT_R = 8
 _SCRYPT_P = 1
 _SALT_BYTES = 16
@@ -57,9 +57,10 @@ def _password_bytes(password: str | bytes) -> bytes:
 
 def _derive(password: bytes, salt: bytes, Scrypt) -> bytes:
     try:
+        # cryptography's Scrypt API does not expose OpenSSL's maxmem
+        # parameter; stay below the common 32 MiB backend ceiling.
         return Scrypt(
             salt=salt, length=32, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P,
-            maxmem=128 * 1024 * 1024,
         ).derive(password)
     except Exception:
         raise MemoryBackupError("memory_backup_key_derivation_failed") from None
