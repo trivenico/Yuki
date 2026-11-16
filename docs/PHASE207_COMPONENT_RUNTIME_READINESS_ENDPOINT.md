@@ -13,7 +13,10 @@ component diagnostics to unauthenticated callers.
 - Return HTTP 200 only when the registered component runtime reports every
   started component healthy.
 - Return HTTP 503 when the registry is absent, no components are started, a
-  health check fails, or health evidence is incomplete.
+  health check fails, health evidence is incomplete, or report construction
+  raises an unexpected exception.
+- Unexpected probe errors are converted to a minimal `unavailable` response;
+  internal exception text is never returned by the unauthenticated endpoint.
 - Return a deliberately small JSON payload containing only overall readiness
   and the component-runtime status; detailed exception text and component
   diagnostics remain in the internal readiness report.
