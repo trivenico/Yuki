@@ -89,7 +89,7 @@ class ToolActionJournalTests(unittest.TestCase):
 
     def test_expired_authorization_claim_recovers_to_prepared_not_unknown(self):
         record = self.journal.reserve("approval-crash", "email.send", {"to": "a@example.com"})
-        self.journal.claim_execution("approval-crash", record.request_digest)
+        original_claim = self.journal.claim_execution("approval-crash", record.request_digest)
         with closing(sqlite3.connect(self.path)) as db:
             db.execute(
                 "UPDATE tool_actions SET lease_expires_at=? WHERE idempotency_key=?",
@@ -99,6 +99,27 @@ class ToolActionJournalTests(unittest.TestCase):
         recovered = self.journal.recover_expired_execution("approval-crash")
         self.assertEqual(recovered.state, "prepared")
         self.assertIsNone(recovered.lease_owner)
+
+        # Expiry recovery revokes the old fencing token. A worker that resumes
+        # after recovery cannot promote its stale authorization claim.
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.begin_claimed_execution(
+                "approval-crash", original_claim.lease_owner,
+            )
+
+        # A new worker may acquire a fresh authorization token; the stale token
+        # must not be interchangeable with the newly issued one.
+        fresh_claim = self.journal.claim_execution("approval-crash", record.request_digest)
+        self.assertEqual(fresh_claim.state, "authorizing")
+        self.assertNotEqual(fresh_claim.lease_owner, original_claim.lease_owner)
+        with self.assertRaises(ToolActionTransitionError):
+            self.journal.begin_claimed_execution(
+                "approval-crash", original_claim.lease_owner,
+            )
+        executing = self.journal.begin_claimed_execution(
+            "approval-crash", fresh_claim.lease_owner,
+        )
+        self.assertEqual(executing.state, "executing")
 
     def test_execution_claim_is_single_use(self):
         record = self.journal.reserve("action-1", "email.send", {"to": "a@example.com"})
