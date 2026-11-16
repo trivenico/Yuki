@@ -183,59 +183,66 @@ class AgentExecutionLoop:
                     stream_events = iter(self.stream_model(
                         messages=list(messages), tools=list(tools), tool_choice="auto"
                     ))
-                    while True:
-                        # Enforce the duration budget before blocking for the next
-                        # provider event; cancellation is also checked at this boundary.
-                        stream_stop_reason = self._stop_reason(started, cancel_check)
-                        if stream_stop_reason:
-                            close_stream = getattr(stream_events, "close", None)
-                            if callable(close_stream):
-                                close_stream()
-                            self._event(
-                                "agent.stopped", reason=stream_stop_reason,
-                                model_turns=turns, tool_calls=calls_total,
-                            )
-                            return AgentExecutionResult(
-                                stream_stop_reason, "", turns, calls_total,
-                                max(0.0, self.clock() - started),
-                            )
+                    try:
+                        while True:
+                            # Enforce the duration budget before blocking for the next
+                            # provider event; cancellation is also checked at this boundary.
+                            stream_stop_reason = self._stop_reason(started, cancel_check)
+                            if stream_stop_reason:
+                                self._event(
+                                    "agent.stopped", reason=stream_stop_reason,
+                                    model_turns=turns, tool_calls=calls_total,
+                                )
+                                return AgentExecutionResult(
+                                    stream_stop_reason, "", turns, calls_total,
+                                    max(0.0, self.clock() - started),
+                                )
+                            try:
+                                event = next(stream_events)
+                            except StopIteration:
+                                break
+                            # A provider may yield after cancellation or the total
+                            # deadline while next() was blocked. Recheck both before
+                            # forwarding text or accepting a tool proposal.
+                            stream_stop_reason = self._stop_reason(started, cancel_check)
+                            if stream_stop_reason:
+                                self._event(
+                                    "agent.stopped", reason=stream_stop_reason,
+                                    model_turns=turns, tool_calls=calls_total,
+                                )
+                                return AgentExecutionResult(
+                                    stream_stop_reason, "", turns, calls_total,
+                                    max(0.0, self.clock() - started),
+                                )
+                            if not isinstance(event, Mapping):
+                                raise AgentExecutionError("stream event must be an object.")
+                            event_type = event.get("type")
+                            if event_type == "text_delta":
+                                delta = event.get("text")
+                                if not isinstance(delta, str) or not delta or len(delta) > 4096:
+                                    raise AgentExecutionError("stream text delta is invalid.")
+                                streamed_size += len(delta)
+                                if streamed_size > 24_000:
+                                    raise AgentExecutionError("streamed response exceeds size limit.")
+                                streamed_text.append(delta)
+                                on_text_delta(delta)
+                            elif event_type == "response":
+                                if response is not None or set(event) != {"type", "response"}:
+                                    raise AgentExecutionError("stream response event is invalid.")
+                                response = event["response"]
+                            else:
+                                raise AgentExecutionError("unsupported stream event.")
+                    finally:
+                        # Release provider/network resources on success, cancellation,
+                        # malformed events, callback failures, and provider exceptions.
                         try:
-                            event = next(stream_events)
-                        except StopIteration:
-                            break
-                        # A provider may yield after cancellation while next() was
-                        # blocked. Recheck before forwarding text or accepting tools.
-                        stream_stop_reason = "cancelled" if cancel_check() else None
-                        if stream_stop_reason:
                             close_stream = getattr(stream_events, "close", None)
                             if callable(close_stream):
                                 close_stream()
-                            self._event(
-                                "agent.stopped", reason=stream_stop_reason,
-                                model_turns=turns, tool_calls=calls_total,
-                            )
-                            return AgentExecutionResult(
-                                stream_stop_reason, "", turns, calls_total,
-                                max(0.0, self.clock() - started),
-                            )
-                        if not isinstance(event, Mapping):
-                            raise AgentExecutionError("stream event must be an object.")
-                        event_type = event.get("type")
-                        if event_type == "text_delta":
-                            delta = event.get("text")
-                            if not isinstance(delta, str) or not delta or len(delta) > 4096:
-                                raise AgentExecutionError("stream text delta is invalid.")
-                            streamed_size += len(delta)
-                            if streamed_size > 24_000:
-                                raise AgentExecutionError("streamed response exceeds size limit.")
-                            streamed_text.append(delta)
-                            on_text_delta(delta)
-                        elif event_type == "response":
-                            if response is not None or set(event) != {"type", "response"}:
-                                raise AgentExecutionError("stream response event is invalid.")
-                            response = event["response"]
-                        else:
-                            raise AgentExecutionError("unsupported stream event.")
+                        except Exception:
+                            # Even a hostile/broken close attribute must not mask
+                            # the provider, protocol, or client-callback failure.
+                            pass
                     streamed_answer = "".join(streamed_text)
                     if response is None:
                         response = {
