@@ -58,6 +58,24 @@ class SandboxExecutionRuntimeCompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "closed"):
             runtime.engine.create_goal()
 
+    def test_image_allowlist_requires_a_complete_sha256_digest(self):
+        with self.assertRaisesRegex(ValueError, "image allow-list"):
+            build_sandbox_execution_runtime(
+                {"workspace": str(self.root), "sandbox_execution_enabled": True,
+                 "sandbox_execution_allowed_images": ["registry.example/yuki@sha256:abc"]},
+                auth_service=self.auth,
+            )
+
+    def test_worker_id_must_be_bounded_non_empty_text(self):
+        image = "registry.example/yuki@sha256:" + "c" * 64
+        with self.assertRaisesRegex(ValueError, "worker ID"):
+            build_sandbox_execution_runtime(
+                {"workspace": str(self.root), "sandbox_execution_enabled": True,
+                 "sandbox_execution_allowed_images": [image],
+                 "sandbox_execution_worker_id": " "},
+                auth_service=self.auth,
+            )
+
     def test_workspace_cannot_overlap_private_execution_state(self):
         image = "registry.example/yuki@sha256:" + "b" * 64
         with self.assertRaisesRegex(ValueError, "isolated"):
