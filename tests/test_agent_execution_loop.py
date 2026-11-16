@@ -133,6 +133,30 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(self.invocations, [])
 
+
+    def test_cancellation_is_rechecked_immediately_after_non_streaming_model_returns(self):
+        model_calls = []
+        cancellation_checks = []
+
+        def model(**kwargs):
+            model_calls.append(True)
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "late_call", "name": "echo", "arguments": {"value": "must-not-run"}}
+            ]}}
+
+        def cancelled():
+            cancellation_checks.append(True)
+            return len(cancellation_checks) >= 2
+
+        result = AgentExecutionLoop(
+            model, self.protocol, cancellation_requested=cancelled,
+        ).run("Cancel during provider request", tools=self.tools)
+
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(model_calls, [True])
+        self.assertEqual(self.invocations, [])
+        self.assertEqual(len(cancellation_checks), 2)
+
     def test_transcript_limit_stops_before_next_model_call(self):
         calls = []
         def model(**kwargs):
