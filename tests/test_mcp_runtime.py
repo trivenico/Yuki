@@ -72,7 +72,9 @@ class MCPRuntimeServiceTests(unittest.TestCase):
             )},
             policy_store=self.policy_store, audit_log=self.audit_log,
         )
+        manager._refresh.firewall_policy = firewall
         self.assertIs(manager.firewall_policy, firewall)
+        self.assertIs(manager.refresh_firewall_policy, firewall)
         self.assertTrue(service.uses_firewall_policy(firewall))
         self.assertFalse(service.uses_firewall_policy(NetworkFirewall(allowed_hosts=("mcp.example",))))
 
