@@ -106,7 +106,7 @@ class _LoopbackHTTPTransport:
 class OllamaProvider:
     """Talk to a local or HTTPS Ollama endpoint; never silently routes to cloud."""
 
-    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45, transport=None):
+    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45, transport=None, firewall_policy=None):
         if not isinstance(base_url, str) or not base_url.strip():
             raise ValueError("Ollama base URL is required.")
         parsed = urlsplit(base_url.strip().rstrip("/"))
@@ -137,7 +137,10 @@ class OllamaProvider:
         self.model = model.strip()
         self.timeout = timeout
         if transport is not None: self._transport = transport
-        elif parsed.scheme == "https": self._transport = PinnedHTTPSProviderTransport(allowed_hosts={host}, timeout=timeout)
+        elif parsed.scheme == "https":
+            self._transport = PinnedHTTPSProviderTransport(
+                allowed_hosts={host}, timeout=timeout, firewall_policy=firewall_policy,
+            )
         else: self._transport = _LoopbackHTTPTransport(host, port)
 
     def is_available(self):
