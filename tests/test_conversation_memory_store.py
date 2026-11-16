@@ -105,6 +105,18 @@ class ConversationMemoryIntegrationTests(unittest.TestCase):
         self.assertIn("Alice prefers SQLite", system_prompt)
         self.assertNotIn("Bob uses PostgreSQL", system_prompt)
 
+
+    def test_service_forwards_explicit_memory_expiration(self):
+        saved = self.service.remember(
+            owner_id="alice", content="Short-lived context",
+            expires_in_seconds=3600,
+        )
+        self.assertIsNotNone(saved["expires_at"])
+        self.assertEqual(
+            self.memory.list(owner_id="alice")[0]["memory_id"],
+            saved["memory_id"],
+        )
+
     def test_memory_is_disabled_unless_store_is_explicitly_injected(self):
         plain = ConversationService(self.store, self.service.agent_loop)
         with self.assertRaisesRegex(RuntimeError, "not enabled"):
