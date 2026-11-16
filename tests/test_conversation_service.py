@@ -7,6 +7,7 @@ from pathlib import Path
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationConflict, ConversationNotFound, ConversationStore
+from core.conversation_memory_store import ConversationMemoryStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -117,6 +118,40 @@ class ConversationServiceTests(unittest.TestCase):
         )
         self.assertEqual([item["role"] for item in history], ["user", "assistant"])
 
+    def test_relevant_saved_memory_is_injected_as_untrusted_reference_context(self):
+        memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories.sqlite3")
+        memory_store.remember(
+            owner_id="owner-a", category="preference",
+            content="I prefer concise answers with practical examples.",
+        )
+        service = ConversationService(self.store, self.loop, memory_store=memory_store)
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="I prefer concise answers, please", request_id="memory-context",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        system_message = next(item for item in self.observed[-1] if item["role"] == "system")
+        self.assertIn("Relevant saved context", system_message["content"])
+        self.assertIn("untrusted user memory", system_message["content"])
+        self.assertIn("I prefer concise answers", system_message["content"])
+
+    def test_saved_memory_is_never_retrieved_across_owners(self):
+        memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories-isolation.sqlite3")
+        memory_store.remember(
+            owner_id="owner-a", category="note",
+            content="Private phrase: cobalt mountain notebook.",
+        )
+        other_conversation = self.store.create_conversation(owner_id="owner-b")
+        service = ConversationService(self.store, self.loop, memory_store=memory_store)
+        result = service.reply(
+            owner_id="owner-b", conversation_id=other_conversation["conversation_id"],
+            user_text="Tell me about cobalt mountain notebook",
+            request_id="memory-owner-isolation", expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        system_message = next(item for item in self.observed[-1] if item["role"] == "system")
+        self.assertNotIn("Private phrase", system_message["content"])
     def test_next_turn_receives_prior_persisted_transcript(self):
         self.send()
         second = self.send(text="Follow up", request="request-2", version=2)
