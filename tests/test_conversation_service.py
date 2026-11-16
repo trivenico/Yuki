@@ -506,5 +506,62 @@ class ConversationServiceTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 ConversationService(self.store, self.loop, max_active_requests=value)
 
+
+    def test_owner_loop_cleanup_runs_without_holding_service_lock(self):
+        service_holder = []
+        lock_acquired = threading.Event()
+        def factory(owner_id):
+            loop = AgentExecutionLoop(
+                lambda **kwargs: {"text": owner_id, "tool_calls": {"tool_calls": []}},
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            )
+            def close():
+                service = service_holder[0]
+                def acquire_service_lock():
+                    with service._lock:
+                        lock_acquired.set()
+                worker = threading.Thread(target=acquire_service_lock)
+                worker.start()
+                worker.join(timeout=2)
+                if worker.is_alive():
+                    raise RuntimeError("service lock held during owner loop cleanup")
+            loop.close = close
+            return loop
+
+        service = ConversationService(self.store, self.loop, agent_loop_for_owner=factory)
+        service_holder.append(service)
+        conversation = self.store.create_conversation(owner_id="owner-a")
+        result = service.reply(
+            owner_id="owner-a", conversation_id=conversation["conversation_id"],
+            user_text="Hello", request_id="lock-release", expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        service.close()
+        self.assertTrue(lock_acquired.is_set())
+
+    def test_concurrent_close_waits_for_first_cleanup_to_finish(self):
+        entered = threading.Event()
+        release = threading.Event()
+        service = ConversationService(self.store, self.loop)
+        def close_loop():
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release shutdown")
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "owner", "tool_calls": {"tool_calls": []}},
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        loop.close = close_loop
+        service._owner_agent_loops["owner-a"] = loop
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(service.close)
+            self.assertTrue(entered.wait(timeout=3))
+            second = pool.submit(service.close)
+            self.assertFalse(second.done())
+            release.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+        self.assertTrue(service._close_complete)
+
 if __name__ == "__main__":
     unittest.main()
