@@ -117,6 +117,14 @@ class ConversationService:
                 raise RuntimeError("persistent memory is not enabled for this runtime.")
             return self.memory_store.delete(owner_id=owner_id, memory_id=memory_id)
 
+    def clear_memories(self, *, owner_id: str) -> int:
+        """Delete all saved memories belonging only to the authenticated owner."""
+        with self._lock:
+            self._ensure_open()
+            if self.memory_store is None:
+                raise RuntimeError("persistent memory is not enabled for this runtime.")
+            return self.memory_store.clear(owner_id=owner_id)
+
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         with self._lock:
             self._ensure_open()
