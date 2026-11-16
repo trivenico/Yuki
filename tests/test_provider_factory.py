@@ -31,6 +31,43 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+
+    def test_shared_firewall_is_injected_into_remote_ollama_transport(self):
+        from core.network_firewall import NetworkFirewall
+
+        firewall = NetworkFirewall(allowed_hosts=("ollama.example.com",))
+        provider = create_provider(
+            {"provider": "ollama", "ollama_base_url": "https://ollama.example.com",
+             "ollama_model": "local-model"},
+            environ={}, firewall_policy=firewall,
+        )
+        self.assertIs(provider._transport.firewall_policy, firewall)
+        self.assertEqual(
+            provider._transport.allowed_hosts, frozenset({"ollama.example.com"}),
+        )
+
+    def test_remote_ollama_fails_closed_when_host_is_not_in_shared_firewall(self):
+        from core.network_firewall import NetworkFirewall
+
+        firewall = NetworkFirewall(allowed_hosts=("api.openai.com",))
+        with self.assertRaisesRegex(ValueError, "firewall policy"):
+            create_provider(
+                {"provider": "ollama", "ollama_base_url": "https://ollama.example.com",
+                 "ollama_model": "local-model"},
+                environ={}, firewall_policy=firewall,
+            )
+
+    def test_shared_firewall_is_injected_into_hybrid_remote_ollama_transport(self):
+        from core.network_firewall import NetworkFirewall
+
+        firewall = NetworkFirewall(allowed_hosts=("ollama.example.com", "api.openai.com"))
+        provider = create_provider(
+            {"provider": "hybrid", "ollama_base_url": "https://ollama.example.com",
+             "ollama_model": "local-model"},
+            environ={}, firewall_policy=firewall,
+        )
+        self.assertIs(provider.local_provider._transport.firewall_policy, firewall)
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
