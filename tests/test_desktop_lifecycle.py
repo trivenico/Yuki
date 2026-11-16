@@ -1,6 +1,7 @@
 import unittest
 
 from ui.desktop.lifecycle import DesktopServiceLifecycle, DesktopShutdownError
+from providers.hybrid import HybridProvider
 
 
 class Resource:
@@ -43,6 +44,21 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         lifecycle.close()
         self.assertEqual(events, ["last", "broken", "first"])
 
+    def test_desktop_lifecycle_closes_hybrid_provider_after_dependents_once(self):
+        events = []
+        class Child:
+            def __init__(self, name):
+                self.name = name
+            def close(self):
+                events.append(self.name)
+        class Dependent:
+            def close(self):
+                events.append("dependent")
+        provider = HybridProvider(Child("local"), Child("cloud"), owns_providers=True)
+        lifecycle = DesktopServiceLifecycle((provider, Dependent()))
+        lifecycle.close()
+        lifecycle.close()
+        self.assertEqual(events, ["dependent", "cloud", "local"])
     def test_non_closable_resources_are_ignored(self):
         events = []
         lifecycle = DesktopServiceLifecycle((object(), Resource("closable", events)))
