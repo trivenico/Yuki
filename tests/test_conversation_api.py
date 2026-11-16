@@ -268,6 +268,24 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["error"], "cloud_consent_required")
         self.assertEqual(calls, [])
 
+    def test_memory_list_category_filter_is_validated_and_owner_scoped(self):
+        memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "filtered-memories.sqlite")
+        self.app.conversations.memory_store = memory_store
+        preference = memory_store.remember(
+            owner_id=self.user.user_id, content="Prefers concise output", category="preference",
+        )
+        memory_store.remember(owner_id=self.user.user_id, content="Project meeting notes", category="note")
+        status, data, _ = self.request(
+            "GET", "/v1/memories", token=self.issued.token, query=b"category=preference",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["memory_id"] for item in data["memories"]], [preference["memory_id"]])
+        status, data, _ = self.request(
+            "GET", "/v1/memories", token=self.issued.token, query=b"category=system",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "invalid_category")
+
     def test_memory_management_is_authenticated_owner_scoped_and_explicit(self):
         memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories.sqlite")
         self.app.conversations.memory_store = memory_store
