@@ -29,6 +29,7 @@ class ProviderRuntimeManager:
         environ: Mapping[str, str] | None = None,
         provider_factory: Callable[..., Any] = create_provider,
         catalog_factory: Callable[..., list[dict[str, Any]]] = build_provider_catalog,
+        firewall_policy: Any = None,
     ):
         if not isinstance(config, dict):
             raise TypeError("config must be a dictionary")
@@ -42,6 +43,7 @@ class ProviderRuntimeManager:
         self.environ = os.environ if environ is None else environ
         self.provider_factory = provider_factory
         self.catalog_factory = catalog_factory
+        self.firewall_policy = firewall_policy
         self._lock = threading.RLock()
         self._load_persisted_selection()
 
@@ -63,7 +65,7 @@ class ProviderRuntimeManager:
             candidate_config = dict(self.config)
             candidate_config["provider"] = name
             # Construct before changing either active state or persisted state.
-            candidate = self.provider_factory(candidate_config, environ=self.environ)
+            candidate = self._create_provider(candidate_config)
             previous = self.adapter.provider
             try:
                 self._persist(name)
@@ -101,6 +103,13 @@ class ProviderRuntimeManager:
                 item for item in self.catalog_factory(config=self.config, environ=self.environ)
                 if item.get("name") == name
             )
+
+    def _create_provider(self, config: dict[str, Any]) -> Any:
+        """Construct providers with the shared policy when one is configured."""
+        kwargs = {"environ": self.environ}
+        if self.firewall_policy is not None:
+            kwargs["firewall_policy"] = self.firewall_policy
+        return self.provider_factory(config, **kwargs)
 
     def _load_persisted_selection(self) -> None:
         try:
