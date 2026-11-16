@@ -61,6 +61,11 @@ class DurableTaskEngine:
               PRIMARY KEY(goal_id,idempotency_key));
             CREATE TABLE IF NOT EXISTS rate_limit_events(
               id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT NOT NULL, action TEXT NOT NULL, occurred_at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS worker_instances(
+              worker_id TEXT PRIMARY KEY, process_id INTEGER NOT NULL,
+              started_at REAL NOT NULL, heartbeat_at REAL NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('active','stopped')),
+              stopped_at REAL);
             CREATE INDEX IF NOT EXISTS rate_limit_window_idx ON rate_limit_events(actor_id,action,occurred_at);
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
             CREATE INDEX IF NOT EXISTS tasks_goal_idx ON tasks(goal_id,created_at);
@@ -126,6 +131,81 @@ class DurableTaskEngine:
     def _event(self, c, goal, task, kind, detail):
         c.execute("INSERT INTO run_events(goal_id,task_id,event_type,detail_json,created_at) VALUES(?,?,?,?,?)",
                   (goal, task, kind, self._json(detail), self.clock()))
+
+    def register_worker(self, worker_id, process_id):
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 256:
+            raise ValueError("invalid worker_id")
+        if isinstance(process_id, bool) or not isinstance(process_id, int) or process_id <= 0:
+            raise ValueError("invalid process_id")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            existing = c.execute(
+                "SELECT state FROM worker_instances WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+            if existing is not None and existing["state"] == "active":
+                raise TaskConflict("worker identity is already registered as active")
+            c.execute(
+                """INSERT INTO worker_instances(worker_id,process_id,started_at,heartbeat_at,state,stopped_at)
+                   VALUES(?,?,?,?, 'active', NULL)
+                   ON CONFLICT(worker_id) DO UPDATE SET
+                     process_id=excluded.process_id, started_at=excluded.started_at,
+                     heartbeat_at=excluded.heartbeat_at, state='active', stopped_at=NULL""",
+                (worker_id, process_id, now, now),
+            )
+            c.commit()
+        return self.get_worker(worker_id)
+
+    def heartbeat_worker(self, worker_id):
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            changed = c.execute(
+                "UPDATE worker_instances SET heartbeat_at=? WHERE worker_id=? AND state='active'",
+                (now, worker_id),
+            ).rowcount
+            if changed != 1:
+                raise TaskConflict("worker is not registered as active")
+            c.commit()
+        return now
+
+    def stop_worker(self, worker_id):
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute(
+                "UPDATE worker_instances SET state='stopped',stopped_at=?,heartbeat_at=? "
+                "WHERE worker_id=? AND state='active'",
+                (now, now, worker_id),
+            )
+            c.commit()
+        return self.get_worker(worker_id)
+
+    def get_worker(self, worker_id):
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM worker_instances WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+        if row is None:
+            raise TaskNotFound("worker not found")
+        return dict(row)
+
+    def list_workers(self, *, stale_after_seconds=30):
+        if (isinstance(stale_after_seconds, bool)
+                or not isinstance(stale_after_seconds, (int, float))
+                or not math.isfinite(stale_after_seconds)
+                or not 1 <= stale_after_seconds <= 3600):
+            raise ValueError("stale_after_seconds must be between 1 and 3600")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT * FROM worker_instances ORDER BY started_at,worker_id"
+            ).fetchall()
+        return [
+            {**dict(row), "stale": row["state"] == "active"
+             and row["heartbeat_at"] <= now - stale_after_seconds}
+            for row in rows
+        ]
 
     def consume_rate_limit(self, actor_id, action, *, limit, window_seconds):
         """Atomically consume one persistent actor/action rate-limit slot."""
