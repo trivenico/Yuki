@@ -25,8 +25,19 @@ class DesktopConversationAdapterTests(unittest.TestCase):
             self.observed.append((messages, tools))
             return {"text": "Canonical runtime reply", "tool_calls": {"tool_calls": []}}
 
+        def stream_model(*, messages, tools, tool_choice):
+            yield {"type": "text_delta", "text": "Streamed"}
+            yield {
+                "type": "response",
+                "response": {
+                    "text": "Streamed",
+                    "tool_calls": {"tool_calls": []},
+                },
+            }
+
         loop = AgentExecutionLoop(
-            model, StructuredToolProtocol(GuardedToolRuntime({}, DenyAll()))
+            model, StructuredToolProtocol(GuardedToolRuntime({}, DenyAll())),
+            stream_model=stream_model,
         )
         self.application = build_conversation_application_runtime(
             {"workspace": self.tempdir.name},
@@ -65,6 +76,20 @@ class DesktopConversationAdapterTests(unittest.TestCase):
                 {"role": "user", "content": "Second turn"},
             ],
         )
+
+    def test_streaming_deltas_are_forwarded_by_the_adapter(self):
+        deltas = []
+        result = self.adapter.send(
+            "Stream this", request_id="stream-request", on_text_delta=deltas.append,
+        )
+        self.assertEqual(result["answer"], "Streamed")
+        self.assertEqual(deltas, ["Streamed"])
+
+    def test_conversation_listing_is_owner_scoped(self):
+        self.adapter.start_new_conversation(title="Mine")
+        self.application.conversations.create(owner_id="another-owner", title="Not mine")
+        listed = self.adapter.list_conversations()
+        self.assertEqual([item["title"] for item in listed], ["Mine"])
 
     def test_select_conversation_enforces_owner_scope(self):
         conversation = self.application.conversations.create(owner_id="another-owner")
