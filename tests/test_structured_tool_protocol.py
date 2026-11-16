@@ -84,6 +84,18 @@ class StructuredToolProtocolTests(unittest.TestCase):
             self.assertEqual(self.calls, [])
             self.assertEqual(self.policy.requests, [])
 
+    def test_parsed_arguments_obey_dispatch_structure_limits(self):
+        nested = {}
+        current = nested
+        for index in range(33):
+            current["child"] = {}
+            current = current["child"]
+        response = self.envelope([self.call("too-deep", arguments=nested)])
+        with self.assertRaises(ToolProtocolError):
+            self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
     def test_duplicate_json_object_keys_are_rejected_at_every_depth(self):
         invalid = (
             '{"tool_calls":[],"tool_calls":[]}',
