@@ -40,7 +40,7 @@ class SandboxExecutionTask:
             raise ValueError("argv must be a tuple containing 1 to 64 arguments")
         if any(not isinstance(arg, str) or not arg or len(arg) > 500 or "\x00" in arg for arg in self.argv):
             raise ValueError("argv arguments must be bounded non-empty NUL-free strings")
-        if not isinstance(self.workspace, str) or not self.workspace or len(self.workspace) > 4096 or "\x00" in self.workspace:
+        if not isinstance(self.workspace, str) or not self.workspace or len(self.workspace) > 4096 or "\x00" in self.workspace or not Path(self.workspace).expanduser().is_absolute():
             raise ValueError("workspace must be a bounded path")
         if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 120:
             raise ValueError("timeout_seconds must be between 1 and 120")
@@ -85,7 +85,7 @@ def execute_approved_task(
     task: SandboxExecutionTask,
     approval: ExecutionApproval,
     *,
-    sandbox: SandboxRunner,
+    sandbox: DockerSandbox,
     verify_approval: ApprovalVerifier,
     audit: AuditWriter,
 ) -> Mapping[str, object]:
