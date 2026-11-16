@@ -6,6 +6,7 @@ lifecycle must close the provider exactly once.
 """
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, Callable
 
 from core.conversation_application_runtime import ConversationApplicationRuntime
@@ -25,25 +26,27 @@ class DesktopConversationSession:
         self.runtime = runtime
         self.conversation = conversation
         self._closed = False
+        self._close_lock = RLock()
 
     def close(self) -> None:
         """Invalidate the UI session before closing its durable conversation store."""
-        if self._closed:
-            return
-        self._closed = True
-        errors: list[Exception] = []
-        try:
-            self.conversation.invalidate()
-        except Exception as exc:
-            errors.append(exc)
-        try:
-            self.runtime.close()
-        except Exception as exc:
-            errors.append(exc)
-        if errors:
-            raise RuntimeError(
-                "Desktop conversation shutdown could not complete every cleanup step."
-            ) from errors[0]
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            errors: list[Exception] = []
+            try:
+                self.conversation.invalidate()
+            except Exception as exc:
+                errors.append(exc)
+            try:
+                self.runtime.close()
+            except Exception as exc:
+                errors.append(exc)
+            if errors:
+                raise RuntimeError(
+                    "Desktop conversation shutdown could not complete every cleanup step."
+                ) from errors[0]
 
 
 def build_authenticated_desktop_conversation(
