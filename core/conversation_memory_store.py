@@ -98,7 +98,7 @@ class ConversationMemoryStore:
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
-        return set(re.findall(r"[a-z0-9_]{2,}", text.casefold()))
+        return set(re.findall(r"[\\w]{2,}", text.casefold(), flags=re.UNICODE))
 
     def search(self, *, owner_id: str, query: str, limit: int = 5) -> list[dict[str, Any]]:
         owner = self._owner(owner_id)
