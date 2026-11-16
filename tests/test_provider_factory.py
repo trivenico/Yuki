@@ -59,6 +59,56 @@ class ProviderFactoryTests(unittest.TestCase):
         )
         self.assertEqual(provider.local_provider.timeout, 14.0)
         self.assertEqual(provider.cloud_provider.timeout, 14.0)
+    def test_factory_hybrid_close_closes_owned_children_once_in_reverse_order(self):
+        events = []
+        class Child:
+            def __init__(self, name):
+                self.name = name
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def close(self):
+                events.append(self.name)
+        local = Child("local")
+        cloud = Child("cloud")
+        provider = HybridProvider(local, cloud, owns_providers=True)
+        provider.close()
+        provider.close()
+        self.assertEqual(events, ["cloud", "local"])
+
+    def test_hybrid_close_does_not_close_borrowed_children(self):
+        events = []
+        class Child:
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def close(self):
+                events.append("closed")
+        child = Child()
+        HybridProvider(child, child).close()
+        self.assertEqual(events, [])
+
+    def test_hybrid_close_continues_after_child_close_failure(self):
+        events = []
+        class Child:
+            def __init__(self, name, fail=False):
+                self.name, self.fail = name, fail
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def close(self):
+                events.append(self.name)
+                if self.fail:
+                    raise OSError("close failed")
+        provider = HybridProvider(Child("local"), Child("cloud", True), owns_providers=True)
+        with self.assertRaisesRegex(RuntimeError, "failed to close"):
+            provider.close()
+        self.assertEqual(events, ["cloud", "local"])
+        provider.close()
+        self.assertEqual(events, ["cloud", "local"])
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
