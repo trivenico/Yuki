@@ -12,6 +12,7 @@ class MainFirewallCompositionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             registry = main.SkillRegistry.defaults(
                 directory,
+                web_allowed_hosts=["mcp.example.com"],
                 mcp_servers=[{
                     "name": "docs",
                     "endpoint": "https://mcp.example.com/mcp",
