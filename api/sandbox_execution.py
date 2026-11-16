@@ -52,6 +52,22 @@ class AuthenticatedSandboxExecutionAPI:
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
 
+            if path == "/v1/sandbox/operator/unknown-outcomes" and method == "GET":
+                if "users:manage" not in user.permissions:
+                    raise PermissionError("operator access required")
+                records = await asyncio.to_thread(
+                    self.submissions.engine.list_unknown_outcomes, limit=100,
+                )
+                return await self._respond(send, 200, {"unknown_outcomes": records})
+
+            if path == "/v1/sandbox/operator/workers" and method == "GET":
+                if "users:manage" not in user.permissions:
+                    raise PermissionError("operator access required")
+                workers = await asyncio.to_thread(
+                    self.submissions.engine.list_workers, stale_after_seconds=30,
+                )
+                return await self._respond(send, 200, {"workers": workers})
+
             if path == "/v1/sandbox/goals" and method == "POST":
                 payload = await self._body(receive)
                 if payload:
