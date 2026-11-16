@@ -225,5 +225,49 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
             self.transport.post_json("https://mcp.example.com/rpc", payload={}, headers={})
 
 
+    def test_shared_firewall_audit_runs_before_mcp_connection(self):
+        decisions = []
+        firewall = NetworkFirewall(
+            allowed_hosts=("mcp.example.com",),
+            audit=decisions.append,
+        )
+        transport = PinnedMCPHTTPTransport(
+            allowed_hosts={"mcp.example.com"},
+            resolver=lambda *args, **kwargs: [record("8.8.8.8")],
+            connection_factory=self.transport._factory,
+            firewall_policy=firewall,
+        )
+
+        status, _, _ = transport.post_json(
+            "https://mcp.example.com/rpc", payload={"jsonrpc": "2.0"},
+            headers={},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(len(decisions), 1)
+        self.assertTrue(decisions[0].allowed)
+        self.assertEqual(len(self.connections), 1)
+
+    def test_shared_firewall_audit_failure_prevents_mcp_connection(self):
+        firewall = NetworkFirewall(
+            allowed_hosts=("mcp.example.com",),
+            audit=lambda decision: (_ for _ in ()).throw(RuntimeError("audit unavailable")),
+        )
+        transport = PinnedMCPHTTPTransport(
+            allowed_hosts={"mcp.example.com"},
+            resolver=lambda *args, **kwargs: [record("8.8.8.8")],
+            connection_factory=lambda *args, **kwargs: self.fail("audit failure must block connection"),
+            firewall_policy=firewall,
+        )
+
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_destination_blocked"):
+            transport.post_json(
+                "https://mcp.example.com/rpc", payload={"jsonrpc": "2.0"},
+                headers={},
+            )
+
+        self.assertEqual(self.connections, [])
+
+
 if __name__ == "__main__":
     unittest.main()
