@@ -17,7 +17,8 @@ class MCPPluginSkill(Skill):
     risk = "high"
     requires_approval = True
 
-    def __init__(self, servers=(), *, token_providers=None):
+    def __init__(self, servers=(), *, token_providers=None, firewall_policy=None):
+        self.firewall_policy = firewall_policy
         self.servers = {}
         for item in servers:
             if not isinstance(item, dict):
@@ -69,6 +70,7 @@ class MCPPluginSkill(Skill):
                 allowed_hosts=config["allowed_hosts"],
                 allowed_tools=config["allowed_tools"],
                 access_token_provider=self._token_providers.get(name),
+                firewall_policy=self.firewall_policy,
                 approver=lambda tool, args: request.get("confirm") == f"CALL {name}/{tool}",
             )
             client.initialize()
