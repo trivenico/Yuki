@@ -127,6 +127,43 @@ class AuthenticatedSandboxExecutionAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["workers"][0]["worker_id"], "api-worker")
 
+
+    def test_authenticated_api_to_durable_worker_execution_lifecycle(self):
+        status, goal = self.request(
+            "POST", "/v1/sandbox/goals", {}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task_payload = {
+            "task_id": "api-e2e-task-01", "image": self.image,
+            "argv": ["python", "--version"], "timeout_seconds": 10,
+            "write_workspace": False, "max_output_bytes": 2048,
+        }
+        status, approval = self.request(
+            "POST", "/v1/sandbox/approvals", task_payload, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        status, queued = self.request(
+            "POST", f"/v1/sandbox/goals/{goal['goal_id']}/tasks",
+            {"task": task_payload, "approval_id": approval["approval_id"]},
+            self.owner_one.token,
+            extra_headers=((b"idempotency-key", b"api-e2e-submit-01"),),
+        )
+        self.assertEqual(status, 202)
+        task_id = queued["task"]["task_id"]
+        with unittest.mock.patch.object(
+            self.sandbox, "run",
+            return_value={"returncode": 0, "stdout": "python 3", "stderr": ""},
+        ) as sandbox_run:
+            completed = self.worker.run_once()
+        sandbox_run.assert_called_once()
+        self.assertEqual(completed["id"], task_id)
+        self.assertEqual(completed["state"], "succeeded")
+        status, body = self.request(
+            "GET", f"/v1/sandbox/tasks/{task_id}", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["task"]["state"], "succeeded")
+
     def test_requires_auth_and_delegates_non_sandbox_routes(self):
         status, body = self.request("POST", "/v1/sandbox/goals", {})
         self.assertEqual((status, body["error"]), (401, "authentication_required"))
