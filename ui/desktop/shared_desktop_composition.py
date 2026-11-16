@@ -42,9 +42,11 @@ def build_shared_desktop_controller(
         memory=memory,
         store_factory=store_factory,
     )
-    chat = SharedDesktopChatController(conversation_session)
     try:
+        chat = SharedDesktopChatController(conversation_session)
         return SharedDesktopControllerBridge(chat, specialist_controller)
     except Exception:
-        chat.logout()
+        # The bridge constructor can reject an incomplete legacy-controller
+        # contract; the session bundle must still be closed on every failure.
+        conversation_session.close()
         raise
