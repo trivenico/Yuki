@@ -106,3 +106,6 @@ maximum supported base64 envelope and returns `Cache-Control: no-store`.
 A separate, explicitly confirmed restore workflow is still required before
 any import can occur.
 
+Conflict counts currently identify exact memory-ID collisions only; preview does
+not infer semantic or near-duplicate content. Such similarity checks must remain
+advisory and must not silently suppress or overwrite memories during a future restore.
