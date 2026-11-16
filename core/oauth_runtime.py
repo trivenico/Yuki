@@ -15,7 +15,7 @@ from core.oauth_transactions import SQLiteOAuthTransactionStore
 
 
 _TRANSACTION_AAD = b"yuki-oauth-transaction-v1"
-_TRANSACTION_ENVELOPE = b"YUKIOT1\\0"
+_TRANSACTION_ENVELOPE = b"YUKIOT1|"
 _KEY_ID = re.compile(rb"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
 
 
@@ -31,13 +31,13 @@ def _transaction_encrypt(cipher, plaintext: bytes) -> bytes:
         raise ValueError("invalid_transaction_key_id")
     if not isinstance(ciphertext, bytes) or not ciphertext:
         raise ValueError("invalid_transaction_ciphertext")
-    return _TRANSACTION_ENVELOPE + encoded_key_id + b"\\0" + ciphertext
+    return _TRANSACTION_ENVELOPE + encoded_key_id + b"|" + ciphertext
 
 
 def _transaction_decrypt(cipher, envelope: bytes) -> bytes:
     if not isinstance(envelope, bytes) or not envelope.startswith(_TRANSACTION_ENVELOPE):
         raise ValueError("invalid_transaction_ciphertext")
-    key_id, separator, ciphertext = envelope[len(_TRANSACTION_ENVELOPE):].partition(b"\\0")
+    key_id, separator, ciphertext = envelope[len(_TRANSACTION_ENVELOPE):].partition(b"|")
     if not separator or not _KEY_ID.fullmatch(key_id) or not ciphertext:
         raise ValueError("invalid_transaction_ciphertext")
     return cipher.decrypt(
