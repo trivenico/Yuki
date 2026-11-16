@@ -24,7 +24,7 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         self.admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         self.session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
         self.store = SQLiteSandboxExecutionApprovalStore(
-            str(root / "approvals.sqlite3"), auth_service=self.auth,
+            str(root / "auth.sqlite3"), auth_service=self.auth,
         )
         self.task = SandboxExecutionTask(
             task_id="exec-auth-1",
@@ -36,7 +36,7 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
     def test_approval_is_persisted_and_verified_after_store_reopen(self):
         approval = self.store.approve(self.task, session_token=self.session.token)
         reopened = SQLiteSandboxExecutionApprovalStore(
-            str(Path(self.tmp.name) / "approvals.sqlite3"), auth_service=self.auth,
+            str(Path(self.tmp.name) / "auth.sqlite3"), auth_service=self.auth,
         )
         self.assertTrue(reopened.verify(approval, self.task))
         self.assertFalse(reopened.verify(approval, SandboxExecutionTask(
