@@ -11,6 +11,7 @@ import uuid
 from typing import Any
 
 from core.conversation_application_runtime import ConversationApplicationRuntime
+from core.memory_context import build_memory_context_system_text
 
 
 class DesktopConversationAdapter:
@@ -26,6 +27,7 @@ class DesktopConversationAdapter:
         application: ConversationApplicationRuntime,
         *,
         owner_id: str,
+        memory: Any = None,
     ) -> None:
         if not isinstance(application, ConversationApplicationRuntime):
             raise TypeError("application must be a ConversationApplicationRuntime.")
@@ -40,6 +42,7 @@ class DesktopConversationAdapter:
             raise RuntimeError("conversation runtime is closed.")
         self._application = application
         self._owner_id = owner_id.strip()
+        self._memory = memory
         self._conversation_id: str | None = None
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
@@ -141,6 +144,7 @@ class DesktopConversationAdapter:
 
             # Keep the selected conversation and version stable for this turn,
             # but do not hold the UI state lock during potentially slow inference.
+            system_text = build_memory_context_system_text(self._memory, message.strip())
             return self._application.conversations.reply(
                 owner_id=self._owner_id,
                 conversation_id=conversation_id,
@@ -148,6 +152,7 @@ class DesktopConversationAdapter:
                 request_id=request_id.strip(),
                 expected_version=expected_version,
                 tools=[],
+                system_text=system_text,
                 cancellation_requested=cancellation_requested,
                 on_text_delta=on_text_delta,
             )
