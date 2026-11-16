@@ -27,22 +27,21 @@ surface adapter for that integration:
   thread-safe cancellation predicate and a text-delta callback; callbacks must
   marshal UI updates onto the Qt main thread.
 
-This is an integration seam, not yet a complete desktop bootstrap migration.
-The existing desktop launcher on the separate desktop-architecture branch still
-creates a fresh `CompanionApplicationService` and in-memory `ConversationSession`
-inside each `_open_session()` call. It does not construct
-`ConversationApplicationRuntime`. Replacing only the controller call would
-therefore leave two competing conversation engines and duplicate session state.
+This adapter is now wired into the desktop launcher's authenticated-session
+composition on the integration branch. The launcher verifies the same signed-in
+identity, builds the legacy specialist controller, and replaces only the chat
+surface with the shared durable runtime. The legacy controller continues to
+own specialist plans, approvals, task operations, encrypted backup/restore,
+and migration. The launcher loads the same application configuration used by
+the provider bootstrap and passes the encrypted desktop memory facade to the
+consent-aware chat adapter.
 
-The migration must be performed at the composition root: establish the
-relationship between the authenticated desktop `actor_id` and the runtime's
-`owner_id`, construct the canonical runtime with its reviewed agent loop and
-store, inject the adapter into the desktop controller, and make the lifecycle
-close that runtime exactly once. The existing provider's `generate_chat()`
-interface is not by itself proof that it satisfies the canonical agent-loop
-model contract; the provider/model adapter must be explicitly verified before
-composition. Keep desktop login/session revocation, memory-consent behavior, and
-supervised task authorization intact during that migration.
+The provider remains owned by the existing process lifecycle; the conversation
+session bundle owns its store and is closed through the controller bridge on
+logout, expiry, and application shutdown. Desktop chat receives an empty tool
+list and does not inherit specialist execution permissions. This is an
+integration cutover under CI review, not a claim that the full desktop
+application has passed end-to-end platform validation.
 
 Qt-thread-safe streaming delivery remains follow-up work. The legacy
 `ConversationSession` stores its transcript only in process memory, so there is
@@ -68,9 +67,9 @@ hook with runtime shutdown by default. When an outer desktop lifecycle already o
 provider shutdown, the caller must pass `close_provider=False` so the provider is
 closed exactly once by that lifecycle. Chat tools remain empty; this helper does not
 connect the supervised specialist task runtime or grant desktop chat new
-permissions. The desktop composition root still needs to call this helper,
-construct `DesktopConversationAdapter` from the same runtime and owner ID,
-and make the existing lifecycle close the resulting runtime exactly once.
+permissions. The desktop composition root calls this helper through
+`build_shared_desktop_controller()`; the authenticated adapter derives its
+owner scope from the same verified identity.
 
 
 ## Authenticated desktop session facade
@@ -149,9 +148,8 @@ conversation = conversation_session.conversation
 
 The bundle is now covered by composition tests for verified identity,
 owner-scoped durable history, deny-all chat tools, external provider ownership,
-memory context, and idempotent shutdown. The actual Qt launcher/controller
-migration remains a separate integration step because its existing branch does
-not yet contain this canonical runtime dependency chain.
+memory context, and idempotent shutdown. The launcher/controller migration is now present on the controlled integration
+branch. CI and cross-platform desktop validation remain outstanding.
 
 
 ## Qt-facing chat controller seam
@@ -164,10 +162,11 @@ conversation facade, exposes the existing memory-context toggle through the
 facade's consent checks, and closes the bundle on logout. It never receives a
 provider, owner ID, raw session token, or tool registry.
 
-The launcher should construct this controller only after
-`DesktopSessionManager.current_identity()` has returned a live identity, pass
+The launcher constructs this controller only after
+`DesktopSessionManager.current_identity()` has returned a live identity, passes
 the existing encrypted `CompanionMemory` instance to the composition helper,
-and register the bundle/controller shutdown through one lifecycle owner.
+and routes bundle shutdown through the controller while the outer lifecycle
+continues to own the provider.
 Existing specialist-plan and task APIs remain on the current authenticated
 specialist controller/service until a separate adapter migration is reviewed;
 the chat controller does not gain authority to approve or execute tasks.
@@ -220,9 +219,9 @@ This keeps the current specialist/task authorization implementation intact
 while replacing the chat engine. The desktop worker's existing
 `controller.respond(message)` call remains compatible. Logout revokes the
 legacy authenticated session first and then always closes the shared chat
-bundle, even if revocation reports an error. The Qt launcher and its lifecycle
-must be ported only after the canonical runtime branch is integrated; do not
-mix the diverged desktop foundation branch into this branch with a blind merge.
+bundle, even if revocation reports an error. This wiring is implemented in `ui/desktop/launch.py` on the integration
+branch. The two source histories were reconciled by selective file integration,
+not by a blind merge.
 
 ## Shared desktop composition factory
 
@@ -235,3 +234,8 @@ This isolates the remaining launcher port to replacing `_open_session()`'s contr
 ## Session-expiry cleanup behavior
 
 The shared desktop controller bridge now treats an authorization failure from either the durable-chat facade or a delegated specialist/task operation as a terminal desktop-session event. It closes the bridge authorization gate, invokes the legacy controller's logout to revoke the local session, and closes the shared conversation bundle even if revocation fails. This prevents an expired session from leaving the durable store, memory-consent facade, or active chat workers alive while the UI waits for the next login transition. The original `PermissionError` is preserved when cleanup succeeds; cleanup failures are surfaced as a separate runtime error. This is a fail-closed boundary: callers should return the UI to login after such an authorization error and must not silently retry under the expired identity.
+
+
+## Launcher cutover on the integration branch
+
+The authenticated `_open_session()` path now builds the shared durable chat controller with the verified local identity and the existing encrypted memory instance. The previous `CompanionApplicationService` remains instantiated as the specialist/task/backup/migration authority, but its in-memory chat response path is no longer the launcher's chat authority. The Qt worker still invokes the compatible `respond(message)` method. The conversation session is closed by bridge logout; the process lifecycle closes the provider once. The launcher imports its configuration and encrypted-memory factory in the Qt run scope so the session composition does not depend on names local to the separate service factory.
