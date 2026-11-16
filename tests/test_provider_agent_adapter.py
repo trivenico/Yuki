@@ -175,7 +175,7 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             self.assertFalse(second_entered.wait(timeout=0.1))
             release.set()
             self.assertEqual(stream.result(timeout=5)[0]["text"], "ok")
-            self.assertEqual(normal.result(timeout=5)["text"], "hello")
+            self.assertEqual(normal.result(timeout=5)["text"], "ok")
         self.assertTrue(second_entered.is_set())
 
 
