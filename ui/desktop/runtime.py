@@ -32,6 +32,7 @@ def build_desktop_conversation_runtime(
     provider: Any,
     owner_id: str,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    close_provider: bool = True,
 ) -> ConversationApplicationRuntime:
     """Build the shared runtime for one authenticated desktop owner.
 
@@ -43,6 +44,8 @@ def build_desktop_conversation_runtime(
         raise TypeError("config must be a dictionary.")
     if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
+    if type(close_provider) is not bool:
+        raise TypeError("close_provider must be a boolean.")
 
     adapter = ProviderAgentAdapter(provider)
     protocol = StructuredToolProtocol(GuardedToolRuntime({}, _DenyAllTools()))
@@ -60,7 +63,7 @@ def build_desktop_conversation_runtime(
         max_duration_seconds=120,
     )
     close = getattr(provider, "close", None)
-    callbacks = (close,) if callable(close) else ()
+    callbacks = (close,) if close_provider and callable(close) else ()
     return build_conversation_application_runtime(
         config,
         agent_loop=agent_loop,
