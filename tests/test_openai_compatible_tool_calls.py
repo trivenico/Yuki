@@ -238,5 +238,16 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
 
+    def test_generate_chat_stream_rejects_unhashable_role_before_network(self):
+        invalid = [
+            [{"role": [], "content": "x"}],
+            [{"role": {}, "content": "x"}],
+        ]
+        for messages in invalid:
+            with self.subTest(messages=messages), self.assertRaises(ValueError):
+                list(self.provider.generate_chat_stream(messages=messages, tools=self.tools))
+        self.assertEqual(self.requests, [])
+
+
 if __name__ == "__main__":
     unittest.main()
