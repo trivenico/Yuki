@@ -251,10 +251,21 @@ class DurableSandboxExecutionWorker:
             raise PermissionError("an approved execution record is required")
         if approval.task_id != task.task_id or approval.task_fingerprint != task.fingerprint():
             raise PermissionError("approval does not bind to this exact execution task")
-        if not callable(self.verify_approval) or self.verify_approval(approval, task) is not True:
-            raise PermissionError("execution approval was not verified at submission")
         if str(self.sandbox.workspace) != str(Path(task.workspace).expanduser().resolve()):
             raise PermissionError("task workspace does not match the configured sandbox workspace")
+        # An exact previously accepted submission is safe to return even after
+        # its one-shot approval has been consumed. The durable receipt binds
+        # actor, approval, fingerprint and idempotency key; mismatches conflict.
+        prior = self.engine.get_submission_receipt(
+            goal_id, idempotency_key,
+            actor_id=approval.actor_id,
+            approval_id=approval.approval_id,
+            task_fingerprint=approval.task_fingerprint,
+        )
+        if prior is not None:
+            return prior
+        if not callable(self.verify_approval) or self.verify_approval(approval, task) is not True:
+            raise PermissionError("execution approval was not verified at submission")
         payload = {
             "task": {
                 "task_id": task.task_id,
