@@ -101,3 +101,37 @@ class SQLiteSandboxExecutionApprovalStore:
                 WHERE approval_id=? AND revoked_at IS NULL""",
                 (datetime.now(timezone.utc).isoformat(), approval_id))
             return result.rowcount == 1
+
+class SandboxExecutionAuditWriter:
+    """Durable metadata-only audit adapter using Yuki's hash-chained audit log."""
+
+    _EVENTS = {
+        "execution.started": "execution_started",
+        "execution.completed": "executed",
+        "execution.failed": "execution_failed",
+    }
+
+    def __init__(self, audit_log):
+        from core.approval_audit import SQLiteApprovalAuditLog
+        if not isinstance(audit_log, SQLiteApprovalAuditLog):
+            raise TypeError("audit_log must be a SQLiteApprovalAuditLog")
+        self.audit_log = audit_log
+
+    def __call__(self, event: Any) -> int:
+        if not isinstance(event, dict):
+            raise ValueError("audit event must be an object")
+        event_type = self._EVENTS.get(event.get("event"))
+        task_id, actor_id, fingerprint = (
+            event.get("task_id"), event.get("actor_id"),
+            event.get("task_fingerprint"),
+        )
+        if event_type is None:
+            raise ValueError("unsupported sandbox execution audit event")
+        if not all(isinstance(value, str) and value for value in (task_id, actor_id, fingerprint)):
+            raise ValueError("sandbox audit identity is incomplete")
+        if len(task_id) > 128 or len(actor_id) > 200 or len(fingerprint) != 64:
+            raise ValueError("sandbox audit identity is invalid")
+        return self.audit_log.append(
+            event_type=event_type, pending_id=task_id, actor=actor_id,
+            skill_id="sandbox:" + fingerprint,
+        )
