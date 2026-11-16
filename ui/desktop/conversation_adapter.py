@@ -77,6 +77,14 @@ class DesktopConversationAdapter:
                 "version": conversation["version"],
             }
 
+    def list_conversations(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """List only this authenticated owner's conversations."""
+        with self._lock:
+            self._ensure_open()
+            return self._application.conversations.list(
+                owner_id=self._owner_id, limit=limit,
+            )
+
     def history(self, *, limit: int = 100) -> list[dict[str, Any]]:
         """Return persisted messages for the selected owner-scoped conversation."""
         with self._lock:
@@ -94,6 +102,7 @@ class DesktopConversationAdapter:
         *,
         request_id: str | None = None,
         cancellation_requested=None,
+        on_text_delta=None,
     ) -> dict[str, Any]:
         """Persist and execute one chat turn through the canonical agent loop.
 
@@ -113,6 +122,8 @@ class DesktopConversationAdapter:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
+        if on_text_delta is not None and not callable(on_text_delta):
+            raise TypeError("on_text_delta must be callable.")
 
         with self._lock:
             self._ensure_open()
@@ -130,6 +141,7 @@ class DesktopConversationAdapter:
                 expected_version=current["version"],
                 tools=[],
                 cancellation_requested=cancellation_requested,
+                on_text_delta=on_text_delta,
             )
 
     def clear_selection(self) -> None:
