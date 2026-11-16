@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +17,19 @@ class OAuthConnectionRegistryTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes only")
+    def test_database_file_is_owner_only(self):
+        self.assertEqual(stat.S_IMODE(Path(self.path).stat().st_mode), 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX symlink semantics only")
+    def test_rejects_database_symlink(self):
+        target = Path(self.temp.name) / "target.sqlite3"
+        target.touch()
+        link = Path(self.temp.name) / "linked.sqlite3"
+        link.symlink_to(target)
+        with self.assertRaises(ValueError):
+            SQLiteOAuthConnectionRegistry(str(link))
 
     def test_register_list_and_get_non_secret_metadata(self):
         record = self.registry.register(

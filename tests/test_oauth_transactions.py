@@ -1,4 +1,6 @@
 import sqlite3
+import os
+import stat
 from contextlib import closing
 import tempfile
 import threading
@@ -44,6 +46,19 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         }
         values.update(overrides)
         return self.store.create(**values)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes only")
+    def test_database_file_is_owner_only(self):
+        self.assertEqual(stat.S_IMODE(Path(self.path).stat().st_mode), 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX symlink semantics only")
+    def test_rejects_database_symlink(self):
+        target = Path(self.temp.name) / "target.sqlite3"
+        target.touch()
+        link = Path(self.temp.name) / "linked.sqlite3"
+        link.symlink_to(target)
+        with self.assertRaises(ValueError):
+            self._store(database_path=str(link))
 
     def test_existing_transaction_schema_is_migrated_for_oidc_nonce(self):
         with closing(sqlite3.connect(self.path)) as db:

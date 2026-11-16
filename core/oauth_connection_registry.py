@@ -5,9 +5,10 @@ import json
 import re
 import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
 import time
 from dataclasses import dataclass
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$")
 _SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
@@ -29,8 +30,7 @@ class SQLiteOAuthConnectionRegistry:
             raise ValueError("database_path must be non-empty")
         if not callable(clock):
             raise ValueError("clock must be callable")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         self._clock = clock
         with self._connection() as db:
             db.execute("PRAGMA journal_mode=WAL")

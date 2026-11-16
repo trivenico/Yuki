@@ -13,6 +13,8 @@ from core.inference_jobs import InferenceJobService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
 from core.oauth_credential_vault import SQLiteOAuthCredentialVault
+from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
+from core.oauth_transactions import SQLiteOAuthTransactionStore
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.sqlite_file_security import (
     SQLitePathSecurityError,
@@ -94,6 +96,12 @@ class SQLiteFileSecurityTests(unittest.TestCase):
             ("oauth.sqlite3", lambda p: SQLiteOAuthCredentialVault(
                 str(p), cipher=_TestCipher(), hmac_key=b"k" * 32
             )),
+            ("oauth-transactions.sqlite3", lambda p: SQLiteOAuthTransactionStore(
+                str(p), hmac_key=b"h" * 32,
+                encrypt=lambda value: b"cipher:" + value,
+                decrypt=lambda value: value[len(b"cipher:"):],
+            )),
+            ("oauth-connections.sqlite3", lambda p: SQLiteOAuthConnectionRegistry(str(p))),
             ("mcp.sqlite3", SQLiteMCPToolPolicyStore),
             ("workflow.sqlite3", WorkflowRunStore),
             ("approval-audit.sqlite3", SQLiteApprovalAuditLog),

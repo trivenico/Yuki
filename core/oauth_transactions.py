@@ -4,10 +4,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import hmac
-from pathlib import Path
 import sqlite3
 import time
 from typing import Callable
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 
 
 class OAuthTransactionError(ValueError):
@@ -39,8 +40,7 @@ class SQLiteOAuthTransactionStore:
             raise ValueError("trusted encrypt and decrypt callbacks are required")
         if type(max_ttl_seconds) is not int or not 60 <= max_ttl_seconds <= 1800:
             raise ValueError("max_ttl_seconds must be between 60 and 1800")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         self._hmac_key, self._encrypt, self._decrypt = bytes(hmac_key), encrypt, decrypt
         self._clock, self.max_ttl_seconds = clock, max_ttl_seconds
         with self._connect() as db:
