@@ -37,7 +37,16 @@ class ConversationMemoryStore:
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(conversation_memories)")}
             if "expires_at" not in columns:
-                db.execute("ALTER TABLE conversation_memories ADD COLUMN expires_at TEXT")
+                try:
+                    db.execute("ALTER TABLE conversation_memories ADD COLUMN expires_at TEXT")
+                except sqlite3.OperationalError as exc:
+                    # Another process may have completed the same additive
+                    # migration after our PRAGMA snapshot.
+                    refreshed = {
+                        row["name"] for row in db.execute("PRAGMA table_info(conversation_memories)")
+                    }
+                    if "expires_at" not in refreshed:
+                        raise exc
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_conversation_memories_owner_created
                 ON conversation_memories(owner_id, created_at DESC, memory_id)
@@ -89,8 +98,14 @@ class ConversationMemoryStore:
         import uuid
         memory_id = uuid.uuid4().hex
         with self._connection() as db:
-            # Serialize per-database capacity checks across independent workers.
+            # Serialize expiry cleanup and capacity checks across workers.
             db.execute("BEGIN IMMEDIATE")
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                "DELETE FROM conversation_memories WHERE owner_id = ? "
+                "AND expires_at IS NOT NULL AND expires_at <= ?",
+                (owner, now),
+            )
             count = db.execute(
                 "SELECT count(*) FROM conversation_memories WHERE owner_id = ?", (owner,)
             ).fetchone()[0]
