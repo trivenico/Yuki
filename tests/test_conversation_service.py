@@ -120,7 +120,7 @@ class ConversationServiceTests(unittest.TestCase):
 
     def test_relevant_saved_memory_is_injected_as_untrusted_reference_context(self):
         memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories.sqlite3")
-        memory_store.remember(
+        saved = memory_store.remember(
             owner_id="owner-a", category="preference",
             content="I prefer concise answers with practical examples.",
         )
@@ -131,6 +131,13 @@ class ConversationServiceTests(unittest.TestCase):
             expected_version=0, tools=[],
         )
         self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["memory_references"], [{
+            "memory_id": saved["memory_id"], "category": "preference",
+            "score": memory_store.search(
+                owner_id="owner-a", query="I prefer concise answers, please", limit=5,
+            )[0]["score"],
+        }])
+        self.assertNotIn("I prefer concise answers with practical examples", json.dumps(result))
         system_message = next(item for item in self.observed[-1] if item["role"] == "system")
         self.assertIn("Relevant saved context", system_message["content"])
         self.assertIn("untrusted user memory", system_message["content"])
@@ -150,6 +157,7 @@ class ConversationServiceTests(unittest.TestCase):
             request_id="memory-owner-isolation", expected_version=0, tools=[],
         )
         self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["memory_references"], [])
         system_message = next(item for item in self.observed[-1] if item["role"] == "system")
         self.assertNotIn("Private phrase", system_message["content"])
     def test_next_turn_receives_prior_persisted_transcript(self):
