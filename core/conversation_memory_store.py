@@ -215,6 +215,64 @@ class ConversationMemoryStore:
         )
         return [{"score": round(score, 6), **item} for score, item in ranked[:limit]]
 
+    @staticmethod
+    def _normalize_content(content: str) -> str:
+        """Normalize text conservatively for duplicate inspection only."""
+        import unicodedata
+        normalized = unicodedata.normalize("NFKC", content).casefold()
+        return " ".join(re.findall(r"[^\W_]+", normalized, flags=re.UNICODE))
+
+    def find_duplicates(
+        self, *, owner_id: str, content: str, limit: int = 5, threshold: float = 0.8,
+    ) -> list[dict[str, Any]]:
+        """Find same-owner active memories that may duplicate proposed content.
+
+        This is advisory only: it never suppresses a save, merges categories,
+        changes expiry, or overwrites potentially contradictory memories.
+        Exact normalized matches are always returned; other candidates use
+        conservative token-set Jaccard similarity at or above threshold.
+        """
+        owner = self._owner(owner_id)
+        if not isinstance(content, str) or not content.strip() or len(content.strip()) > self.MAX_TEXT_CHARS:
+            raise ValueError(f"content must be 1-{self.MAX_TEXT_CHARS} characters.")
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise ValueError("limit must be between 1 and 20.")
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0.5 <= threshold <= 1.0:
+            raise ValueError("threshold must be a number from 0.5 to 1.0.")
+        normalized = self._normalize_content(content)
+        proposed_tokens = self._tokens(content)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT memory_id, category, content, created_at, expires_at "
+                "FROM conversation_memories WHERE owner_id = ? "
+                "AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC, memory_id DESC",
+                (owner, now),
+            ).fetchall()
+        matches = []
+        for row in rows:
+            item = dict(row)
+            exact = self._normalize_content(item["content"]) == normalized
+            existing_tokens = self._tokens(item["content"])
+            union = proposed_tokens | existing_tokens
+            similarity = (
+                len(proposed_tokens & existing_tokens) / len(union)
+                if union else float(exact)
+            )
+            if exact or similarity >= threshold:
+                matches.append({
+                    **item,
+                    "exact": exact,
+                    "similarity": round(similarity, 6),
+                })
+        matches.sort(
+            key=lambda item: (
+                not item["exact"], -item["similarity"],
+                item["created_at"], item["memory_id"],
+            )
+        )
+        return matches[:limit]
+
     def list(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
         owner = self._owner(owner_id)
         if type(limit) is not int or not 1 <= limit <= 200:

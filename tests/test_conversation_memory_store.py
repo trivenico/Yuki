@@ -83,6 +83,52 @@ class ConversationMemoryStoreTests(unittest.TestCase):
             [(item["memory_id"], item["score"]) for item in second],
         )
 
+    def test_duplicate_inspection_finds_normalized_exact_match_without_mutating(self):
+        saved = self.memory.remember(
+            owner_id="alice", content="Prefer concise engineering updates",
+            category="preference",
+        )
+        before = self.memory.list(owner_id="alice")
+        matches = self.memory.find_duplicates(
+            owner_id="alice", content="  PREFER   concise engineering updates!  ",
+        )
+        self.assertEqual([item["memory_id"] for item in matches], [saved["memory_id"]])
+        self.assertTrue(matches[0]["exact"])
+        self.assertEqual(matches[0]["similarity"], 1.0)
+        self.assertEqual(self.memory.list(owner_id="alice"), before)
+
+    def test_duplicate_inspection_finds_near_match_but_not_low_overlap(self):
+        near = self.memory.remember(
+            owner_id="alice", content="Prefer concise engineering updates",
+        )
+        self.memory.remember(
+            owner_id="alice", content="Recipes for slow roasted vegetables",
+        )
+        matches = self.memory.find_duplicates(
+            owner_id="alice", content="Prefer concise engineering updates daily",
+            threshold=0.8,
+        )
+        self.assertEqual([item["memory_id"] for item in matches], [near["memory_id"]])
+        self.assertFalse(matches[0]["exact"])
+        self.assertGreaterEqual(matches[0]["similarity"], 0.8)
+
+    def test_duplicate_inspection_is_owner_scoped_and_ignores_expired_entries(self):
+        alice = self.memory.remember(owner_id="alice", content="Private project deployment preference")
+        self.memory.remember(owner_id="bob", content="Private project deployment preference")
+        expired = self.memory.remember(
+            owner_id="alice", content="Old private project deployment preference",
+            expires_in_seconds=60,
+        )
+        with self.memory._connection() as db:
+            db.execute(
+                "UPDATE conversation_memories SET expires_at = ? WHERE memory_id = ?",
+                ("2000-01-01T00:00:00+00:00", expired["memory_id"]),
+            )
+        matches = self.memory.find_duplicates(
+            owner_id="alice", content="Private project deployment preference",
+        )
+        self.assertEqual([item["memory_id"] for item in matches], [alice["memory_id"]])
+
     def test_memory_inputs_are_bounded_and_categories_are_allowlisted(self):
         for kwargs in (
             {"owner_id": "", "content": "text"},
