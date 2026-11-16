@@ -62,10 +62,13 @@ def build_docker_argv(
         network_args = ["--network", "none"]
     else:
         raise SandboxRuntimeError("allowlist mode requires a separately enforced egress gateway")
+    host_uid = os.getuid() if hasattr(os, "getuid") else None
+    if host_uid == 0:
+        raise SandboxRuntimeError("refusing sandbox launch from a root service")
     if runtime_user is None:
         if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
             raise SandboxRuntimeError("non-root UID/GID detection unsupported on this host")
-        uid, gid = os.getuid(), os.getgid()
+        uid, gid = host_uid, os.getgid()
     else:
         if (not isinstance(runtime_user, tuple) or len(runtime_user) != 2
                 or any(isinstance(value, bool) or not isinstance(value, int) or value < 1
