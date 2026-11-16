@@ -23,7 +23,11 @@ class SQLiteSandboxExecutionApprovalStore:
     def __init__(self, database_path: str, *, auth_service: BuiltInAuthService):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService")
-        self.database_path = prepare_private_sqlite_path(database_path)
+        auth_path = str(auth_service.database_path)
+        requested_path = str(prepare_private_sqlite_path(database_path))
+        if requested_path != auth_path:
+            raise ValueError("approval records must share the authentication database for atomic revocation and consumption")
+        self.database_path = auth_path
         self.auth_service = auth_service
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -44,6 +48,7 @@ class SQLiteSandboxExecutionApprovalStore:
                 db.execute("ALTER TABLE sandbox_execution_approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'")
             if "consumed_at" not in columns:
                 db.execute("ALTER TABLE sandbox_execution_approvals ADD COLUMN consumed_at TEXT")
+            db.execute("UPDATE sandbox_execution_approvals SET status='revoked' WHERE revoked_at IS NOT NULL")
             db.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_approval_task ON sandbox_execution_approvals(task_id)")
 
     @contextmanager
@@ -102,17 +107,30 @@ class SQLiteSandboxExecutionApprovalStore:
 
     def consume(self, approval: ExecutionApproval, task: SandboxExecutionTask) -> bool:
         """Atomically consume a valid approval exactly once before external dispatch."""
-        if not self.verify(approval, task):
+        if not isinstance(approval, ExecutionApproval) or not isinstance(task, SandboxExecutionTask):
+            return False
+        if (approval.approved is not True or approval.task_id != task.task_id
+                or approval.task_fingerprint != task.fingerprint()):
             return False
         consumed_at = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""SELECT a.actor_id, a.session_hash FROM sandbox_execution_approvals a
+                JOIN auth_sessions s ON s.token_hash=a.session_hash
+                JOIN auth_users u ON u.user_id=s.user_id
+                WHERE a.approval_id=? AND a.actor_id=? AND a.task_id=?
+                  AND a.task_fingerprint=? AND a.status='approved'
+                  AND s.revoked_at IS NULL AND s.expires_at>? AND u.disabled=0
+                  AND u.role IN ('admin','operator')""",
+                (approval.approval_id, approval.actor_id, task.task_id,
+                 task.fingerprint(), now)).fetchone()
+            if row is None:
+                return False
             result = db.execute("""UPDATE sandbox_execution_approvals
                 SET status='consumed', consumed_at=?
-                WHERE approval_id=? AND actor_id=? AND task_id=?
-                  AND task_fingerprint=? AND status='approved'""",
-                (consumed_at, approval.approval_id, approval.actor_id,
-                 task.task_id, task.fingerprint()))
+                WHERE approval_id=? AND status='approved'""",
+                (consumed_at, approval.approval_id))
             return result.rowcount == 1
 
     def revoke(self, approval_id: str, *, session_token: str) -> bool:
