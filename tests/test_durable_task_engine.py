@@ -406,6 +406,26 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskNotFound):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
 
+
+    def test_unknown_external_outcome_is_terminal_and_requires_reconciliation(self):
+        task = self.engine.submit(
+            self.goal, "sandbox.execution.v1", {}, idempotency_key="unknown-outcome",
+            max_attempts=1,
+        )
+        self.engine.claim("execution-worker", task_types=("sandbox.execution.v1",))
+        failed = self.engine.fail_unknown_outcome(task["id"], "execution-worker")
+        self.assertEqual(failed["state"], "failed")
+        self.assertIn("manual reconciliation", failed["last_error"])
+        events = self.engine.list_events(self.goal)
+        self.assertTrue(any(
+            event["event_type"] == "task.outcome_unknown"
+            and event["task_id"] == task["id"]
+            for event in events
+        ))
+        self.assertEqual(self.engine.claim(
+            "execution-worker", task_types=("sandbox.execution.v1",)
+        ), None)
+
     def test_claim_can_be_scoped_to_explicit_task_types(self):
         text_task = self.engine.submit(self.goal, "specialist.text", {}, idempotency_key="text")
         exec_task = self.engine.submit(self.goal, "sandbox.execution.v1", {}, idempotency_key="exec")
