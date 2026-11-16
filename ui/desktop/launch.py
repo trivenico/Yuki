@@ -184,6 +184,38 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit(None, exc)
 
+    class ShutdownWorkerSignals(QObject):
+        finished = Signal(object)
+
+    class ShutdownWorker(QRunnable):
+        """Run ordered service shutdown away from the Qt event thread."""
+
+        def __init__(self, lifecycle, controller, sessions):
+            super().__init__()
+            self.lifecycle = lifecycle
+            self.controller = controller
+            self.sessions = sessions
+            self.signals = ShutdownWorkerSignals()
+
+        @Slot()
+        def run(self):
+            error = None
+
+            def revoke_active_session():
+                if self.controller is not None:
+                    self.controller.logout()
+                elif self.sessions is not None:
+                    self.sessions.logout()
+
+            try:
+                if self.lifecycle is not None:
+                    self.lifecycle.close(before_close=revoke_active_session)
+                else:
+                    revoke_active_session()
+            except Exception as exc:
+                error = exc
+            self.signals.finished.emit(error)
+
     class YukiWindow(QMainWindow):
         def __init__(self):
             super().__init__()
@@ -197,6 +229,9 @@ def run() -> int:
             self.lifecycle = None
             self.controller = None
             self.busy = False
+            self._shutdown_started = False
+            self._shutdown_complete = False
+            self._shutdown_worker = None
             self.current_plan = None
             self.migration_preview = None
             self._build_ui()
@@ -1154,35 +1189,38 @@ def run() -> int:
             self._return_to_login()
             self.login_status.setText("You are signed out.")
 
-        def closeEvent(self, event):
-            if self.busy:
-                QMessageBox.information(
-                    self, "Request in progress",
-                    "Wait for the current response before closing Yuki."
-                )
-                event.ignore()
-                return
-            def revoke_active_session():
-                if self.controller is not None:
-                    self.controller.logout()
-                elif self.sessions is not None:
-                    self.sessions.logout()
-
-            try:
-                if self.lifecycle is not None:
-                    self.lifecycle.close(before_close=revoke_active_session)
-                else:
-                    revoke_active_session()
-            except Exception as exc:
+        @Slot(object)
+        def _shutdown_finished(self, error: Any):
+            self._shutdown_complete = True
+            self.controller = None
+            if error is not None:
                 QMessageBox.warning(
                     self, "Yuki shutdown",
                     "Yuki could not complete every cleanup operation ("
-                    + type(exc).__name__
+                    + type(error).__name__
                     + "). Remaining cleanup was attempted; check the application logs."
                 )
-            finally:
-                self.controller = None
-            event.accept()
+            self.close()
+
+        def closeEvent(self, event):
+            if self._shutdown_complete:
+                event.accept()
+                return
+            event.ignore()
+            if self._shutdown_started:
+                return
+            self._shutdown_started = True
+            self.setEnabled(False)
+            self.login_status.setText(
+                "Yuki is safely signing out and shutting down…"
+            )
+            # The pool is single-threaded: this shutdown task runs only after
+            # any active provider/backup/plan operation has returned. Resource
+            # closure therefore cannot race an in-flight desktop operation.
+            worker = ShutdownWorker(self.lifecycle, self.controller, self.sessions)
+            worker.signals.finished.connect(self._shutdown_finished)
+            self._shutdown_worker = worker
+            self.pool.start(worker)
 
     app = QApplication.instance() or QApplication(sys.argv)
     window = YukiWindow()
