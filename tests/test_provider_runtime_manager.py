@@ -179,7 +179,8 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             manager = ProviderRuntimeManager(
                 {"provider": "openai"}, adapter,
                 Path(directory) / "provider-selection.json",
-                environ={}, provider_factory=factory, catalog_factory=_catalog,
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=factory, catalog_factory=_catalog,
                 firewall_policy=firewall,
             )
             manager.select("ollama")
