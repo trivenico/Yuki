@@ -252,5 +252,8 @@ class DurableSandboxExecutionWorker:
             raise
 
     def cancel(self, task_id: str) -> Mapping[str, object]:
-        """Cancel queued work; the durable engine refuses unsafe live cancellation."""
+        """Cancel this worker's queued execution tasks, never another task class."""
+        current = self.engine.get_task(task_id)
+        if current["task_type"] != EXECUTION_TASK_TYPE:
+            raise PermissionError("worker cannot cancel a different task type")
         return self.engine.cancel_task(task_id)
