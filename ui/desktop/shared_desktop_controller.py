@@ -7,6 +7,7 @@ operations remain delegated to the existing authenticated desktop controller.
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 
@@ -42,25 +43,22 @@ class SharedDesktopControllerBridge:
         self._chat = chat
         self._specialists = specialist_controller
         self._closed = False
+        self._lock = RLock()
 
     def respond(self, message: str, **kwargs: Any) -> str:
-        if self._closed:
-            raise RuntimeError("desktop controller bridge is closed.")
+        self._ensure_open()
         return self._chat.respond(message, **kwargs)
 
     def set_memory_context(self, enabled: bool) -> None:
-        if self._closed:
-            raise RuntimeError("desktop controller bridge is closed.")
+        self._ensure_open()
         self._chat.set_memory_context(enabled)
 
     def memory_context_enabled(self) -> bool:
-        if self._closed:
-            raise RuntimeError("desktop controller bridge is closed.")
+        self._ensure_open()
         return self._chat.memory_context_enabled()
 
     def _specialist_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        if self._closed:
-            raise RuntimeError("desktop controller bridge is closed.")
+        self._ensure_open()
         if name not in self._SPECIALIST_METHODS:
             raise AttributeError(name)
         return getattr(self._specialists, name)(*args, **kwargs)
@@ -117,9 +115,12 @@ class SharedDesktopControllerBridge:
 
     def logout(self) -> bool:
         """Revoke the old authenticated controller, then close shared chat state."""
-        if self._closed:
-            return False
-        self._closed = True
+        with self._lock:
+            if self._closed:
+                return False
+            # Close the authorization gate before invoking potentially blocking
+            # cleanup. Concurrent logout callers must not revoke/close twice.
+            self._closed = True
         errors: list[Exception] = []
         revoked = False
         try:
@@ -137,3 +138,8 @@ class SharedDesktopControllerBridge:
         return revoked
 
     close = logout
+
+    def _ensure_open(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("desktop controller bridge is closed.")
