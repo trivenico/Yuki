@@ -1,6 +1,7 @@
 """Composable ASGI runtime for authenticated Yuki conversations."""
 from __future__ import annotations
 
+import json
 from threading import RLock
 from typing import Any, Callable
 
@@ -54,6 +55,21 @@ class ConversationRuntime:
         if self._closed:
             raise RuntimeError("conversation runtime is closed")
         if scope.get("type") == "http":
+            if scope.get("path") == "/readyz" and scope.get("method", "GET").upper() in {"GET", "HEAD"}:
+                report = self.readiness_report()
+                component = report.capabilities["component_runtime"]
+                ready = component.status == "verified"
+                payload = {
+                    "status": "ready" if ready else "not_ready",
+                    "component_runtime": component.status,
+                }
+                body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                await self.web.respond(
+                    send, 200 if ready else 503, body,
+                    "application/json; charset=utf-8",
+                    scope.get("method", "GET").upper(),
+                )
+                return
             await self.web(scope, receive, send)
             return
         if scope.get("type") != "lifespan":

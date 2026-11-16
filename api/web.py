@@ -68,6 +68,13 @@ class YukiWebApplication:
         await self.api(scope, receive, send)
 
     @staticmethod
+    async def respond(send, status, body, content_type, method, *, cache=b"no-store", extra=None):
+        """Send a response with the web shell's standard security headers."""
+        await YukiWebApplication._respond(
+            send, status, body, content_type, method, cache=cache, extra=extra
+        )
+
+    @staticmethod
     async def _respond(send, status, body, content_type, method, *, cache=b"no-store", extra=None):
         headers = [
             (b"content-type", content_type.encode("ascii")),
