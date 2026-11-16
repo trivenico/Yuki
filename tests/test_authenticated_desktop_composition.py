@@ -1,0 +1,118 @@
+"""Tests for authenticated durable desktop conversation composition."""
+from dataclasses import dataclass
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.conversation_store import ConversationStore
+from ui.desktop.shared_conversation_session import build_authenticated_desktop_conversation
+
+
+@dataclass(frozen=True)
+class Identity:
+    actor_id: str
+    session_id: str = "session-1"
+
+
+class Sessions:
+    def __init__(self, identity):
+        self.identity = identity
+
+    def current_identity(self):
+        return self.identity
+
+
+class Provider:
+    def __init__(self):
+        self.calls = []
+        self.close_count = 0
+
+    def generate_chat(self, *, messages, tools, tool_choice):
+        self.calls.append((messages, tools, tool_choice))
+        return {"text": "Durable desktop reply", "tool_calls": {"tool_calls": []}}
+
+    def close(self):
+        self.close_count += 1
+
+
+class AuthenticatedDesktopCompositionTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.identity = Identity("desktop-owner")
+        self.sessions = Sessions(self.identity)
+        self.provider = Provider()
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def build(self, *, memory=None):
+        return build_authenticated_desktop_conversation(
+            {"workspace": self.tempdir.name},
+            provider=self.provider,
+            identity=self.identity,
+            sessions=self.sessions,
+            memory=memory,
+            store_factory=lambda config: ConversationStore(
+                Path(config["workspace"]) / "conversations.sqlite3"
+            ),
+        )
+
+    def test_composes_owner_scoped_durable_chat_and_leaves_provider_lifecycle_external(self):
+        session = self.build()
+        try:
+            result = session.conversation.send("Hello", request_id="desktop-1")
+            self.assertEqual(result["answer"], "Durable desktop reply")
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(self.provider.calls[0][1], [])
+            self.assertEqual(self.provider.calls[0][2], "auto")
+            self.assertEqual(
+                session.conversation.history()[0]["content"],
+                "Hello",
+            )
+            self.assertEqual(
+                session.runtime.conversations.list(owner_id="desktop-owner")[0]["conversation_id"],
+                result["conversation_id"],
+            )
+        finally:
+            session.close()
+        self.assertEqual(self.provider.close_count, 0)
+        self.assertTrue(session.runtime.closed)
+
+    def test_rejects_identity_not_verified_by_current_session(self):
+        self.sessions.identity = None
+        with self.assertRaises(PermissionError):
+            self.build()
+        self.assertEqual(self.provider.calls, [])
+        self.assertEqual(self.provider.close_count, 0)
+
+    def test_session_close_invalidates_facade_and_closes_runtime_idempotently(self):
+        session = self.build()
+        session.conversation.start_new_conversation()
+        session.close()
+        session.close()
+        with self.assertRaises(PermissionError):
+            session.conversation.list_conversations()
+        self.assertTrue(session.runtime.closed)
+        self.assertEqual(self.provider.close_count, 0)
+
+    def test_memory_context_is_bound_to_verified_desktop_session(self):
+        class Memory:
+            context_enabled = True
+            def context_entries(self, *, query, limit):
+                return [{"category": "preference", "text": "Use concise answers"}]
+
+            def disable_context(self):
+                self.context_enabled = False
+
+        memory = Memory()
+        session = self.build(memory=memory)
+        try:
+            session.conversation.send("Hello", request_id="desktop-memory")
+            self.assertIn("Use concise answers", self.provider.calls[0][0][0]["content"])
+        finally:
+            session.close()
+        self.assertFalse(memory.context_enabled)
+
+
+if __name__ == "__main__":
+    unittest.main()
