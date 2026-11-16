@@ -330,6 +330,25 @@ class ConversationMemoryStore:
         return cursor.rowcount
 
 
+    def inspect_import_conflicts(self, *, owner_id: str, memory_ids: tuple[str, ...]) -> int:
+        """Count IDs already owned by this user without changing the database."""
+        owner = self._owner(owner_id)
+        if not isinstance(memory_ids, tuple) or len(memory_ids) > self.MAX_ENTRIES_PER_OWNER:
+            raise ValueError("memory_ids must be a bounded tuple.")
+        if any(not isinstance(value, str) or not value for value in memory_ids):
+            raise ValueError("memory_ids must contain non-empty strings.")
+        if not memory_ids:
+            return 0
+        placeholders = ",".join("?" for _ in memory_ids)
+        with self._connection() as db:
+            row = db.execute(
+                f"SELECT count(*) FROM conversation_memories WHERE owner_id = ? "
+                f"AND memory_id IN ({placeholders})",
+                (owner, *memory_ids),
+            ).fetchone()
+        return int(row[0])
+
+
     def export_snapshot(self, *, owner_id: str) -> dict[str, Any]:
         """Return one consistent, bounded snapshot of this owner's active memories."""
         owner = self._owner(owner_id)
