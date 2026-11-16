@@ -1,4 +1,5 @@
 """Tests for the Qt-independent shared desktop chat controller."""
+import threading
 import unittest
 from ui.desktop.shared_chat_controller import SharedDesktopChatController
 
@@ -61,6 +62,45 @@ class SharedDesktopChatControllerTests(unittest.TestCase):
         self.assertEqual(session.close_count, 1)
         with self.assertRaises(RuntimeError):
             controller.respond("No longer authenticated")
+
+    def test_logout_signals_cancellation_to_active_chat_worker(self):
+        entered = threading.Event()
+        cancelled = threading.Event()
+        class BlockingConversation(Conversation):
+            def send(self, message, **kwargs):
+                entered.set()
+                check_cancelled = kwargs["cancellation_requested"]
+                for _ in range(100):
+                    if check_cancelled():
+                        cancelled.set()
+                        return {"status": "cancelled", "answer": ""}
+                    threading.Event().wait(0.005)
+                return {"status": "completed", "answer": "unexpected"}
+
+        session = Session()
+        session.conversation = BlockingConversation()
+        controller = SharedDesktopChatController(session)
+        errors = []
+        worker = threading.Thread(
+            target=lambda: self._capture_error(
+                errors, lambda: controller.respond("Active turn")
+            )
+        )
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        controller.logout()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(session.close_count, 1)
+        self.assertTrue(errors)
+
+    @staticmethod
+    def _capture_error(errors, operation):
+        try:
+            operation()
+        except Exception as exc:
+            errors.append(exc)
 
     def test_non_completed_turn_is_not_presented_as_success(self):
         class FailedConversation(Conversation):
