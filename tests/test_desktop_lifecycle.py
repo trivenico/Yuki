@@ -46,6 +46,7 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
 
     def test_desktop_lifecycle_closes_hybrid_provider_after_dependents_once(self):
         events = []
+
         class Child:
             def __init__(self, name):
                 self.name = name
@@ -59,6 +60,7 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         lifecycle.close()
         lifecycle.close()
         self.assertEqual(events, ["dependent", "cloud", "local"])
+
     def test_non_closable_resources_are_ignored(self):
         events = []
         lifecycle = DesktopServiceLifecycle((object(), Resource("closable", events)))
