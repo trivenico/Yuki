@@ -116,6 +116,34 @@ class SpecialistWorkerTests(unittest.TestCase):
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
         self.assertEqual(events[-1].kind, "task.cancelled")
 
+    def test_session_revocation_during_handler_prevents_late_completion(self):
+        task_id = self.create_task(approval=True)
+        queued = self.store.get(task_id)
+        self.store.approve(task_id, actor_id="alice", session_id="logout-session",
+                           expected_version=queued.version)
+        started = Event()
+        release = Event()
+        outcome = {}
+
+        def slow_handler(_argument):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test handler timed out")
+            return "late output must not be persisted"
+
+        worker = self.worker({"code-review": slow_handler})
+        thread = Thread(target=lambda: outcome.setdefault("result", worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(timeout=5), "worker did not start handler")
+        self.store.cancel_session_approved_runs("logout-session")
+        release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "worker did not exit after handler returned")
+        self.assertEqual(outcome["result"].state, "cancelled")
+        persisted = self.store.get(task_id)
+        self.assertEqual(persisted.state, "cancelled")
+        self.assertIsNone(persisted.result)
+
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()
         result = self.worker({
