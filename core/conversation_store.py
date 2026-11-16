@@ -8,9 +8,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-import sqlite3
 import json
 import math
+import sqlite3
 
 from core.sqlite_file_security import prepare_private_sqlite_path
 import time
@@ -96,9 +96,16 @@ class ConversationStore:
                 CREATE INDEX IF NOT EXISTS idx_generation_runs_owner_status
                     ON conversation_generation_runs(owner_id, status, updated_at);
             """)
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(conversation_messages)")}
-            if "memory_references" not in columns:
-                db.execute("ALTER TABLE conversation_messages ADD COLUMN memory_references TEXT")
+            # Serialize additive schema upgrades across concurrent application starts.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                columns = {row["name"] for row in db.execute("PRAGMA table_info(conversation_messages)")}
+                if "memory_references" not in columns:
+                    db.execute("ALTER TABLE conversation_messages ADD COLUMN memory_references TEXT")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
 
     def health_check(self) -> bool:
         """Verify the configured SQLite store can execute a read-only probe."""
