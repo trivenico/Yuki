@@ -21,6 +21,7 @@ def _build_services():
     from automation.task_runtime import TaskRuntime
     from automation.workflow_store import WorkflowRunStore
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
+    from ui.desktop.lifecycle import DesktopServiceLifecycle
 
     root = prepare_private_desktop_root(desktop_data_root())
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
@@ -44,7 +45,8 @@ def _build_services():
     coordinator = SpecialistAgentCoordinator(
         runtime, task_db, built_in_agents, authorize=permission_check,
     )
-    return auth, sessions, provider, coordinator, runtime
+    lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
+    return auth, sessions, provider, coordinator, runtime, lifecycle
 
 
 def run() -> int:
@@ -148,6 +150,7 @@ def run() -> int:
             self.auth = None
             self.sessions = None
             self.provider = None
+            self.lifecycle = None
             self.controller = None
             self.busy = False
             self.current_plan = None
@@ -650,7 +653,7 @@ def run() -> int:
             try:
                 (
                     self.auth, self.sessions, self.provider,
-                    self.coordinator, self.runtime,
+                    self.coordinator, self.runtime, self.lifecycle,
                 ) = _build_services()
                 identity = self.sessions.current_identity()
                 if identity is not None:
@@ -1092,6 +1095,15 @@ def run() -> int:
                 )
                 event.ignore()
                 return
+            if self.lifecycle is not None:
+                try:
+                    self.lifecycle.close()
+                except Exception as exc:
+                    QMessageBox.warning(
+                        self, "Yuki shutdown",
+                        "One or more services could not close cleanly ("
+                        + type(exc).__name__ + "). Check the application logs."
+                    )
             event.accept()
 
     app = QApplication.instance() or QApplication(sys.argv)
