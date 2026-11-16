@@ -43,6 +43,20 @@ def _close_startup_resources(resources) -> None:
                 continue
 
 
+def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -> None:
+    """Revoke the active owner session, then close process resources."""
+    def revoke_active_session():
+        if controller is not None:
+            controller.logout()
+        elif sessions is not None:
+            sessions.logout()
+
+    if lifecycle is not None:
+        lifecycle.close(before_close=revoke_active_session)
+    else:
+        revoke_active_session()
+
+
 def _build_services():
     from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
@@ -200,18 +214,10 @@ def run() -> int:
         @Slot()
         def run(self):
             error = None
-
-            def revoke_active_session():
-                if self.controller is not None:
-                    self.controller.logout()
-                elif self.sessions is not None:
-                    self.sessions.logout()
-
             try:
-                if self.lifecycle is not None:
-                    self.lifecycle.close(before_close=revoke_active_session)
-                else:
-                    revoke_active_session()
+                _shutdown_desktop_services(
+                    self.lifecycle, self.controller, self.sessions,
+                )
             except Exception as exc:
                 error = exc
             self.signals.finished.emit(error)
