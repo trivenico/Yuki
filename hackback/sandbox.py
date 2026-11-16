@@ -20,12 +20,16 @@ class DockerSandbox:
                  enabled: bool = False, approver: Callable[[str], bool] | None = None,
                  docker_binary: str = "docker"):
         self.workspace = Path(workspace).expanduser().resolve()
+        if "," in str(self.workspace):
+            raise SandboxError("Workspace path contains unsupported Docker mount syntax.")
+        if not self.workspace.is_absolute() or self.workspace == Path(self.workspace.anchor):
+            raise SandboxError("A dedicated non-root workspace directory is required.")
         self.allowed_images = frozenset(allowed_images)
         self.enabled = enabled
         self.approver = approver
         self.docker_binary = docker_binary
 
-    def run(self, image: str, argv: Sequence[str], *, timeout: int = 30) -> dict:
+    def run(self, image: str, argv: Sequence[str], *, timeout: int = 30, write_workspace: bool = False) -> dict:
         if not self.enabled:
             raise SandboxError("Sandbox execution is disabled by configuration.")
         if image not in self.allowed_images or not image or "@sha256:" not in image:
@@ -41,13 +45,16 @@ class DockerSandbox:
         self.workspace.mkdir(parents=True, exist_ok=True)
         if self.approver is None or self.approver(f"Run approved image {image} with argv {list(argv)!r}") is not True:
             raise SandboxError("Explicit approval was not granted.")
+        if type(write_workspace) is not bool:
+            raise SandboxError("write_workspace must be a boolean.")
+        mount_mode = "rw" if write_workspace else "ro"
         command = [
             self.docker_binary, "run", "--rm", "--pull=never",
             "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--pids-limit=64",
             "--memory=512m", "--cpus=1", "--user=65534:65534",
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",
-            "--mount", f"type=bind,src={self.workspace},dst=/workspace,rw",
+            "--mount", f"type=bind,src={self.workspace},dst=/workspace,{mount_mode}",
             "--workdir", "/workspace", image, *argv,
         ]
         try:
