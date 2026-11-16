@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -6,6 +7,7 @@ from core.pinned_https_provider_transport import PinnedHTTPTransportError
 from core.network_firewall import NetworkFirewall
 from skills.web_deep_read import DeepReadSkill
 from skills.wiki_skill import WikiSkill
+from skills.registry import SkillRegistry
 from skills.web_skill import WebSkill, WebSkillError
 
 
@@ -152,6 +154,20 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
         firewall = NetworkFirewall(allowed_hosts=("other.example.com",))
         with self.assertRaisesRegex(ValueError, "allow every configured cloud host"):
             WebSkill(allowed_hosts=("example.com",), firewall_policy=firewall)
+
+
+    def test_default_skill_registry_injects_shared_firewall_into_web_readers(self):
+        firewall = NetworkFirewall(allowed_hosts=("example.com",))
+        with tempfile.TemporaryDirectory() as workspace:
+            registry = SkillRegistry.defaults(
+                workspace,
+                web_allowed_hosts=("example.com",),
+                firewall_policy=firewall,
+            )
+
+        self.assertIs(registry.get("web_fetch")._transport.firewall_policy, firewall)
+        self.assertIs(registry.get("web_deep_read").reader._transport.firewall_policy, firewall)
+        self.assertIs(registry.get("wiki").reader._transport.firewall_policy, firewall)
 
 
 if __name__ == "__main__":
