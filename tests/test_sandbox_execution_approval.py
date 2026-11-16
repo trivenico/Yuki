@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from automation.execution_task import DurableSandboxExecutionWorker, SandboxExecutionTask
+from automation.execution_task import DurableSandboxExecutionWorker, SandboxExecutionTask, execute_approved_task, ExecutionOutcomeUnknown
 from core.durable_task_engine import DurableTaskEngine
 from hackback.sandbox import DockerSandbox
 from unittest.mock import Mock
@@ -102,6 +102,29 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
             [item["event_type"] for item in reversed(log.list_events())],
             ["execution_started", "executed"],
         )
+
+
+    def test_completion_audit_failure_is_recorded_as_unknown_not_retried(self):
+        approval = self.store.approve(self.task, session_token=self.session.token)
+        sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=(self.task.image,), enabled=True,
+            approver=lambda _reason: True,
+        )
+        sandbox.run = Mock(return_value={"returncode": 0, "stdout": "ok", "stderr": ""})
+        events = []
+        def audit(event):
+            events.append(event["event"])
+            return event["event"] != "execution.completed"
+        with self.assertRaises(ExecutionOutcomeUnknown):
+            execute_approved_task(
+                self.task, approval, sandbox=sandbox,
+                verify_approval=self.store.verify, consume_approval=self.store.consume,
+                audit=audit,
+            )
+        self.assertEqual(events, [
+            "execution.started", "execution.completed", "execution.unknown",
+        ])
+        self.assertFalse(self.store.verify(approval, self.task))
 
     def test_audit_writer_persists_hash_chained_metadata_events(self):
         log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "audit.sqlite3"))
