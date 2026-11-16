@@ -42,6 +42,7 @@ class DesktopConversationAdapter:
         self._owner_id = owner_id.strip()
         self._conversation_id: str | None = None
         self._lock = threading.RLock()
+        self._send_lock = threading.Lock()
 
     @property
     def conversation_id(self) -> str | None:
@@ -104,10 +105,12 @@ class DesktopConversationAdapter:
         cancellation_requested=None,
         on_text_delta=None,
     ) -> dict[str, Any]:
-        """Persist and execute one chat turn through the canonical agent loop.
+        """Persist and execute one serialized turn through the canonical loop.
 
-        No tools are exposed by this desktop chat adapter. Callers may provide a
-        stable request ID to safely retry a turn after a transport/UI interruption.
+        The send lock serializes turns, while the state lock is held only long
+        enough to snapshot the selected conversation and its version. Model
+        inference therefore never blocks selection changes or UI cancellation.
+        No tools are exposed by this desktop chat adapter.
         """
         if not isinstance(message, str) or not message.strip() or len(message) > 20_000:
             raise ValueError("message must be non-empty text of at most 20000 characters.")
@@ -125,20 +128,25 @@ class DesktopConversationAdapter:
         if on_text_delta is not None and not callable(on_text_delta):
             raise TypeError("on_text_delta must be callable.")
 
-        with self._lock:
-            self._ensure_open()
-            if self._conversation_id is None:
-                self.start_new_conversation()
-            conversation_id = self._require_conversation()
-            current = self._application.store.get_conversation(
-                owner_id=self._owner_id, conversation_id=conversation_id,
-            )
+        with self._send_lock:
+            with self._lock:
+                self._ensure_open()
+                if self._conversation_id is None:
+                    self.start_new_conversation()
+                conversation_id = self._require_conversation()
+                current = self._application.store.get_conversation(
+                    owner_id=self._owner_id, conversation_id=conversation_id,
+                )
+                expected_version = current["version"]
+
+            # Keep the selected conversation and version stable for this turn,
+            # but do not hold the UI state lock during potentially slow inference.
             return self._application.conversations.reply(
                 owner_id=self._owner_id,
                 conversation_id=conversation_id,
                 user_text=message.strip(),
                 request_id=request_id.strip(),
-                expected_version=current["version"],
+                expected_version=expected_version,
                 tools=[],
                 cancellation_requested=cancellation_requested,
                 on_text_delta=on_text_delta,
