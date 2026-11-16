@@ -47,21 +47,46 @@ class SharedDesktopControllerBridge:
 
     def respond(self, message: str, **kwargs: Any) -> str:
         self._ensure_open()
-        return self._chat.respond(message, **kwargs)
+        try:
+            return self._chat.respond(message, **kwargs)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
 
     def set_memory_context(self, enabled: bool) -> None:
         self._ensure_open()
-        self._chat.set_memory_context(enabled)
+        try:
+            self._chat.set_memory_context(enabled)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
 
     def memory_context_enabled(self) -> bool:
         self._ensure_open()
-        return self._chat.memory_context_enabled()
+        try:
+            return self._chat.memory_context_enabled()
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
 
     def _specialist_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         self._ensure_open()
         if name not in self._SPECIALIST_METHODS:
             raise AttributeError(name)
-        return getattr(self._specialists, name)(*args, **kwargs)
+        try:
+            return getattr(self._specialists, name)(*args, **kwargs)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def _close_after_authorization_failure(self) -> None:
+        """Fail closed when either authenticated surface reports revoked access."""
+        try:
+            self.logout()
+        except Exception as exc:
+            raise RuntimeError(
+                "Desktop authorization failed and session cleanup was incomplete."
+            ) from exc
 
     def list_specialists(self) -> Any:
         return self._specialist_call("list_specialists")
