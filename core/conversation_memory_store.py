@@ -65,7 +65,7 @@ class ConversationMemoryStore:
         owner = self._owner(owner_id)
         if not isinstance(content, str) or not content.strip() or len(content.strip()) > self.MAX_TEXT_CHARS:
             raise ValueError(f"content must be 1-{self.MAX_TEXT_CHARS} characters.")
-        if category not in self.CATEGORIES:
+        if not isinstance(category, str) or category not in self.CATEGORIES:
             raise ValueError("category must be note, preference, or lesson.")
         import uuid
         memory_id = uuid.uuid4().hex
