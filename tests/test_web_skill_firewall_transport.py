@@ -2,6 +2,10 @@ import unittest
 from unittest.mock import patch
 
 from core.pinned_https_provider_transport import PinnedHTTPTransportError
+
+from core.network_firewall import NetworkFirewall
+from skills.web_deep_read import DeepReadSkill
+from skills.wiki_skill import WikiSkill
 from skills.web_skill import WebSkill, WebSkillError
 
 
@@ -134,6 +138,20 @@ class WebSkillFirewallTransportTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(WebSkillError, "HTML or plain-text"):
             binary.execute("https://example.com/")
+
+
+    def test_deep_read_and_wiki_reuse_injected_firewall_policy(self):
+        firewall = NetworkFirewall(allowed_hosts=("example.com",))
+        deep_read = DeepReadSkill(("example.com",), firewall_policy=firewall)
+        wiki = WikiSkill(("example.com",), firewall_policy=firewall)
+
+        self.assertIs(deep_read.reader._transport.firewall_policy, firewall)
+        self.assertIs(wiki.reader._transport.firewall_policy, firewall)
+
+    def test_web_skill_rejects_shared_firewall_that_does_not_cover_hosts(self):
+        firewall = NetworkFirewall(allowed_hosts=("other.example.com",))
+        with self.assertRaisesRegex(ValueError, "allow every configured cloud host"):
+            WebSkill(allowed_hosts=("example.com",), firewall_policy=firewall)
 
 
 if __name__ == "__main__":
