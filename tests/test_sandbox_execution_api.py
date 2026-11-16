@@ -5,7 +5,7 @@ from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from api.sandbox_execution import AuthenticatedSandboxExecutionAPI
 from automation.execution_task import DurableSandboxExecutionWorker
@@ -150,7 +150,7 @@ class AuthenticatedSandboxExecutionAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 202)
         task_id = queued["task"]["task_id"]
-        with unittest.mock.patch.object(
+        with patch.object(
             self.sandbox, "run",
             return_value={"returncode": 0, "stdout": "python 3", "stderr": ""},
         ) as sandbox_run:
