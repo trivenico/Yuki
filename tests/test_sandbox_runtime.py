@@ -19,6 +19,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
             workspace=self.tmp.name, command=command)
         self.assertEqual(argv[argv.index("--network") + 1], "none")
         self.assertIn("--read-only", argv)
+        self.assertIn("--pull=never", argv)
         self.assertIn("--cap-drop", argv)
         self.assertIn("ALL", argv)
         self.assertIn("--pids-limit", argv)
@@ -62,6 +63,14 @@ class DockerSandboxArgvTests(unittest.TestCase):
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
                 workspace=self.tmp.name, command=["python", "bad\x00arg"])
+
+    def test_workspace_path_cannot_inject_docker_mount_options(self):
+        with tempfile.TemporaryDirectory(prefix="yuki,ro") as directory:
+            with patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True), \\
+                 patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True):
+                with self.assertRaisesRegex(SandboxRuntimeError, "mount syntax"):
+                    build_docker_argv(SandboxPolicy(), image="python:3.12",
+                        workspace=directory, command=["python", "--version"])
 
     def test_workspace_must_be_absolute_and_exist(self):
         with self.assertRaises(SandboxRuntimeError):
