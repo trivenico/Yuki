@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from automation.execution_task import DurableSandboxExecutionWorker
+from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 from automation.sandbox_execution_approval import (
     SQLiteSandboxExecutionApprovalStore,
     SandboxExecutionAuditWriter,
@@ -28,7 +29,8 @@ class SandboxExecutionRuntime:
                  approval_store: SQLiteSandboxExecutionApprovalStore,
                  audit_log: SQLiteApprovalAuditLog,
                  sandbox: DockerSandbox,
-                 worker: DurableSandboxExecutionWorker):
+                 worker: DurableSandboxExecutionWorker,
+                 submission_service: SandboxExecutionSubmissionService):
         self.engine = engine
         self.approval_store = approval_store
         self.audit_log = audit_log
@@ -123,9 +125,14 @@ def build_sandbox_execution_runtime(
             approval_store=approval_store,
             audit_writer=audit_writer,
         )
+        submission_service = SandboxExecutionSubmissionService(
+            auth_service=auth_service, engine=engine, worker=worker,
+            approval_store=approval_store,
+        )
         return SandboxExecutionRuntime(
             engine=engine, approval_store=approval_store,
             audit_log=audit_log, sandbox=sandbox, worker=worker,
+            submission_service=submission_service,
         )
     except Exception:
         engine.close()
