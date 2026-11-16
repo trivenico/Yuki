@@ -106,6 +106,7 @@ class ConversationRuntime:
             # is not retried implicitly against potentially partially closed resources.
             self._closed = True
             failures = []
+            primary_cleanup_error = None
             if self.component_registry is not None:
                 try:
                     failures.extend(self.component_registry.close())
@@ -114,13 +115,16 @@ class ConversationRuntime:
             else:
                 try:
                     self.application.close()
-                except Exception:
+                except Exception as error:
+                    primary_cleanup_error = error
                     failures.append("application")
             if self.sandbox_execution_runtime is not None:
                 try:
                     self.sandbox_execution_runtime.close()
                 except Exception:
                     failures.append("sandbox-execution-runtime")
+            if primary_cleanup_error is not None:
+                raise primary_cleanup_error
             if failures:
                 raise RuntimeError("component shutdown failed: " + ", ".join(failures))
 
