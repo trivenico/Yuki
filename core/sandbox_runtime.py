@@ -49,7 +49,7 @@ def build_docker_argv(
     resolved_workspace = str(path.resolve())
     # Docker parses --mount as comma-separated key/value fields. A comma in
     # the host path could inject mount options and weaken the intended scope.
-    if "," in resolved_workspace or "\\x00" in resolved_workspace:
+    if "," in resolved_workspace:
         raise SandboxRuntimeError("workspace path contains unsupported mount syntax")
     if policy.network_mode == "none":
         if network_allowlist:
