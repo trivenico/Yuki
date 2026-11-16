@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,7 +29,7 @@ class SandboxExecutionSubmissionServiceTests(unittest.TestCase):
             "owner.one", "Correct horse battery staple 9!",
         )
         self.auth.create_account("owner.two", "Another secure password 4!")
-        with sqlite3.connect(self.auth.database_path) as db:
+        with closing(sqlite3.connect(self.auth.database_path)) as db:
             db.execute("UPDATE auth_users SET role='admin' WHERE username='owner.two'")
         self.session_b = self.auth.authenticate(
             "owner.two", "Another secure password 4!",
