@@ -70,27 +70,29 @@ def run_worker(
         target=maintain_heartbeat, name="yuki-sandbox-heartbeat", daemon=True,
     )
     heartbeat_thread.start()
-    recovered = runtime.engine.recover_expired_leases()
-    if recovered:
-        _LOG.warning("Marked %d expired sandbox task lease(s) for reconciliation", recovered)
+    try:
+        # Execution tasks have max_attempts=1. Expired in-flight work is
+        # terminally failed rather than replayed after an uncertain side effect.
+        recovered = runtime.engine.recover_expired_leases()
+        if recovered:
+            _LOG.warning("Marked %d expired sandbox task lease(s) for reconciliation", recovered)
 
-    _LOG.info("Sandbox worker started")
-    while not stop_event.is_set():
-        try:
-            task = runtime.worker.run_once(lease_seconds=LEASE_SECONDS)
-        except Exception:
-            # Exception messages can contain task data. Keep operational logs
-            # deliberately generic; durable task/audit records carry safe codes.
-            _LOG.error("Sandbox task processing failed; inspect the durable task state")
-            task = None
-        if task is None:
-            stop_event.wait(float(poll_interval))
-        else:
-            _LOG.info("Sandbox task reached state: %s", task.get("state", "unknown"))
-    heartbeat_stop.set()
-    heartbeat_thread.join(timeout=heartbeat_interval + 1.0)
-    runtime.engine.stop_worker(worker_id)
-    _LOG.info("Sandbox worker stopped after the current task boundary")
+        _LOG.info("Sandbox worker started")
+        while not stop_event.is_set():
+            try:
+                task = runtime.worker.run_once(lease_seconds=LEASE_SECONDS)
+            except Exception:
+                _LOG.error("Sandbox task processing failed; inspect the durable task state")
+                task = None
+            if task is None:
+                stop_event.wait(float(poll_interval))
+            else:
+                _LOG.info("Sandbox task reached state: %s", task.get("state", "unknown"))
+        _LOG.info("Sandbox worker stopped after the current task boundary")
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=heartbeat_interval + 1.0)
+        runtime.engine.stop_worker(worker_id)
 
 
 def main() -> None:
