@@ -65,6 +65,8 @@ def build_local_core_component_registry(
     """Compose the local-only CLI graph with configuration and local identity."""
     registry = ComponentRegistry()
     _register_configuration(registry, config)
+    if network_firewall is None and config is not None:
+        network_firewall = build_network_firewall_from_config(config)
     runtimes = (
         build_local_identity_access_component_runtime(owner_id),
         build_provider_component_runtime(provider),
