@@ -181,7 +181,7 @@ class ConversationMemoryRetentionTests(unittest.TestCase):
             [item["memory_id"] for item in self.memory.list(owner_id="alice")],
             [permanent["memory_id"]],
         )
-        self.assertEqual(self.memory.search(owner_id="alice", query="Temporary project"), [])
+        self.assertEqual(self.memory.search(owner_id="alice", query="Temporary context"), [])
         self.assertEqual(self.memory.prune_expired(owner_id="alice"), 1)
         self.assertEqual(self.memory.prune_expired(owner_id="alice"), 0)
 
