@@ -10,6 +10,7 @@ from core.auth import BuiltInAuthService
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
+from core.conversation_memory_store import ConversationMemoryStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.tool_action_approvals import SQLiteToolActionApprovalStore
@@ -267,6 +268,49 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["error"], "cloud_consent_required")
         self.assertEqual(calls, [])
 
+    def test_memory_management_is_authenticated_owner_scoped_and_explicit(self):
+        memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories.sqlite")
+        self.app.conversations.memory_store = memory_store
+        status, data, _ = self.request("GET", "/v1/memories")
+        self.assertEqual(status, 401)
+
+        status, data, _ = self.request(
+            "POST", "/v1/memories", {"content": "My preferred writing style", "category": "preference"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        memory_id = data["memory"]["memory_id"]
+
+        status, data, _ = self.request("GET", "/v1/memories", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["memory_id"] for item in data["memories"]], [memory_id])
+
+        self.auth.create_account("other-user", "a-secure-other-password")
+        other = self.auth.authenticate("other-user", "a-secure-other-password")
+        status, data, _ = self.request("GET", "/v1/memories", token=other.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"], [])
+        status, data, _ = self.request("DELETE", f"/v1/memories/{memory_id}", token=other.token)
+        self.assertEqual(status, 200)
+        self.assertFalse(data["deleted"])
+
+        status, data, _ = self.request("DELETE", "/v1/memories", {}, self.issued.token)
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "explicit_confirmation_required")
+        status, data, _ = self.request("DELETE", f"/v1/memories/{memory_id}", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertTrue(data["deleted"])
+
+    def test_memory_clear_requires_explicit_confirmation(self):
+        memory_store = ConversationMemoryStore(Path(self.tempdir.name) / "memories.sqlite")
+        self.app.conversations.memory_store = memory_store
+        memory_store.remember(owner_id=self.user.user_id, content="Keep until confirmed")
+        status, data, _ = self.request(
+            "DELETE", "/v1/memories", {"confirm": True}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["deleted"], 1)
+        self.assertEqual(memory_store.list(owner_id=self.user.user_id), [])
     def test_login_create_send_history_and_logout(self):
         status, data, headers = self.request(
             "POST", "/v1/auth/login",
