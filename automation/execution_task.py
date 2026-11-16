@@ -177,6 +177,24 @@ class DurableSandboxExecutionWorker:
         self.verify_approval = verify_approval
         self.audit = audit
 
+    @classmethod
+    def from_trusted_stores(
+        cls, engine: DurableTaskEngine, *, worker_id: str,
+        sandbox: DockerSandbox, approval_store, audit_writer,
+    ) -> "DurableSandboxExecutionWorker":
+        """Compose the worker with Yuki's concrete persisted security stores."""
+        from automation.sandbox_execution_approval import (
+            SQLiteSandboxExecutionApprovalStore, SandboxExecutionAuditWriter,
+        )
+        if not isinstance(approval_store, SQLiteSandboxExecutionApprovalStore):
+            raise TypeError("approval_store must be a SQLiteSandboxExecutionApprovalStore")
+        if not isinstance(audit_writer, SandboxExecutionAuditWriter):
+            raise TypeError("audit_writer must be a SandboxExecutionAuditWriter")
+        return cls(
+            engine, worker_id=worker_id, sandbox=sandbox,
+            verify_approval=approval_store.verify, audit=audit_writer,
+        )
+
     def submit(
         self,
         goal_id: str,
