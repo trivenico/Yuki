@@ -86,6 +86,47 @@ class AuthenticatedSandboxExecutionAPITests(unittest.TestCase):
             return sent[0]["status"], json.loads(sent[1]["body"])
         return asyncio.run(run())
 
+
+    def test_operator_reconciliation_endpoints_require_admin_and_return_safe_metadata(self):
+        status, _ = self.request(
+            "GET", "/v1/sandbox/operator/unknown-outcomes", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        status, _ = self.request(
+            "GET", "/v1/sandbox/operator/workers", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+
+        self.auth.create_account("operator-user", "Operator secure password 3!")
+        with closing(sqlite3.connect(self.auth.database_path)) as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE username='operator-user'")
+        operator = self.auth.authenticate("operator-user", "Operator secure password 3!")
+        status, body = self.request(
+            "GET", "/v1/sandbox/operator/unknown-outcomes", token=operator.token,
+        )
+        self.assertEqual((status, body["error"]), (403, "forbidden"))
+
+        goal = self.engine.create_owned_goal(self.owner_one.user.user_id)
+        task = self.engine.submit(
+            goal, "sandbox.execution.v1", {"secret": "never expose"},
+            idempotency_key="api-unknown", max_attempts=1,
+        )
+        self.engine.claim("api-reconcile-worker", task_types=("sandbox.execution.v1",))
+        self.engine.fail_unknown_outcome(task["id"], "api-reconcile-worker")
+        status, body = self.request(
+            "GET", "/v1/sandbox/operator/unknown-outcomes", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["unknown_outcomes"][0]["id"], task["id"])
+        self.assertNotIn("payload", body["unknown_outcomes"][0])
+        self.assertNotIn("secret", json.dumps(body))
+        self.engine.register_worker("api-worker", 4321)
+        status, body = self.request(
+            "GET", "/v1/sandbox/operator/workers", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["workers"][0]["worker_id"], "api-worker")
+
     def test_requires_auth_and_delegates_non_sandbox_routes(self):
         status, body = self.request("POST", "/v1/sandbox/goals", {})
         self.assertEqual((status, body["error"]), (401, "authentication_required"))
