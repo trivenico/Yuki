@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 from core.oauth_mcp_connection import OAuthMCPConnectionError, OAuthMCPConnectionManager
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolPolicyRegistry, MCPToolRisk
+from core.network_firewall import NetworkFirewall
+from core.mcp_client import MCPHTTPClient
 
 
 class FakeRefresh:
@@ -68,6 +70,29 @@ class OAuthMCPConnectionTests(unittest.TestCase):
         }
         args.update(overrides)
         return self.manager.create_client(**args)
+
+
+    def test_manager_propagates_application_firewall_to_mcp_client_factory(self):
+        firewall = NetworkFirewall(allowed_hosts=("mcp.example",))
+        manager = OAuthMCPConnectionManager(
+            provider_id="provider", credential_vault=self.vault,
+            refresh_service=self.refresh, client_factory=CapturingClient,
+            firewall_policy=firewall,
+        )
+        client = manager.create_client(
+            owner_id="owner", account_id="account",
+            endpoint="https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+            allowed_tools=(), approver=lambda _name, _arguments: False,
+        )
+        self.assertIs(client.kwargs["firewall_policy"], firewall)
+
+    def test_default_mcp_client_uses_injected_firewall_for_pinned_transport(self):
+        firewall = NetworkFirewall(allowed_hosts=("mcp.example",))
+        client = MCPHTTPClient(
+            "https://mcp.example/rpc", allowed_hosts={"mcp.example"},
+            firewall_policy=firewall,
+        )
+        self.assertIs(client._http.firewall_policy, firewall)
 
     def test_policy_client_derives_allowlist_and_uses_risk_approver(self):
         policy = MCPToolPolicy(
