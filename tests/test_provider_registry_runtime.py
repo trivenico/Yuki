@@ -77,6 +77,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
             {"provider": "hybrid"},
             environ={
                 "YUKI_CLOUD_MODEL": "test-cloud-model",
+                "YUKI_OLLAMA_MODEL": "test-local-model",
                 "OPENAI_API_KEY": "test-key",
             },
             firewall_policy=firewall,
