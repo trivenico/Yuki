@@ -213,6 +213,24 @@ class BuiltInAuthService:
             """, (digest, now)).fetchone()
             return self._user(row) if row else None
 
+    def resolve_session_hash(self, token_hash, *, expected_user_id=None):
+        """Check a stored session digest without ever recovering its bearer token."""
+        if not isinstance(token_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", token_hash):
+            return False
+        now = _timestamp(_utcnow())
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT s.token_hash, u.user_id FROM auth_sessions s
+                JOIN auth_users u ON u.user_id=s.user_id
+                WHERE s.token_hash=? AND s.revoked_at IS NULL
+                  AND s.expires_at>? AND u.disabled=0
+            """, (token_hash, now)).fetchone()
+        if row is None:
+            return False
+        if expected_user_id is not None and row["user_id"] != expected_user_id:
+            return False
+        return hmac.compare_digest(row["token_hash"], token_hash)
+
     def revoke_session(self, token):
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             return False
