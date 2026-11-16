@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 
@@ -79,6 +80,21 @@ class ConversationStoreTests(unittest.TestCase):
                 role="user", content="question", idempotency_key="user-with-provenance",
                 memory_references=[],
             )
+
+    def test_memory_provenance_schema_migration_preserves_existing_messages(self):
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            role="assistant", content="Legacy answer", idempotency_key="legacy-assistant",
+            expected_version=0,
+        )
+        with sqlite3.connect(self.store.database_path) as db:
+            db.execute("ALTER TABLE conversation_messages DROP COLUMN memory_references")
+        migrated = ConversationStore(self.store.database_path)
+        history = migrated.list_messages(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual(history[0]["content"], "Legacy answer")
+        self.assertIsNone(history[0]["memory_references"])
 
     def test_owner_scope_hides_conversation_and_messages(self):
         conversation_id = self.conversation["conversation_id"]
