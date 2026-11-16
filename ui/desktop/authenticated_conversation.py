@@ -132,6 +132,9 @@ class AuthenticatedDesktopConversation:
         """Discard local session state and revoke memory context during logout."""
         if self._invalidated:
             return
+        # Close the authorization gate before touching local resources so a
+        # concurrent UI action cannot start another turn during logout.
+        self._invalidated = True
         errors = []
         try:
             self.disable_memory_context()
@@ -141,7 +144,6 @@ class AuthenticatedDesktopConversation:
             self._conversation.clear_selection()
         except Exception as exc:
             errors.append(exc)
-        self._invalidated = True
         if errors:
             raise RuntimeError(
                 "Desktop session invalidation could not complete every cleanup step."
