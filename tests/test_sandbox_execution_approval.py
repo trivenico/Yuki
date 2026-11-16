@@ -81,7 +81,7 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         approval = self.store.approve(self.task, session_token=self.session.token)
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.session.user.user_id)
         log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "worker-audit.sqlite3"))
         writer = SandboxExecutionAuditWriter(log)
         sandbox = DockerSandbox(
@@ -110,7 +110,7 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         approval = self.store.approve(self.task, session_token=self.session.token)
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.session.user.user_id)
         log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "commit-audit.sqlite3"))
         writer = SandboxExecutionAuditWriter(log)
         sandbox = DockerSandbox(
@@ -134,7 +134,7 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         approval = self.store.approve(self.task, session_token=self.session.token)
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.session.user.user_id)
         log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "commit-recovery-audit.sqlite3"))
         writer = SandboxExecutionAuditWriter(log)
         sandbox = DockerSandbox(
@@ -160,7 +160,7 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         approval = self.store.approve(self.task, session_token=self.session.token)
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.session.user.user_id)
         log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "unknown-audit.sqlite3"))
         writer = SandboxExecutionAuditWriter(log)
         sandbox = DockerSandbox(
