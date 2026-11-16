@@ -116,6 +116,33 @@ class AuthenticatedDesktopConversationTests(unittest.TestCase):
             )
         self.assertEqual(stream_started, [])
 
+    def test_memory_context_requires_live_session_and_explicit_consent(self):
+        class Memory:
+            def __init__(self):
+                self.context_enabled = False
+            def enable_context(self):
+                self.context_enabled = True
+            def disable_context(self):
+                self.context_enabled = False
+
+        memory = Memory()
+        loop = self.build(lambda **kwargs: {
+            "text": "Hello", "tool_calls": {"tool_calls": []},
+        })
+        facade = AuthenticatedDesktopConversation(
+            self.application, identity=self.identity, sessions=self.sessions,
+            memory=memory,
+        )
+        self.assertFalse(facade.memory_context_enabled())
+        facade.set_memory_context_enabled(True)
+        self.assertTrue(facade.memory_context_enabled())
+        self.sessions.identity = None
+        with self.assertRaises(PermissionError):
+            facade.set_memory_context_enabled(False)
+        # Logout can still revoke local consent after the session is revoked.
+        facade.disable_memory_context()
+        self.assertFalse(memory.context_enabled)
+
     def test_constructor_rejects_unverified_identity(self):
         class ForgedSessions:
             @staticmethod
