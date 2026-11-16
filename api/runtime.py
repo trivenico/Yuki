@@ -107,9 +107,15 @@ class ConversationRuntime:
             self._closed = True
             failures = []
             if self.component_registry is not None:
-                failures.extend(self.component_registry.close())
+                try:
+                    failures.extend(self.component_registry.close())
+                except Exception:
+                    failures.append("component-registry")
             else:
-                self.application.close()
+                try:
+                    self.application.close()
+                except Exception:
+                    failures.append("application")
             if self.sandbox_execution_runtime is not None:
                 try:
                     self.sandbox_execution_runtime.close()
@@ -395,8 +401,17 @@ def build_conversation_runtime(
         return ConversationRuntime(app, application, component_registry, sandbox_execution_runtime)
     except Exception:
         if "component_registry" in locals() and isinstance(component_registry, ComponentRegistry):
-            component_registry.close()
-        application.close()
+            try:
+                component_registry.close()
+            except Exception:
+                pass
+        try:
+            application.close()
+        except Exception:
+            pass
         if sandbox_execution_runtime is not None:
-            sandbox_execution_runtime.close()
+            try:
+                sandbox_execution_runtime.close()
+            except Exception:
+                pass
         raise
