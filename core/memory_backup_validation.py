@@ -102,7 +102,10 @@ def validate_memory_backup_snapshot(plaintext: bytes, authenticated_owner_id: st
         content = item.get("content")
         if not isinstance(content, str) or not content.strip() or len(content) > 2000:
             raise MemoryBackupValidationError("invalid_memory_backup_snapshot")
-        content_bytes += len(content.encode("utf-8"))
+        try:
+            content_bytes += len(content.encode("utf-8"))
+        except UnicodeEncodeError:
+            raise MemoryBackupValidationError("invalid_memory_backup_snapshot") from None
         if content_bytes > _MAX_SNAPSHOT_BYTES:
             raise MemoryBackupValidationError("invalid_memory_backup_snapshot")
         _timestamp(item.get("created_at"))
