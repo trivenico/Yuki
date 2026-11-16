@@ -504,6 +504,31 @@ class DurableTaskEngineTests(unittest.TestCase):
             "owner-idempotent-rate", "sandbox.task.submit", limit=1, window_seconds=60,
         ))
 
+
+    def test_expired_sandbox_lease_is_unknown_and_never_requeued(self):
+        now = [500.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        goal = engine.create_goal()
+        task = engine.submit(
+            goal, "sandbox.execution.v1", {"argv": ["python", "--version"]},
+            idempotency_key="expired-sandbox-no-replay", max_attempts=4,
+        )
+        engine.claim("lost-sandbox-worker", lease_seconds=5)
+        now[0] += 6
+        self.assertEqual(engine.recover_expired_leases(), 1)
+        recovered = engine.get_task(task["id"])
+        self.assertEqual(recovered["state"], "failed")
+        self.assertEqual(recovered["attempts"], 1)
+        self.assertIn("outcome unknown", recovered["last_error"])
+        self.assertIsNone(engine.claim(
+            "replacement-sandbox-worker", task_types=("sandbox.execution.v1",),
+        ))
+        records = engine.list_unknown_outcomes()
+        self.assertEqual([record["id"] for record in records], [task["id"]])
+        event_types = [event["event_type"] for event in engine.list_events(goal)]
+        self.assertIn("task.lease_expired", event_types)
+        self.assertIn("task.outcome_unknown", event_types)
+
     def test_worker_registry_heartbeat_and_stale_detection_persist(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
