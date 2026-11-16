@@ -56,6 +56,7 @@ class ConversationService:
         self._lifecycle = threading.Condition(self._lock)
         self._active_requests = 0
         self._conversation_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._conversation_lock_users: dict[tuple[str, str], int] = {}
         self._closed = False
 
     def _ensure_open(self) -> None:
@@ -158,6 +159,7 @@ class ConversationService:
             self._ensure_open()
             self._active_requests += 1
             conversation_lock = self._conversation_locks.setdefault(key, threading.Lock())
+            self._conversation_lock_users[key] = self._conversation_lock_users.get(key, 0) + 1
         try:
             with conversation_lock:
                 with self._lifecycle:
@@ -183,6 +185,12 @@ class ConversationService:
         finally:
             with self._lifecycle:
                 self._active_requests -= 1
+                users = self._conversation_lock_users.get(key, 0) - 1
+                if users <= 0:
+                    self._conversation_lock_users.pop(key, None)
+                    self._conversation_locks.pop(key, None)
+                else:
+                    self._conversation_lock_users[key] = users
                 if self._active_requests == 0:
                     self._lifecycle.notify_all()
 
