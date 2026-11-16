@@ -127,7 +127,7 @@ class ConversationServiceTests(unittest.TestCase):
         service = ConversationService(self.store, self.loop, memory_store=memory_store)
         result = service.reply(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
-            user_text="Please use my preferred writing style", request_id="memory-context",
+            user_text="I prefer concise answers, please", request_id="memory-context",
             expected_version=0, tools=[],
         )
         self.assertEqual(result["status"], "completed")
