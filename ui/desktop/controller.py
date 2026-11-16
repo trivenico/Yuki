@@ -151,6 +151,27 @@ class DesktopCompanionController:
         return restore_encrypted_backup(Path(backup), target, passphrase)
 
     def logout(self) -> bool:
-        self.application.reset_conversation()
-        self.application.memory.disable()
-        return self.sessions.logout()
+        """Revoke the authenticated session before best-effort local cleanup."""
+        errors: list[Exception] = []
+        revoked = False
+        try:
+            # Revoke first: a local cleanup failure must never leave credentials
+            # active merely because clearing UI/session state raised an error.
+            revoked = self.sessions.logout()
+        except Exception as exc:
+            errors.append(exc)
+
+        for cleanup in (
+            self.application.reset_conversation,
+            self.application.memory.disable,
+        ):
+            try:
+                cleanup()
+            except Exception as exc:
+                errors.append(exc)
+
+        if errors:
+            raise RuntimeError(
+                "Yuki could not complete every logout operation; verify session status."
+            ) from errors[0]
+        return revoked
