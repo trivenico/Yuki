@@ -24,6 +24,7 @@ from voice.tts import LocalTTS, TTSError
 from voice.wakeword import WakeWordDetector, WakeWordError
 from voice.speaker_verification import SpeakerVerifier, SpeakerVerificationError
 from providers.factory import create_provider
+from core.network_firewall import build_network_firewall_from_config
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
@@ -111,8 +112,11 @@ def main():
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
+    # Construct one application firewall and pass that exact instance to the
+    # model-provider transport. Enabled policies fail closed on bad host config.
+    network_firewall = build_network_firewall_from_config(config)
     agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
+    ai = YukiAgent(create_provider(config, firewall_policy=network_firewall))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     local_workers = build_local_worker_runtime(workspace, ai.provider)
     memory_path = workspace / "yuki_memory.json"
