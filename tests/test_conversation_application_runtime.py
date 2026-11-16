@@ -4,9 +4,13 @@ import unittest
 from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
-from core.conversation_application_runtime import build_conversation_application_runtime
+from core.conversation_application_runtime import (
+    build_conversation_application_runtime,
+    build_provider_backed_conversation_application_runtime,
+)
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.conversation_memory_store import ConversationMemoryStore
 from core.structured_tool_protocol import StructuredToolProtocol
 
 
@@ -198,6 +202,73 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             self.assertFalse(second.is_alive())
             self.assertTrue(second_finished.is_set())
         self.assertEqual(calls, ["close"])
+
+
+    def test_provider_backed_factory_composes_and_persists_full_conversation(self):
+        class Provider:
+            def __init__(self):
+                self.calls = 0
+                self.closed = 0
+            def generate_chat(self, *, messages, tools, tool_choice):
+                self.calls += 1
+                self.asserted_tool_choice = tool_choice
+                return {"text": "provider-backed answer", "tool_calls": {"tool_calls": []}}
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            provider = Provider()
+            memory = ConversationMemoryStore(Path(directory) / "memory.sqlite3")
+            runtime = build_provider_backed_conversation_application_runtime(
+                {"workspace": directory}, provider=provider,
+                guarded_runtime=GuardedToolRuntime({}, _NoTools()),
+                owner_id="owner-a",
+                store_factory=lambda config: ConversationStore(Path(directory) / "chat.sqlite3"),
+                memory_store=memory,
+            )
+            self.assertIsNotNone(runtime.provider_adapter)
+            runtime.conversations.remember(
+                owner_id="owner-a", content="Prefers concise technical answers",
+                category="preference",
+            )
+            conversation = runtime.conversations.create(owner_id="owner-a")
+            result = runtime.conversations.reply(
+                owner_id="owner-a", conversation_id=conversation["conversation_id"],
+                user_text="Hello Yuki", request_id="provider-backed-1",
+                expected_version=0, tools=[],
+            )
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["answer"], "provider-backed answer")
+            self.assertEqual(provider.calls, 1)
+            self.assertEqual(
+                [item["role"] for item in runtime.conversations.history(
+                    owner_id="owner-a", conversation_id=conversation["conversation_id"]
+                )],
+                ["user", "assistant"],
+            )
+            runtime.close()
+            runtime.close()
+            self.assertEqual(provider.closed, 1)
+
+    def test_provider_is_closed_once_when_store_construction_fails(self):
+        class Provider:
+            def __init__(self):
+                self.closed = 0
+            def generate_chat(self, *, messages, tools, tool_choice):
+                return {"text": "unused", "tool_calls": {"tool_calls": []}}
+            def close(self):
+                self.closed += 1
+
+        provider = Provider()
+        def broken_store(config):
+            raise OSError("database unavailable")
+        with self.assertRaisesRegex(OSError, "database unavailable"):
+            build_provider_backed_conversation_application_runtime(
+                {}, provider=provider,
+                guarded_runtime=GuardedToolRuntime({}, _NoTools()),
+                store_factory=broken_store,
+            )
+        self.assertEqual(provider.closed, 1)
 
 if __name__ == "__main__":
     unittest.main()
