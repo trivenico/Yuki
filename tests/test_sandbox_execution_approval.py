@@ -105,6 +105,57 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
 
 
 
+
+    def test_worker_marks_unconfirmed_queue_commit_as_unknown(self):
+        approval = self.store.approve(self.task, session_token=self.session.token)
+        engine = DurableTaskEngine(":memory:")
+        self.addCleanup(engine.close)
+        goal = engine.create_goal()
+        log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "commit-audit.sqlite3"))
+        writer = SandboxExecutionAuditWriter(log)
+        sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=(self.task.image,), enabled=True,
+            approver=lambda _reason: True,
+        )
+        sandbox.run = Mock(return_value={"returncode": 0, "stdout": "ok", "stderr": ""})
+        worker = DurableSandboxExecutionWorker.from_trusted_stores(
+            engine, worker_id="sandbox-worker", sandbox=sandbox,
+            approval_store=self.store, audit_writer=writer,
+        )
+        queued = worker.submit(goal, self.task, approval, idempotency_key="unknown-queue-commit")
+        engine.complete = Mock(side_effect=RuntimeError("database unavailable"))
+        with self.assertRaises(ExecutionOutcomeUnknown):
+            worker.run_once()
+        failed = engine.get_task(queued["id"])
+        self.assertEqual(failed["state"], "failed")
+        self.assertIn("manual reconciliation", failed["last_error"])
+
+    def test_worker_recovers_when_queue_commit_succeeded_before_connection_error(self):
+        approval = self.store.approve(self.task, session_token=self.session.token)
+        engine = DurableTaskEngine(":memory:")
+        self.addCleanup(engine.close)
+        goal = engine.create_goal()
+        log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "commit-recovery-audit.sqlite3"))
+        writer = SandboxExecutionAuditWriter(log)
+        sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=(self.task.image,), enabled=True,
+            approver=lambda _reason: True,
+        )
+        sandbox.run = Mock(return_value={"returncode": 0, "stdout": "ok", "stderr": ""})
+        worker = DurableSandboxExecutionWorker.from_trusted_stores(
+            engine, worker_id="sandbox-worker", sandbox=sandbox,
+            approval_store=self.store, audit_writer=writer,
+        )
+        queued = worker.submit(goal, self.task, approval, idempotency_key="committed-before-error")
+        original_complete = engine.complete
+        def commit_then_raise(*args, **kwargs):
+            original_complete(*args, **kwargs)
+            raise RuntimeError("connection lost after commit")
+        engine.complete = commit_then_raise
+        result = worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertEqual(engine.get_task(queued["id"])["state"], "succeeded")
+
     def test_worker_persists_unknown_outcome_as_terminal_non_retryable_state(self):
         approval = self.store.approve(self.task, session_token=self.session.token)
         engine = DurableTaskEngine(":memory:")
