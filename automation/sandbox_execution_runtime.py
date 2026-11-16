@@ -54,13 +54,13 @@ def build_sandbox_execution_runtime(
     """
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary")
-    if not isinstance(auth_service, BuiltInAuthService):
-        raise TypeError("auth_service must be a BuiltInAuthService")
     enabled = config.get("sandbox_execution_enabled", False)
     if type(enabled) is not bool:
         raise ValueError("sandbox_execution_enabled must be a boolean")
     if not enabled:
         return None
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService when sandbox execution is enabled")
 
     workspace_value = config.get("workspace")
     if not isinstance(workspace_value, str) or not workspace_value.strip():
@@ -81,7 +81,7 @@ def build_sandbox_execution_runtime(
     if not isinstance(images, list) or not images:
         raise ValueError("sandbox execution requires digest-pinned allow-listed images")
     if any(not isinstance(image, str) or len(image) > 255
-           or re.fullmatch(r"[^@\\s]+@sha256:[0-9a-f]{64}", image) is None
+           or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", image) is None
            for image in images) or len(set(images)) != len(images):
         raise ValueError("sandbox execution image allow-list is invalid")
 
