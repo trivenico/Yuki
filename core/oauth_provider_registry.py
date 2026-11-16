@@ -74,6 +74,9 @@ class PreparedOAuthProviderRegistry:
                 "provider_id": provider_id,
                 "display_name": presentation.display_name,
                 "description": presentation.description,
+                # These are the exact scopes prepared for this provider, not a
+                # broader UI-authored approximation.
+                "requested_scopes": tuple(prepared.scopes),
                 "available": True,
             })
         self._firewall_policy = firewall_policy
@@ -89,7 +92,7 @@ class PreparedOAuthProviderRegistry:
         return self._services.get(provider_id)
 
     def provider_catalog(self):
-        """Return safe catalog projections; no URLs, issuer, client ID, or secrets."""
+        """Return safe catalog projections, including exact consent scopes only."""
         return tuple(dict(item) for item in self._catalog)
 
     def uses_firewall_policy(self, policy: NetworkFirewall) -> bool:
