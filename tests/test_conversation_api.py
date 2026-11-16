@@ -661,6 +661,7 @@ class ConversationAPITests(unittest.TestCase):
 
     def test_memory_backup_export_is_authenticated_encrypted_and_owner_scoped(self):
         try:
+            import cryptography  # noqa: F401
             from core.memory_backup_envelope import decrypt_backup
             import base64
         except ImportError:
