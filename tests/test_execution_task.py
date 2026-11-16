@@ -139,7 +139,7 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
     def test_durable_worker_claims_only_execution_tasks_and_persists_result(self):
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.approval.actor_id)
         text_task = engine.submit(
             goal, "specialist.text", {"text": "hello"}, idempotency_key="text-task",
         )
@@ -165,7 +165,7 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
     def test_durable_worker_never_retries_side_effecting_execution(self):
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.approval.actor_id)
         worker = DurableSandboxExecutionWorker(
             engine, worker_id="sandbox-worker", sandbox=self.sandbox,
             verify_approval=lambda _approval, _task: True,
@@ -189,7 +189,7 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
     def test_completion_persistence_failure_after_dispatch_is_unknown_and_never_replayed(self):
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.approval.actor_id)
         worker = DurableSandboxExecutionWorker(
             engine, worker_id="completion-failure-worker", sandbox=self.sandbox,
             verify_approval=lambda _approval, _task: True,
@@ -226,7 +226,7 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
     def test_durable_worker_cancellation_is_queued_only(self):
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.approval.actor_id)
         worker = DurableSandboxExecutionWorker(
             engine, worker_id="sandbox-worker", sandbox=self.sandbox,
             verify_approval=lambda _approval, _task: True,
@@ -242,7 +242,7 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
     def test_durable_worker_rejects_workspace_mismatch_before_enqueue(self):
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.approval.actor_id)
         worker = DurableSandboxExecutionWorker(
             engine, worker_id="sandbox-worker", sandbox=self.sandbox,
             verify_approval=lambda _approval, _task: True,
@@ -265,7 +265,7 @@ class ApprovedExecutionTaskTests(unittest.TestCase):
     def test_execution_worker_cannot_cancel_other_task_types(self):
         engine = DurableTaskEngine(":memory:")
         self.addCleanup(engine.close)
-        goal = engine.create_goal()
+        goal = engine.create_owned_goal(self.approval.actor_id)
         text_task = engine.submit(
             goal, "specialist.text", {}, idempotency_key="unrelated-task",
         )
