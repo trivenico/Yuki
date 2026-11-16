@@ -134,6 +134,12 @@ class MCPRuntimeService:
         self._trusted_tool_definitions = MappingProxyType(normalized)
         self._audit = audit_log
 
+    def uses_firewall_policy(self, policy) -> bool:
+        """Verify every configured provider manager uses the exact shared policy."""
+        if not isinstance(policy, NetworkFirewall):
+            return False
+        return all(manager.firewall_policy is policy for manager in self._managers.values())
+
     def has_provider(self, provider_id: str) -> bool:
         """Report whether a provider exists in trusted host configuration."""
         return isinstance(provider_id, str) and provider_id in self._managers
