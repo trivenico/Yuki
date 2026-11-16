@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import uuid
 from typing import Any
 
 from api.request_body import RequestBodyTooLarge, read_json_object
@@ -132,11 +131,13 @@ class AuthenticatedSandboxExecutionAPI:
             return await self._respond(send, 404, {"error": "not_found"})
 
     def _task(self, payload: dict) -> SandboxExecutionTask:
-        required = {"image", "argv"}
+        required = {"task_id", "image", "argv"}
         optional = {"timeout_seconds", "write_workspace", "max_output_bytes"}
         if not isinstance(payload, dict) or not required.issubset(payload) or set(payload) - required - optional:
             raise ValueError("invalid task fields")
-        image, argv = payload["image"], payload["argv"]
+        task_id, image, argv = payload["task_id"], payload["image"], payload["argv"]
+        if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id):
+            raise ValueError("invalid task ID")
         if not isinstance(image, str) or image not in self.allowed_images:
             raise ValueError("image is not allow-listed")
         if (not isinstance(argv, list) or not argv or len(argv) > 64
@@ -149,7 +150,7 @@ class AuthenticatedSandboxExecutionAPI:
         if type(timeout) is not int or type(write) is not bool or type(output) is not int:
             raise ValueError("invalid task bounds")
         task = SandboxExecutionTask(
-            task_id=uuid.uuid4().hex, image=image, argv=tuple(argv),
+            task_id=task_id, image=image, argv=tuple(argv),
             workspace=self.workspace, timeout_seconds=timeout,
             write_workspace=write, max_output_bytes=output,
         )
