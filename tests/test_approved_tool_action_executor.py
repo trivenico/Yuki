@@ -1,6 +1,8 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from core.approved_tool_action_executor import ApprovedToolActionExecutor
@@ -145,6 +147,32 @@ class ApprovedToolActionExecutorTests(unittest.TestCase):
         self.assertEqual(proposal.execution_state, "not_started")
         self.assertEqual(self.journal.get(self.proposal.idempotency_key).version, 0)
         self.assertEqual(self.calls, [])
+
+    def test_concurrent_execution_claim_dispatches_side_effect_once(self):
+        barrier = threading.Barrier(2)
+
+        def execute():
+            barrier.wait(timeout=5)
+            try:
+                return self.executor.execute(
+                    self.proposal.proposal_id, principal_id="owner-a",
+                )
+            except ValueError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: execute(), range(2)))
+
+        successes = [item for item in results if not isinstance(item, Exception)]
+        rejected = [item for item in results if isinstance(item, ValueError)]
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(successes[0].state, "finished")
+        self.assertEqual(len(rejected), 1)
+        self.assertIn("already claimed", str(rejected[0]))
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(
+            self.journal.get(self.proposal.idempotency_key).state, "succeeded",
+        )
 
     def test_execution_is_single_claim_and_cannot_be_replayed(self):
         self.executor.execute(self.proposal.proposal_id, principal_id="owner-a")
