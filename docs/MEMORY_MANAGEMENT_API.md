@@ -54,10 +54,9 @@ the bounded prompt context. If memory is disabled, no matches exist, or retrieva
 fails, the array is empty.
 
 The streaming endpoint sends the same reply object in its final `completed` or
-`cancelled` event. Replayed responses return `memory_references: null` because
-provenance is not yet persisted for historical turns; clients should distinguish
-that from an empty array. This is response-time transparency, not a durable audit
-record.
+`cancelled` event. Replayed responses return the persisted references for turns
+generated after this migration; older assistant messages return
+`memory_references: null`. Clients should distinguish that from an empty array.
 ## Durable conversation memory provenance
 
 Assistant message records persist a bounded `memory_references` field alongside
