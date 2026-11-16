@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from core.durable_task_engine import DurableTaskEngine, TaskConflict
+from core.durable_task_engine import DurableTaskEngine
 from automation.execution_task import (
     DurableSandboxExecutionWorker, EXECUTION_TASK_TYPE,
     ExecutionApproval,
