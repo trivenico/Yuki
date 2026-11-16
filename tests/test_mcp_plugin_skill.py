@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from skills.mcp_plugin import MCPPluginSkill
+from core.network_firewall import NetworkFirewall
 
 SERVER = {"name": "docs", "endpoint": "https://mcp.example.com/mcp",
           "allowed_hosts": ["mcp.example.com"], "allowed_tools": ["search_docs"]}
@@ -69,6 +70,15 @@ class MCPPluginSkillTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(factory.call_args.kwargs["access_token_provider"], provider)
         provider.assert_not_called()
+
+    @patch("skills.mcp_plugin.MCPHTTPClient")
+    def test_shared_firewall_policy_is_passed_to_mcp_transport(self, factory):
+        policy = NetworkFirewall(allowed_hosts={"mcp.example.com"})
+        result = MCPPluginSkill([SERVER], firewall_policy=policy).run(
+            json.dumps({"action": "list", "server": "docs"})
+        )
+        self.assertTrue(result.ok)
+        self.assertIs(factory.call_args.kwargs["firewall_policy"], policy)
 
     def test_unknown_action_fails_closed(self):
         result = MCPPluginSkill([SERVER]).run(json.dumps({"action": "exec", "server": "docs"}))

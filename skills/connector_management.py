@@ -16,10 +16,11 @@ class ConnectorManagementSkill(Skill):
     requires_approval = True
     max_argument_length = 2000
 
-    def __init__(self, servers=(), timeout=8):
+    def __init__(self, servers=(), timeout=8, *, firewall_policy=None):
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 15:
             raise ValueError("timeout must be from 1 to 15 seconds.")
         self.timeout = timeout
+        self.firewall_policy = firewall_policy
         self.servers = {}
         for item in servers:
             if not isinstance(item, dict):
@@ -65,7 +66,8 @@ class ConnectorManagementSkill(Skill):
             if config is None:
                 raise ValueError("Connector is not configured.")
             client = MCPHTTPClient(config["endpoint"], allowed_hosts=config["allowed_hosts"],
-                                   allowed_tools=config["allowed_tools"], timeout=self.timeout)
+                                   allowed_tools=config["allowed_tools"], timeout=self.timeout,
+                                   firewall_policy=self.firewall_policy)
             info = client.initialize()
             tools = client.list_tools()
             exposed = {item["name"] for item in tools}
