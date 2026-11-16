@@ -25,7 +25,7 @@ class MCPHTTPClient:
 
     def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
                  access_token_provider=None, timeout=10, http_transport=None,
-                 execution_audit=None):
+                 execution_audit=None, firewall_policy=None):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
@@ -39,7 +39,10 @@ class MCPHTTPClient:
         self.timeout = timeout
         if http_transport is not None and not callable(getattr(http_transport, "post_json", None)):
             raise TypeError("MCP HTTP transport must provide post_json.")
-        self._http = http_transport or PinnedMCPHTTPTransport(allowed_hosts=self.allowed_hosts, timeout=timeout)
+        self._http = http_transport or PinnedMCPHTTPTransport(
+            allowed_hosts=self.allowed_hosts, timeout=timeout,
+            firewall_policy=firewall_policy,
+        )
         self.session_id = None
         self._initialized = False
         self._request_id = 0
