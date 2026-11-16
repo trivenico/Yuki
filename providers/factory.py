@@ -33,6 +33,11 @@ def create_provider(config=None, *, environ=None, firewall_policy=None):
             firewall_policy=firewall_policy,
         )
     if selected == "gemini":
+        if firewall_policy is not None:
+            raise RuntimeError(
+                "Gemini CLI subprocess networking is not enforced by the shared firewall; "
+                "refusing provider startup while firewall enforcement is required."
+            )
         return GeminiCLIProvider(
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
             max_prompt_chars=cfg.get("gemini_max_prompt_chars", 20000),
