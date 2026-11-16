@@ -58,6 +58,11 @@ class OAuthTokenRefreshService:
         """Trusted provider identity used by host-side integrations."""
         return self._provider_id
 
+    @property
+    def firewall_policy(self):
+        """Expose the exact policy used by the pinned OAuth token transport."""
+        return getattr(self._transport, "firewall_policy", None)
+
     def refresh_if_needed(self, *, owner_id: str, account_id: str) -> dict:
         """Serialize lookup, provider rotation, and vault CAS across workers."""
         coordinator = self._lifecycle_coordinator
