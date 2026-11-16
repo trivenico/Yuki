@@ -276,5 +276,29 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 runtime.close()
 
 
+
+    def test_cli_runtime_creates_workspace_memory_when_explicitly_enabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            provider = FakeProvider()
+            runtime = build_local_conversation_runtime(
+                {"max_agent_steps": 3, "workspace": directory,
+                 "provider": "mock", "storage_backend": "sqlite",
+                 "conversation_memory_enabled": True},
+                provider_factory=lambda config: provider,
+                store_factory=lambda config: ConversationStore(root / "conversations.sqlite3"),
+                owner_id_factory=lambda: "local-memory-owner-identity-000000000000",
+            )
+            database = root / "conversation-memory.sqlite3"
+            try:
+                self.assertTrue(database.is_file())
+                self.assertIsInstance(runtime.conversations.memory_store, ConversationMemoryStore)
+                runtime.conversations.remember(
+                    owner_id=runtime.owner_id, content="Keep local preferences private",
+                )
+                self.assertEqual(len(runtime.conversations.memories(owner_id=runtime.owner_id)), 1)
+            finally:
+                runtime.close()
+
 if __name__ == "__main__":
     unittest.main()
