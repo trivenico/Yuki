@@ -504,5 +504,28 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
 
 
+
+    def test_api_runtime_creates_memory_only_when_explicitly_enabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory,
+                 "conversation_memory_enabled": True},
+                auth_service=auth, agent_loop=_loop(),
+            )
+            database = root / "conversation-memory.sqlite3"
+            try:
+                self.assertIsInstance(runtime.application.conversations.memory_store, ConversationMemoryStore)
+                self.assertTrue(database.is_file())
+                runtime.application.conversations.remember(
+                    owner_id="authenticated-api-owner", content="Keep context private",
+                )
+                self.assertEqual(
+                    len(runtime.application.conversations.memories(owner_id="authenticated-api-owner")), 1,
+                )
+            finally:
+                runtime.close()
+
 if __name__ == "__main__":
     unittest.main()
