@@ -152,3 +152,28 @@ owner-scoped durable history, deny-all chat tools, external provider ownership,
 memory context, and idempotent shutdown. The actual Qt launcher/controller
 migration remains a separate integration step because its existing branch does
 not yet contain this canonical runtime dependency chain.
+
+
+## Qt-facing chat controller seam
+
+`ui.desktop.shared_chat_controller.SharedDesktopChatController` is the
+Qt-independent controller intended to replace the launcher's current
+`controller.respond(message)` chat call. It accepts the
+`DesktopConversationSession` bundle, delegates turns to its authenticated
+conversation facade, exposes the existing memory-context toggle through the
+facade's consent checks, and closes the bundle on logout. It never receives a
+provider, owner ID, raw session token, or tool registry.
+
+The launcher should construct this controller only after
+`DesktopSessionManager.current_identity()` has returned a live identity, pass
+the existing encrypted `CompanionMemory` instance to the composition helper,
+and register the bundle/controller shutdown through one lifecycle owner.
+Existing specialist-plan and task APIs remain on the current authenticated
+specialist controller/service until a separate adapter migration is reviewed;
+the chat controller does not gain authority to approve or execute tasks.
+
+The Qt `ChatWorker` can continue to call `respond(message)` from its
+background thread. If streaming is enabled, its delta callback must emit a Qt
+signal; never update widgets directly from the provider worker. Logout must
+invalidate the conversation facade before closing the store, and the outer
+lifecycle must continue to close the provider exactly once.
