@@ -21,11 +21,17 @@ _KEY_ID = re.compile(rb"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
 
 def _transaction_encrypt(cipher, plaintext: bytes) -> bytes:
     key_id, ciphertext = cipher.encrypt(plaintext, associated_data=_TRANSACTION_AAD)
-    if not isinstance(key_id, str) or not _KEY_ID.fullmatch(key_id.encode("ascii", errors="ignore")):
+    if not isinstance(key_id, str):
+        raise ValueError("invalid_transaction_key_id")
+    try:
+        encoded_key_id = key_id.encode("ascii")
+    except UnicodeEncodeError:
+        raise ValueError("invalid_transaction_key_id") from None
+    if not _KEY_ID.fullmatch(encoded_key_id):
         raise ValueError("invalid_transaction_key_id")
     if not isinstance(ciphertext, bytes) or not ciphertext:
         raise ValueError("invalid_transaction_ciphertext")
-    return _TRANSACTION_ENVELOPE + key_id.encode("ascii") + b"\\0" + ciphertext
+    return _TRANSACTION_ENVELOPE + encoded_key_id + b"\\0" + ciphertext
 
 
 def _transaction_decrypt(cipher, envelope: bytes) -> bytes:
