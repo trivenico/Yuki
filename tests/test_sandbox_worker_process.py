@@ -1,6 +1,5 @@
 import threading
-
-import pytest
+import unittest
 
 from automation.sandbox_execution_runtime import SandboxExecutionRuntime
 from scripts.run_sandbox_worker import _poll_interval, run_worker
@@ -63,11 +62,11 @@ def test_worker_process_finishes_current_task_before_stopping():
     assert engine.recovery_calls == 1
 
 
-@pytest.mark.parametrize("value", [True, False, 0, 31, "1", None])
-def test_worker_poll_interval_rejects_invalid_values(value):
-    with pytest.raises(ValueError):
-        _poll_interval({"sandbox_execution_poll_interval_seconds": value})
-
+def test_worker_poll_interval_rejects_invalid_values():
+    for value in (True, False, 0, 31, "1", None):
+        with unittest.TestCase().subTest(value=value):
+            with unittest.TestCase().assertRaises(ValueError):
+                _poll_interval({"sandbox_execution_poll_interval_seconds": value})
 
 def test_worker_poll_interval_accepts_bounded_numeric_value():
     assert _poll_interval({"sandbox_execution_poll_interval_seconds": 2}) == 2.0
