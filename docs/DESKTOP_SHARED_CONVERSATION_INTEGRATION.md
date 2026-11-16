@@ -71,3 +71,16 @@ connect the supervised specialist task runtime or grant desktop chat new
 permissions. The desktop composition root still needs to call this helper,
 construct `DesktopConversationAdapter` from the same runtime and owner ID,
 and make the existing lifecycle close the resulting runtime exactly once.
+
+
+## Authenticated desktop session facade
+
+`ui.desktop.authenticated_conversation.AuthenticatedDesktopConversation`
+binds the shared adapter to the identity returned by the desktop session
+manager. It derives the owner scope from the verified identity's `actor_id`,
+rechecks the live session before every operation, guards streaming callbacks,
+and refuses to return a response if the session expires during inference.
+The facade does not own or close the shared runtime; the desktop lifecycle
+remains its single shutdown owner. The existing desktop memory-consent and
+specialist-task approval flows must remain separate and unchanged during the
+eventual bootstrap migration.
