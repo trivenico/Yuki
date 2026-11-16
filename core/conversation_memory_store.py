@@ -328,3 +328,37 @@ class ConversationMemoryStore:
                     (owner, now),
                 )
         return cursor.rowcount
+
+
+    def export_snapshot(self, *, owner_id: str) -> dict[str, Any]:
+        """Return one consistent, bounded snapshot of this owner's active memories."""
+        owner = self._owner(owner_id)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            now = datetime.now(timezone.utc)
+            rows = db.execute(
+                "SELECT memory_id, category, content, created_at, expires_at "
+                "FROM conversation_memories WHERE owner_id = ? "
+                "AND (expires_at IS NULL OR expires_at > ?) "
+                "ORDER BY created_at ASC, memory_id ASC LIMIT ?",
+                (owner, now.isoformat(), self.MAX_ENTRIES_PER_OWNER + 1),
+            ).fetchall()
+            if len(rows) > self.MAX_ENTRIES_PER_OWNER:
+                raise ValueError("invalid_backup_payload_size")
+            memories = [dict(row) for row in rows]
+            content_bytes = 0
+            for memory in memories:
+                content = memory.get("content")
+                if not isinstance(content, str):
+                    raise ValueError("invalid_backup_payload_size")
+                content_bytes += len(content.encode("utf-8"))
+                if content_bytes > 8 * 1024 * 1024:
+                    raise ValueError("invalid_backup_payload_size")
+        return {
+            "format": "yuki-memory-snapshot",
+            "schema_version": 1,
+            "owner_id": owner,
+            "exported_at": now.isoformat(),
+            "memory_count": len(memories),
+            "memories": memories,
+        }

@@ -311,6 +311,35 @@ class ConversationMemoryRetentionTests(unittest.TestCase):
                     owner_id="alice", content="bounded", expires_in_seconds=value,
                 )
 
+
+    def test_export_snapshot_is_owner_scoped_active_and_deterministic(self):
+        first = self.memory.remember(owner_id="alice", content="first")
+        second = self.memory.remember(owner_id="alice", content="second")
+        self.memory.remember(owner_id="bob", content="private to Bob")
+        with self.memory._connection() as db:
+            db.execute(
+                "UPDATE conversation_memories SET expires_at = ? WHERE memory_id = ?",
+                ("2000-01-01T00:00:00+00:00", first["memory_id"]),
+            )
+
+        snapshot = self.memory.export_snapshot(owner_id="alice")
+        self.assertEqual(snapshot["owner_id"], "alice")
+        self.assertEqual(snapshot["memory_count"], 1)
+        self.assertEqual([item["memory_id"] for item in snapshot["memories"]], [second["memory_id"]])
+
+    def test_export_snapshot_rejects_more_than_owner_capacity(self):
+        with self.memory._connection() as db:
+            db.executemany(
+                "INSERT INTO conversation_memories(memory_id, owner_id, category, content) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    (f"overflow-{index}", "alice", "note", "bounded")
+                    for index in range(self.memory.MAX_ENTRIES_PER_OWNER + 1)
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "invalid_backup_payload_size"):
+            self.memory.export_snapshot(owner_id="alice")
+
     def test_existing_memory_database_is_migrated_without_losing_rows(self):
         import sqlite3
         legacy = Path(self.tempdir.name) / "legacy.sqlite3"

@@ -68,3 +68,24 @@ never copied into this audit metadata. Older assistant messages without recorded
 provenance return `null`, while newly generated turns with no injected memories
 record an empty array. The field is owner-scoped through the conversation store.
 The additive SQLite migration preserves existing message rows.
+
+
+## Encrypted owner-scoped export
+
+`POST /v1/memories/backup` accepts exactly `{password}` and returns a versioned
+`yuki-memory-backup` envelope as base64. The authenticated session determines the
+owner; `owner_id` is never accepted from the request. The encrypted snapshot
+contains the owner binding, export timestamp, schema version, count, and a
+stable ordering of that owner's active memories. Expired memories and other
+owners' records are excluded. The snapshot is encrypted before it is returned;
+the API response is marked `Cache-Control: no-store`.
+
+Export snapshots are bounded before serialization: at most 2,000 active memories per owner and at most 8 MiB of combined UTF-8 memory content. The encrypted-envelope layer independently enforces its serialized payload and envelope size limits.
+
+The passphrase must be at least 12 UTF-8 bytes and is not recoverable by Yuki.
+Keep it separate from the backup file. The endpoint requires the optional
+`production-storage` dependency extra for AES-GCM support and returns
+`503 memory_backup_crypto_unavailable` when that dependency is absent.
+There is not yet a restore endpoint; importing backups remains intentionally
+unsupported until preview, validation, owner binding, and atomic merge semantics
+are implemented.

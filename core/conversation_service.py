@@ -449,3 +449,19 @@ class ConversationService:
         raise ConversationConflict(
             "this request was already recorded but has no completed assistant response."
         )
+
+
+    def export_memory_backup(self, *, owner_id: str, password: str | bytes) -> bytes:
+        """Create an encrypted export for the authenticated owner only."""
+        import json
+        from core.memory_backup_envelope import encrypt_backup
+
+        with self._lock:
+            self._ensure_open()
+            if self.memory_store is None:
+                raise RuntimeError("persistent memory is not enabled for this runtime.")
+            snapshot = self.memory_store.export_snapshot(owner_id=owner_id)
+        plaintext = json.dumps(
+            snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        return encrypt_backup(plaintext, password)
