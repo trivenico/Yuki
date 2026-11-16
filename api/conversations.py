@@ -352,6 +352,35 @@ class YukiConversationAPI:
                 except Exception:
                     return await self._respond(send, 500, {"error": "provider_catalog_unavailable"})
 
+            if path == "/v1/memories/backup" and method == "POST":
+                payload = await self._body(receive)
+                if set(payload) != {"password"} or not isinstance(payload.get("password"), str):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    import base64
+                    envelope = await asyncio.to_thread(
+                        self.conversations.export_memory_backup,
+                        owner_id=user.user_id, password=payload["password"],
+                    )
+                except RuntimeError:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                except ValueError as exc:
+                    code = str(exc)
+                    if code == "memory_backup_crypto_unavailable":
+                        return await self._respond(send, 503, {"error": code})
+                    if code not in {
+                        "invalid_backup_password", "invalid_backup_payload_size",
+                        "memory_backup_key_derivation_failed", "memory_backup_encryption_failed",
+                        "memory_backup_envelope_too_large",
+                    }:
+                        code = "memory_backup_failed"
+                    return await self._respond(send, 400, {"error": code})
+                return await self._respond(send, 200, {
+                    "format": "yuki-memory-backup",
+                    "version": 1,
+                    "envelope_base64": base64.b64encode(envelope).decode("ascii"),
+                })
+
             if path == "/v1/memories" and method == "GET":
                 query = self._query(scope)
                 if set(query) - {"limit", "category"}:
