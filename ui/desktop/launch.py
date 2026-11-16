@@ -26,6 +26,23 @@ def _close_expired_controller(controller: Any) -> Exception | None:
     return None
 
 
+def _close_startup_resources(resources) -> None:
+    """Best-effort reverse-order cleanup for partially composed desktop startup."""
+    seen: set[int] = set()
+    for resource in reversed(tuple(resources)):
+        if resource is None or id(resource) in seen:
+            continue
+        seen.add(id(resource))
+        close = getattr(resource, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # Preserve the startup exception; later resources still get a
+                # cleanup attempt, and normal shutdown reports aggregated errors.
+                continue
+
+
 def _build_services():
     from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
@@ -43,27 +60,36 @@ def _build_services():
     root = prepare_private_desktop_root(desktop_data_root())
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, load_os_keyring())
-    provider = create_provider(load_config())
-    permission_check = task_permission_authorizer(
-        auth,
-        session_token_provider=lambda: (
-            sessions.current_identity().session_id
-            if sessions.current_identity() is not None else ""
-        ),
-    )
-    task_db = str(root / "tasks.sqlite3")
-    runtime = TaskRuntime(WorkflowRunStore(task_db), authorize=permission_check)
-    built_in_agents = (
-        SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
-        SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
-        SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
-        SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
-    )
-    coordinator = SpecialistAgentCoordinator(
-        runtime, task_db, built_in_agents, authorize=permission_check,
-    )
-    lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
-    return auth, sessions, provider, coordinator, runtime, lifecycle
+    provider = None
+    try:
+        provider = create_provider(load_config())
+        permission_check = task_permission_authorizer(
+            auth,
+            session_token_provider=lambda: (
+                sessions.current_identity().session_id
+                if sessions.current_identity() is not None else ""
+            ),
+        )
+        task_db = str(root / "tasks.sqlite3")
+        runtime = TaskRuntime(WorkflowRunStore(task_db), authorize=permission_check)
+        built_in_agents = (
+            SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
+            SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
+            SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
+            SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
+        )
+        coordinator = SpecialistAgentCoordinator(
+            runtime, task_db, built_in_agents, authorize=permission_check,
+        )
+        lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
+        return auth, sessions, provider, coordinator, runtime, lifecycle
+    except Exception:
+        # Provider construction is the first potentially long-lived external
+        # resource. If any later service fails, release it before propagating
+        # the original startup error. Auth/session adapters currently expose no
+        # persistent close handle; close any future closeable resource too.
+        _close_startup_resources((auth, sessions, provider))
+        raise
 
 
 def run() -> int:
