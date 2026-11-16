@@ -132,9 +132,20 @@ class AuthenticatedDesktopConversation:
         """Discard local session state and revoke memory context during logout."""
         if self._invalidated:
             return
-        self.disable_memory_context()
-        self._conversation.clear_selection()
+        errors = []
+        try:
+            self.disable_memory_context()
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            self._conversation.clear_selection()
+        except Exception as exc:
+            errors.append(exc)
         self._invalidated = True
+        if errors:
+            raise RuntimeError(
+                "Desktop session invalidation could not complete every cleanup step."
+            ) from errors[0]
 
     def clear_selection(self) -> None:
         self._require_live_session()
