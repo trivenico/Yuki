@@ -21,6 +21,18 @@ class ProviderAgentAdapter:
         # through this adapter; independent adapter instances remain independent.
         self._provider_lock = threading.RLock()
 
+    def replace_provider(self, provider: Any) -> Any:
+        """Atomically replace the client after all current calls/streams finish.
+
+        Returns the previous provider so its owner can close it after the swap.
+        """
+        if provider is None or not callable(getattr(provider, "generate_chat", None)):
+            raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
+        with self._provider_lock:
+            previous = self.provider
+            self.provider = provider
+            return previous
+
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
