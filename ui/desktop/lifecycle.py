@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from threading import RLock
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 class DesktopShutdownError(RuntimeError):
@@ -22,13 +22,18 @@ class DesktopServiceLifecycle:
         with self._lock:
             return self._closed
 
-    def close(self) -> None:
+    def close(self, *, before_close: Callable[[], Any] | None = None) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             seen: set[int] = set()
             errors: list[Exception] = []
+            if before_close is not None:
+                try:
+                    before_close()
+                except Exception as exc:
+                    errors.append(exc)
             for resource in reversed(self._resources):
                 if resource is None or id(resource) in seen:
                     continue
