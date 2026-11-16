@@ -7,9 +7,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import ipaddress
+import logging
 import re
+from collections.abc import Mapping
 from typing import Callable, Iterable
 
+
+_LOGGER = logging.getLogger(__name__)
 
 _HOST = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$")
 
@@ -126,3 +130,53 @@ class NetworkFirewall:
             except Exception:
                 return FirewallDecision(False, "audit_unavailable", decision.host, decision.port, decision.protocol)
         return decision
+
+
+def build_network_firewall_from_config(
+    config: Mapping[str, object], *,
+    audit: Callable[[FirewallDecision], None] | None = None,
+) -> NetworkFirewall | None:
+    """Build the application firewall from explicitly configured integration hosts.
+
+    The policy is disabled unless firewall_enabled is exactly true. When
+    enabled, web and MCP host scopes form the shared policy; each transport
+    must still enforce its own narrower host allow-list.
+    """
+    if not isinstance(config, Mapping):
+        raise FirewallPolicyError("firewall_config_must_be_a_mapping")
+    enabled = config.get("firewall_enabled", False)
+    if type(enabled) is not bool:
+        raise FirewallPolicyError("firewall_enabled_must_be_boolean")
+    if not enabled:
+        return None
+    web_hosts = config.get("web_allowed_hosts", [])
+    mcp_servers = config.get("mcp_servers", [])
+    if not isinstance(web_hosts, (list, tuple)) or not isinstance(mcp_servers, (list, tuple)):
+        raise FirewallPolicyError("firewall_host_configuration_invalid")
+    hosts: dict[str, str] = {}
+    for host in web_hosts:
+        if not isinstance(host, str):
+            raise FirewallPolicyError("firewall_host_configuration_invalid")
+        hosts.setdefault(host.lower(), host.lower())
+    for server in mcp_servers:
+        if not isinstance(server, Mapping):
+            raise FirewallPolicyError("firewall_mcp_configuration_invalid")
+        server_hosts = server.get("allowed_hosts", [])
+        if not isinstance(server_hosts, (list, tuple)):
+            raise FirewallPolicyError("firewall_mcp_configuration_invalid")
+        for host in server_hosts:
+            if not isinstance(host, str):
+                raise FirewallPolicyError("firewall_mcp_configuration_invalid")
+            hosts.setdefault(host.lower(), host.lower())
+    if not hosts:
+        raise FirewallPolicyError("firewall_enabled_requires_configured_hosts")
+    if len(hosts) > 100:
+        raise FirewallPolicyError("firewall_host_limit_exceeded")
+    audit_callback = audit
+    if audit_callback is None:
+        def audit_callback(decision: FirewallDecision) -> None:
+            _LOGGER.info(
+                "outbound firewall decision allowed=%s reason=%s host=%s port=%s protocol=%s",
+                decision.allowed, decision.reason, decision.host, decision.port, decision.protocol,
+            )
+    return NetworkFirewall(allowed_hosts=tuple(hosts.values()), audit=audit_callback)

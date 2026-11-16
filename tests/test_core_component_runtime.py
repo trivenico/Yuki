@@ -178,5 +178,65 @@ class CoreComponentCompositionTests(unittest.TestCase):
             self.assertTrue(application._closed)
 
 
+    def test_configured_firewall_is_composed_automatically_from_web_and_mcp_hosts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            provider = FakeProvider()
+            registry = build_core_component_registry(
+                auth_service=auth, provider=provider, agent_loop=self._loop(),
+                config={
+                    "workspace": directory, "provider": "mock",
+                    "firewall_enabled": True,
+                    "web_allowed_hosts": ["reader.example.com"],
+                    "mcp_servers": [{"allowed_hosts": ["mcp.example.com"]}],
+                },
+            )
+            firewall = registry.resolve("network-firewall")
+            self.assertEqual(
+                firewall.allowed_hosts,
+                frozenset({"reader.example.com", "mcp.example.com"}),
+            )
+            registry.start_all()
+            self.assertTrue(registry.health()["network-firewall"])
+            registry.close()
+
+    def test_enabled_firewall_without_explicit_hosts_fails_core_composition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            with self.assertRaisesRegex(ValueError, "requires_configured_hosts"):
+                build_core_component_registry(
+                    auth_service=auth, provider=FakeProvider(), agent_loop=self._loop(),
+                    config={"workspace": directory, "provider": "mock",
+                            "firewall_enabled": True, "web_allowed_hosts": [], "mcp_servers": []},
+                )
+
+
+    def test_local_core_registry_composes_configured_firewall(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from core.core_component_runtime import build_local_core_component_registry
+            from core.conversation_application_runtime import build_conversation_application_runtime
+            from core.conversation_store import ConversationStore
+            provider = FakeProvider()
+            loop = self._loop()
+            application = build_conversation_application_runtime(
+                {}, agent_loop=loop,
+                store_factory=lambda config: ConversationStore(Path(directory) / "local.sqlite3"),
+            )
+            registry = build_local_core_component_registry(
+                owner_id="local-firewall-owner-000000000000", provider=provider, agent_loop=loop,
+                application_runtime=application,
+                config={"workspace": directory, "provider": "mock",
+                        "firewall_enabled": True, "web_allowed_hosts": ["reader.example.com"],
+                        "mcp_servers": [{"allowed_hosts": ["mcp.example.com"]}]},
+            )
+            firewall = registry.resolve("network-firewall")
+            self.assertEqual(firewall.allowed_hosts, frozenset({
+                "reader.example.com", "mcp.example.com",
+            }))
+            registry.start_all()
+            self.assertTrue(registry.health()["network-firewall"])
+            registry.close()
+
+
 if __name__ == "__main__":
     unittest.main()

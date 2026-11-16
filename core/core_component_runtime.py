@@ -10,7 +10,7 @@ from core.durable_conversations_component_runtime import build_durable_conversat
 from core.component_registry import ComponentRegistry
 from core.identity_component_runtime import build_identity_access_component_runtime
 from core.local_identity_component_runtime import build_local_identity_access_component_runtime
-from core.network_firewall import NetworkFirewall
+from core.network_firewall import NetworkFirewall, build_network_firewall_from_config
 from core.network_firewall_component_runtime import build_network_firewall_component_runtime
 from core.owner_agent_component_runtime import build_owner_agent_execution_component_runtime
 from providers.component_runtime import build_provider_component_runtime
@@ -33,6 +33,8 @@ def build_core_component_registry(
     """Register validated configuration and foundational API component runtimes."""
     registry = ComponentRegistry()
     _register_configuration(registry, config)
+    if network_firewall is None and config is not None:
+        network_firewall = build_network_firewall_from_config(config)
     runtimes = (
         build_identity_access_component_runtime(auth_service),
         build_provider_component_runtime(provider),
@@ -63,6 +65,8 @@ def build_local_core_component_registry(
     """Compose the local-only CLI graph with configuration and local identity."""
     registry = ComponentRegistry()
     _register_configuration(registry, config)
+    if network_firewall is None and config is not None:
+        network_firewall = build_network_firewall_from_config(config)
     runtimes = (
         build_local_identity_access_component_runtime(owner_id),
         build_provider_component_runtime(provider),

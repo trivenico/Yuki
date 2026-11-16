@@ -25,6 +25,8 @@ from core.conversation_application_runtime import (
 )
 from core.device_pairing import DevicePairingService
 from core.readiness import ReadinessReport, build_readiness_report
+from core.network_firewall import NetworkFirewall, build_network_firewall_from_config
+from core.network_firewall_component_runtime import build_network_firewall_component_runtime
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
@@ -139,6 +141,7 @@ def build_conversation_runtime(
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
     memory_store: ConversationMemoryStore | None = None,
+    network_firewall: NetworkFirewall | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -151,6 +154,10 @@ def build_conversation_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     if memory_store is not None and not isinstance(memory_store, ConversationMemoryStore):
         raise TypeError("memory_store must be a ConversationMemoryStore or None.")
+    if network_firewall is not None and not isinstance(network_firewall, NetworkFirewall):
+        raise TypeError("network_firewall must be a NetworkFirewall or None.")
+    if network_firewall is None:
+        network_firewall = build_network_firewall_from_config(config)
     if gmail_runtime_bundle is not None:
         if not isinstance(gmail_runtime_bundle, GmailToolRuntimeBundle):
             raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
@@ -343,6 +350,16 @@ def build_conversation_runtime(
                     component_registry.register(
                         build_configuration_component_runtime(config)
                     )
+            if network_firewall is not None:
+                try:
+                    registered_firewall = component_registry.resolve("network-firewall")
+                except LookupError:
+                    component_registry.register(
+                        build_network_firewall_component_runtime(network_firewall)
+                    )
+                else:
+                    if registered_firewall is not network_firewall:
+                        raise ValueError("component registry network-firewall instance mismatch")
             expected_instances = {
                 "identity-access": auth_service,
                 "agent-execution": agent_loop,
