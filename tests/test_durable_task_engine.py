@@ -455,5 +455,29 @@ class DurableTaskEngineTests(unittest.TestCase):
                     self.engine.claim("worker", task_types=invalid)
 
 
+
+    def test_worker_registry_heartbeat_and_stale_detection_persist(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        engine.register_worker("worker-pid-123", 123)
+        self.assertEqual(engine.get_worker("worker-pid-123")["state"], "active")
+        self.assertFalse(engine.list_workers(stale_after_seconds=5)[0]["stale"])
+        now[0] += 6
+        self.assertTrue(engine.list_workers(stale_after_seconds=5)[0]["stale"])
+        engine.heartbeat_worker("worker-pid-123")
+        self.assertFalse(engine.list_workers(stale_after_seconds=5)[0]["stale"])
+        reopened = DurableTaskEngine(self.db, clock=lambda: now[0])
+        try:
+            self.assertEqual(reopened.get_worker("worker-pid-123")["process_id"], 123)
+            self.assertEqual(reopened.stop_worker("worker-pid-123")["state"], "stopped")
+            self.assertFalse(reopened.list_workers(stale_after_seconds=5)[0]["stale"])
+        finally:
+            reopened.close()
+
+    def test_worker_registry_rejects_duplicate_active_identity(self):
+        self.engine.register_worker("unique-worker", 321)
+        with self.assertRaises(TaskConflict):
+            self.engine.register_worker("unique-worker", 654)
+
 if __name__ == "__main__":
     unittest.main()
