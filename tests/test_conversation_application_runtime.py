@@ -270,5 +270,50 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             )
         self.assertEqual(provider.closed, 1)
 
+
+    def test_memory_configuration_is_disabled_without_creating_database_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = build_conversation_application_runtime(
+                {"workspace": directory}, agent_loop=_agent_loop(),
+                store_factory=lambda config: ConversationStore(Path(directory) / "chat.sqlite3"),
+            )
+            self.assertIsNone(runtime.conversations.memory_store)
+            self.assertFalse((Path(directory) / "conversation-memory.sqlite3").exists())
+            runtime.close()
+
+    def test_enabled_memory_uses_private_workspace_database_and_owner_scope(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = build_conversation_application_runtime(
+                {"workspace": directory, "conversation_memory_enabled": True},
+                agent_loop=_agent_loop(),
+                store_factory=lambda config: ConversationStore(Path(directory) / "chat.sqlite3"),
+            )
+            database = Path(directory) / "conversation-memory.sqlite3"
+            self.assertTrue(database.is_file())
+            if os.name == "posix":
+                self.assertEqual(database.stat().st_mode & 0o777, 0o600)
+            runtime.conversations.remember(
+                owner_id="owner-a", content="Yuki core runtime uses SQLite",
+            )
+            self.assertEqual(
+                len(runtime.conversations.memories(owner_id="owner-a")), 1,
+            )
+            self.assertEqual(runtime.conversations.memories(owner_id="owner-b"), [])
+            runtime.close()
+
+    def test_memory_configuration_requires_boolean_and_workspace_before_opening_store(self):
+        opened = []
+        for config in (
+            {"conversation_memory_enabled": "yes", "workspace": "/tmp/yuki"},
+            {"conversation_memory_enabled": True},
+        ):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                build_conversation_application_runtime(
+                    config, agent_loop=_agent_loop(),
+                    store_factory=lambda value: opened.append(True),
+                )
+        self.assertEqual(opened, [])
+
 if __name__ == "__main__":
     unittest.main()
