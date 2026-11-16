@@ -16,8 +16,8 @@ from core.durable_task_engine import DurableTaskEngine
 from hackback.sandbox import DockerSandbox
 
 _TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-_ACTOR_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,199}$")
-_APPROVAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_ACTOR_ID = re.compile(r"^[A-Za-z0-9_.@:-][A-Za-z0-9_.@:-]{0,199}$")
+_APPROVAL_ID = re.compile(r"^[A-Za-z0-9_.:-][A-Za-z0-9_.:-]{0,127}$")
 
 
 @dataclass(frozen=True)
@@ -328,7 +328,15 @@ class DurableSandboxExecutionWorker:
                     "sandbox completed but its durable task result could not be confirmed"
                 ) from completion_error
         except ExecutionOutcomeUnknown:
-            self.engine.fail_unknown_outcome(claimed["id"], self.worker_id)
+            # Some paths (notably an ambiguous completion commit) already
+            # persisted the terminal unknown state before raising. Avoid
+            # attempting to consume the now-released lease a second time.
+            try:
+                current = self.engine.get_task(claimed["id"])
+            except Exception:
+                current = None
+            if current is not None and current.get("state") == "running":
+                self.engine.fail_unknown_outcome(claimed["id"], self.worker_id)
             raise
         except Exception:
             self.engine.fail(
