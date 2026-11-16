@@ -43,6 +43,46 @@ class ConversationMemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.memory.list(owner_id="alice"), [])
         self.assertEqual(self.memory.list(owner_id="bob")[0]["memory_id"], bob["memory_id"])
 
+    def test_search_ranks_direct_phrase_above_noisier_overlap(self):
+        broad = self.memory.remember(
+            owner_id="alice",
+            content="Engineering notes mention concise updates, concise writing, and concise summaries",
+        )
+        exact = self.memory.remember(
+            owner_id="alice",
+            content="Concise engineering updates",
+            category="preference",
+        )
+        matches = self.memory.search(
+            owner_id="alice", query="concise engineering updates", limit=2,
+        )
+        self.assertEqual(matches[0]["memory_id"], exact["memory_id"])
+        self.assertEqual({item["memory_id"] for item in matches}, {broad["memory_id"], exact["memory_id"]})
+        self.assertGreater(matches[0]["score"], matches[1]["score"])
+
+    def test_search_checks_older_memories_beyond_recent_200(self):
+        oldest = self.memory.remember(
+            owner_id="alice", content="Unique archival detail: violet telescope",
+        )
+        for index in range(205):
+            self.memory.remember(
+                owner_id="alice", content=f"Unrelated recent memory number {index}",
+            )
+        matches = self.memory.search(
+            owner_id="alice", query="violet telescope", limit=5,
+        )
+        self.assertEqual([item["memory_id"] for item in matches], [oldest["memory_id"]])
+
+    def test_search_ranking_is_deterministic_for_repeated_queries(self):
+        self.memory.remember(owner_id="alice", content="Project uses Python and SQLite")
+        self.memory.remember(owner_id="alice", content="Project uses Python and PostgreSQL")
+        first = self.memory.search(owner_id="alice", query="project database Python")
+        second = self.memory.search(owner_id="alice", query="project database Python")
+        self.assertEqual(
+            [(item["memory_id"], item["score"]) for item in first],
+            [(item["memory_id"], item["score"]) for item in second],
+        )
+
     def test_memory_inputs_are_bounded_and_categories_are_allowlisted(self):
         for kwargs in (
             {"owner_id": "", "content": "text"},
