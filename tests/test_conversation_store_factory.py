@@ -8,6 +8,7 @@ from core.conversation_store import ConversationStore
 
 
 class ConversationStoreFactoryTests(unittest.TestCase):
+    @unittest.skipUnless(__import__("os").name == "posix", "POSIX permission semantics only; Windows ACLs are deployment-managed")
     def test_sqlite_is_default_and_factory_creates_private_local_store(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.yaml"
