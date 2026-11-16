@@ -59,7 +59,7 @@ def build_memory_context_system_text(
             raise MemoryContextError("Consented memory contains an invalid entry.")
         category = entry.get("category", "note")
         content = entry.get("text")
-        if category not in {"note", "preference", "lesson"}:
+        if not isinstance(category, str) or category not in {"note", "preference", "lesson"}:
             raise MemoryContextError("Consented memory contains an unsupported category.")
         if not isinstance(content, str) or not content.strip():
             raise MemoryContextError("Consented memory contains invalid text.")
