@@ -18,6 +18,7 @@ TERMINAL = {"succeeded", "failed", "cancelled"}
 class TaskEngineError(RuntimeError): pass
 class TaskNotFound(TaskEngineError): pass
 class TaskConflict(TaskEngineError): pass
+class RateLimitExceeded(TaskEngineError): pass
 
 class DurableTaskEngine:
     """Transactional task queue with idempotency, dependency gates, leases and events.
@@ -58,6 +59,14 @@ class DurableTaskEngine:
               approval_id TEXT NOT NULL, task_fingerprint TEXT NOT NULL,
               task_id TEXT NOT NULL REFERENCES tasks(id), created_at REAL NOT NULL,
               PRIMARY KEY(goal_id,idempotency_key));
+            CREATE TABLE IF NOT EXISTS rate_limit_events(
+              id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT NOT NULL, action TEXT NOT NULL, occurred_at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS worker_instances(
+              worker_id TEXT PRIMARY KEY, process_id INTEGER NOT NULL,
+              started_at REAL NOT NULL, heartbeat_at REAL NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('active','stopped')),
+              stopped_at REAL);
+            CREATE INDEX IF NOT EXISTS rate_limit_window_idx ON rate_limit_events(actor_id,action,occurred_at);
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
             CREATE INDEX IF NOT EXISTS tasks_goal_idx ON tasks(goal_id,created_at);
             CREATE TABLE IF NOT EXISTS dependencies(
@@ -123,6 +132,113 @@ class DurableTaskEngine:
         c.execute("INSERT INTO run_events(goal_id,task_id,event_type,detail_json,created_at) VALUES(?,?,?,?,?)",
                   (goal, task, kind, self._json(detail), self.clock()))
 
+    def register_worker(self, worker_id, process_id):
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 256:
+            raise ValueError("invalid worker_id")
+        if isinstance(process_id, bool) or not isinstance(process_id, int) or process_id <= 0:
+            raise ValueError("invalid process_id")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            existing = c.execute(
+                "SELECT state FROM worker_instances WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+            if existing is not None and existing["state"] == "active":
+                raise TaskConflict("worker identity is already registered as active")
+            c.execute(
+                """INSERT INTO worker_instances(worker_id,process_id,started_at,heartbeat_at,state,stopped_at)
+                   VALUES(?,?,?,?, 'active', NULL)
+                   ON CONFLICT(worker_id) DO UPDATE SET
+                     process_id=excluded.process_id, started_at=excluded.started_at,
+                     heartbeat_at=excluded.heartbeat_at, state='active', stopped_at=NULL""",
+                (worker_id, process_id, now, now),
+            )
+            c.commit()
+        return self.get_worker(worker_id)
+
+    def heartbeat_worker(self, worker_id):
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            changed = c.execute(
+                "UPDATE worker_instances SET heartbeat_at=? WHERE worker_id=? AND state='active'",
+                (now, worker_id),
+            ).rowcount
+            if changed != 1:
+                raise TaskConflict("worker is not registered as active")
+            c.commit()
+        return now
+
+    def stop_worker(self, worker_id):
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute(
+                "UPDATE worker_instances SET state='stopped',stopped_at=?,heartbeat_at=? "
+                "WHERE worker_id=? AND state='active'",
+                (now, now, worker_id),
+            )
+            c.commit()
+        return self.get_worker(worker_id)
+
+    def get_worker(self, worker_id):
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM worker_instances WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+        if row is None:
+            raise TaskNotFound("worker not found")
+        return dict(row)
+
+    def list_workers(self, *, stale_after_seconds=30):
+        if (isinstance(stale_after_seconds, bool)
+                or not isinstance(stale_after_seconds, (int, float))
+                or not math.isfinite(stale_after_seconds)
+                or not 1 <= stale_after_seconds <= 3600):
+            raise ValueError("stale_after_seconds must be between 1 and 3600")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT * FROM worker_instances ORDER BY started_at,worker_id"
+            ).fetchall()
+        return [
+            {**dict(row), "stale": row["state"] == "active"
+             and row["heartbeat_at"] <= now - stale_after_seconds}
+            for row in rows
+        ]
+
+    def consume_rate_limit(self, actor_id, action, *, limit, window_seconds):
+        """Atomically consume one persistent actor/action rate-limit slot."""
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200:
+            raise ValueError("invalid rate-limit actor")
+        if not isinstance(action, str) or not action or len(action) > 64:
+            raise ValueError("invalid rate-limit action")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10000:
+            raise ValueError("rate limit must be 1..10000")
+        if isinstance(window_seconds, bool) or not isinstance(window_seconds, int) or not 1 <= window_seconds <= 86400:
+            raise ValueError("rate-limit window must be 1..86400 seconds")
+        now = self.clock()
+        cutoff = now - window_seconds
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute(
+                "DELETE FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at<=?",
+                (actor_id, action, cutoff),
+            )
+            count = c.execute(
+                "SELECT COUNT(*) AS n FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at>?",
+                (actor_id, action, cutoff),
+            ).fetchone()["n"]
+            if count >= limit:
+                c.commit()
+                return False
+            c.execute(
+                "INSERT INTO rate_limit_events(actor_id,action,occurred_at) VALUES(?,?,?)",
+                (actor_id, action, now),
+            )
+            c.commit()
+        return True
+
     def create_goal(self, goal_id=None):
         goal_id, now = goal_id or str(uuid.uuid4()), self.clock()
         with closing(self._connect()) as c:
@@ -151,7 +267,7 @@ class DurableTaskEngine:
             row = c.execute("SELECT owner_id FROM goal_owners WHERE goal_id=?", (goal_id,)).fetchone()
         return None if row is None else row["owner_id"]
 
-    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0, submission_receipt=None):
+    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0, submission_receipt=None, owner_id=None, max_active_tasks=None, rate_limit=None):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
@@ -170,6 +286,17 @@ class DurableTaskEngine:
             "max_attempts": max_attempts,
             "delay_seconds": float(delay_seconds),
         })
+        rate_limit_spec = None
+        if rate_limit is not None:
+            if not isinstance(rate_limit, (tuple, list)) or len(rate_limit) != 4:
+                raise ValueError("rate_limit must be (actor_id, action, limit, window_seconds)")
+            rate_actor, rate_action, rate_count, rate_window = rate_limit
+            if (not isinstance(rate_actor, str) or not rate_actor.strip() or len(rate_actor) > 200
+                    or not isinstance(rate_action, str) or not rate_action or len(rate_action) > 64
+                    or isinstance(rate_count, bool) or not isinstance(rate_count, int) or not 1 <= rate_count <= 10000
+                    or isinstance(rate_window, bool) or not isinstance(rate_window, int) or not 1 <= rate_window <= 86400):
+                raise ValueError("rate_limit contains invalid bounds or identity")
+            rate_limit_spec = (rate_actor, rate_action, rate_count, rate_window)
         receipt = None
         if submission_receipt is not None:
             if not isinstance(submission_receipt, dict) or set(submission_receipt) != {"actor_id", "approval_id", "task_fingerprint"}:
@@ -208,6 +335,38 @@ class DurableTaskEngine:
                 c.commit()
                 return self._decode(old)
             if goal["state"]!="active": raise TaskConflict("goal is not active")
+            if rate_limit_spec is not None:
+                rate_actor, rate_action, rate_count, rate_window = rate_limit_spec
+                cutoff = now - rate_window
+                c.execute(
+                    "DELETE FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at<=?",
+                    (rate_actor, rate_action, cutoff),
+                )
+                rate_used = c.execute(
+                    "SELECT COUNT(*) AS n FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at>?",
+                    (rate_actor, rate_action, cutoff),
+                ).fetchone()["n"]
+                if rate_used >= rate_count:
+                    raise RateLimitExceeded("task submission rate limit exceeded")
+                c.execute(
+                    "INSERT INTO rate_limit_events(actor_id,action,occurred_at) VALUES(?,?,?)",
+                    (rate_actor, rate_action, now),
+                )
+            if owner_id is not None:
+                if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+                    raise ValueError("invalid task owner")
+                owner = c.execute("SELECT owner_id FROM goal_owners WHERE goal_id=?", (goal_id,)).fetchone()
+                if owner is None or owner["owner_id"] != owner_id:
+                    raise TaskConflict("task owner does not match goal owner")
+                if isinstance(max_active_tasks, bool) or not isinstance(max_active_tasks, int) or not 1 <= max_active_tasks <= 1000:
+                    raise ValueError("max_active_tasks must be 1..1000")
+                active = c.execute(
+                    "SELECT COUNT(*) AS n FROM tasks t JOIN goal_owners o ON o.goal_id=t.goal_id "
+                    "WHERE o.owner_id=? AND t.task_type=? AND t.state IN ('queued','running')",
+                    (owner_id, task_type),
+                ).fetchone()["n"]
+                if active >= max_active_tasks:
+                    raise RateLimitExceeded("owner active sandbox task quota exceeded")
             for dep in deps:
                 d = c.execute("SELECT goal_id FROM tasks WHERE id=?",(dep,)).fetchone()
                 if d is None or d["goal_id"]!=goal_id: raise TaskConflict("dependency must belong to same goal")
@@ -365,18 +524,42 @@ class DurableTaskEngine:
         return self.get_task(task_id)
 
     def recover_expired_leases(self):
-        now,count=self.clock(),0
+        now, count = self.clock(), 0
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            rows=c.execute("SELECT * FROM tasks WHERE state='running' AND lease_until<=?",(now,)).fetchall()
-            for r in rows:
-                retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-                c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
-                self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
+            rows = c.execute(
+                "SELECT * FROM tasks WHERE state='running' AND lease_until<=?",
+                (now,),
+            ).fetchall()
+            for row in rows:
+                # A sandbox command may already have caused an external side
+                # effect before its worker disappeared. Never replay it after
+                # lease expiry, even if a future caller changes max_attempts.
+                unknown = row["task_type"] == "sandbox.execution.v1"
+                retry = (not unknown) and row["attempts"] < row["max_attempts"]
+                state = "queued" if retry else "failed"
+                error = (
+                    "execution outcome unknown; manual reconciliation required"
+                    if unknown else "worker lease expired"
+                )
+                c.execute(
+                    """UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,
+                       last_error=?,updated_at=? WHERE id=?""",
+                    (state, error, now, row["id"]),
+                )
+                self._event(
+                    c, row["goal_id"], row["id"], "task.lease_expired",
+                    {"attempt": row["attempts"], "retry": retry},
+                )
+                if unknown:
+                    self._event(
+                        c, row["goal_id"], row["id"], "task.outcome_unknown",
+                        {"reason": "sandbox_worker_lease_expired"},
+                    )
                 if not retry:
-                    self._fail_blocked_descendants(c, r["goal_id"], now)
-                    self._complete_goal_if_terminal(c,r["goal_id"],now)
-                count+=1
+                    self._fail_blocked_descendants(c, row["goal_id"], now)
+                    self._complete_goal_if_terminal(c, row["goal_id"], now)
+                count += 1
             c.commit()
         return count
 
@@ -458,6 +641,24 @@ class DurableTaskEngine:
         any_task=c.execute("SELECT 1 FROM tasks WHERE goal_id=? LIMIT 1",(goal_id,)).fetchone()
         if any_task and pending is None:
             c.execute("UPDATE goals SET state='completed',updated_at=? WHERE id=?",(now,goal_id)); self._event(c,goal_id,None,"goal.completed",{})
+
+    def list_unknown_outcomes(self, *, limit=100):
+        """Return metadata-only records requiring operator reconciliation."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                """SELECT t.id,t.goal_id,t.state,t.attempts,t.last_error,
+                          t.created_at,t.updated_at,MAX(e.created_at) AS unknown_at
+                   FROM tasks t
+                   JOIN run_events e ON e.task_id=t.id
+                   WHERE t.task_type='sandbox.execution.v1'
+                     AND t.state='failed' AND e.event_type='task.outcome_unknown'
+                   GROUP BY t.id
+                   ORDER BY unknown_at,t.id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_task(self,task_id):
         with closing(self._connect()) as c: r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()

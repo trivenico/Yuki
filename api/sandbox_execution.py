@@ -9,7 +9,7 @@ from typing import Any
 from api.request_body import RequestBodyTooLarge, read_json_object
 from automation.execution_task import ExecutionApproval, SandboxExecutionTask
 from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
-from core.durable_task_engine import TaskConflict, TaskNotFound
+from core.durable_task_engine import RateLimitExceeded, TaskConflict, TaskNotFound
 
 _MAX_BODY = 32_768
 _TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -51,6 +51,22 @@ class AuthenticatedSandboxExecutionAPI:
             user = await asyncio.to_thread(self.auth.resolve_session, token)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            if path == "/v1/sandbox/operator/unknown-outcomes" and method == "GET":
+                if "users:manage" not in user.permissions:
+                    raise PermissionError("operator access required")
+                records = await asyncio.to_thread(
+                    self.submissions.engine.list_unknown_outcomes, limit=100,
+                )
+                return await self._respond(send, 200, {"unknown_outcomes": records})
+
+            if path == "/v1/sandbox/operator/workers" and method == "GET":
+                if "users:manage" not in user.permissions:
+                    raise PermissionError("operator access required")
+                workers = await asyncio.to_thread(
+                    self.submissions.engine.list_workers, stale_after_seconds=30,
+                )
+                return await self._respond(send, 200, {"workers": workers})
 
             if path == "/v1/sandbox/goals" and method == "POST":
                 payload = await self._body(receive)
@@ -127,6 +143,8 @@ class AuthenticatedSandboxExecutionAPI:
             return await self._respond(send, 403, {"error": "forbidden"})
         except (ValueError, TypeError, KeyError):
             return await self._respond(send, 400, {"error": "invalid_request"})
+        except RateLimitExceeded:
+            return await self._respond(send, 429, {"error": "rate_limit_exceeded"})
         except TaskNotFound:
             return await self._respond(send, 404, {"error": "not_found"})
         except TaskConflict:

@@ -9,9 +9,23 @@ class _Engine:
     def __init__(self, recovered=0):
         self.recovered = recovered
         self.recovery_calls = 0
+        self.recovery_error = None
+        self.registered = []
+        self.stopped = []
+
+    def register_worker(self, worker_id, process_id):
+        self.registered.append((worker_id, process_id))
+
+    def heartbeat_worker(self, worker_id):
+        return True
+
+    def stop_worker(self, worker_id):
+        self.stopped.append(worker_id)
 
     def recover_expired_leases(self):
         self.recovery_calls += 1
+        if self.recovery_error is not None:
+            raise self.recovery_error
         return self.recovered
 
 
@@ -20,6 +34,7 @@ class _Worker:
         self.event = event
         self.results = list(results)
         self.calls = 0
+        self.worker_id = "test-worker"
 
     def run_once(self, *, lease_seconds):
         assert lease_seconds == 180
@@ -51,6 +66,8 @@ def test_worker_process_recovers_expired_leases_and_polls_until_stop():
     run_worker(_runtime(engine, worker), stop_event=event, poll_interval=0.1)
     assert engine.recovery_calls == 1
     assert worker.calls == 1
+    assert engine.registered[0][0] == "test-worker"
+    assert engine.stopped == ["test-worker"]
 
 
 def test_worker_process_finishes_current_task_before_stopping():
@@ -60,7 +77,20 @@ def test_worker_process_finishes_current_task_before_stopping():
     run_worker(_runtime(engine, worker), stop_event=event, poll_interval=0.1)
     assert worker.calls == 1
     assert engine.recovery_calls == 1
+    assert engine.stopped == ["test-worker"]
 
+
+
+def test_worker_registry_is_stopped_when_startup_recovery_fails():
+    event = threading.Event()
+    engine = _Engine()
+    engine.recovery_error = RuntimeError("private database path")
+    worker = _Worker(event, [])
+    with unittest.TestCase().assertRaises(RuntimeError):
+        run_worker(_runtime(engine, worker), stop_event=event, poll_interval=0.1)
+    assert engine.registered[0][0] == "test-worker"
+    assert engine.stopped == ["test-worker"]
+    assert worker.calls == 0
 
 def test_worker_poll_interval_rejects_invalid_values():
     for value in (True, False, 0, 31, "1", None):

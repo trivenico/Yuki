@@ -15,7 +15,7 @@ from automation.execution_task import (
 )
 from automation.sandbox_execution_approval import SQLiteSandboxExecutionApprovalStore
 from core.auth import BuiltInAuthService, AuthenticatedUser
-from core.durable_task_engine import DurableTaskEngine
+from core.durable_task_engine import DurableTaskEngine, RateLimitExceeded
 
 
 class SandboxExecutionSubmissionService:
@@ -60,12 +60,16 @@ class SandboxExecutionSubmissionService:
 
     def create_goal(self, *, session_token: str) -> str:
         user = self._principal(session_token, permission="workflow:read")
+        if not self.engine.consume_rate_limit(user.user_id, "sandbox.goal.create", limit=10, window_seconds=60):
+            raise RateLimitExceeded("goal creation rate limit exceeded")
         return self.engine.create_owned_goal(user.user_id)
 
     def approve_task(
         self, task: SandboxExecutionTask, *, session_token: str,
     ) -> ExecutionApproval:
-        self._principal(session_token, permission=self.PERMISSION)
+        user = self._principal(session_token, permission=self.PERMISSION)
+        if not self.engine.consume_rate_limit(user.user_id, "sandbox.approval.create", limit=20, window_seconds=3600):
+            raise RateLimitExceeded("approval creation rate limit exceeded")
         return self.approval_store.approve(task, session_token=session_token)
 
     def submit(
@@ -83,10 +87,17 @@ class SandboxExecutionSubmissionService:
             raise PermissionError("Goal is unavailable.")
         if not isinstance(approval, ExecutionApproval) or approval.actor_id != user.user_id:
             raise PermissionError("The approval belongs to a different principal.")
-        # The worker checks a matching durable receipt first, then verifies
-        # a still-pending approval before creating any new queue entry.
+        # Exact retries do not consume another rate-limit slot.
+        prior = self.engine.get_submission_receipt(
+            goal_id, idempotency_key, actor_id=approval.actor_id,
+            approval_id=approval.approval_id,
+            task_fingerprint=approval.task_fingerprint,
+        )
+        if prior is not None:
+            return prior
         return self.worker.submit(
             goal_id, task, approval, idempotency_key=idempotency_key,
+            rate_limit=(user.user_id, "sandbox.task.submit", 10, 60),
         )
 
     def get_task(self, task_id: str, *, session_token: str) -> Mapping[str, object]:

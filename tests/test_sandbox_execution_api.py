@@ -5,7 +5,7 @@ from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from api.sandbox_execution import AuthenticatedSandboxExecutionAPI
 from automation.execution_task import DurableSandboxExecutionWorker
@@ -85,6 +85,84 @@ class AuthenticatedSandboxExecutionAPITests(unittest.TestCase):
             }, receive, send)
             return sent[0]["status"], json.loads(sent[1]["body"])
         return asyncio.run(run())
+
+
+    def test_operator_reconciliation_endpoints_require_admin_and_return_safe_metadata(self):
+        status, _ = self.request(
+            "GET", "/v1/sandbox/operator/unknown-outcomes", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        status, _ = self.request(
+            "GET", "/v1/sandbox/operator/workers", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+
+        self.auth.create_account("operator-user", "Operator secure password 3!")
+        with closing(sqlite3.connect(self.auth.database_path)) as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE username='operator-user'")
+        operator = self.auth.authenticate("operator-user", "Operator secure password 3!")
+        status, body = self.request(
+            "GET", "/v1/sandbox/operator/unknown-outcomes", token=operator.token,
+        )
+        self.assertEqual((status, body["error"]), (403, "forbidden"))
+
+        goal = self.engine.create_owned_goal(self.owner_one.user.user_id)
+        task = self.engine.submit(
+            goal, "sandbox.execution.v1", {"secret": "never expose"},
+            idempotency_key="api-unknown", max_attempts=1,
+        )
+        self.engine.claim("api-reconcile-worker", task_types=("sandbox.execution.v1",))
+        self.engine.fail_unknown_outcome(task["id"], "api-reconcile-worker")
+        status, body = self.request(
+            "GET", "/v1/sandbox/operator/unknown-outcomes", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["unknown_outcomes"][0]["id"], task["id"])
+        self.assertNotIn("payload", body["unknown_outcomes"][0])
+        self.assertNotIn("secret", json.dumps(body))
+        self.engine.register_worker("api-worker", 4321)
+        status, body = self.request(
+            "GET", "/v1/sandbox/operator/workers", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["workers"][0]["worker_id"], "api-worker")
+
+
+    def test_authenticated_api_to_durable_worker_execution_lifecycle(self):
+        status, goal = self.request(
+            "POST", "/v1/sandbox/goals", {}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        task_payload = {
+            "task_id": "api-e2e-task-01", "image": self.image,
+            "argv": ["python", "--version"], "timeout_seconds": 10,
+            "write_workspace": False, "max_output_bytes": 2048,
+        }
+        status, approval = self.request(
+            "POST", "/v1/sandbox/approvals", task_payload, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        status, queued = self.request(
+            "POST", f"/v1/sandbox/goals/{goal['goal_id']}/tasks",
+            {"task": task_payload, "approval_id": approval["approval_id"]},
+            self.owner_one.token,
+            extra_headers=((b"idempotency-key", b"api-e2e-submit-01"),),
+        )
+        self.assertEqual(status, 202)
+        task_id = queued["task"]["task_id"]
+        with patch.object(
+            self.sandbox, "run",
+            return_value={"returncode": 0, "stdout": "python 3", "stderr": ""},
+        ) as sandbox_run:
+            completed = self.worker.run_once()
+        sandbox_run.assert_called_once()
+        self.assertEqual(completed["id"], task_id)
+        self.assertEqual(completed["state"], "succeeded")
+        status, body = self.request(
+            "GET", f"/v1/sandbox/tasks/{task_id}", token=self.owner_one.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["task"]["state"], "succeeded")
 
     def test_requires_auth_and_delegates_non_sandbox_routes(self):
         status, body = self.request("POST", "/v1/sandbox/goals", {})

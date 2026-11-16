@@ -245,6 +245,7 @@ class DurableSandboxExecutionWorker:
         approval: ExecutionApproval,
         *,
         idempotency_key: str,
+        rate_limit: tuple[str, str, int, int] | None = None,
     ) -> Mapping[str, object]:
         task.validate()
         if not isinstance(approval, ExecutionApproval) or approval.approved is not True:
@@ -292,6 +293,8 @@ class DurableSandboxExecutionWorker:
                 "approval_id": approval.approval_id,
                 "task_fingerprint": approval.task_fingerprint,
             },
+            owner_id=approval.actor_id, max_active_tasks=5,
+            rate_limit=rate_limit,
         )
 
     def run_once(self, *, lease_seconds: int = 180) -> Mapping[str, object] | None:

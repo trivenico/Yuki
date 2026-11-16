@@ -455,5 +455,102 @@ class DurableTaskEngineTests(unittest.TestCase):
                     self.engine.claim("worker", task_types=invalid)
 
 
+
+
+    def test_unknown_outcome_listing_is_metadata_only_and_excludes_other_failures(self):
+        unknown = self.engine.submit(
+            self.goal, "sandbox.execution.v1", {"secret": "do-not-return"},
+            idempotency_key="unknown-list", max_attempts=1,
+        )
+        self.engine.claim("reconcile-worker", task_types=("sandbox.execution.v1",))
+        self.engine.fail_unknown_outcome(unknown["id"], "reconcile-worker")
+        ordinary_goal = self.engine.create_goal()
+        ordinary = self.engine.submit(
+            ordinary_goal, "sandbox.execution.v1", {"argv": ["false"]},
+            idempotency_key="ordinary-failure", max_attempts=1,
+        )
+        self.engine.claim("ordinary-worker", task_types=("sandbox.execution.v1",))
+        self.engine.fail(ordinary["id"], "ordinary-worker", "sandbox execution failed")
+        records = self.engine.list_unknown_outcomes()
+        self.assertEqual([item["id"] for item in records], [unknown["id"]])
+        self.assertNotIn("payload", records[0])
+        self.assertNotIn("secret", str(records[0]))
+        self.assertIn("unknown_at", records[0])
+
+
+    def test_submission_idempotency_and_rate_limit_are_atomic_together(self):
+        goal = self.engine.create_owned_goal("owner-idempotent-rate")
+        receipt = {
+            "actor_id": "owner-idempotent-rate",
+            "approval_id": "approval-atomic-1",
+            "task_fingerprint": "a" * 64,
+        }
+        first = self.engine.submit(
+            goal, "sandbox.execution.v1", {"task": "same"},
+            idempotency_key="atomic-idempotency", max_attempts=1,
+            submission_receipt=receipt, owner_id="owner-idempotent-rate",
+            max_active_tasks=5,
+            rate_limit=("owner-idempotent-rate", "sandbox.task.submit", 1, 60),
+        )
+        retry = self.engine.submit(
+            goal, "sandbox.execution.v1", {"task": "same"},
+            idempotency_key="atomic-idempotency", max_attempts=1,
+            submission_receipt=receipt, owner_id="owner-idempotent-rate",
+            max_active_tasks=5,
+            rate_limit=("owner-idempotent-rate", "sandbox.task.submit", 1, 60),
+        )
+        self.assertEqual(first["id"], retry["id"])
+        self.assertFalse(self.engine.consume_rate_limit(
+            "owner-idempotent-rate", "sandbox.task.submit", limit=1, window_seconds=60,
+        ))
+
+
+    def test_expired_sandbox_lease_is_unknown_and_never_requeued(self):
+        now = [500.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        goal = engine.create_goal()
+        task = engine.submit(
+            goal, "sandbox.execution.v1", {"argv": ["python", "--version"]},
+            idempotency_key="expired-sandbox-no-replay", max_attempts=4,
+        )
+        engine.claim("lost-sandbox-worker", lease_seconds=5)
+        now[0] += 6
+        self.assertEqual(engine.recover_expired_leases(), 1)
+        recovered = engine.get_task(task["id"])
+        self.assertEqual(recovered["state"], "failed")
+        self.assertEqual(recovered["attempts"], 1)
+        self.assertIn("outcome unknown", recovered["last_error"])
+        self.assertIsNone(engine.claim(
+            "replacement-sandbox-worker", task_types=("sandbox.execution.v1",),
+        ))
+        records = engine.list_unknown_outcomes()
+        self.assertEqual([record["id"] for record in records], [task["id"]])
+        event_types = [event["event_type"] for event in engine.list_events(goal)]
+        self.assertIn("task.lease_expired", event_types)
+        self.assertIn("task.outcome_unknown", event_types)
+
+    def test_worker_registry_heartbeat_and_stale_detection_persist(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        engine.register_worker("worker-pid-123", 123)
+        self.assertEqual(engine.get_worker("worker-pid-123")["state"], "active")
+        self.assertFalse(engine.list_workers(stale_after_seconds=5)[0]["stale"])
+        now[0] += 6
+        self.assertTrue(engine.list_workers(stale_after_seconds=5)[0]["stale"])
+        engine.heartbeat_worker("worker-pid-123")
+        self.assertFalse(engine.list_workers(stale_after_seconds=5)[0]["stale"])
+        reopened = DurableTaskEngine(self.db, clock=lambda: now[0])
+        try:
+            self.assertEqual(reopened.get_worker("worker-pid-123")["process_id"], 123)
+            self.assertEqual(reopened.stop_worker("worker-pid-123")["state"], "stopped")
+            self.assertFalse(reopened.list_workers(stale_after_seconds=5)[0]["stale"])
+        finally:
+            reopened.close()
+
+    def test_worker_registry_rejects_duplicate_active_identity(self):
+        self.engine.register_worker("unique-worker", 321)
+        with self.assertRaises(TaskConflict):
+            self.engine.register_worker("unique-worker", 654)
+
 if __name__ == "__main__":
     unittest.main()

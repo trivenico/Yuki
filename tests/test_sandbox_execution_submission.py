@@ -12,7 +12,7 @@ from automation.sandbox_execution_approval import (
 from automation.sandbox_execution_submission import SandboxExecutionSubmissionService
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.auth import BuiltInAuthService
-from core.durable_task_engine import DurableTaskEngine, TaskConflict
+from core.durable_task_engine import DurableTaskEngine, RateLimitExceeded, TaskConflict
 from hackback.sandbox import DockerSandbox
 
 
@@ -158,6 +158,50 @@ class SandboxExecutionSubmissionServiceTests(unittest.TestCase):
             self.service.approve_task(self.task, session_token=ordinary.token)
         with self.assertRaises(PermissionError):
             self.service.create_goal(session_token="invalid-session-token")
+
+
+    def test_rate_limits_persist_across_engine_restarts(self):
+        self.assertTrue(self.engine.consume_rate_limit(
+            "owner-a", "sandbox.task.submit", limit=1, window_seconds=60,
+        ))
+        reopened = DurableTaskEngine(self.engine.db_path)
+        try:
+            self.assertFalse(reopened.consume_rate_limit(
+                "owner-a", "sandbox.task.submit", limit=1, window_seconds=60,
+            ))
+            self.assertTrue(reopened.consume_rate_limit(
+                "owner-b", "sandbox.task.submit", limit=1, window_seconds=60,
+            ))
+        finally:
+            reopened.close()
+
+
+    def test_rate_limit_cleanup_does_not_erase_other_action_windows(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.engine.db_path, clock=lambda: now[0])
+        self.assertTrue(engine.consume_rate_limit(
+            "owner-window", "sandbox.approval.create", limit=1, window_seconds=3600,
+        ))
+        now[0] += 100
+        self.assertTrue(engine.consume_rate_limit(
+            "owner-window", "sandbox.goal.create", limit=1, window_seconds=60,
+        ))
+        self.assertFalse(engine.consume_rate_limit(
+            "owner-window", "sandbox.approval.create", limit=1, window_seconds=3600,
+        ))
+
+    def test_active_task_quota_is_atomic_and_owner_wide(self):
+        goal = self.engine.create_owned_goal("owner-quota")
+        self.engine.submit(
+            goal, "test.task", {"n": 1}, idempotency_key="quota-1",
+            owner_id="owner-quota", max_active_tasks=1,
+        )
+        second_goal = self.engine.create_owned_goal("owner-quota")
+        with self.assertRaises(RateLimitExceeded):
+            self.engine.submit(
+                second_goal, "test.task", {"n": 2}, idempotency_key="quota-2",
+                owner_id="owner-quota", max_active_tasks=1,
+            )
 
 if __name__ == "__main__":
     unittest.main()

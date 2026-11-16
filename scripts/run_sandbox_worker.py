@@ -53,24 +53,46 @@ def run_worker(
     # Execution tasks have max_attempts=1. Expired in-flight work is therefore
     # terminally failed rather than replayed: an external side effect may have
     # happened before the previous worker lost its lease.
-    recovered = runtime.engine.recover_expired_leases()
-    if recovered:
-        _LOG.warning("Marked %d expired sandbox task lease(s) for reconciliation", recovered)
+    worker_id = runtime.worker.worker_id
+    runtime.engine.register_worker(worker_id, os.getpid())
+    heartbeat_stop = threading.Event()
+    heartbeat_interval = min(max(float(poll_interval), 1.0), 10.0)
 
-    _LOG.info("Sandbox worker started")
-    while not stop_event.is_set():
-        try:
-            task = runtime.worker.run_once(lease_seconds=LEASE_SECONDS)
-        except Exception:
-            # Exception messages can contain task data. Keep operational logs
-            # deliberately generic; durable task/audit records carry safe codes.
-            _LOG.error("Sandbox task processing failed; inspect the durable task state")
-            task = None
-        if task is None:
-            stop_event.wait(float(poll_interval))
-        else:
-            _LOG.info("Sandbox task reached state: %s", task.get("state", "unknown"))
-    _LOG.info("Sandbox worker stopped after the current task boundary")
+    def maintain_heartbeat():
+        while not heartbeat_stop.wait(heartbeat_interval):
+            try:
+                runtime.engine.heartbeat_worker(worker_id)
+            except Exception:
+                # Never log exception text: database errors may contain paths.
+                _LOG.error("Sandbox worker heartbeat update failed")
+
+    heartbeat_thread = threading.Thread(
+        target=maintain_heartbeat, name="yuki-sandbox-heartbeat", daemon=True,
+    )
+    heartbeat_thread.start()
+    try:
+        # Execution tasks have max_attempts=1. Expired in-flight work is
+        # terminally failed rather than replayed after an uncertain side effect.
+        recovered = runtime.engine.recover_expired_leases()
+        if recovered:
+            _LOG.warning("Marked %d expired sandbox task lease(s) for reconciliation", recovered)
+
+        _LOG.info("Sandbox worker started")
+        while not stop_event.is_set():
+            try:
+                task = runtime.worker.run_once(lease_seconds=LEASE_SECONDS)
+            except Exception:
+                _LOG.error("Sandbox task processing failed; inspect the durable task state")
+                task = None
+            if task is None:
+                stop_event.wait(float(poll_interval))
+            else:
+                _LOG.info("Sandbox task reached state: %s", task.get("state", "unknown"))
+        _LOG.info("Sandbox worker stopped after the current task boundary")
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=heartbeat_interval + 1.0)
+        runtime.engine.stop_worker(worker_id)
 
 
 def main() -> None:
@@ -87,7 +109,17 @@ def main() -> None:
     # The worker uses the same auth database as the web process, but is a
     # distinct OS process. It never binds a network listener.
     auth = BuiltInAuthService(str(Path(workspace_value).expanduser() / "auth.sqlite3"))
-    # A process-unique lease owner prevents an expired old process from\n    # committing against a replacement process that reused the configured ID.\n    worker_config = dict(config)\n    base_worker_id = str(config.get("sandbox_execution_worker_id", "yuki-sandbox-worker"))\n    worker_config["sandbox_execution_worker_id"] = f"{base_worker_id[:220]}-{os.getpid()}-{secrets.token_hex(8)}"\n    runtime = build_sandbox_execution_runtime(worker_config, auth_service=auth)
+    # A process-unique lease owner prevents an expired old process from
+    # committing against a replacement process that reused the configured ID.
+    base_worker_id = config.get("sandbox_execution_worker_id", "yuki-sandbox-worker")
+    if (not isinstance(base_worker_id, str) or not base_worker_id.strip()
+            or len(base_worker_id) > 220):
+        raise SystemExit("sandbox_execution_worker_id must be non-empty text of at most 220 characters.")
+    worker_config = dict(config)
+    worker_config["sandbox_execution_worker_id"] = (
+        f"{base_worker_id}-{os.getpid()}-{secrets.token_hex(8)}"
+    )
+    runtime = build_sandbox_execution_runtime(worker_config, auth_service=auth)
     if runtime is None:
         raise SystemExit(
             "Sandbox execution is disabled. Set sandbox_execution_enabled: true "
