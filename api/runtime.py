@@ -104,10 +104,16 @@ class ConversationRuntime:
             # Keep the closed fence set even if a cleanup hook raises: cleanup
             # is not retried implicitly against potentially partially closed resources.
             self._closed = True
-            if self.component_registry is None:
+            failures = []
+            if self.component_registry is not None:
+                failures.extend(self.component_registry.close())
+            else:
                 self.application.close()
-                return
-            failures = self.component_registry.close()
+            if self.sandbox_execution_runtime is not None:
+                try:
+                    self.sandbox_execution_runtime.close()
+                except Exception:
+                    failures.append("sandbox-execution-runtime")
             if failures:
                 raise RuntimeError("component shutdown failed: " + ", ".join(failures))
 
