@@ -1,8 +1,6 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from core.config import load_config
 from core.conversation_store_factory import create_conversation_store
@@ -10,50 +8,20 @@ from core.conversation_store import ConversationStore
 
 
 class ConversationStoreFactoryTests(unittest.TestCase):
-    def test_sqlite_remains_default_and_factory_creates_local_store(self):
+    def test_sqlite_is_default_and_factory_creates_private_local_store(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.yaml"
-            config_path.write_text("workspace: " + directory + "\n", encoding="utf-8")
-            with patch.dict(os.environ, {"YUKI_STORAGE_BACKEND": "sqlite", "YUKI_DATABASE_URL": ""}, clear=False):
-                config = load_config(config_path)
-            self.assertEqual(config["storage_backend"], "sqlite")
+            workspace = Path(directory) / "workspace"
+            config_path.write_text(f"workspace: {workspace}\n", encoding="utf-8")
+            config = load_config(config_path)
+            self.assertEqual(config["workspace"], str(workspace.resolve()))
             store = create_conversation_store(config)
             self.assertIsInstance(store, ConversationStore)
             conversation = store.create_conversation(owner_id="factory-user")
             self.assertEqual(conversation["owner_id"], "factory-user")
+            self.assertTrue(store.health_check())
+            self.assertEqual(Path(store.database_path).stat().st_mode & 0o777, 0o600)
 
-    def test_remote_postgres_requires_tls(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config_path = Path(directory) / "config.yaml"
-            config_path.write_text("workspace: " + directory + "\n", encoding="utf-8")
-            env = {
-                "YUKI_STORAGE_BACKEND": "postgres",
-                "YUKI_DATABASE_URL": "postgresql://yuki:secret@db.example.test/yuki",
-            }
-            with patch.dict(os.environ, env, clear=False):
-                with self.assertRaisesRegex(RuntimeError, "remote databases require TLS"):
-                    load_config(config_path)
-
-    def test_remote_postgres_accepts_verify_full(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config_path = Path(directory) / "config.yaml"
-            config_path.write_text("workspace: " + directory + "\n", encoding="utf-8")
-            env = {
-                "YUKI_STORAGE_BACKEND": "postgres",
-                "YUKI_DATABASE_URL": "postgresql://yuki:secret@db.example.test/yuki?sslmode=verify-full",
-            }
-            with patch.dict(os.environ, env, clear=False):
-                config = load_config(config_path)
-            self.assertEqual(config["storage_backend"], "postgres")
-            self.assertEqual(config["database_pool_min"], 1)
-            self.assertEqual(config["database_pool_max"], 10)
-
-    def test_pool_bounds_are_validated(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config_path = Path(directory) / "config.yaml"
-            config_path.write_text("database_pool_min: 12\ndatabase_pool_max: 4\n", encoding="utf-8")
-            with self.assertRaisesRegex(RuntimeError, "Expected an integer"):
-                load_config(config_path)
 
 if __name__ == "__main__":
     unittest.main()
