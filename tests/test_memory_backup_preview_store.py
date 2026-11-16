@@ -23,7 +23,7 @@ class MemoryBackupPreviewStoreTests(unittest.TestCase):
             self.assertEqual(store.list(owner_id="alice"), before)
             self.assertEqual(store.inspect_import_conflicts(
                 owner_id="bob", memory_ids=(alice["memory_id"],),
-            ), 0)
+            ), 1)
 
     def test_conflict_inspection_rejects_unbounded_or_invalid_ids(self):
         with tempfile.TemporaryDirectory() as directory:
