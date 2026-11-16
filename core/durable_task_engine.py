@@ -267,7 +267,7 @@ class DurableTaskEngine:
             row = c.execute("SELECT owner_id FROM goal_owners WHERE goal_id=?", (goal_id,)).fetchone()
         return None if row is None else row["owner_id"]
 
-    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0, submission_receipt=None, owner_id=None, max_active_tasks=None):
+    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0, submission_receipt=None, owner_id=None, max_active_tasks=None, rate_limit=None):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
@@ -286,6 +286,17 @@ class DurableTaskEngine:
             "max_attempts": max_attempts,
             "delay_seconds": float(delay_seconds),
         })
+        rate_limit_spec = None
+        if rate_limit is not None:
+            if not isinstance(rate_limit, (tuple, list)) or len(rate_limit) != 4:
+                raise ValueError("rate_limit must be (actor_id, action, limit, window_seconds)")
+            rate_actor, rate_action, rate_count, rate_window = rate_limit
+            if (not isinstance(rate_actor, str) or not rate_actor.strip() or len(rate_actor) > 200
+                    or not isinstance(rate_action, str) or not rate_action or len(rate_action) > 64
+                    or isinstance(rate_count, bool) or not isinstance(rate_count, int) or not 1 <= rate_count <= 10000
+                    or isinstance(rate_window, bool) or not isinstance(rate_window, int) or not 1 <= rate_window <= 86400):
+                raise ValueError("rate_limit contains invalid bounds or identity")
+            rate_limit_spec = (rate_actor, rate_action, rate_count, rate_window)
         receipt = None
         if submission_receipt is not None:
             if not isinstance(submission_receipt, dict) or set(submission_receipt) != {"actor_id", "approval_id", "task_fingerprint"}:
@@ -324,6 +335,23 @@ class DurableTaskEngine:
                 c.commit()
                 return self._decode(old)
             if goal["state"]!="active": raise TaskConflict("goal is not active")
+            if rate_limit_spec is not None:
+                rate_actor, rate_action, rate_count, rate_window = rate_limit_spec
+                cutoff = now - rate_window
+                c.execute(
+                    "DELETE FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at<=?",
+                    (rate_actor, rate_action, cutoff),
+                )
+                rate_used = c.execute(
+                    "SELECT COUNT(*) AS n FROM rate_limit_events WHERE actor_id=? AND action=? AND occurred_at>?",
+                    (rate_actor, rate_action, cutoff),
+                ).fetchone()["n"]
+                if rate_used >= rate_count:
+                    raise RateLimitExceeded("task submission rate limit exceeded")
+                c.execute(
+                    "INSERT INTO rate_limit_events(actor_id,action,occurred_at) VALUES(?,?,?)",
+                    (rate_actor, rate_action, now),
+                )
             if owner_id is not None:
                 if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
                     raise ValueError("invalid task owner")
