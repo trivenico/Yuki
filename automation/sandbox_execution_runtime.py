@@ -29,7 +29,8 @@ class SandboxExecutionRuntime:
                  approval_store: SQLiteSandboxExecutionApprovalStore,
                  audit_log: SQLiteApprovalAuditLog,
                  sandbox: DockerSandbox,
-                 worker: DurableSandboxExecutionWorker,\n                 submission_service: SandboxExecutionSubmissionService):
+                 worker: DurableSandboxExecutionWorker,
+                 submission_service: SandboxExecutionSubmissionService):
         self.engine = engine
         self.approval_store = approval_store
         self.audit_log = audit_log
