@@ -53,6 +53,23 @@ def run_worker(
     # Execution tasks have max_attempts=1. Expired in-flight work is therefore
     # terminally failed rather than replayed: an external side effect may have
     # happened before the previous worker lost its lease.
+    worker_id = runtime.worker.worker_id
+    runtime.engine.register_worker(worker_id, os.getpid())
+    heartbeat_stop = threading.Event()
+    heartbeat_interval = min(max(float(poll_interval), 1.0), 10.0)
+
+    def maintain_heartbeat():
+        while not heartbeat_stop.wait(heartbeat_interval):
+            try:
+                runtime.engine.heartbeat_worker(worker_id)
+            except Exception:
+                # Never log exception text: database errors may contain paths.
+                _LOG.error("Sandbox worker heartbeat update failed")
+
+    heartbeat_thread = threading.Thread(
+        target=maintain_heartbeat, name="yuki-sandbox-heartbeat", daemon=True,
+    )
+    heartbeat_thread.start()
     recovered = runtime.engine.recover_expired_leases()
     if recovered:
         _LOG.warning("Marked %d expired sandbox task lease(s) for reconciliation", recovered)
@@ -70,6 +87,9 @@ def run_worker(
             stop_event.wait(float(poll_interval))
         else:
             _LOG.info("Sandbox task reached state: %s", task.get("state", "unknown"))
+    heartbeat_stop.set()
+    heartbeat_thread.join(timeout=heartbeat_interval + 1.0)
+    runtime.engine.stop_worker(worker_id)
     _LOG.info("Sandbox worker stopped after the current task boundary")
 
 
