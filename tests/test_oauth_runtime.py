@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 from core.oauth_os_key_provider import OSKeyringOAuthKeyProvider, OAuthOSKeyStoreError
-from core.oauth_transactions import OAuthTransactionError\nfrom core.oauth_runtime import (
+from core.oauth_transactions import OAuthTransactionError
+from core.oauth_runtime import (
     build_oauth_credential_vault,
     build_oauth_transaction_store,
 )
