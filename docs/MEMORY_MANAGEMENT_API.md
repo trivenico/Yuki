@@ -28,3 +28,14 @@ creating a memory database during ordinary application startup.
 
 Tests cover unauthenticated access, save/list/delete, cross-owner isolation,
 and explicit confirmation before clearing all saved memories.
+## Conversation context retrieval
+
+When the host explicitly injects a `ConversationMemoryStore` into the conversation
+service, Yuki searches only the authenticated owner's non-expired memories for
+the current user message. Up to five matching entries are added to the system
+context under an explicit untrusted-reference heading, with a 4,000-character
+budget. Retrieved memory is reference data, never an instruction source. If
+memory retrieval fails, the conversation continues without memory context.
+
+Memory retrieval does not create or update memories. Saving remains an explicit
+operation through `POST /v1/memories`.
