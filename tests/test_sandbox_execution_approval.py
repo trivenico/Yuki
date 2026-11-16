@@ -104,6 +104,35 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         )
 
 
+
+    def test_worker_persists_unknown_outcome_as_terminal_non_retryable_state(self):
+        approval = self.store.approve(self.task, session_token=self.session.token)
+        engine = DurableTaskEngine(":memory:")
+        self.addCleanup(engine.close)
+        goal = engine.create_goal()
+        log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "unknown-audit.sqlite3"))
+        writer = SandboxExecutionAuditWriter(log)
+        sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=(self.task.image,), enabled=True,
+            approver=lambda _reason: True,
+        )
+        sandbox.run = Mock(side_effect=TimeoutError("docker response lost"))
+        worker = DurableSandboxExecutionWorker.from_trusted_stores(
+            engine, worker_id="sandbox-worker", sandbox=sandbox,
+            approval_store=self.store, audit_writer=writer,
+        )
+        queued = worker.submit(goal, self.task, approval, idempotency_key="unknown-worker-outcome")
+        with self.assertRaises(ExecutionOutcomeUnknown):
+            worker.run_once()
+        failed = engine.get_task(queued["id"])
+        self.assertEqual(failed["state"], "failed")
+        self.assertIn("manual reconciliation", failed["last_error"])
+        self.assertTrue(any(
+            event["event_type"] == "task.outcome_unknown"
+            for event in engine.list_events(goal)
+        ))
+        self.assertIsNone(worker.run_once())
+
     def test_completion_audit_failure_is_recorded_as_unknown_not_retried(self):
         approval = self.store.approve(self.task, session_token=self.session.token)
         sandbox = DockerSandbox(
