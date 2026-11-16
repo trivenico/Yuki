@@ -51,13 +51,29 @@ class DockerSandboxTests(unittest.TestCase):
         mount = command[command.index("--mount") + 1]
         self.assertTrue(mount.endswith(",rw"))
 
+    @patch("hackback.sandbox.subprocess.run")
     @patch("hackback.sandbox.subprocess.Popen")
-    def test_output_is_bounded_and_process_terminated(self, popen):
+    def test_output_is_bounded_and_container_cleanup_is_requested(self, popen, docker_run):
         process = FakeProcess(stdout=b"x" * 128)
-        popen.return_value = process
+        def start(command, **_kwargs):
+            cidfile = command[command.index("--cidfile") + 1]
+            Path(cidfile).write_text("a" * 64, encoding="ascii")
+            return process
+        popen.side_effect = start
         with self.assertRaisesRegex(SandboxError, "output exceeded"):
             self.make_sandbox().run(self.image, ["python", "-c", "pass"], max_output_bytes=32)
         self.assertTrue(process.terminated)
+        cleanup_command = docker_run.call_args.args[0]
+        self.assertEqual(cleanup_command, ["docker", "rm", "--force", "a" * 64])
+        self.assertFalse(docker_run.call_args.kwargs["shell"])
+
+    @patch("hackback.sandbox.subprocess.Popen")
+    def test_container_id_file_is_passed_to_docker(self, popen):
+        popen.return_value = FakeProcess()
+        self.make_sandbox().run(self.image, ["python", "--version"])
+        command = popen.call_args.args[0]
+        self.assertIn("--cidfile", command)
+        self.assertTrue(command[command.index("--cidfile") + 1].endswith("container.id"))
 
     def test_invalid_output_limit_is_rejected(self):
         with self.assertRaisesRegex(SandboxError, "max_output_bytes"):
