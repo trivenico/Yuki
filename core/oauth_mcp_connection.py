@@ -5,6 +5,7 @@ import re
 from typing import Callable
 
 from core.mcp_client import MCPHTTPClient
+from core.network_firewall import NetworkFirewall
 
 
 class OAuthMCPConnectionError(RuntimeError):
@@ -18,7 +19,7 @@ _SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
 class OAuthMCPConnectionManager:
     """Build restricted MCP clients backed by one trusted OAuth provider."""
 
-    def __init__(self, *, provider_id: str, credential_vault, refresh_service, client_factory: Callable = MCPHTTPClient):
+    def __init__(self, *, provider_id: str, credential_vault, refresh_service, client_factory: Callable = MCPHTTPClient, firewall_policy: NetworkFirewall | None = None):
         if not isinstance(provider_id, str) or not _IDENTIFIER.fullmatch(provider_id):
             raise ValueError("provider_id is invalid")
         if not callable(getattr(credential_vault, "get", None)):
@@ -28,7 +29,10 @@ class OAuthMCPConnectionManager:
         if not callable(client_factory):
             raise TypeError("an MCP client factory is required")
         self._provider_id, self._vault = provider_id, credential_vault
+        if firewall_policy is not None and not isinstance(firewall_policy, NetworkFirewall):
+            raise TypeError("firewall_policy must be a NetworkFirewall or None")
         self._refresh, self._client_factory = refresh_service, client_factory
+        self._firewall_policy = firewall_policy
 
     @staticmethod
     def _scopes(values) -> frozenset[str]:
@@ -109,10 +113,18 @@ class OAuthMCPConnectionManager:
             except Exception:
                 raise OAuthMCPConnectionError("credential_not_available") from None
 
+        client_options = {
+            "allowed_hosts": allowed_hosts,
+            "allowed_tools": allowed_tools,
+            "approver": approver,
+            "access_token_provider": access_token_provider,
+            "execution_audit": execution_audit,
+            "timeout": timeout,
+        }
+        if self._firewall_policy is not None:
+            client_options["firewall_policy"] = self._firewall_policy
         try:
-            return self._client_factory(endpoint, allowed_hosts=allowed_hosts, allowed_tools=allowed_tools,
-                approver=approver, access_token_provider=access_token_provider,
-                execution_audit=execution_audit, timeout=timeout)
+            return self._client_factory(endpoint, **client_options)
         except OAuthMCPConnectionError:
             raise
         except Exception:
