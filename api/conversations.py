@@ -130,7 +130,7 @@ class YukiConversationAPI:
                 if self.pending_tool_action_proposals is None:
                     return await self._respond(send, 503, {"error": "proposal_management_unavailable"})
                 query = self._query(scope)
-                if set(query) - {"limit"}:
+                if set(query) - {"limit", "category"}:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 try:
                     limit = int(query.get("limit", "50"))
@@ -359,7 +359,8 @@ class YukiConversationAPI:
                 try:
                     limit = int(query.get("limit", "50"))
                     memories = await asyncio.to_thread(
-                        self.conversations.memories, owner_id=user.user_id, limit=limit,
+                        self.conversations.memories, owner_id=user.user_id,
+                        limit=limit, category=query.get("category"),
                     )
                 except RuntimeError:
                     return await self._respond(send, 503, {"error": "memory_unavailable"})
