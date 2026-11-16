@@ -63,5 +63,5 @@ The authenticated sandbox API currently applies persistent per-user limits in th
 - New task submissions: 10 requests per rolling 60-second window
 - Active sandbox tasks: at most 5 queued or running tasks across all goals owned by one user
 
-Exact idempotent retries return the original durable task and do not consume another submission slot. Rate-limit events store only the actor ID, action name, and timestamp; they do not store command arguments or credentials. Exceeding a request or active-task quota returns HTTP 429. These are conservative code defaults in this release, not yet operator-configurable policy. Monitor rejected requests before considering any increase.
+Exact idempotent retries return the original durable task and do not consume another submission slot. Submission idempotency receipt creation, the per-user submission rate-limit event, and task insertion are committed in the same SQLite transaction, including concurrent duplicate requests. Rate-limit events store only the actor ID, action name, and timestamp; they do not store command arguments or credentials. Exceeding a request or active-task quota returns HTTP 429. These are conservative code defaults in this release, not yet operator-configurable policy. Monitor rejected requests before considering any increase.
 
