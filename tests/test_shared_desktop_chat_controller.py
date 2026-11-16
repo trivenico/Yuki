@@ -32,7 +32,8 @@ class SharedDesktopChatControllerTests(unittest.TestCase):
         session = Session()
         controller = SharedDesktopChatController(session)
         deltas = []
-        cancel = lambda: False
+        cancel_state = {"requested": False}
+        cancel = lambda: cancel_state["requested"]
         delta_callback = deltas.append
         answer = controller.respond(
             "Hello", request_id="desktop-chat-1",
@@ -44,7 +45,11 @@ class SharedDesktopChatControllerTests(unittest.TestCase):
         self.assertEqual(
             session.conversation.calls[0][1]["request_id"], "desktop-chat-1",
         )
-        self.assertIs(session.conversation.calls[0][1]["cancellation_requested"], cancel)
+        wrapped_cancel = session.conversation.calls[0][1]["cancellation_requested"]
+        self.assertTrue(callable(wrapped_cancel))
+        self.assertFalse(wrapped_cancel())
+        cancel_state["requested"] = True
+        self.assertTrue(wrapped_cancel())
         self.assertIs(session.conversation.calls[0][1]["on_text_delta"], delta_callback)
 
     def test_memory_toggle_delegates_to_authenticated_consent_boundary(self):
