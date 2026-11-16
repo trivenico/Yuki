@@ -434,7 +434,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             def health(self):
                 return {"identity-access": self.healthy}
 
-        async def request(runtime):
+        async def request(runtime, method="GET"):
             sent = []
 
             async def receive():
@@ -444,29 +444,33 @@ class ConversationRuntimeTests(unittest.TestCase):
                 sent.append(message)
 
             await runtime(
-                {"type": "http", "method": "GET", "path": "/readyz",
+                {"type": "http", "method": method, "path": "/readyz",
                  "headers": [], "query_string": b""},
                 receive, send,
             )
             start = next(item for item in sent if item["type"] == "http.response.start")
             body = next(item for item in sent if item["type"] == "http.response.body")
-            return start["status"], json.loads(body["body"])
+            return start["status"], body["body"]
 
         application = SimpleNamespace(store=object(), close=lambda: None)
         healthy = ConversationRuntime(lambda *args: None, application, Registry(True))
-        status, payload = asyncio.run(request(healthy))
+        status, body = asyncio.run(request(healthy))
         self.assertEqual(status, 200)
-        self.assertEqual(payload, {"status": "ready", "component_runtime": "verified"})
+        self.assertEqual(json.loads(body), {"status": "ready", "component_runtime": "verified"})
+
+        head_status, head_body = asyncio.run(request(healthy, "HEAD"))
+        self.assertEqual(head_status, 200)
+        self.assertEqual(head_body, b"")
 
         unhealthy = ConversationRuntime(lambda *args: None, application, Registry(False))
-        status, payload = asyncio.run(request(unhealthy))
+        status, body = asyncio.run(request(unhealthy))
         self.assertEqual(status, 503)
-        self.assertEqual(payload, {"status": "not_ready", "component_runtime": "unavailable"})
+        self.assertEqual(json.loads(body), {"status": "not_ready", "component_runtime": "unavailable"})
 
         unconfigured = ConversationRuntime(lambda *args: None, application)
-        status, payload = asyncio.run(request(unconfigured))
+        status, body = asyncio.run(request(unconfigured))
         self.assertEqual(status, 503)
-        self.assertEqual(payload, {"status": "not_ready", "component_runtime": "unconfigured"})
+        self.assertEqual(json.loads(body), {"status": "not_ready", "component_runtime": "unconfigured"})
 
     def test_asgi_lifespan_closes_storage_on_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
