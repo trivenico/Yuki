@@ -223,7 +223,7 @@ class CoreComponentCompositionTests(unittest.TestCase):
                 store_factory=lambda config: ConversationStore(Path(directory) / "local.sqlite3"),
             )
             registry = build_local_core_component_registry(
-                owner_id="local-firewall-owner", provider=provider, agent_loop=loop,
+                owner_id="local-firewall-owner-000000000000", provider=provider, agent_loop=loop,
                 application_runtime=application,
                 config={"workspace": directory, "provider": "mock",
                         "firewall_enabled": True, "web_allowed_hosts": ["reader.example.com"],
