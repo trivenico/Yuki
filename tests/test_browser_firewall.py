@@ -1,8 +1,11 @@
 import socket
+import tempfile
 import unittest
 
 from automation.browser import BrowserAutomationError, SafeBrowser
 from core.network_firewall import NetworkFirewall
+from skills.browser_skill import BrowserSkill
+from skills.registry import SkillRegistry
 
 
 def answer(ip):
@@ -91,6 +94,18 @@ class BrowserFirewallTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(BrowserAutomationError, "malformed"):
             browser._validate("https://example.com../")
+
+
+    def test_browser_skill_and_default_registry_reuse_application_firewall(self):
+        firewall = NetworkFirewall(allowed_hosts=("example.com",))
+        skill = BrowserSkill(("example.com",), firewall_policy=firewall)
+        self.assertIs(skill.browser.firewall, firewall)
+        with tempfile.TemporaryDirectory() as workspace:
+            registry = SkillRegistry.defaults(
+                workspace, web_allowed_hosts=("example.com",),
+                firewall_policy=firewall,
+            )
+        self.assertIs(registry.get("browser_read").browser.firewall, firewall)
 
 
 if __name__ == "__main__":
