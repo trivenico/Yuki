@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -51,8 +52,14 @@ class ConversationMemoryStore:
         db.execute("PRAGMA busy_timeout=10000")
         return db
 
+    @contextmanager
     def _connection(self):
-        return self._connect(str(self.database_path))
+        db = self._connect(str(self.database_path))
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def remember(self, *, owner_id: str, content: str, category: str = "note") -> dict[str, Any]:
         owner = self._owner(owner_id)
