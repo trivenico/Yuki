@@ -339,14 +339,19 @@ class ConversationMemoryStore:
             raise ValueError("memory_ids must contain non-empty strings.")
         if not memory_ids:
             return 0
-        placeholders = ",".join("?" for _ in memory_ids)
-        with self._connection() as db:
-            row = db.execute(
-                f"SELECT count(*) FROM conversation_memories WHERE owner_id = ? "
-                f"AND memory_id IN ({placeholders})",
-                (owner, *memory_ids),
-            ).fetchone()
-        return int(row[0])
+        conflicts = 0
+        # Stay below SQLite's conservative 999-variable limit on older builds.
+        for offset in range(0, len(memory_ids), 500):
+            batch = memory_ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            with self._connection() as db:
+                row = db.execute(
+                    f"SELECT count(*) FROM conversation_memories WHERE owner_id = ? "
+                    f"AND memory_id IN ({placeholders})",
+                    (owner, *batch),
+                ).fetchone()
+            conflicts += int(row[0])
+        return conflicts
 
 
     def export_snapshot(self, *, owner_id: str) -> dict[str, Any]:
