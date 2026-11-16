@@ -2,7 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from automation.execution_task import SandboxExecutionTask
+from automation.execution_task import DurableSandboxExecutionWorker, SandboxExecutionTask
+from core.durable_task_engine import DurableTaskEngine
+from hackback.sandbox import DockerSandbox
+from unittest.mock import Mock
 from automation.sandbox_execution_approval import (
     SQLiteSandboxExecutionApprovalStore, SandboxExecutionAuditWriter,
 )
@@ -57,6 +60,32 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         self.assertTrue(self.store.revoke(approval.approval_id, session_token=self.session.token))
         self.assertFalse(self.store.verify(approval, self.task))
         self.assertFalse(self.store.revoke(approval.approval_id, session_token=self.session.token))
+
+
+    def test_worker_composition_rechecks_persisted_approval_and_writes_durable_audit(self):
+        approval = self.store.approve(self.task, session_token=self.session.token)
+        engine = DurableTaskEngine(":memory:")
+        self.addCleanup(engine.close)
+        goal = engine.create_goal()
+        log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "worker-audit.sqlite3"))
+        writer = SandboxExecutionAuditWriter(log)
+        sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=(self.task.image,), enabled=True,
+            approver=lambda _reason: True,
+        )
+        sandbox.run = Mock(return_value={"returncode": 0, "stdout": "ok", "stderr": ""})
+        worker = DurableSandboxExecutionWorker.from_trusted_stores(
+            engine, worker_id="sandbox-worker", sandbox=sandbox,
+            approval_store=self.store, audit_writer=writer,
+        )
+        queued = worker.submit(goal, self.task, approval, idempotency_key="durable-auth-approval")
+        result = worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertTrue(log.verify_chain())
+        self.assertEqual(
+            [item["event_type"] for item in reversed(log.list_events())],
+            ["execution_started", "executed"],
+        )
 
     def test_audit_writer_persists_hash_chained_metadata_events(self):
         log = SQLiteApprovalAuditLog(str(Path(self.tmp.name) / "audit.sqlite3"))
