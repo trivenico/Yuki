@@ -49,6 +49,7 @@ class ConversationRuntime:
         self.web = YukiWebApplication(app)
         self.application = application
         self.component_registry = component_registry
+        self.sandbox_execution_runtime = sandbox_execution_runtime
         self.store = application.store
         self._closed = False
         self._close_lock = RLock()
