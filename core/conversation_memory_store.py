@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -34,9 +35,16 @@ class ConversationMemoryStore:
                     CHECK(length(content) BETWEEN 1 AND 2000)
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(conversation_memories)")}
+            if "expires_at" not in columns:
+                db.execute("ALTER TABLE conversation_memories ADD COLUMN expires_at TEXT")
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_conversation_memories_owner_created
                 ON conversation_memories(owner_id, created_at DESC, memory_id)
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conversation_memories_expiry
+                ON conversation_memories(expires_at) WHERE expires_at IS NOT NULL
             """)
 
     @staticmethod
@@ -61,8 +69,19 @@ class ConversationMemoryStore:
         finally:
             db.close()
 
-    def remember(self, *, owner_id: str, content: str, category: str = "note") -> dict[str, Any]:
+    def remember(
+        self, *, owner_id: str, content: str, category: str = "note",
+        expires_in_seconds: int | None = None,
+    ) -> dict[str, Any]:
         owner = self._owner(owner_id)
+        if expires_in_seconds is not None and (
+            type(expires_in_seconds) is not int or not 60 <= expires_in_seconds <= 315_360_000
+        ):
+            raise ValueError("expires_in_seconds must be None or an integer from 60 to 315360000.")
+        expires_at = (
+            (datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)).isoformat()
+            if expires_in_seconds is not None else None
+        )
         if not isinstance(content, str) or not content.strip() or len(content.strip()) > self.MAX_TEXT_CHARS:
             raise ValueError(f"content must be 1-{self.MAX_TEXT_CHARS} characters.")
         if not isinstance(category, str) or category not in self.CATEGORIES:
@@ -86,12 +105,12 @@ class ConversationMemoryStore:
                         (owner, oldest["memory_id"]),
                     )
             db.execute(
-                "INSERT INTO conversation_memories(memory_id, owner_id, category, content) "
-                "VALUES (?, ?, ?, ?)",
-                (memory_id, owner, category, content.strip()),
+                "INSERT INTO conversation_memories(memory_id, owner_id, category, content, expires_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (memory_id, owner, category, content.strip(), expires_at),
             )
             row = db.execute(
-                "SELECT memory_id, category, content, created_at FROM conversation_memories "
+                "SELECT memory_id, category, content, created_at, expires_at FROM conversation_memories "
                 "WHERE owner_id = ? AND memory_id = ?", (owner, memory_id)
             ).fetchone()
         return dict(row)
@@ -126,9 +145,10 @@ class ConversationMemoryStore:
             return []
         with self._connection() as db:
             rows = db.execute(
-                "SELECT memory_id, category, content, created_at FROM conversation_memories "
-                "WHERE owner_id = ? ORDER BY created_at DESC, memory_id DESC LIMIT 200",
-                (owner,),
+                "SELECT memory_id, category, content, created_at, expires_at FROM conversation_memories "
+                "WHERE owner_id = ? AND (expires_at IS NULL OR expires_at > ?) "
+                "ORDER BY created_at DESC, memory_id DESC LIMIT 200",
+                (owner, datetime.now(timezone.utc).isoformat()),
             ).fetchall()
         ranked = []
         for row in rows:
@@ -147,9 +167,10 @@ class ConversationMemoryStore:
             raise ValueError("limit must be between 1 and 200.")
         with self._connection() as db:
             rows = db.execute(
-                "SELECT memory_id, category, content, created_at FROM conversation_memories "
-                "WHERE owner_id = ? ORDER BY created_at DESC, memory_id DESC LIMIT ?",
-                (owner, limit),
+                "SELECT memory_id, category, content, created_at, expires_at FROM conversation_memories "
+                "WHERE owner_id = ? AND (expires_at IS NULL OR expires_at > ?) "
+                "ORDER BY created_at DESC, memory_id DESC LIMIT ?",
+                (owner, datetime.now(timezone.utc).isoformat(), limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -168,4 +189,23 @@ class ConversationMemoryStore:
         owner = self._owner(owner_id)
         with self._connection() as db:
             cursor = db.execute("DELETE FROM conversation_memories WHERE owner_id = ?", (owner,))
+        return cursor.rowcount
+
+    
+    def prune_expired(self, *, owner_id: str | None = None) -> int:
+        """Permanently delete expired memories, optionally limited to one owner."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connection() as db:
+            if owner_id is None:
+                cursor = db.execute(
+                    "DELETE FROM conversation_memories WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                    (now,),
+                )
+            else:
+                owner = self._owner(owner_id)
+                cursor = db.execute(
+                    "DELETE FROM conversation_memories WHERE owner_id = ? "
+                    "AND expires_at IS NOT NULL AND expires_at <= ?",
+                    (owner, now),
+                )
         return cursor.rowcount
