@@ -372,6 +372,8 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertCountEqual(
             calls, ["first independent request", "second independent request"]
         )
+        self.assertEqual(service._conversation_locks, {})
+        self.assertEqual(service._conversation_lock_users, {})
 
     def test_close_waits_for_active_generation_before_returning(self):
         entered = threading.Event()
