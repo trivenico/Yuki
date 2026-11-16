@@ -3,9 +3,26 @@ import unittest
 from unittest.mock import patch
 
 import main
+from core.network_firewall import NetworkFirewall
 
 
 class MainFirewallCompositionTests(unittest.TestCase):
+    def test_default_mcp_skills_share_the_application_firewall(self):
+        policy = NetworkFirewall(allowed_hosts={"mcp.example.com"})
+        with tempfile.TemporaryDirectory() as directory:
+            registry = main.SkillRegistry.defaults(
+                directory,
+                mcp_servers=[{
+                    "name": "docs",
+                    "endpoint": "https://mcp.example.com/mcp",
+                    "allowed_hosts": ["mcp.example.com"],
+                    "allowed_tools": ["search_docs"],
+                }],
+                firewall_policy=policy,
+            )
+        self.assertIs(registry.get("mcp_plugin").firewall_policy, policy)
+        self.assertIs(registry.get("connector_management").firewall_policy, policy)
+
     def test_build_agent_passes_shared_firewall_to_default_skills(self):
         policy = object()
         with tempfile.TemporaryDirectory() as directory:
