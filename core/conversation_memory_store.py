@@ -345,10 +345,12 @@ class ConversationMemoryStore:
             batch = memory_ids[offset:offset + 500]
             placeholders = ",".join("?" for _ in batch)
             with self._connection() as db:
+                # memory_id is a global primary key, so detect collisions
+                # across owners without returning any other owner's metadata.
                 row = db.execute(
-                    f"SELECT count(*) FROM conversation_memories WHERE owner_id = ? "
-                    f"AND memory_id IN ({placeholders})",
-                    (owner, *batch),
+                    f"SELECT count(*) FROM conversation_memories "
+                    f"WHERE memory_id IN ({placeholders})",
+                    batch,
                 ).fetchone()
             conflicts += int(row[0])
         return conflicts
