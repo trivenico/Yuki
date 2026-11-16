@@ -5,6 +5,7 @@ import json
 from threading import RLock
 from typing import Any, Callable
 
+from automation.sandbox_execution_runtime import SandboxExecutionRuntime
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
@@ -166,6 +167,12 @@ def build_conversation_runtime(
         raise TypeError("network_firewall must be a NetworkFirewall or None.")
     if network_firewall is None:
         network_firewall = build_network_firewall_from_config(config)
+    if sandbox_execution_runtime is not None and not isinstance(sandbox_execution_runtime, SandboxExecutionRuntime):
+        raise TypeError("sandbox_execution_runtime must be a SandboxExecutionRuntime or None.")
+    if config.get("sandbox_execution_enabled", False) is True and sandbox_execution_runtime is None:
+        raise ValueError("enabled sandbox execution requires its trusted runtime composition.")
+    if sandbox_execution_runtime is not None and config.get("sandbox_execution_enabled", False) is not True:
+        raise ValueError("sandbox execution runtime cannot be attached while the feature is disabled.")
     if gmail_runtime_bundle is not None:
         if not isinstance(gmail_runtime_bundle, GmailToolRuntimeBundle):
             raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
