@@ -37,7 +37,7 @@ Set `sandbox_execution_poll_interval_seconds` to a number from 0.1 through 30 to
 - Inspect the durable task state and hash-chained audit events before deciding whether to submit a new task.
 - An `outcome_unknown` event requires manual reconciliation. Do not blindly retry the command.
 - The current worker is serial. Do not scale replicas until concurrency limits, lease behavior, host isolation, and operational monitoring have been reviewed.
-- This worker does not provide per-user quotas, API rate limiting, or a network health endpoint. Those are outstanding production-hardening tasks.
+- The worker records a durable process-presence heartbeat in the task database. Operators can inspect active and stale worker records through the engine's `list_workers(stale_after_seconds=...)` interface; this is not exposed as an unauthenticated network endpoint. A crashed process remains `active` in storage but is marked `stale` by the query after its heartbeat deadline. A graceful shutdown marks it `stopped`.
 
 ## Validation boundary
 
