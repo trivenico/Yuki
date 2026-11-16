@@ -106,7 +106,7 @@ class SkillRegistry:
             SmartHomeFullSkill(), DeviceScannerSkill(), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
             FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
             MessagingExpandedSkill(root), TieredAutonomySkill(root),
-            RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots), GitHubLifecycleSkill(allowed_roots=configured_github_roots), MCPPluginSkill(servers=mcp_servers), ConnectorManagementSkill(servers=mcp_servers),
+            RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots), GitHubLifecycleSkill(allowed_roots=configured_github_roots), MCPPluginSkill(servers=mcp_servers, firewall_policy=firewall_policy), ConnectorManagementSkill(servers=mcp_servers, firewall_policy=firewall_policy),
         ))
         # Installed packs contain bounded, data-only guidance. They are loaded from
         # the shared YUKI_HOME data root and remain subject to the normal skill
