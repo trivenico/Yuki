@@ -143,6 +143,29 @@ class AuthenticatedDesktopConversationTests(unittest.TestCase):
         facade.disable_memory_context()
         self.assertFalse(memory.context_enabled)
 
+    def test_invalidate_clears_selection_and_memory_even_after_session_revocation(self):
+        class Memory:
+            context_enabled = True
+            def disable_context(self):
+                self.context_enabled = False
+
+        facade = self.build(lambda **kwargs: {
+            "text": "Hello", "tool_calls": {"tool_calls": []},
+        })
+        facade.start_new_conversation()
+        memory = Memory()
+        facade_with_memory = AuthenticatedDesktopConversation(
+            self.application, identity=self.identity, sessions=self.sessions,
+            memory=memory,
+        )
+        facade_with_memory.start_new_conversation()
+        self.sessions.identity = None
+        facade_with_memory.invalidate()
+        self.assertFalse(memory.context_enabled)
+        with self.assertRaises(PermissionError):
+            facade_with_memory.list_conversations()
+        self.assertIsNone(facade_with_memory._conversation.conversation_id)
+
     def test_constructor_rejects_unverified_identity(self):
         class ForgedSessions:
             @staticmethod
