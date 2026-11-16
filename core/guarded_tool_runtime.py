@@ -283,8 +283,7 @@ class GuardedToolRuntime:
         try:
             handler = self._tools[name]
             action_handler = getattr(handler, "invoke_action", None)
-            if lease_owner is not None and callable(action_handler):
-                with self._handler_locks[name]:
+            with self._handler_locks[name]:
                 if lease_owner is not None and callable(action_handler):
                     raw_result = action_handler(
                         argument, action_context=action_context, principal_id=principal_id,
