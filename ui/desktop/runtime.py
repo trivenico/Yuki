@@ -38,11 +38,17 @@ def build_desktop_conversation_runtime(
 
     `owner_id` must come from the trusted desktop session manager's authenticated
     account ID (not a widget field, username, or caller-controlled message).
-    The provider is owned by this runtime and closed exactly once on shutdown.
+    By default the runtime owns and closes the provider. Set close_provider=False
+    only when an outer desktop lifecycle is the provider's explicit owner.
     """
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
-    if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+    if (
+        not isinstance(owner_id, str)
+        or not owner_id.strip()
+        or len(owner_id) > 128
+        or any(ord(char) < 32 or ord(char) == 127 for char in owner_id)
+    ):
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
     if type(close_provider) is not bool:
         raise TypeError("close_provider must be a boolean.")
