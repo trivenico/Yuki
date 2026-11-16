@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -335,6 +337,74 @@ class ConversationServiceTests(unittest.TestCase):
             service.close()
         service.close()
         self.assertEqual(closed, ["owner-a", "owner-b"])
+
+
+    def test_independent_conversations_generate_concurrently(self):
+        rendezvous = threading.Barrier(2, timeout=3)
+        calls = []
+
+        def concurrent_model(*, messages, tools, tool_choice):
+            calls.append(messages[-1]["content"])
+            rendezvous.wait()
+            return {"text": "parallel answer", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            concurrent_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop)
+        other = service.create(owner_id="owner-a")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="first independent request", request_id="parallel-1",
+                expected_version=0, tools=[],
+            )
+            second = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=other["conversation_id"],
+                user_text="second independent request", request_id="parallel-2",
+                expected_version=0, tools=[],
+            )
+            self.assertEqual(first.result(timeout=5)["status"], "completed")
+            self.assertEqual(second.result(timeout=5)["status"], "completed")
+        self.assertCountEqual(
+            calls, ["first independent request", "second independent request"]
+        )
+
+    def test_close_waits_for_active_generation_before_returning(self):
+        entered = threading.Event()
+        release = threading.Event()
+        close_finished = threading.Event()
+
+        def blocking_model(*, messages, tools, tool_choice):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release model")
+            return {"text": "finished safely", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            blocking_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            request = pool.submit(
+                service.reply, owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="hold open", request_id="close-race", expected_version=0,
+                tools=[],
+            )
+            self.assertTrue(entered.wait(timeout=3))
+            closing = pool.submit(lambda: (service.close(), close_finished.set()))
+            self.assertFalse(close_finished.wait(timeout=0.1))
+            release.set()
+            self.assertEqual(request.result(timeout=5)["status"], "completed")
+            closing.result(timeout=5)
+        self.assertTrue(close_finished.is_set())
+        with self.assertRaisesRegex(RuntimeError, "service is closed"):
+            service.create(owner_id="owner-a")
 
 if __name__ == "__main__":
     unittest.main()
