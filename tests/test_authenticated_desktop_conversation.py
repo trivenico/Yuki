@@ -1,6 +1,7 @@
 """Tests for authenticated desktop conversation session enforcement."""
 from dataclasses import dataclass
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -165,6 +166,32 @@ class AuthenticatedDesktopConversationTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             facade_with_memory.list_conversations()
         self.assertIsNone(facade_with_memory._conversation.conversation_id)
+
+    def test_invalidation_closes_authorization_gate_before_cleanup_finishes(self):
+        entered = threading.Event()
+        release = threading.Event()
+        class BlockingMemory:
+            context_enabled = True
+            def disable_context(self):
+                entered.set()
+                release.wait(timeout=2)
+                self.context_enabled = False
+
+        facade = self.build(lambda **kwargs: {
+            "text": "Hello", "tool_calls": {"tool_calls": []},
+        })
+        facade = AuthenticatedDesktopConversation(
+            self.application, identity=self.identity, sessions=self.sessions,
+            memory=BlockingMemory(),
+        )
+        worker = threading.Thread(target=facade.invalidate)
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        with self.assertRaises(PermissionError):
+            facade.list_conversations()
+        release.set()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
 
     def test_constructor_rejects_unverified_identity(self):
         class ForgedSessions:
