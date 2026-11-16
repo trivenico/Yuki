@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,7 +34,7 @@ class AuthenticatedSandboxExecutionAPITests(unittest.TestCase):
         self.auth.bootstrap_admin("owner-one", "A secure password 1!")
         self.owner_one = self.auth.authenticate("owner-one", "A secure password 1!")
         self.auth.create_account("owner-two", "Another secure password 2!")
-        with sqlite3.connect(self.auth.database_path) as db:
+        with closing(sqlite3.connect(self.auth.database_path)) as db:
             db.execute("UPDATE auth_users SET role='admin' WHERE username='owner-two'")
         self.owner_two = self.auth.authenticate("owner-two", "Another secure password 2!")
         self.image = "registry.example/yuki@sha256:" + "a" * 64
