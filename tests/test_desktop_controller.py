@@ -252,6 +252,34 @@ class ControllerTests(unittest.TestCase):
                 "a secure backup passphrase",
             )
 
+
+    def test_logout_revokes_session_before_conversation_cleanup_failure(self):
+        self.controller.set_memory_context(True)
+        with patch.object(
+            self.app, "reset_conversation", side_effect=RuntimeError("reset failed")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "logout operations"):
+                self.controller.logout()
+        self.assertIsNone(self.auth.resolve_session(self.identity.session_id))
+        self.assertFalse(self.memory.context_enabled)
+
+    def test_logout_attempts_memory_cleanup_when_session_revocation_fails(self):
+        self.controller.set_memory_context(True)
+        calls = []
+        original_disable = self.memory.disable
+        def record_disable():
+            calls.append("memory")
+            original_disable()
+        with patch.object(
+            self.sessions, "logout", side_effect=RuntimeError("revoke failed")
+        ), patch.object(self.app, "reset_conversation", side_effect=lambda: calls.append("conversation")), patch.object(
+            self.memory, "disable", side_effect=record_disable
+        ):
+            with self.assertRaisesRegex(RuntimeError, "logout operations"):
+                self.controller.logout()
+        self.assertEqual(calls, ["conversation", "memory"])
+        self.assertFalse(self.memory.context_enabled)
+
     def test_logout_clears_session_conversation_and_memory_context(self):
         self.controller.set_memory_context(True)
         self.controller.respond("hello")
