@@ -39,3 +39,7 @@ memory retrieval fails, the conversation continues without memory context.
 
 Memory retrieval does not create or update memories. Saving remains an explicit
 operation through `POST /v1/memories`.
+
+## Category filtering
+
+`GET /v1/memories?category=preference` filters the authenticated owner's active memories by one allowlisted category: `note`, `preference`, or `lesson`. The existing `limit` parameter remains supported. Unknown query parameters and invalid categories are rejected; owner identity always comes from the authenticated session.
