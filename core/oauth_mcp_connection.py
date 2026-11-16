@@ -34,6 +34,11 @@ class OAuthMCPConnectionManager:
         self._refresh, self._client_factory = refresh_service, client_factory
         self._firewall_policy = firewall_policy
 
+    @property
+    def firewall_policy(self) -> NetworkFirewall | None:
+        """Return the exact shared policy bound to newly created MCP clients."""
+        return self._firewall_policy
+
     @staticmethod
     def _scopes(values) -> frozenset[str]:
         if not isinstance(values, (tuple, list)) or len(values) > 64:

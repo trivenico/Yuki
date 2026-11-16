@@ -56,6 +56,32 @@ class MCPRuntimeServiceTests(unittest.TestCase):
             required_scopes=("profile:read",), version=1, enabled=enabled,
         )
 
+    def test_shared_firewall_identity_is_verified_for_every_provider_manager(self):
+        from core.network_firewall import NetworkFirewall
+
+        firewall = NetworkFirewall(allowed_hosts=("mcp.example",))
+        manager = OAuthMCPConnectionManager(
+            provider_id="provider", credential_vault=Vault(),
+            refresh_service=Refresh(), client_factory=CapturingClient,
+            firewall_policy=firewall,
+        )
+        service = MCPRuntimeService(
+            connection_managers={"provider": manager},
+            provider_configs={"provider": MCPProviderConnectionConfig(
+                endpoint="https://mcp.example/mcp", allowed_hosts=("mcp.example",),
+            )},
+            policy_store=self.policy_store, audit_log=self.audit_log,
+        )
+        self.assertIs(manager.firewall_policy, firewall)
+        self.assertTrue(service.uses_firewall_policy(firewall))
+        self.assertFalse(service.uses_firewall_policy(NetworkFirewall(allowed_hosts=("mcp.example",))))
+
+    def test_manager_without_shared_firewall_fails_identity_check(self):
+        from core.network_firewall import NetworkFirewall
+        self.assertFalse(self.service.uses_firewall_policy(
+            NetworkFirewall(allowed_hosts=("mcp.example",))
+        ))
+
     def test_builds_client_from_owner_scoped_durable_policy(self):
         self.policy_store.set_policy(
             owner_id="owner", provider_id="provider", account_id="account",

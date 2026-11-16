@@ -20,6 +20,7 @@ from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
 from core.approval_audit import MCPExecutionAudit, MCPToolPolicyAudit, SQLiteApprovalAuditLog
 from core.mcp_tool_policy_store import MCPToolPolicyConflict, SQLiteMCPToolPolicyStore
 from core.oauth_mcp_connection import OAuthMCPConnectionManager
+from core.network_firewall import NetworkFirewall
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,12 @@ class MCPRuntimeService:
             normalized[key] = definition
         self._trusted_tool_definitions = MappingProxyType(normalized)
         self._audit = audit_log
+
+    def uses_firewall_policy(self, policy) -> bool:
+        """Verify every configured provider manager uses the exact shared policy."""
+        if not isinstance(policy, NetworkFirewall):
+            return False
+        return all(manager.firewall_policy is policy for manager in self._managers.values())
 
     def has_provider(self, provider_id: str) -> bool:
         """Report whether a provider exists in trusted host configuration."""
