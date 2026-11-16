@@ -109,4 +109,5 @@ class ConversationMemoryIntegrationTests(unittest.TestCase):
         plain = ConversationService(self.store, self.service.agent_loop)
         with self.assertRaisesRegex(RuntimeError, "not enabled"):
             plain.remember(owner_id="alice", content="No implicit memory")
-        self.assertEqual(plain.memories if False else [], [])
+        with self.assertRaisesRegex(RuntimeError, "not enabled"):
+            plain.memories(owner_id="alice")
