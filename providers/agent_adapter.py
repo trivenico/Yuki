@@ -22,11 +22,12 @@ class ProviderAgentAdapter:
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
     ):
         """Expose provider streaming through the agent loop's normalized event contract."""
+        # Validate caller input before capability detection so malformed data
+        # has the same deterministic contract for streaming and non-streaming.
+        self._validate_inputs(messages, tools, tool_choice)
         stream = getattr(self.provider, "generate_chat_stream", None)
         if not callable(stream):
             raise RuntimeError("configured provider does not support native streaming.")
-        # Reuse the same input contract as the non-streaming adapter.
-        self._validate_inputs(messages, tools, tool_choice)
         return stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
 
     @staticmethod
