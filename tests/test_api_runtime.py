@@ -11,6 +11,7 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.core_component_runtime import build_core_component_registry
 from core.conversation_store import ConversationStore
+from core.conversation_memory_store import ConversationMemoryStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAuthProviderRegistry
@@ -478,6 +479,29 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "verified")
             runtime.close()
             self.assertEqual(runtime.readiness_report().capabilities["component_runtime"].status, "unavailable")
+
+
+    def test_api_runtime_injects_opt_in_owner_scoped_memory_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            memory = ConversationMemoryStore(root / "memory.sqlite")
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), memory_store=memory,
+            )
+            service = runtime.application.conversations
+            self.assertIs(service.memory_store, memory)
+            saved = service.remember(
+                owner_id="api-owner-a", content="Use concise technical summaries",
+                category="preference",
+            )
+            self.assertEqual(
+                [item["memory_id"] for item in service.memories(owner_id="api-owner-a")],
+                [saved["memory_id"]],
+            )
+            self.assertEqual(service.memories(owner_id="api-owner-b"), [])
+            runtime.close()
 
 
 if __name__ == "__main__":
