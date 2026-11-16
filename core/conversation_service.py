@@ -66,31 +66,45 @@ class ConversationService:
         self._conversation_locks: dict[tuple[str, str], threading.Lock] = {}
         self._conversation_lock_users: dict[tuple[str, str], int] = {}
         self._closed = False
+        self._close_complete = False
+        self._close_error: Exception | None = None
 
     def _ensure_open(self) -> None:
         if self._closed:
             raise RuntimeError("conversation service is closed")
 
     def close(self) -> None:
-        """Fence new work and close every factory-owned owner loop exactly once."""
-        with self._lock:
+        """Fence new work and close owned loops without holding the service lock."""
+        with self._lifecycle:
             if self._closed:
+                # Concurrent shutdown callers must not return while the first
+                # caller is still disposing provider/agent resources.
+                while not self._close_complete:
+                    self._lifecycle.wait()
+                if self._close_error is not None:
+                    raise self._close_error
                 return
             self._closed = True
             while self._active_requests:
                 self._lifecycle.wait()
             loops = tuple(self._owner_agent_loops.values())
             self._owner_agent_loops.clear()
-            errors = []
-            for loop in loops:
-                close = getattr(loop, "close", None)
-                if callable(close):
-                    try:
-                        close()
-                    except Exception as exc:
-                        errors.append(exc)
-            if errors:
-                raise errors[0]
+
+        errors = []
+        for loop in loops:
+            close = getattr(loop, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    errors.append(exc)
+
+        with self._lifecycle:
+            self._close_error = errors[0] if errors else None
+            self._close_complete = True
+            self._lifecycle.notify_all()
+        if errors:
+            raise errors[0]
 
     def _agent_loop_for_request(self, owner_id: str) -> AgentExecutionLoop:
         """Return the shared loop or a cached, exclusively owned owner loop."""
