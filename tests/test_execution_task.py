@@ -8,6 +8,7 @@ from core.durable_task_engine import DurableTaskEngine
 from automation.execution_task import (
     DurableSandboxExecutionWorker, EXECUTION_TASK_TYPE,
     ExecutionApproval,
+    ExecutionOutcomeUnknown,
     SandboxExecutionTask,
     execute_approved_task,
 )
