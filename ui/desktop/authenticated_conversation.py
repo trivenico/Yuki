@@ -6,6 +6,7 @@ input. Runtime shutdown remains the responsibility of the application lifecycle.
 """
 from __future__ import annotations
 
+from threading import Condition, RLock
 from typing import Any, Callable
 
 from ui.desktop.conversation_adapter import DesktopConversationAdapter
@@ -26,6 +27,8 @@ class AuthenticatedDesktopConversation:
         self._sessions = sessions
         self._memory = memory
         self._invalidated = False
+        self._lifecycle = Condition(RLock())
+        self._active_sends = 0
         self._conversation = DesktopConversationAdapter(
             application, owner_id=actor_id, memory=memory,
         )
@@ -64,7 +67,9 @@ class AuthenticatedDesktopConversation:
         cancellation_requested: Callable[[], bool] | None = None,
         on_text_delta: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
-        self._require_live_session()
+        with self._lifecycle:
+            self._require_live_session()
+            self._active_sends += 1
 
         def guarded_delta(delta: str) -> None:
             self._require_live_session()
@@ -81,16 +86,21 @@ class AuthenticatedDesktopConversation:
                 return True
             return bool(cancellation_requested()) if cancellation_requested is not None else False
 
-        result = self._conversation.send(
-            message,
-            request_id=request_id,
-            cancellation_requested=guarded_cancel,
-            on_text_delta=guarded_delta if on_text_delta is not None else None,
-        )
-        # Do not return a completed response to a desktop surface whose
-        # authenticated session was revoked while inference was in progress.
-        self._require_live_session()
-        return result
+        try:
+            result = self._conversation.send(
+                message,
+                request_id=request_id,
+                cancellation_requested=guarded_cancel,
+                on_text_delta=guarded_delta if on_text_delta is not None else None,
+            )
+            # Do not return a completed response to a desktop surface whose
+            # authenticated session was revoked while inference was in progress.
+            self._require_live_session()
+            return result
+        finally:
+            with self._lifecycle:
+                self._active_sends -= 1
+                self._lifecycle.notify_all()
 
     def set_memory_context_enabled(self, enabled: bool) -> None:
         """Apply explicit, session-scoped consent to memory retrieval."""
@@ -130,11 +140,15 @@ class AuthenticatedDesktopConversation:
 
     def invalidate(self) -> None:
         """Discard local session state and revoke memory context during logout."""
-        if self._invalidated:
-            return
-        # Close the authorization gate before touching local resources so a
-        # concurrent UI action cannot start another turn during logout.
-        self._invalidated = True
+        # Close the authorization gate first, then wait for active sends to
+        # observe cancellation and finish before the owning session closes the
+        # SQLite runtime. This prevents teardown racing an in-flight DB commit.
+        with self._lifecycle:
+            if self._invalidated:
+                return
+            self._invalidated = True
+            while self._active_sends:
+                self._lifecycle.wait()
         errors = []
         try:
             self.disable_memory_context()
