@@ -12,6 +12,7 @@ from threading import RLock
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
+from core.conversation_memory_store import ConversationMemoryStore
 
 
 @dataclass
@@ -69,6 +70,7 @@ def build_conversation_application_runtime(
     confirmation_check: Callable | None = None,
     approval_id_factory: Callable | None = None,
     pending_proposal_factory: Callable | None = None,
+    memory_store: ConversationMemoryStore | None = None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -84,6 +86,8 @@ def build_conversation_application_runtime(
         raise TypeError("agent_loop_for_owner must be callable.")
     if not callable(store_factory):
         raise TypeError("store_factory must be callable.")
+    if memory_store is not None and not isinstance(memory_store, ConversationMemoryStore):
+        raise TypeError("memory_store must be a ConversationMemoryStore or None.")
     for callback, name in (
         (action_context_factory, "action_context_factory"),
         (confirmation_check, "confirmation_check"),
@@ -116,6 +120,7 @@ def build_conversation_application_runtime(
             confirmation_check=confirmation_check,
             approval_id_factory=approval_id_factory,
             pending_proposal_factory=pending_proposal_factory,
+            memory_store=memory_store,
         )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,
