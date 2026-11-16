@@ -51,6 +51,12 @@ class DurableTaskEngine:
               idempotency_key TEXT NOT NULL, submission_fingerprint TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
               available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, last_error TEXT,
               created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(goal_id,idempotency_key));
+            CREATE TABLE IF NOT EXISTS submission_receipts(
+              goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+              idempotency_key TEXT NOT NULL, actor_id TEXT NOT NULL,
+              approval_id TEXT NOT NULL, task_fingerprint TEXT NOT NULL,
+              task_id TEXT NOT NULL REFERENCES tasks(id), created_at REAL NOT NULL,
+              PRIMARY KEY(goal_id,idempotency_key));
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
             CREATE INDEX IF NOT EXISTS tasks_goal_idx ON tasks(goal_id,created_at);
             CREATE TABLE IF NOT EXISTS dependencies(
@@ -144,7 +150,7 @@ class DurableTaskEngine:
             row = c.execute("SELECT owner_id FROM goal_owners WHERE goal_id=?", (goal_id,)).fetchone()
         return None if row is None else row["owner_id"]
 
-    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0):
+    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0, submission_receipt=None):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
@@ -163,9 +169,30 @@ class DurableTaskEngine:
             "max_attempts": max_attempts,
             "delay_seconds": float(delay_seconds),
         })
+        receipt = None
+        if submission_receipt is not None:
+            if not isinstance(submission_receipt, dict) or set(submission_receipt) != {"actor_id", "approval_id", "task_fingerprint"}:
+                raise ValueError("submission_receipt has an invalid shape")
+            actor_id, approval_id, task_fingerprint = (submission_receipt["actor_id"], submission_receipt["approval_id"], submission_receipt["task_fingerprint"])
+            if (not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200
+                    or not isinstance(approval_id, str) or not approval_id.strip() or len(approval_id) > 128
+                    or not isinstance(task_fingerprint, str) or len(task_fingerprint) != 64
+                    or any(ch not in "0123456789abcdef" for ch in task_fingerprint)):
+                raise ValueError("submission_receipt contains invalid identity or fingerprint fields")
+            receipt = (actor_id, approval_id, task_fingerprint)
         task_id = str(uuid.uuid4())
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
+            if receipt is not None:
+                prior = c.execute("SELECT * FROM submission_receipts WHERE goal_id=? AND idempotency_key=?", (goal_id, idempotency_key)).fetchone()
+                if prior is not None:
+                    if (prior["actor_id"], prior["approval_id"], prior["task_fingerprint"]) != receipt:
+                        raise TaskConflict("idempotency key is already bound to a different actor, approval, or task")
+                    existing_task = c.execute("SELECT * FROM tasks WHERE id=?", (prior["task_id"],)).fetchone()
+                    if existing_task is None:
+                        raise TaskConflict("submission receipt references a missing task")
+                    c.commit()
+                    return self._decode(existing_task)
             goal = c.execute("SELECT state FROM goals WHERE id=?",(goal_id,)).fetchone()
             if goal is None: raise TaskNotFound("goal not found")
             old = c.execute("SELECT * FROM tasks WHERE goal_id=? AND idempotency_key=?",(goal_id,idempotency_key)).fetchone()
@@ -174,6 +201,9 @@ class DurableTaskEngine:
                 # terminal; returning an existing task never reopens the goal.
                 if old["submission_fingerprint"] is None or old["submission_fingerprint"] != submission_fingerprint:
                     raise TaskConflict("idempotency key reused with different or unverifiable submission options")
+                if receipt is not None:
+                    c.execute("INSERT INTO submission_receipts(goal_id,idempotency_key,actor_id,approval_id,task_fingerprint,task_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                              (goal_id, idempotency_key, receipt[0], receipt[1], receipt[2], old["id"], now))
                 c.commit()
                 return self._decode(old)
             if goal["state"]!="active": raise TaskConflict("goal is not active")
@@ -183,11 +213,28 @@ class DurableTaskEngine:
             c.execute("INSERT INTO tasks(id,goal_id,task_type,payload_json,state,idempotency_key,submission_fingerprint,max_attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                       (task_id,goal_id,task_type,payload_json,"queued",idempotency_key,submission_fingerprint,max_attempts,now+delay_seconds,now,now))
             for dep in deps: c.execute("INSERT INTO dependencies VALUES(?,?)",(task_id,dep))
+            if receipt is not None:
+                c.execute("INSERT INTO submission_receipts(goal_id,idempotency_key,actor_id,approval_id,task_fingerprint,task_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                          (goal_id, idempotency_key, receipt[0], receipt[1], receipt[2], task_id, now))
             c.execute("UPDATE goals SET updated_at=? WHERE id=?",(now,goal_id))
             self._event(c,goal_id,task_id,"task.queued",{"task_type":task_type,"dependencies":list(deps)})
             c.commit()
         return self.get_task(task_id)
 
+    def get_submission_receipt(self, goal_id, idempotency_key, *, actor_id, approval_id, task_fingerprint):
+        """Return the exact prior task, rejecting any attempt to rebind its key."""
+        with closing(self._connect()) as c:
+            row = c.execute("SELECT * FROM submission_receipts WHERE goal_id=? AND idempotency_key=?", (goal_id, idempotency_key)).fetchone()
+            if row is None:
+                return None
+            expected = (actor_id, approval_id, task_fingerprint)
+            actual = (row["actor_id"], row["approval_id"], row["task_fingerprint"])
+            if actual != expected:
+                raise TaskConflict("idempotency key is already bound to a different actor, approval, or task")
+            task = c.execute("SELECT * FROM tasks WHERE id=?", (row["task_id"],)).fetchone()
+            if task is None:
+                raise TaskConflict("submission receipt references a missing task")
+            return self._decode(task)
     def claim(self, worker_id, *, lease_seconds=60, task_types=None):
         if not isinstance(worker_id,str) or not 1 <= len(worker_id) <= 256: raise ValueError("invalid worker_id")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600: raise ValueError("lease_seconds must be an integer in 1..3600")
