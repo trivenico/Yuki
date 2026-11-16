@@ -113,11 +113,18 @@ class OAuthMCPConnectionManager:
             except Exception:
                 raise OAuthMCPConnectionError("credential_not_available") from None
 
+        client_options = {
+            "allowed_hosts": allowed_hosts,
+            "allowed_tools": allowed_tools,
+            "approver": approver,
+            "access_token_provider": access_token_provider,
+            "execution_audit": execution_audit,
+            "timeout": timeout,
+        }
+        if self._firewall_policy is not None:
+            client_options["firewall_policy"] = self._firewall_policy
         try:
-            return self._client_factory(endpoint, allowed_hosts=allowed_hosts, allowed_tools=allowed_tools,
-                approver=approver, access_token_provider=access_token_provider,
-                execution_audit=execution_audit, timeout=timeout,
-                firewall_policy=self._firewall_policy)
+            return self._client_factory(endpoint, **client_options)
         except OAuthMCPConnectionError:
             raise
         except Exception:
