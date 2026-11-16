@@ -97,7 +97,7 @@ class SkillRegistry:
             GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
             DeepReadSkill(allowed_hosts=web_allowed_hosts, firewall_policy=firewall_policy),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
-            BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
+            BrowserSkill(allowed_hosts=web_allowed_hosts, firewall_policy=firewall_policy), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
             WikiSkill(allowed_hosts=web_allowed_hosts, firewall_policy=firewall_policy), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
             ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
             PredictionEngineSkill(), MultiModelCritiqueSkill(), AIMentorSkill(root), AIHumanizerSkill(),
