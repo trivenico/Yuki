@@ -21,6 +21,10 @@ security_lab_enabled: false
 recon_allowlisted_targets: []
 sandbox_enabled: false
 sandbox_allowed_images: []
+# Durable approved command execution is opt-in and requires digest-pinned images.
+sandbox_execution_enabled: false
+sandbox_execution_allowed_images: []
+sandbox_execution_worker_id: yuki-sandbox-worker
 firewall_enabled: false
 firewall_dry_run: true
 web_allowed_hosts: []
