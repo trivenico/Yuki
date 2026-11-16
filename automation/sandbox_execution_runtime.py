@@ -6,6 +6,7 @@ not start a polling loop or expose an HTTP execution endpoint.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from automation.execution_task import DurableSandboxExecutionWorker
@@ -65,9 +66,12 @@ def build_sandbox_execution_runtime(
     if not isinstance(workspace_value, str) or not workspace_value.strip():
         raise ValueError("sandbox execution requires a configured workspace")
     root = Path(workspace_value).expanduser().resolve()
-    sandbox_workspace = Path(
-        config.get("sandbox_execution_workspace", str(root / "sandbox-execution-workspace"))
-    ).expanduser().resolve()
+    workspace_setting = config.get(
+        "sandbox_execution_workspace", str(root / "sandbox-execution-workspace")
+    )
+    if not isinstance(workspace_setting, str) or not workspace_setting.strip():
+        raise ValueError("sandbox execution workspace must be a non-empty path")
+    sandbox_workspace = Path(workspace_setting).expanduser().resolve()
     if sandbox_workspace == Path(sandbox_workspace.anchor) or sandbox_workspace == root:
         raise ValueError("sandbox execution requires a dedicated non-root workspace")
     if "," in str(sandbox_workspace):
@@ -76,7 +80,8 @@ def build_sandbox_execution_runtime(
     images = config.get("sandbox_execution_allowed_images")
     if not isinstance(images, list) or not images:
         raise ValueError("sandbox execution requires digest-pinned allow-listed images")
-    if any(not isinstance(image, str) or len(image) > 255 or "@sha256:" not in image
+    if any(not isinstance(image, str) or len(image) > 255
+           or re.fullmatch(r"[^@\\s]+@sha256:[0-9a-f]{64}", image) is None
            for image in images) or len(set(images)) != len(images):
         raise ValueError("sandbox execution image allow-list is invalid")
 
@@ -90,6 +95,10 @@ def build_sandbox_execution_runtime(
     auth_db = str(Path(auth_service.database_path).resolve())
     if len({task_db, audit_db, auth_db}) != 3:
         raise ValueError("sandbox execution requires separate task, audit and authentication databases")
+
+    worker_id = config.get("sandbox_execution_worker_id", "yuki-sandbox-worker")
+    if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 256:
+        raise ValueError("sandbox execution worker ID must be bounded non-empty text")
 
     engine = DurableTaskEngine(task_db)
     try:
@@ -109,7 +118,7 @@ def build_sandbox_execution_runtime(
         )
         worker = DurableSandboxExecutionWorker.from_trusted_stores(
             engine,
-            worker_id=str(config.get("sandbox_execution_worker_id", "yuki-sandbox-worker")),
+            worker_id=worker_id.strip(),
             sandbox=sandbox,
             approval_store=approval_store,
             audit_writer=audit_writer,
