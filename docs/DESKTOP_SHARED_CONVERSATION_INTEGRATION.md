@@ -111,3 +111,44 @@ user action; this integration only controls whether saved entries may be
 retrieved for model context. The core adapter is deliberately storage-agnostic
 so other surfaces can reuse it with their own authenticated and consent-aware
 memory facade.
+
+
+## Authenticated session bundle and lifecycle ownership
+
+The composition root can use
+`ui.desktop.shared_conversation_session.build_authenticated_desktop_conversation()`
+to construct the complete authenticated durable-chat unit. It verifies that
+`sessions.current_identity()` matches the supplied identity before opening the
+conversation store, derives the owner only from `identity.actor_id`, passes
+through the encrypted memory facade, and returns a `DesktopConversationSession`.
+
+Register that returned session as one resource in the desktop lifecycle. Its
+`close()` invalidates the authenticated facade (revoking memory context and
+clearing the selected conversation) before closing the conversation runtime.
+The helper deliberately sets `close_provider=False`: the outer desktop
+lifecycle continues to own the already-created provider and closes it exactly
+once. Do not also register the inner runtime separately, or call both
+`DesktopConversationSession.close()` and `runtime.close()` from independent
+shutdown paths.
+
+Example composition at the authenticated desktop boundary:
+
+```python
+memory = create_desktop_memory(sessions.keyring)
+conversation_session = build_authenticated_desktop_conversation(
+    load_config(),
+    provider=provider,
+    identity=identity,
+    sessions=sessions,
+    memory=memory,
+)
+conversation = conversation_session.conversation
+# Register conversation_session (not conversation_session.runtime) with the
+# lifecycle; register provider once in the outer lifecycle as before.
+```
+
+The bundle is now covered by composition tests for verified identity,
+owner-scoped durable history, deny-all chat tools, external provider ownership,
+memory context, and idempotent shutdown. The actual Qt launcher/controller
+migration remains a separate integration step because its existing branch does
+not yet contain this canonical runtime dependency chain.
