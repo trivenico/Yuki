@@ -177,3 +177,49 @@ background thread. If streaming is enabled, its delta callback must emit a Qt
 signal; never update widgets directly from the provider worker. Logout must
 invalidate the conversation facade before closing the store, and the outer
 lifecycle must continue to close the provider exactly once.
+
+
+## Preserve the existing specialist UI during the chat cutover
+
+`ui.desktop.shared_desktop_controller.SharedDesktopControllerBridge` provides
+the old desktop controller surface while moving only chat and memory-context
+operations to the shared durable runtime. Chat requests and memory consent go
+to `SharedDesktopChatController`; specialist plans, dispatch, approvals,
+task progress/cancellation, migration and encrypted backup operations remain
+on the existing authenticated `DesktopCompanionController`. The bridge uses
+an explicit method allowlist rather than exposing the legacy controller through
+unrestricted attribute forwarding.
+
+In the desktop launcher's authenticated-session composition, the intended
+wiring is:
+
+```python
+context = build_desktop_context(
+    authenticate=sessions.current_identity,
+    provider=provider,
+    memory=create_desktop_memory(sessions.keyring),
+    session=ConversationSession(provider),
+    agent_coordinator=coordinator,
+    task_runtime=task_runtime,
+)
+legacy_controller = DesktopCompanionController(
+    context.application, context.identity, sessions
+)
+conversation_session = build_authenticated_desktop_conversation(
+    load_config(),
+    provider=provider,
+    identity=context.identity,
+    sessions=sessions,
+    memory=context.application.memory,
+)
+shared_chat = SharedDesktopChatController(conversation_session)
+self.controller = SharedDesktopControllerBridge(shared_chat, legacy_controller)
+```
+
+This keeps the current specialist/task authorization implementation intact
+while replacing the chat engine. The desktop worker's existing
+`controller.respond(message)` call remains compatible. Logout revokes the
+legacy authenticated session first and then always closes the shared chat
+bundle, even if revocation reports an error. The Qt launcher and its lifecycle
+must be ported only after the canonical runtime branch is integrated; do not
+mix the diverged desktop foundation branch into this branch with a blind merge.
