@@ -35,6 +35,8 @@ class SQLiteSandboxExecutionApprovalStore:
                 task_id TEXT NOT NULL,
                 task_fingerprint TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','consumed','revoked')),
+                consumed_at TEXT,
                 revoked_at TEXT
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_approval_task ON sandbox_execution_approvals(task_id)")
@@ -82,9 +84,9 @@ class SQLiteSandboxExecutionApprovalStore:
         if approval.task_fingerprint != task.fingerprint():
             return False
         with self._connect() as db:
-            row = db.execute("""SELECT actor_id,session_hash,task_id,task_fingerprint,revoked_at
+            row = db.execute("""SELECT actor_id,session_hash,task_id,task_fingerprint,status
                 FROM sandbox_execution_approvals WHERE approval_id=?""", (approval.approval_id,)).fetchone()
-        if row is None or row["revoked_at"] is not None:
+        if row is None or row["status"] != "approved":
             return False
         if (row["actor_id"] != approval.actor_id or row["task_id"] != task.task_id
                 or row["task_fingerprint"] != task.fingerprint()):
@@ -92,13 +94,29 @@ class SQLiteSandboxExecutionApprovalStore:
         # Resolve by digest without retaining the bearer token in this store.
         return self.auth_service.resolve_session_hash(row["session_hash"], expected_user_id=row["actor_id"]) is True
 
+
+    def consume(self, approval: ExecutionApproval, task: SandboxExecutionTask) -> bool:
+        """Atomically consume a valid approval exactly once before external dispatch."""
+        if not self.verify(approval, task):
+            return False
+        consumed_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            result = db.execute("""UPDATE sandbox_execution_approvals
+                SET status='consumed', consumed_at=?
+                WHERE approval_id=? AND actor_id=? AND task_id=?
+                  AND task_fingerprint=? AND status='approved'""",
+                (consumed_at, approval.approval_id, approval.actor_id,
+                 task.task_id, task.fingerprint()))
+            return result.rowcount == 1
+
     def revoke(self, approval_id: str, *, session_token: str) -> bool:
         user = self.auth_service.resolve_session(session_token) if isinstance(session_token, str) else None
         if user is None or "users:manage" not in user.permissions:
             raise PermissionError("An authenticated administrator is required to revoke approvals.")
         with self._connect() as db:
-            result = db.execute("""UPDATE sandbox_execution_approvals SET revoked_at=?
-                WHERE approval_id=? AND revoked_at IS NULL""",
+            result = db.execute("""UPDATE sandbox_execution_approvals SET status='revoked', revoked_at=?
+                WHERE approval_id=? AND status='approved'""",
                 (datetime.now(timezone.utc).isoformat(), approval_id))
             return result.rowcount == 1
 
