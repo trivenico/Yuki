@@ -18,6 +18,7 @@ from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.network_firewall import build_network_firewall_from_config
 from core.inference_jobs import InferenceJobService
 from core.structured_tool_protocol import StructuredToolProtocol
+from automation.sandbox_execution_runtime import build_sandbox_execution_runtime
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
 from providers.runtime_manager import ProviderRuntimeManager
@@ -72,14 +73,23 @@ def create_app():
     income_opportunities = SQLiteIncomeOpportunityStore(
         str(workspace / "income-opportunities.sqlite3")
     )
-    return build_conversation_runtime(
-        config, auth_service=auth, agent_loop=agent_loop,
-        provider_catalog=provider_manager.catalog,
-        provider_selector=provider_manager.select,
-        device_pairing=device_pairing, inference_jobs=inference_jobs,
-        income_opportunities=income_opportunities,
-        network_firewall=network_firewall,
+    sandbox_execution_runtime = build_sandbox_execution_runtime(
+        config, auth_service=auth,
     )
+    try:
+        return build_conversation_runtime(
+            config, auth_service=auth, agent_loop=agent_loop,
+            provider_catalog=provider_manager.catalog,
+            provider_selector=provider_manager.select,
+            device_pairing=device_pairing, inference_jobs=inference_jobs,
+            income_opportunities=income_opportunities,
+            network_firewall=network_firewall,
+            sandbox_execution_runtime=sandbox_execution_runtime,
+        )
+    except Exception:
+        if sandbox_execution_runtime is not None:
+            sandbox_execution_runtime.close()
+        raise
 
 
 def main():

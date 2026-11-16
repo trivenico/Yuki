@@ -5,6 +5,7 @@ import json
 from threading import RLock
 from typing import Any, Callable
 
+from automation.sandbox_execution_runtime import SandboxExecutionRuntime
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
@@ -44,11 +45,12 @@ from core.google_gmail_runtime import GmailToolRuntimeBundle
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime, component_registry: ComponentRegistry | None = None):
+    def __init__(self, app: Any, application: ConversationApplicationRuntime, component_registry: ComponentRegistry | None = None, sandbox_execution_runtime=None):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
         self.component_registry = component_registry
+        self.sandbox_execution_runtime = sandbox_execution_runtime
         self.store = application.store
         self._closed = False
         self._close_lock = RLock()
@@ -103,10 +105,26 @@ class ConversationRuntime:
             # Keep the closed fence set even if a cleanup hook raises: cleanup
             # is not retried implicitly against potentially partially closed resources.
             self._closed = True
-            if self.component_registry is None:
-                self.application.close()
-                return
-            failures = self.component_registry.close()
+            failures = []
+            primary_cleanup_error = None
+            if self.component_registry is not None:
+                try:
+                    failures.extend(self.component_registry.close())
+                except Exception:
+                    failures.append("component-registry")
+            else:
+                try:
+                    self.application.close()
+                except Exception as error:
+                    primary_cleanup_error = error
+                    failures.append("application")
+            if self.sandbox_execution_runtime is not None:
+                try:
+                    self.sandbox_execution_runtime.close()
+                except Exception:
+                    failures.append("sandbox-execution-runtime")
+            if primary_cleanup_error is not None:
+                raise primary_cleanup_error
             if failures:
                 raise RuntimeError("component shutdown failed: " + ", ".join(failures))
 
@@ -142,6 +160,7 @@ def build_conversation_runtime(
     component_registry_factory: Callable[[BuiltInAuthService, AgentExecutionLoop, ConversationApplicationRuntime], ComponentRegistry] | None = None,
     memory_store: ConversationMemoryStore | None = None,
     network_firewall: NetworkFirewall | None = None,
+    sandbox_execution_runtime=None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -158,6 +177,12 @@ def build_conversation_runtime(
         raise TypeError("network_firewall must be a NetworkFirewall or None.")
     if network_firewall is None:
         network_firewall = build_network_firewall_from_config(config)
+    if sandbox_execution_runtime is not None and not isinstance(sandbox_execution_runtime, SandboxExecutionRuntime):
+        raise TypeError("sandbox_execution_runtime must be a SandboxExecutionRuntime or None.")
+    if config.get("sandbox_execution_enabled", False) is True and sandbox_execution_runtime is None:
+        raise ValueError("enabled sandbox execution requires its trusted runtime composition.")
+    if sandbox_execution_runtime is not None and config.get("sandbox_execution_enabled", False) is not True:
+        raise ValueError("sandbox execution runtime cannot be attached while the feature is disabled.")
     if gmail_runtime_bundle is not None:
         if not isinstance(gmail_runtime_bundle, GmailToolRuntimeBundle):
             raise TypeError("gmail_runtime_bundle must be a GmailToolRuntimeBundle.")
@@ -377,9 +402,20 @@ def build_conversation_runtime(
                         f"component registry instance mismatch: {component_id}"
                     )
             component_registry.start_all()
-        return ConversationRuntime(app, application, component_registry)
+        return ConversationRuntime(app, application, component_registry, sandbox_execution_runtime)
     except Exception:
         if "component_registry" in locals() and isinstance(component_registry, ComponentRegistry):
-            component_registry.close()
-        application.close()
+            try:
+                component_registry.close()
+            except Exception:
+                pass
+        try:
+            application.close()
+        except Exception:
+            pass
+        if sandbox_execution_runtime is not None:
+            try:
+                sandbox_execution_runtime.close()
+            except Exception:
+                pass
         raise
