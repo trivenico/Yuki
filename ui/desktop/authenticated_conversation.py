@@ -69,10 +69,20 @@ class AuthenticatedDesktopConversation:
             if on_text_delta is not None:
                 on_text_delta(delta)
 
+        def guarded_cancel() -> bool:
+            # The agent loop polls cancellation between model/stream events.
+            # Session revocation therefore stops cooperative work promptly;
+            # the post-turn check below remains the final response-release gate.
+            try:
+                self._require_live_session()
+            except Exception:
+                return True
+            return bool(cancellation_requested()) if cancellation_requested is not None else False
+
         result = self._conversation.send(
             message,
             request_id=request_id,
-            cancellation_requested=cancellation_requested,
+            cancellation_requested=guarded_cancel,
             on_text_delta=guarded_delta if on_text_delta is not None else None,
         )
         # Do not return a completed response to a desktop surface whose
