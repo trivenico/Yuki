@@ -472,6 +472,16 @@ class ConversationRuntimeTests(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertEqual(json.loads(body), {"status": "not_ready", "component_runtime": "unconfigured"})
 
+        class BrokenRuntime(ConversationRuntime):
+            def readiness_report(self):
+                raise RuntimeError("sensitive internal diagnostic")
+
+        broken = BrokenRuntime(lambda *args: None, application)
+        status, body = asyncio.run(request(broken))
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body), {"status": "not_ready", "component_runtime": "unavailable"})
+        self.assertNotIn(b"sensitive", body)
+
     def test_asgi_lifespan_closes_storage_on_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
