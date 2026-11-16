@@ -89,3 +89,20 @@ Keep it separate from the backup file. The endpoint requires the optional
 There is not yet a restore endpoint; importing backups remains intentionally
 unsupported until preview, validation, owner binding, and atomic merge semantics
 are implemented.
+
+## Read-only encrypted backup preview
+
+`POST /v1/memories/backup/preview` accepts exactly
+`{password, envelope_base64}`. It authenticates and decrypts the envelope,
+strictly validates the versioned snapshot (including duplicate JSON keys,
+unknown fields, record bounds, categories, timestamps, duplicate IDs, and
+owner binding), and compares incoming memory IDs with the authenticated
+owner's existing records. The response contains only counts and category
+totals; it never returns memory content.
+
+The preview performs no database writes. It does not import, overwrite, merge,
+or delete memories. The endpoint is bounded to a 17 MiB JSON body to carry the
+maximum supported base64 envelope and returns `Cache-Control: no-store`.
+A separate, explicitly confirmed restore workflow is still required before
+any import can occur.
+
