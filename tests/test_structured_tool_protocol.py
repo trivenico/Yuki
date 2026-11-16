@@ -7,6 +7,7 @@ from core.structured_tool_protocol import (
     StructuredToolProtocol,
     ToolProtocolError,
     parse_tool_calls,
+    StructuredToolCall,
 )
 
 
@@ -106,6 +107,28 @@ class StructuredToolProtocolTests(unittest.TestCase):
     def test_runtime_type_is_required(self):
         with self.assertRaises(TypeError):
             StructuredToolProtocol(object())
+
+
+    def test_direct_dispatch_revalidates_forged_structured_calls(self):
+        invalid_calls = (
+            StructuredToolCall("../bad", "echo", {"text": "hello"}),
+            StructuredToolCall("call_1", "../echo", {"text": "hello"}),
+            StructuredToolCall("call_1", "echo", {"text": "x" * 8_001}),
+            StructuredToolCall("call_1", "echo", {"value": float("nan")}),
+            StructuredToolCall("call_1", "echo", {"value": object()}),
+            StructuredToolCall("call_1", "echo", []),
+        )
+        for call in invalid_calls:
+            with self.subTest(call=call), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch_call(call)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
+    def test_direct_dispatch_accepts_bounded_plain_json_arguments(self):
+        call = StructuredToolCall("call_direct", "echo", {"nested": [True, None, 3]})
+        result = self.protocol.dispatch_call(call)
+        self.assertEqual(result.call_id, "call_direct")
+        self.assertEqual(json.loads(result.output), {"nested": [True, None, 3]})
 
 
 
