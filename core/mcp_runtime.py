@@ -139,7 +139,11 @@ class MCPRuntimeService:
         """Verify every configured provider manager uses the exact shared policy."""
         if not isinstance(policy, NetworkFirewall):
             return False
-        return all(manager.firewall_policy is policy for manager in self._managers.values())
+        return all(
+            manager.firewall_policy is policy
+            and manager.refresh_firewall_policy is policy
+            for manager in self._managers.values()
+        )
 
     def has_provider(self, provider_id: str) -> bool:
         """Report whether a provider exists in trusted host configuration."""
