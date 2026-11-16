@@ -35,6 +35,10 @@ class WebFirewallCompositionTests(unittest.TestCase):
         self.assertIs(create_provider.call_args.kwargs["firewall_policy"], policy)
         self.assertIs(manager_factory.call_args.kwargs["firewall_policy"], policy)
         self.assertIs(runtime_factory.call_args.kwargs["network_firewall"], policy)
+        # The default personal-assistant profile must not require Google OAuth.
+        self.assertIsNone(runtime_factory.call_args.kwargs["oauth_connections"])
+        self.assertIsNone(runtime_factory.call_args.kwargs["prepared_oauth_provider_registry"])
+        self.assertIsNone(runtime_factory.call_args.kwargs["mcp_runtime"])
 
 
     def test_web_startup_passes_explicit_prepared_oauth_and_mcp_runtime(self):
