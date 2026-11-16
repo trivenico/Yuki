@@ -8,8 +8,11 @@ class Chat:
     def __init__(self):
         self.calls = []
         self.close_count = 0
+        self.fail_authorization = False
     def respond(self, message, **kwargs):
         self.calls.append((message, kwargs))
+        if self.fail_authorization:
+            raise PermissionError("session expired")
         return "shared chat reply"
     def set_memory_context(self, enabled):
         self.calls.append(("memory", enabled))
@@ -25,6 +28,8 @@ class Specialists:
         self.fail_logout = fail_logout
     def _call(self, name, *args, **kwargs):
         self.calls.append((name, args, kwargs))
+        if getattr(self, "fail_authorization", False):
+            raise PermissionError("session expired")
         return name
     def logout(self):
         self.calls.append(("logout", (), {}))
@@ -83,6 +88,22 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "logout"):
             bridge.logout()
         self.assertEqual(chat.close_count, 1)
+
+    def test_chat_authorization_failure_closes_both_session_surfaces(self):
+        bridge, chat, specialists = self.make()
+        chat.fail_authorization = True
+        with self.assertRaisesRegex(PermissionError, "expired"):
+            bridge.respond("hello")
+        self.assertEqual(chat.close_count, 1)
+        self.assertEqual(specialists.calls[-1][0], "logout")
+
+    def test_specialist_authorization_failure_closes_both_session_surfaces(self):
+        bridge, chat, specialists = self.make()
+        specialists.fail_authorization = True
+        with self.assertRaisesRegex(PermissionError, "expired"):
+            bridge.list_specialists()
+        self.assertEqual(chat.close_count, 1)
+        self.assertEqual(specialists.calls[-1][0], "logout")
 
 
     def test_concurrent_logout_closes_authorization_gate_and_runs_once(self):
