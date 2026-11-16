@@ -48,7 +48,7 @@ def _confirm(action, reason, risk="medium"):
     return _ask_approval(ApprovalRequest(action=action, reason=reason, risk=risk))
 
 
-def build_agent(config):
+def build_agent(config, *, firewall_policy=None):
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
     registry = SkillRegistry.defaults(
@@ -60,6 +60,7 @@ def build_agent(config):
         trusted_plugin_modules=config["trusted_plugin_modules"],
         github_allowed_roots=config.get("github_allowed_roots", []),
         mcp_servers=config.get("mcp_servers", []),
+        firewall_policy=firewall_policy,
     )
     return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
 
@@ -115,7 +116,7 @@ def main():
     # Construct one application firewall and pass that exact instance to the
     # model-provider transport. Enabled policies fail closed on bad host config.
     network_firewall = build_network_firewall_from_config(config)
-    agent = build_agent(config)
+    agent = build_agent(config, firewall_policy=network_firewall)
     ai = YukiAgent(create_provider(config, firewall_policy=network_firewall))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     local_workers = build_local_worker_runtime(workspace, ai.provider)
