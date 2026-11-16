@@ -328,3 +328,27 @@ class ConversationMemoryStore:
                     (owner, now),
                 )
         return cursor.rowcount
+
+
+    def export_snapshot(self, *, owner_id: str) -> dict[str, Any]:
+        """Return one consistent, bounded snapshot of this owner's active memories."""
+        owner = self._owner(owner_id)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            now = datetime.now(timezone.utc)
+            rows = db.execute(
+                "SELECT memory_id, category, content, created_at, expires_at "
+                "FROM conversation_memories WHERE owner_id = ? "
+                "AND (expires_at IS NULL OR expires_at > ?) "
+                "ORDER BY created_at ASC, memory_id ASC",
+                (owner, now.isoformat()),
+            ).fetchall()
+            memories = [dict(row) for row in rows]
+        return {
+            "format": "yuki-memory-snapshot",
+            "schema_version": 1,
+            "owner_id": owner,
+            "exported_at": now.isoformat(),
+            "memory_count": len(memories),
+            "memories": memories,
+        }
