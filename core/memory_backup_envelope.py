@@ -59,7 +59,7 @@ def _derive(password: bytes, salt: bytes, Scrypt) -> bytes:
     try:
         return Scrypt(
             salt=salt, length=32, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P,
-            maxmem=64 * 1024 * 1024,
+            maxmem=128 * 1024 * 1024,
         ).derive(password)
     except Exception:
         raise MemoryBackupError("memory_backup_key_derivation_failed") from None
