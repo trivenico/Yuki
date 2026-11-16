@@ -590,6 +590,24 @@ class DurableTaskEngine:
         if any_task and pending is None:
             c.execute("UPDATE goals SET state='completed',updated_at=? WHERE id=?",(now,goal_id)); self._event(c,goal_id,None,"goal.completed",{})
 
+    def list_unknown_outcomes(self, *, limit=100):
+        """Return metadata-only records requiring operator reconciliation."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                """SELECT t.id,t.goal_id,t.state,t.attempts,t.last_error,
+                          t.created_at,t.updated_at,MAX(e.created_at) AS unknown_at
+                   FROM tasks t
+                   JOIN run_events e ON e.task_id=t.id
+                   WHERE t.task_type='sandbox.execution.v1'
+                     AND t.state='failed' AND e.event_type='task.outcome_unknown'
+                   GROUP BY t.id
+                   ORDER BY unknown_at,t.id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_task(self,task_id):
         with closing(self._connect()) as c: r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
         if r is None: raise TaskNotFound("task not found")
