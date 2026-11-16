@@ -44,6 +44,14 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
             argv=("python", "-c", "print(1)"), workspace=self.task.workspace,
         )))
 
+
+    def test_approval_can_be_consumed_only_once(self):
+        approval = self.store.approve(self.task, session_token=self.session.token)
+        self.assertTrue(self.store.consume(approval, self.task))
+        self.assertFalse(self.store.verify(approval, self.task))
+        self.assertFalse(self.store.consume(approval, self.task))
+        self.assertFalse(self.store.revoke(approval.approval_id, session_token=self.session.token))
+
     def test_non_approver_cannot_create_approval(self):
         self.auth.create_account("normal.user", "Another secure password 4!")
         session = self.auth.authenticate("normal.user", "Another secure password 4!")
@@ -81,6 +89,7 @@ class SandboxExecutionApprovalStoreTests(unittest.TestCase):
         queued = worker.submit(goal, self.task, approval, idempotency_key="durable-auth-approval")
         result = worker.run_once()
         self.assertEqual(result["state"], "succeeded")
+        self.assertFalse(self.store.verify(approval, self.task))
         self.assertTrue(log.verify_chain())
         self.assertEqual(
             [item["event_type"] for item in reversed(log.list_events())],
