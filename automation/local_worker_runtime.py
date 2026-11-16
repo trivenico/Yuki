@@ -45,6 +45,7 @@ def build_local_worker_runtime(
     allow_cloud: bool = False,
     max_tasks_per_cycle: int = 3,
     max_workers: int = 2,
+    firewall_policy=None,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
@@ -57,6 +58,11 @@ def build_local_worker_runtime(
         raise ValueError("A provider or provider_manager is required.")
     if provider_manager is None and (provider_preferences is not None or allow_cloud is not False):
         raise ValueError("provider_preferences and allow_cloud require provider_manager.")
+    if firewall_policy is not None:
+        if provider_manager is None:
+            raise ValueError("firewall_policy requires a provider_manager with shared firewall binding.")
+        if getattr(provider_manager, "firewall_policy", None) is not firewall_policy:
+            raise ValueError("provider_manager must use the exact local worker firewall policy.")
     if type(allow_cloud) is not bool:
         raise ValueError("allow_cloud must be a boolean.")
     root = Path(workspace).expanduser()
