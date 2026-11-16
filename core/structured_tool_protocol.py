@@ -110,9 +110,13 @@ def _validated_call_arguments(arguments: Any) -> str:
                 raise ToolProtocolError("tool arguments contain a non-finite number.")
             continue
         if value_type is list:
+            if len(pending) + nodes + len(value) > 4096:
+                raise ToolProtocolError("tool arguments exceed structural limits.")
             pending.extend((item, depth + 1) for item in value)
             continue
         if value_type is dict:
+            if len(pending) + nodes + (2 * len(value)) > 4096:
+                raise ToolProtocolError("tool arguments exceed structural limits.")
             for key, item in value.items():
                 if type(key) is not str:
                     raise ToolProtocolError("tool argument keys must be strings.")
