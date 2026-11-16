@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from providers.runtime_manager import ProviderRuntimeManager
 from providers.agent_adapter import ProviderAgentAdapter
+from core.network_firewall import NetworkFirewall
 
 
 def _catalog(*, config, environ):
@@ -165,6 +166,45 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                 self.assertEqual(switch.result(timeout=5)["name"], "ollama")
             self.assertEqual(previous.closed, 1)
             self.assertIs(adapter.provider, candidate)
+
+
+    def test_shared_firewall_policy_reaches_persistent_provider_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            firewall = NetworkFirewall(allowed_hosts={"api.openai.com"})
+            captured = []
+            def factory(config, *, environ, firewall_policy=None):
+                captured.append(firewall_policy)
+                return SimpleNamespace(provider=config["provider"])
+            adapter = SimpleNamespace(provider=SimpleNamespace(provider="openai"))
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, adapter,
+                Path(directory) / "provider-selection.json",
+                environ={}, provider_factory=factory, catalog_factory=_catalog,
+                firewall_policy=firewall,
+            )
+            manager.select("ollama")
+            self.assertIs(captured[-1], firewall)
+            self.assertIs(adapter.provider, not None and adapter.provider)
+            self.assertEqual(adapter.provider.provider, "ollama")
+
+    def test_shared_firewall_policy_reaches_persisted_provider_reload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "provider-selection.json"
+            path.write_text(json.dumps({"schema_version": 1, "provider": "ollama"}))
+            firewall = NetworkFirewall(allowed_hosts={"api.openai.com"})
+            captured = []
+            def factory(config, *, environ, firewall_policy=None):
+                captured.append(firewall_policy)
+                return SimpleNamespace(provider=config["provider"])
+            adapter = SimpleNamespace(provider=SimpleNamespace(provider="openai"))
+            ProviderRuntimeManager(
+                {"provider": "openai"}, adapter, path,
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=factory, catalog_factory=_catalog,
+                firewall_policy=firewall,
+            )
+            self.assertEqual(captured, [firewall])
+            self.assertEqual(adapter.provider.provider, "ollama")
 
 if __name__ == "__main__":
     unittest.main()
