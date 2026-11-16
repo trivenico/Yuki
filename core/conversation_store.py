@@ -137,6 +137,7 @@ class ConversationStore:
             "role": row["role"],
             "content": row["content"],
             "created_at": row["created_at"],
+            **({"memory_references": json.loads(row["memory_references"])} if row["role"] == "assistant" and row["memory_references"] is not None else ({"memory_references": None} if row["role"] == "assistant" else {})),
         }
 
     @contextmanager
@@ -209,6 +210,23 @@ class ConversationStore:
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         if generation_request_id is not None and (role != "user" or not isinstance(generation_request_id, str) or not generation_request_id.strip() or len(generation_request_id) > 160):
             raise ValueError("generation_request_id must be non-empty text for user messages.")
+        encoded_references = None
+        if memory_references is not None:
+            if role != "assistant" or not isinstance(memory_references, list) or len(memory_references) > 5:
+                raise ValueError("memory_references must be a list of at most five assistant references.")
+            for item in memory_references:
+                if not isinstance(item, dict) or set(item) != {"memory_id", "category", "score"}:
+                    raise ValueError("each memory reference must contain memory_id, category, and score.")
+                if not isinstance(item["memory_id"], str) or not item["memory_id"].strip() or len(item["memory_id"]) > 128:
+                    raise ValueError("memory reference ID is invalid.")
+                if item["category"] not in {"note", "preference", "lesson"}:
+                    raise ValueError("memory reference category is invalid.")
+                score = item["score"]
+                if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
+                    raise ValueError("memory reference score must be finite numeric data.")
+            encoded_references = json.dumps(memory_references, ensure_ascii=True, separators=(",", ":"))
+            if len(encoded_references) > 4096:
+                raise ValueError("memory references exceed the storage limit.")
         if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise ValueError("expected_version must be a non-negative integer.")
         now, message_id = self._now(), str(uuid.uuid4())
