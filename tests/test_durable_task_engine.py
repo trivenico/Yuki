@@ -406,6 +406,19 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskNotFound):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
 
+    def test_claim_can_be_scoped_to_explicit_task_types(self):
+        text_task = self.engine.submit(self.goal, "specialist.text", {}, idempotency_key="text")
+        exec_task = self.engine.submit(self.goal, "sandbox.execution.v1", {}, idempotency_key="exec")
+        claimed = self.engine.claim("execution-worker", task_types=("sandbox.execution.v1",))
+        self.assertEqual(claimed["id"], exec_task["id"])
+        self.assertEqual(self.engine.get_task(text_task["id"])["state"], "queued")
+
+    def test_claim_task_type_filter_is_strictly_validated(self):
+        for invalid in ((), [], ("",), ("x", "x"), ("x" * 129,), "sandbox.execution.v1"):
+            with self.subTest(task_types=invalid):
+                with self.assertRaises(ValueError):
+                    self.engine.claim("worker", task_types=invalid)
+
 
 if __name__ == "__main__":
     unittest.main()
