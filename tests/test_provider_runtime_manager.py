@@ -184,7 +184,6 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             )
             manager.select("ollama")
             self.assertIs(captured[-1], firewall)
-            self.assertIs(adapter.provider, not None and adapter.provider)
             self.assertEqual(adapter.provider.provider, "ollama")
 
     def test_shared_firewall_policy_reaches_persisted_provider_reload(self):
