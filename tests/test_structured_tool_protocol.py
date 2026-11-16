@@ -72,6 +72,30 @@ class StructuredToolProtocolTests(unittest.TestCase):
         with self.assertRaises(ToolProtocolError):
             parse_tool_calls(json.dumps({"tool_calls": [], "extra": True}))
 
+    def test_non_standard_json_numbers_are_rejected_before_any_dispatch(self):
+        valid_call = '{"id":"valid","name":"echo","arguments":{"text":"safe"}}'
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            response = (
+                '{"tool_calls":[' + valid_call
+                + ',{"id":"bad","name":"echo","arguments":{"value":' + constant + '}}]}'
+            )
+            with self.subTest(constant=constant), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch(response)
+            self.assertEqual(self.calls, [])
+            self.assertEqual(self.policy.requests, [])
+
+    def test_duplicate_json_object_keys_are_rejected_at_every_depth(self):
+        invalid = (
+            '{"tool_calls":[],"tool_calls":[]}',
+            '{"tool_calls":[{"id":"x","id":"y","name":"echo","arguments":{}}]}',
+            '{"tool_calls":[{"id":"x","name":"echo","arguments":{"a":1,"a":2}}]}',
+        )
+        for response in invalid:
+            with self.subTest(response=response), self.assertRaises(ToolProtocolError):
+                self.protocol.dispatch(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.policy.requests, [])
+
     def test_invalid_shapes_and_limits_are_rejected(self):
         invalid = (
             "",
