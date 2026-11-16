@@ -61,3 +61,63 @@ jobs:
         run: python -m unittest discover -s tests -p "test_companion_secure_memory.py" -v
       - name: Run memory-consent integration tests
         run: python -m unittest discover -s tests -p "test_companion_memory_consent.py" -v
+      - name: Run encrypted desktop backup tests
+        run: python -m unittest discover -s tests -p "test_desktop_backup.py" -v
+      - name: Run encrypted desktop memory tests
+        run: python -m unittest discover -s tests -p "test_desktop_memory.py" -v
+      - name: Run private desktop storage tests
+        run: python -m unittest discover -s tests -p "test_desktop_storage.py" -v
+      - name: Run desktop backup controller tests
+        run: python -m unittest discover -s tests -p "test_desktop_controller.py" -v
+
+  desktop-build:
+    name: Desktop bundle / ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install desktop and build dependencies
+        run: python -m pip install --requirement requirements.txt --requirement requirements-desktop.txt --requirement requirements-desktop-build.txt
+      - name: Validate dependencies
+        run: python -m pip check
+      - name: Verify import-safe desktop package
+        run: python -c "import ui.desktop; import ui.desktop.launch; print('desktop imports without starting Qt')"
+      - name: Run encrypted desktop backup tests
+        run: python -m unittest discover -s tests -p "test_desktop_backup.py" -v
+      - name: Install SBOM generator
+        run: python -m pip install "cyclonedx-bom>=4.0,<6"
+      - name: Build native desktop bundle
+        run: python -m PyInstaller --noconfirm --clean --windowed --onedir --name Yuki --paths . --collect-all PySide6 --collect-all shiboken6 --collect-all keyring --collect-submodules keyring.backends ui/desktop/launch.py
+      - name: Prepare release evidence directory
+        run: python -c "from pathlib import Path; Path('release-evidence').mkdir(exist_ok=True)"
+      - name: Generate build-environment CycloneDX SBOM
+        run: cyclonedx-py environment --output-file release-evidence/sbom.cdx.json --output-format JSON
+      - name: Install Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0
+      - name: Run packaged Qt runtime smoke test
+        run: python -m tools.desktop_smoke_test dist/Yuki
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Generate bundle SHA-256 manifest
+        run: python -m tools.desktop_artifact_manifest dist/Yuki --output release-evidence/manifest.json
+      - name: Upload unsigned developer bundle and release evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: yuki-desktop-${{ matrix.os }}
+          path: |
+            dist/Yuki*
+            release-evidence/
+          if-no-files-found: error
+          retention-days: 7
