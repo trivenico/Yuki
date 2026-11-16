@@ -45,16 +45,7 @@ class SandboxExecutionSubmissionService:
         self.engine = engine
         self.worker = worker
         self.approval_store = approval_store
-        # Ownership is stored alongside the durable queue so the goal and its
-        # owner cannot drift into separate databases during ordinary writes.
-        with closing(self.engine._connect()) as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS sandbox_goal_owners (
-                    goal_id TEXT PRIMARY KEY,
-                    actor_id TEXT NOT NULL,
-                    created_at REAL NOT NULL
-                )
-            """)
+        # Ownership is persisted transactionally with each goal by the engine.
 
     def _principal(self, session_token: str, *, permission: str | None = None) -> AuthenticatedUser:
         user = self.auth_service.resolve_session(session_token)
@@ -65,26 +56,11 @@ class SandboxExecutionSubmissionService:
         return user
 
     def _owns_goal(self, goal_id: str, actor_id: str) -> bool:
-        with closing(self.engine._connect()) as db:
-            row = db.execute(
-                "SELECT 1 FROM sandbox_goal_owners WHERE goal_id=? AND actor_id=?",
-                (goal_id, actor_id),
-            ).fetchone()
-        return row is not None
+        return self.engine.goal_owner(goal_id) == actor_id
 
     def create_goal(self, *, session_token: str) -> str:
         user = self._principal(session_token, permission="workflow:read")
-        goal_id = self.engine.create_goal()
-        try:
-            with closing(self.engine._connect()) as db:
-                db.execute(
-                    "INSERT INTO sandbox_goal_owners(goal_id,actor_id,created_at) VALUES(?,?,?)",
-                    (goal_id, user.user_id, self.engine.clock()),
-                )
-        except Exception:
-            # An orphan goal has no owner and is not visible through this facade.
-            raise
-        return goal_id
+        return self.engine.create_owned_goal(user.user_id)
 
     def approve_task(
         self, task: SandboxExecutionTask, *, session_token: str,
