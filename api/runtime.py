@@ -44,7 +44,7 @@ from core.google_gmail_runtime import GmailToolRuntimeBundle
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime, component_registry: ComponentRegistry | None = None):
+    def __init__(self, app: Any, application: ConversationApplicationRuntime, component_registry: ComponentRegistry | None = None, sandbox_execution_runtime=None):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
