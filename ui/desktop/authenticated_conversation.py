@@ -25,6 +25,7 @@ class AuthenticatedDesktopConversation:
         self._identity = identity
         self._sessions = sessions
         self._memory = memory
+        self._invalidated = False
         self._conversation = DesktopConversationAdapter(
             application, owner_id=actor_id, memory=memory,
         )
@@ -35,7 +36,7 @@ class AuthenticatedDesktopConversation:
         return self._conversation.conversation_id
 
     def _require_live_session(self) -> str:
-        if self._sessions.current_identity() != self._identity:
+        if self._invalidated or self._sessions.current_identity() != self._identity:
             raise PermissionError("The desktop session expired. Sign in again.")
         return self._identity.actor_id
 
@@ -126,6 +127,14 @@ class AuthenticatedDesktopConversation:
         if not callable(operation):
             raise RuntimeError("The configured memory facade cannot revoke context consent.")
         operation()
+
+    def invalidate(self) -> None:
+        """Discard local session state and revoke memory context during logout."""
+        if self._invalidated:
+            return
+        self.disable_memory_context()
+        self._conversation.clear_selection()
+        self._invalidated = True
 
     def clear_selection(self) -> None:
         self._require_live_session()
