@@ -19,6 +19,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
             workspace=self.tmp.name, command=command)
         self.assertEqual(argv[argv.index("--network") + 1], "none")
         self.assertIn("--read-only", argv)
+        self.assertIn("--pull=never", argv)
         self.assertIn("--cap-drop", argv)
         self.assertIn("ALL", argv)
         self.assertIn("--pids-limit", argv)
@@ -63,10 +64,43 @@ class DockerSandboxArgvTests(unittest.TestCase):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
                 workspace=self.tmp.name, command=["python", "bad\x00arg"])
 
+    def test_workspace_path_cannot_inject_docker_mount_options(self):
+        with tempfile.TemporaryDirectory(prefix="yuki,ro") as directory:
+            with patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True), patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True):
+                with self.assertRaisesRegex(SandboxRuntimeError, "mount syntax"):
+                    build_docker_argv(SandboxPolicy(), image="python:3.12",
+                        workspace=directory, command=["python", "--version"])
+
     def test_workspace_must_be_absolute_and_exist(self):
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
                 workspace="relative/path", command=["python", "--version"])
+
+    def test_launcher_options_are_validated_and_applied(self):
+        with tempfile.TemporaryDirectory() as cid_dir:
+            cidfile = str(__import__("pathlib").Path(cid_dir) / "cid")
+            argv = build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                command=["python", "--version"], docker_binary="/usr/bin/docker",
+                runtime_user=(65534, 65534), cidfile=cidfile,
+            )
+            self.assertEqual(argv[0], "/usr/bin/docker")
+            self.assertEqual(argv[argv.index("--user") + 1], "65534:65534")
+            self.assertEqual(argv[argv.index("--cidfile") + 1], cidfile)
+
+    def test_invalid_runtime_identity_and_cidfile_are_rejected(self):
+        for runtime_user in ((0, 1000), (1000, 0), (True, 1000), [1000, 1000]):
+            with self.subTest(runtime_user=runtime_user):
+                with self.assertRaises(SandboxRuntimeError):
+                    build_docker_argv(
+                        SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                        command=["python"], runtime_user=runtime_user,
+                    )
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                command=["python"], cidfile="relative/cid",
+            )
 
 
 if __name__ == "__main__":

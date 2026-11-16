@@ -22,6 +22,9 @@ def build_docker_argv(
     workspace: str,
     command: Sequence[str],
     network_allowlist: Sequence[str] = (),
+    docker_binary: str = "docker",
+    runtime_user: tuple[int, int] | None = None,
+    cidfile: str | None = None,
 ) -> list[str]:
     """Build a fail-closed Docker command, enforcing workspace capabilities.
 
@@ -33,6 +36,8 @@ def build_docker_argv(
         policy.validate()
     except (AttributeError, SandboxPolicyError) as exc:
         raise SandboxRuntimeError("invalid sandbox policy") from exc
+    if not isinstance(docker_binary, str) or not docker_binary or "\x00" in docker_binary:
+        raise SandboxRuntimeError("invalid Docker executable")
     if not isinstance(image, str) or not _IMAGE_RE.fullmatch(image):
         raise SandboxRuntimeError("invalid sandbox image reference")
     if (
@@ -46,26 +51,46 @@ def build_docker_argv(
     path = Path(workspace)
     if not path.exists() or not path.is_dir():
         raise SandboxRuntimeError("workspace must be an existing directory")
+    resolved_workspace = str(path.resolve())
+    # Docker parses --mount as comma-separated key/value fields. A comma in
+    # the host path could inject mount options and weaken the intended scope.
+    if "," in resolved_workspace:
+        raise SandboxRuntimeError("workspace path contains unsupported mount syntax")
     if policy.network_mode == "none":
         if network_allowlist:
             raise SandboxRuntimeError("allowlist conflicts with disabled networking")
         network_args = ["--network", "none"]
     else:
         raise SandboxRuntimeError("allowlist mode requires a separately enforced egress gateway")
-    if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
-        raise SandboxRuntimeError("non-root UID/GID detection unsupported on this host")
-    uid, gid = os.getuid(), os.getgid()
-    if uid == 0:
+    host_uid = os.getuid() if hasattr(os, "getuid") else None
+    if host_uid == 0:
         raise SandboxRuntimeError("refusing sandbox launch from a root service")
+    if runtime_user is None:
+        if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
+            raise SandboxRuntimeError("non-root UID/GID detection unsupported on this host")
+        uid, gid = host_uid, os.getgid()
+    else:
+        if (not isinstance(runtime_user, tuple) or len(runtime_user) != 2
+                or any(isinstance(value, bool) or not isinstance(value, int) or value < 1
+                       for value in runtime_user)):
+            raise SandboxRuntimeError("runtime_user must be a non-root (uid, gid) pair")
+        uid, gid = runtime_user
+    if uid == 0 or gid == 0:
+        raise SandboxRuntimeError("refusing root container identity")
+    cid_args: list[str] = []
+    if cidfile is not None:
+        if not isinstance(cidfile, str) or not os.path.isabs(cidfile) or "," in cidfile or "\x00" in cidfile:
+            raise SandboxRuntimeError("cidfile must be an absolute path without mount delimiters")
+        cid_args = ["--cidfile", cidfile]
 
     workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
     return [
-        "docker", "run", "--rm", "--interactive", "--read-only",
+        docker_binary, "run", "--rm", "--pull=never", *cid_args, "--interactive", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",
         "--pids-limit", str(policy.max_processes), "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges:true",
         "--tmpfs", f"/tmp:rw,noexec,nosuid,nodev,size={min(policy.memory_mb, 256)}m",
-        "--mount", f"type=bind,src={str(path.resolve())},dst=/workspace,{workspace_access}",
+        "--mount", f"type=bind,src={resolved_workspace},dst=/workspace,{workspace_access}",
         "--workdir", "/workspace", *network_args, image, *command,
     ]
