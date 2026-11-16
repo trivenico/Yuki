@@ -35,6 +35,8 @@ class HybridProvider:
         self._closed = False
 
     def is_available(self):
+        if self._closed:
+            return False
         try:
             return self.local_provider.is_available() is True
         except Exception:
@@ -42,6 +44,8 @@ class HybridProvider:
 
     def generate_chat(self, system: str, messages: list[dict]) -> str:
         """Use structured roles on the local provider; never flatten system prompts."""
+        if self._closed:
+            raise RuntimeError("Hybrid provider is closed.")
         chat = getattr(self.local_provider, "generate_chat", None)
         if not callable(chat):
             raise RuntimeError("Configured local provider does not support structured chat.")
@@ -57,6 +61,8 @@ class HybridProvider:
         return self.generate_for("general", prompt)
 
     def generate_for(self, task: str, prompt: str) -> str:
+        if self._closed:
+            raise RuntimeError("Hybrid provider is closed.")
         if not isinstance(task, str) or not task.strip():
             raise ValueError("A task name is required.")
         task_key = task.strip().lower()
