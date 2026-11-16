@@ -186,6 +186,29 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.text, "Hello")
         self.assertEqual(self.invocations, [])
 
+    def test_deeply_nested_model_arguments_fail_as_agent_error_without_dispatch(self):
+        arguments = {}
+        current = arguments
+        for _ in range(1_100):
+            child = {}
+            current["child"] = child
+            current = child
+
+        model_calls = []
+        def model(**kwargs):
+            model_calls.append(True)
+            return {
+                "text": "",
+                "tool_calls": {"tool_calls": [{
+                    "id": "deep_call", "name": "echo", "arguments": arguments,
+                }]},
+            }
+
+        with self.assertRaises(AgentExecutionError):
+            AgentExecutionLoop(model, self.protocol).run("Try deeply nested input", tools=[])
+        self.assertEqual(model_calls, [True])
+        self.assertEqual(self.invocations, [])
+
     def test_model_turn_budget_stops_unfinished_agent(self):
         def model(**kwargs):
             return {"text": "", "tool_calls": {"tool_calls": [
