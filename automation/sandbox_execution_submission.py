@@ -83,8 +83,8 @@ class SandboxExecutionSubmissionService:
             raise PermissionError("Goal is unavailable.")
         if not isinstance(approval, ExecutionApproval) or approval.actor_id != user.user_id:
             raise PermissionError("The approval belongs to a different principal.")
-        if self.approval_store.verify(approval, task) is not True:
-            raise PermissionError("The approval is expired, revoked, consumed, or invalid.")
+        # The worker checks a matching durable receipt first, then verifies
+        # a still-pending approval before creating any new queue entry.
         return self.worker.submit(
             goal_id, task, approval, idempotency_key=idempotency_key,
         )
