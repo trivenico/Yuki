@@ -34,19 +34,28 @@ def build_shared_desktop_controller(
     controller exactly once. Register the provider only once with the outer
     lifecycle and do not separately register the returned conversation runtime.
     """
-    conversation_session = build_authenticated_desktop_conversation(
-        config,
-        provider=provider,
-        identity=identity,
-        sessions=sessions,
-        memory=memory,
-        store_factory=store_factory,
-    )
+    conversation_session = None
     try:
+        conversation_session = build_authenticated_desktop_conversation(
+            config,
+            provider=provider,
+            identity=identity,
+            sessions=sessions,
+            memory=memory,
+            store_factory=store_factory,
+        )
         chat = SharedDesktopChatController(conversation_session)
         return SharedDesktopControllerBridge(chat, specialist_controller)
     except Exception:
-        # The bridge constructor can reject an incomplete legacy-controller
-        # contract; the session bundle must still be closed on every failure.
-        conversation_session.close()
+        # A failed chat composition must not leave the already-authenticated
+        # legacy controller or its memory-consent state alive.
+        if conversation_session is not None:
+            try:
+                conversation_session.close()
+            except Exception:
+                pass
+        try:
+            specialist_controller.logout()
+        except Exception:
+            pass
         raise
