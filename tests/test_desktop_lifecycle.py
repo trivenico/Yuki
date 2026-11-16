@@ -49,6 +49,21 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         lifecycle.close()
         self.assertEqual(events, ["closable"])
 
+    def test_session_revocation_runs_before_resources_and_failure_does_not_skip_cleanup(self):
+        events = []
+        resource = Resource("resource", events)
+        lifecycle = DesktopServiceLifecycle((resource,))
+
+        def revoke():
+            events.append("revoke")
+            raise PermissionError("session revoke failed")
+
+        with self.assertRaises(DesktopShutdownError):
+            lifecycle.close(before_close=revoke)
+
+        self.assertEqual(events, ["revoke", "resource"])
+        self.assertTrue(lifecycle.closed)
+
 
 if __name__ == "__main__":
     unittest.main()
