@@ -385,9 +385,11 @@ def build_conversation_runtime(
                         f"component registry instance mismatch: {component_id}"
                     )
             component_registry.start_all()
-        return ConversationRuntime(app, application, component_registry)
+        return ConversationRuntime(app, application, component_registry, sandbox_execution_runtime)
     except Exception:
         if "component_registry" in locals() and isinstance(component_registry, ComponentRegistry):
             component_registry.close()
         application.close()
+        if sandbox_execution_runtime is not None:
+            sandbox_execution_runtime.close()
         raise
