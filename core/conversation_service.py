@@ -122,13 +122,19 @@ class ConversationService:
             self._owner_agent_loops[owner_id] = loop
             return loop
 
-    def remember(self, *, owner_id: str, content: str, category: str = "note") -> dict[str, Any]:
+    def remember(
+        self, *, owner_id: str, content: str, category: str = "note",
+        expires_in_seconds: int | None = None,
+    ) -> dict[str, Any]:
         """Explicitly save a bounded memory for the authenticated owner."""
         with self._lock:
             self._ensure_open()
             if self.memory_store is None:
                 raise RuntimeError("persistent memory is not enabled for this runtime.")
-            return self.memory_store.remember(owner_id=owner_id, content=content, category=category)
+            return self.memory_store.remember(
+                owner_id=owner_id, content=content, category=category,
+                expires_in_seconds=expires_in_seconds,
+            )
 
     def memories(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
         """List only the authenticated owner's saved memories."""
