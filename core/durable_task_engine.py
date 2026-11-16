@@ -44,7 +44,7 @@ class DurableTaskEngine:
             CREATE TABLE IF NOT EXISTS goals(
               id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('active','paused','cancelled','completed')),
               created_at REAL NOT NULL, updated_at REAL NOT NULL);
-            CREATE TABLE IF NOT EXISTS tasks(
+            CREATE TABLE IF NOT EXISTS goal_owners(\n              goal_id TEXT PRIMARY KEY REFERENCES goals(id) ON DELETE CASCADE,\n              owner_id TEXT NOT NULL, created_at REAL NOT NULL);\n            CREATE TABLE IF NOT EXISTS tasks(
               id TEXT PRIMARY KEY, goal_id TEXT NOT NULL REFERENCES goals(id),
               task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
               state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
@@ -124,6 +124,25 @@ class DurableTaskEngine:
             self._event(c,goal_id,None,"goal.created",{})
             c.commit()
         return goal_id
+
+    def create_owned_goal(self, owner_id):
+        """Create a goal and its immutable owner record in one SQLite transaction."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be bounded non-empty text")
+        goal_id, now = str(uuid.uuid4()), self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("INSERT INTO goals VALUES(?,?,?,?)", (goal_id, "active", now, now))
+            c.execute("INSERT INTO goal_owners(goal_id,owner_id,created_at) VALUES(?,?,?)",
+                      (goal_id, owner_id, now))
+            self._event(c, goal_id, None, "goal.created", {"owner_id": owner_id})
+            c.commit()
+        return goal_id
+
+    def goal_owner(self, goal_id):
+        with closing(self._connect()) as c:
+            row = c.execute("SELECT owner_id FROM goal_owners WHERE goal_id=?", (goal_id,)).fetchone()
+        return None if row is None else row["owner_id"]
 
     def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
