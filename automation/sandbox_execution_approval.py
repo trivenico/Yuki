@@ -39,6 +39,11 @@ class SQLiteSandboxExecutionApprovalStore:
                 consumed_at TEXT,
                 revoked_at TEXT
             )""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sandbox_execution_approvals)")}
+            if "status" not in columns:
+                db.execute("ALTER TABLE sandbox_execution_approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'")
+            if "consumed_at" not in columns:
+                db.execute("ALTER TABLE sandbox_execution_approvals ADD COLUMN consumed_at TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_approval_task ON sandbox_execution_approvals(task_id)")
 
     @contextmanager
