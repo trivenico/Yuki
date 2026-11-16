@@ -210,6 +210,8 @@ def build_conversation_runtime(
             prepared_oauth_provider_registry.authorization_service_for_provider
         )
         oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
+        if network_firewall is not None and not prepared_oauth_provider_registry.uses_firewall_policy(network_firewall):
+            raise ValueError("prepared OAuth providers must use the exact API network firewall policy")
     if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if mcp_runtime is not None and network_firewall is not None:
