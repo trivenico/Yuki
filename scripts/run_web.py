@@ -31,7 +31,37 @@ class DenyAllTools:
         return False
 
 
-def create_app():
+def create_app(
+    *,
+    oauth_connections=None,
+    oauth_disconnect_service_for_provider=None,
+    prepared_oauth_provider_registry=None,
+    mcp_runtime=None,
+):
+    """Build the web app, optionally mounting a fully prepared OAuth/MCP stack.
+
+    OAuth/MCP stays disabled by default. Deployments must construct the provider
+    transports, encrypted vault, refresh service, and durable stores explicitly
+    and inject the completed objects; this entrypoint never guesses endpoints or
+    reads provider secrets from untrusted application config.
+    """
+    oauth_dependencies = (
+        oauth_connections,
+        oauth_disconnect_service_for_provider,
+        prepared_oauth_provider_registry,
+    )
+    if any(value is not None for value in oauth_dependencies) and not all(
+        value is not None for value in oauth_dependencies
+    ):
+        raise RuntimeError(
+            "OAuth web startup requires the connection registry, disconnect resolver, "
+            "and prepared provider registry together."
+        )
+    if mcp_runtime is not None and not all(
+        value is not None for value in oauth_dependencies
+    ):
+        raise RuntimeError("MCP web startup requires the complete OAuth runtime.")
+
     config = load_config()
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
@@ -78,6 +108,10 @@ def create_app():
         provider_selector=provider_manager.select,
         device_pairing=device_pairing, inference_jobs=inference_jobs,
         income_opportunities=income_opportunities,
+        oauth_connections=oauth_connections,
+        oauth_disconnect_service_for_provider=oauth_disconnect_service_for_provider,
+        prepared_oauth_provider_registry=prepared_oauth_provider_registry,
+        mcp_runtime=mcp_runtime,
         network_firewall=network_firewall,
     )
 
