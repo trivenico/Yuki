@@ -157,7 +157,7 @@ class ConversationServiceTests(unittest.TestCase):
             user_text="I prefer concise answers, please", request_id="durable-memory",
             expected_version=0, tools=[],
         )
-        reopened_store = ConversationStore(Path(self.tempdir.name) / "conversations.sqlite3")
+        reopened_store = ConversationStore(Path(self.tempdir.name) / "chat.sqlite3")
         reopened_service = ConversationService(reopened_store, self.loop, memory_store=memory_store)
         replay = reopened_service.reply(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
