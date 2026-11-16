@@ -64,7 +64,9 @@ The helper builds the canonical `ProviderAgentAdapter`,
 `AgentExecutionLoop`, deny-all `StructuredToolProtocol`, and
 `ConversationApplicationRuntime`. It uses the configured conversation store,
 sets the runtime owner scope, and registers the provider's optional `close()`
-hook with runtime shutdown. Chat tools remain empty; this helper does not
+hook with runtime shutdown by default. When an outer desktop lifecycle already owns
+provider shutdown, the caller must pass `close_provider=False` so the provider is
+closed exactly once by that lifecycle. Chat tools remain empty; this helper does not
 connect the supervised specialist task runtime or grant desktop chat new
 permissions. The desktop composition root still needs to call this helper,
 construct `DesktopConversationAdapter` from the same runtime and owner ID,
