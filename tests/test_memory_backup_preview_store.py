@@ -1,4 +1,4 @@
-"""Read-only owner-scoped conflict inspection tests."""
+"""Read-only global memory-ID conflict inspection tests."""
 from __future__ import annotations
 
 import tempfile
@@ -13,7 +13,7 @@ class MemoryBackupPreviewStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = ConversationMemoryStore(Path(directory) / "memory.sqlite3")
             alice = store.remember(owner_id="alice", content="Alice memory")
-            store.remember(owner_id="bob", content="Bob memory")
+            bob = store.remember(owner_id="bob", content="Bob memory")
             before = store.list(owner_id="alice")
             conflicts = store.inspect_import_conflicts(
                 owner_id="alice",
@@ -22,7 +22,7 @@ class MemoryBackupPreviewStoreTests(unittest.TestCase):
             self.assertEqual(conflicts, 1)
             self.assertEqual(store.list(owner_id="alice"), before)
             self.assertEqual(store.inspect_import_conflicts(
-                owner_id="bob", memory_ids=(alice["memory_id"],),
+                owner_id="alice", memory_ids=(bob["memory_id"],),
             ), 1)
 
     def test_conflict_inspection_rejects_unbounded_or_invalid_ids(self):
