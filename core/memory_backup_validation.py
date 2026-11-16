@@ -16,7 +16,7 @@ _SNAPSHOT_FIELDS = {
     "format", "schema_version", "owner_id", "exported_at", "memory_count", "memories",
 }
 _MEMORY_FIELDS = {
-    "memory_id", "owner_id", "category", "content", "created_at", "expires_at",
+    "memory_id", "category", "content", "created_at", "expires_at",
 }
 
 
@@ -93,8 +93,6 @@ def validate_memory_backup_snapshot(plaintext: bytes, authenticated_owner_id: st
         if memory_id in seen:
             raise MemoryBackupValidationError("duplicate_memory_backup_id")
         seen.add(memory_id)
-        if item.get("owner_id") != authenticated_owner_id:
-            raise MemoryBackupValidationError("memory_backup_owner_mismatch")
         category = item.get("category")
         if not isinstance(category, str) or category not in _CATEGORIES:
             raise MemoryBackupValidationError("invalid_memory_backup_snapshot")
