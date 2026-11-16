@@ -41,8 +41,8 @@ class ConversationMemoryStore:
 
     @staticmethod
     def _owner(owner_id: str) -> str:
-        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
-            raise ValueError("owner_id must be non-empty text of at most 128 characters.")
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be non-empty text of at most 200 characters.")
         return owner_id.strip()
 
     @staticmethod
