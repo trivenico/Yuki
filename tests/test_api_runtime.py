@@ -14,6 +14,7 @@ from core.conversation_store import ConversationStore
 from core.conversation_memory_store import ConversationMemoryStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
+from core.network_firewall import NetworkFirewall
 from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAuthProviderRegistry
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
@@ -384,6 +385,69 @@ class ConversationRuntimeTests(unittest.TestCase):
             },))
             self.assertIsNone(runtime.app._service_for_provider("unknown"))
             runtime.close()
+
+    def test_runtime_accepts_prepared_oauth_registry_with_exact_shared_firewall(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            connection_registry = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite"))
+            policy = NetworkFirewall(allowed_hosts=("issuer.example",))
+            service = SimpleNamespace(
+                provider_id="example", firewall_policy=policy,
+                begin=lambda **kwargs: {}, complete=lambda **kwargs: {},
+            )
+            prepared = PreparedOAuthProvider(
+                provider_id="example", issuer="https://issuer.example",
+                resource="https://mcp.example", client_id="private-client",
+                registration_method="pre_registered",
+                redirect_uri="https://app.example/oauth/callback/example",
+                scopes=("read",), authorization_service=service,
+            )
+            providers = PreparedOAuthProviderRegistry(
+                {"example": prepared},
+                {"example": OAuthProviderPresentation("Example")},
+                firewall_policy=policy,
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                oauth_connections=connection_registry,
+                oauth_disconnect_service_for_provider=lambda provider: None,
+                prepared_oauth_provider_registry=providers,
+                network_firewall=policy,
+            )
+            self.assertIs(runtime.app._service_for_provider("example"), service)
+            runtime.close()
+
+    def test_runtime_rejects_prepared_oauth_registry_without_shared_firewall_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            connection_registry = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite"))
+            policy = NetworkFirewall(allowed_hosts=("issuer.example",))
+            service = SimpleNamespace(
+                provider_id="example", begin=lambda **kwargs: {}, complete=lambda **kwargs: {},
+            )
+            prepared = PreparedOAuthProvider(
+                provider_id="example", issuer="https://issuer.example",
+                resource="https://mcp.example", client_id="private-client",
+                registration_method="pre_registered",
+                redirect_uri="https://app.example/oauth/callback/example",
+                scopes=("read",), authorization_service=service,
+            )
+            providers = PreparedOAuthProviderRegistry(
+                {"example": prepared},
+                {"example": OAuthProviderPresentation("Example")},
+            )
+            with self.assertRaisesRegex(ValueError, "exact API network firewall policy"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    oauth_connections=connection_registry,
+                    oauth_disconnect_service_for_provider=lambda provider: None,
+                    prepared_oauth_provider_registry=providers,
+                    network_firewall=policy,
+                )
 
     def test_runtime_rejects_registry_combined_with_explicit_oauth_resolver(self):
         with tempfile.TemporaryDirectory() as directory:
