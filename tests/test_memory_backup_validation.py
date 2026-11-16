@@ -14,7 +14,6 @@ from core.memory_backup_validation import (
 def snapshot(owner="alice", memories=None):
     items = memories if memories is not None else [{
         "memory_id": "a" * 32,
-        "owner_id": owner,
         "category": "preference",
         "content": "Concise engineering updates",
         "created_at": "2026-11-16T10:00:00Z",
@@ -57,7 +56,7 @@ class MemoryBackupValidationTests(unittest.TestCase):
         with self.assertRaises(MemoryBackupValidationError):
             self.validate(value)
 
-    def test_rejects_duplicate_ids_and_cross_owner_records(self):
+    def test_rejects_duplicate_ids_and_unexpected_record_owner_field(self):
         value = snapshot()
         value["memories"].append(dict(value["memories"][0]))
         value["memory_count"] = 2
@@ -65,7 +64,7 @@ class MemoryBackupValidationTests(unittest.TestCase):
             self.validate(value)
         value = snapshot()
         value["memories"][0]["owner_id"] = "bob"
-        with self.assertRaisesRegex(MemoryBackupValidationError, "owner_mismatch"):
+        with self.assertRaises(MemoryBackupValidationError):
             self.validate(value)
 
     def test_rejects_bool_schema_version_wrong_counts_and_invalid_categories(self):
