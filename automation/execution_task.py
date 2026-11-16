@@ -9,7 +9,8 @@ from dataclasses import dataclass
 import hashlib
 import json
 import re
-from typing import Callable, Mapping, Protocol
+from pathlib import Path
+from typing import Callable, Mapping
 
 from hackback.sandbox import DockerSandbox
 
@@ -76,15 +77,6 @@ class ExecutionApproval:
     approved: bool
 
 
-class SandboxRunner(Protocol):
-    workspace: object
-
-    def run(
-        self, image: str, argv: tuple[str, ...], *, timeout: int,
-        write_workspace: bool, max_output_bytes: int,
-    ) -> Mapping[str, object]: ...
-
-
 ApprovalVerifier = Callable[[ExecutionApproval, SandboxExecutionTask], bool]
 AuditWriter = Callable[[Mapping[str, object]], object]
 
@@ -118,7 +110,7 @@ def execute_approved_task(
         raise PermissionError("execution approval was not verified")
     if not isinstance(sandbox, DockerSandbox):
         raise TypeError("sandbox must be a configured DockerSandbox")
-    if str(sandbox.workspace) != str(__import__("pathlib").Path(task.workspace).expanduser().resolve()):
+    if str(sandbox.workspace) != str(Path(task.workspace).expanduser().resolve()):
         raise PermissionError("task workspace does not match the configured sandbox workspace")
     if not callable(audit):
         raise TypeError("a durable audit writer is required")
@@ -129,7 +121,8 @@ def execute_approved_task(
         "actor_id": approval.actor_id,
         "task_fingerprint": task.fingerprint(),
     }
-    audit({**audit_base, "event": "execution.started"})
+    if audit({**audit_base, "event": "execution.started"}) is False:
+        raise RuntimeError("execution start audit was not durably accepted")
     try:
         result = sandbox.run(
             task.image,
@@ -139,9 +132,11 @@ def execute_approved_task(
             max_output_bytes=task.max_output_bytes,
         )
     except Exception:
-        audit({**audit_base, "event": "execution.failed"})
+        if audit({**audit_base, "event": "execution.failed"}) is False:
+            raise RuntimeError("execution failure audit was not durably accepted")
         raise
-    audit({**audit_base, "event": "execution.completed"})
+    if audit({**audit_base, "event": "execution.completed"}) is False:
+        raise RuntimeError("execution completion audit was not durably accepted")
     if not isinstance(result, Mapping):
         raise RuntimeError("sandbox returned an invalid execution result")
     return result
