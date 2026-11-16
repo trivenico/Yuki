@@ -154,6 +154,9 @@ def load_config(path=None):
         "language_behavior": language_behavior, "voice_style": voice_style,
         "spoken_reply_policy": spoken_reply_policy,
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
+        "conversation_memory_enabled": _bool_setting(
+            "YUKI_CONVERSATION_MEMORY_ENABLED", raw, "conversation_memory_enabled", False
+        ),
         "security_lab_enabled": _bool_setting("YUKI_SECURITY_LAB_ENABLED", raw, "security_lab_enabled", False),
         "sandbox_enabled": _bool_setting("YUKI_SANDBOX_ENABLED", raw, "sandbox_enabled", False),
         "gmail_enabled": _bool_setting("YUKI_GMAIL_ENABLED", raw, "gmail_enabled", False),
