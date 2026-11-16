@@ -126,6 +126,13 @@ class ConversationMemoryIntegrationTests(unittest.TestCase):
         matches = self.memory.search(owner_id="alice", query="東京 プロジェクト")
         self.assertEqual([item["memory_id"] for item in matches], [saved["memory_id"]])
 
+    def test_cjk_search_matches_terms_inside_unspaced_japanese_chinese_and_korean(self):
+        saved = self.memory.remember(
+            owner_id="alice", content="人工知能の研究を東京で進める 서울 프로젝트"
+        )
+        matches = self.memory.search(owner_id="alice", query="人工知能 東京 서울")
+        self.assertEqual([item["memory_id"] for item in matches], [saved["memory_id"]])
+
 
     def test_memory_retrieval_failure_does_not_break_conversation(self):
         self.memory.search = lambda **kwargs: (_ for _ in ()).throw(OSError("memory unavailable"))
