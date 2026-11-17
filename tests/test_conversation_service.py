@@ -133,11 +133,22 @@ class ConversationServiceTests(unittest.TestCase):
         renewal_attempted = threading.Event()
         errors = []
 
+        invocations = []
+
+        class AllowEcho:
+            def authorize_tool(self, name):
+                return name == "echo"
+
         def blocking_model(**kwargs):
             entered.set()
             if not release.wait(timeout=3):
                 raise TimeoutError("test provider was not released")
-            return {"text": "stale answer must not persist", "tool_calls": {"tool_calls": []}}
+            return {
+                "text": "",
+                "tool_calls": {"tool_calls": [
+                    {"id": "late_echo", "name": "echo", "arguments": {"value": "must-not-run"}}
+                ]},
+            }
 
         def lose_lease(**kwargs):
             renewal_attempted.set()
@@ -147,7 +158,10 @@ class ConversationServiceTests(unittest.TestCase):
             self.store,
             AgentExecutionLoop(
                 blocking_model,
-                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+                StructuredToolProtocol(GuardedToolRuntime(
+                    {"echo": lambda raw: invocations.append(raw) or raw},
+                    AllowEcho(),
+                )),
             ),
         )
 
@@ -159,7 +173,12 @@ class ConversationServiceTests(unittest.TestCase):
                     user_text="A request whose lease will be lost",
                     request_id="lost-lease-request",
                     expected_version=0,
-                    tools=[],
+                    tools=[{
+                        "type": "function",
+                        "function": {"name": "echo", "description": "Echo input",
+                                     "parameters": {"type": "object", "properties": {
+                                         "value": {"type": "string"}}, "required": ["value"]}},
+                    }],
                 )
             except Exception as exc:
                 errors.append(exc)
@@ -185,6 +204,7 @@ class ConversationServiceTests(unittest.TestCase):
             conversation_id=self.conversation["conversation_id"],
         )
         self.assertEqual([message["role"] for message in messages], ["user"])
+        self.assertEqual(invocations, [], "stale model tool proposal must never execute")
         pending = self.store.list_interrupted_generations(
             owner_id="owner-a",
             conversation_id=self.conversation["conversation_id"],
