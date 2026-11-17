@@ -43,6 +43,17 @@ def _close_startup_resources(resources) -> None:
                 continue
 
 
+def _restrict_session_to_logout_retry(tabs: Any, chat_controls: tuple[Any, ...], logout_button: Any, chat_status: Any) -> None:
+    """Leave only the retry-sign-out control usable after failed revocation."""
+    for index in range(tabs.count()):
+        tabs.setTabEnabled(index, index == 0)
+    for control in chat_controls:
+        control.setEnabled(False)
+    logout_button.setText("Retry sign out")
+    logout_button.setEnabled(True)
+    chat_status.setEnabled(True)
+
+
 def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -> None:
     """Revoke the active owner session, then close process resources."""
     def revoke_active_session():
@@ -1209,15 +1220,12 @@ def run() -> int:
 
         def _restrict_to_logout_retry(self):
             self.setEnabled(True)
-            for index in range(self.authenticated_tabs.count()):
-                self.authenticated_tabs.setTabEnabled(index, index == 0)
-            for widget in (
-                self.memory_toggle, self.transcript, self.message, self.send_button,
-            ):
-                widget.setEnabled(False)
-            self.logout_button.setText("Retry sign out")
-            self.logout_button.setEnabled(True)
-            self.chat_status.setEnabled(True)
+            _restrict_session_to_logout_retry(
+                self.authenticated_tabs,
+                (self.memory_toggle, self.transcript, self.message, self.send_button),
+                self.logout_button,
+                self.chat_status,
+            )
 
         @Slot(object)
         def _logout_finished(self, error: Any):
