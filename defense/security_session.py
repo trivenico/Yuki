@@ -6,7 +6,7 @@ in-flight results before asking the monitor to disable itself.
 """
 from __future__ import annotations
 
-from threading import RLock
+from threading import Condition, RLock
 from typing import Callable, Any
 
 
@@ -27,6 +27,7 @@ class SecuritySessionController:
         self._monitor = monitor
         self._authorize = authorize
         self._lock = RLock()
+        self._condition = Condition(self._lock)
         self._active = False
         self._starting = False
         self._starting_generation = None
@@ -110,20 +111,22 @@ class SecuritySessionController:
             raise SecuritySessionError("The authenticated session ended during startup.")
 
     def _disable_monitor(self) -> None:
-        with self._lock:
-            if self._stopping:
-                raise SecuritySessionError("Security monitor cleanup is already in progress.")
+        with self._condition:
+            while self._stopping:
+                self._condition.wait()
             self._stopping = True
         try:
             self._monitor.disable()
         except Exception as exc:
-            with self._lock:
+            with self._condition:
                 self._stopping = False
                 self._cleanup_required = True
+                self._condition.notify_all()
             raise SecuritySessionError("Security monitor cleanup failed.") from exc
-        with self._lock:
+        with self._condition:
             self._stopping = False
             self._cleanup_required = False
+            self._condition.notify_all()
 
     def stop(self) -> None:
         with self._lock:
