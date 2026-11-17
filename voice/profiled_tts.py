@@ -26,6 +26,8 @@ class ProfiledLocalSpeechOutput:
     """Apply only controls the wrapped local synthesizer can actually honor."""
 
     _PROFILE_CONTROLS = frozenset({"speaking_rate", "pitch", "expressiveness", "style"})
+    _MAX_FALLBACK_CHUNKS = 100
+    _MAX_FALLBACK_CHARACTERS = 20_000
 
     def __init__(self, synthesizer, profile: VoiceProfile):
         if not callable(getattr(synthesizer, "speak", None)):
@@ -58,11 +60,17 @@ class ProfiledLocalSpeechOutput:
         if callable(stream):
             return stream(chunks)
         count = 0
+        total_characters = 0
         for chunk in chunks:
             if not isinstance(chunk, str) or not chunk.strip():
                 continue
             if len(chunk) > 2000:
                 raise ValueError("Each speech chunk must be at most 2000 characters.")
+            if count >= self._MAX_FALLBACK_CHUNKS:
+                raise ValueError("Speech stream exceeds the 100-chunk limit.")
+            total_characters += len(chunk)
+            if total_characters > self._MAX_FALLBACK_CHARACTERS:
+                raise ValueError("Speech stream exceeds the 20000-character limit.")
             self.synthesizer.speak(chunk)
             count += 1
         return {"chunks_spoken": count, "interrupted": False}
