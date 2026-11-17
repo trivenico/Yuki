@@ -35,14 +35,16 @@ class SoundDeviceWakeWordAudioSource:
         self._stop_event = Event()
         self._lock = Lock()
         self._started = False
+        self._starting = False
         self._closed = False
 
     def start(self) -> None:
         with self._lock:
             if self._closed:
                 raise WakeWordAudioError("The microphone source is closed.")
-            if self._started:
-                raise WakeWordAudioError("The microphone source is already started.")
+            if self._started or self._starting:
+                raise WakeWordAudioError("The microphone source is already active.")
+            self._starting = True
             self._stop_event.clear()
 
         sd = self._sounddevice
@@ -55,12 +57,13 @@ class SoundDeviceWakeWordAudioSource:
                 ) from exc
 
         def on_audio(indata, frames, time_info, status):
-            if self._stop_event.is_set():
+            if self._stop_event.is_set() or frames != self.BLOCKSIZE:
                 return
-            # Keep only the newest bounded frame; never build an audio history.
+            # Validate the callback buffer before copying; never allocate an
+            # unbounded frame from unexpected device callback metadata.
+            if len(indata) != self.FRAME_BYTES:
+                return
             frame = bytes(indata)
-            if len(frame) != self.FRAME_BYTES:
-                return
             try:
                 self._frames.put_nowait(frame)
             except Full:
@@ -84,6 +87,8 @@ class SoundDeviceWakeWordAudioSource:
             )
             stream.start()
         except Exception as exc:
+            with self._lock:
+                self._starting = False
             if stream is not None:
                 try:
                     stream.close()
@@ -95,6 +100,7 @@ class SoundDeviceWakeWordAudioSource:
 
         with self._lock:
             if self._closed or self._stop_event.is_set():
+                self._starting = False
                 try:
                     stream.stop()
                 finally:
@@ -103,6 +109,7 @@ class SoundDeviceWakeWordAudioSource:
             self._sounddevice = sd
             self._stream = stream
             self._started = True
+            self._starting = False
 
     def read(self):
         while not self._stop_event.is_set():
