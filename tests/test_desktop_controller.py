@@ -227,7 +227,7 @@ class ControllerTests(unittest.TestCase):
                 backup, restored, "a secure backup passphrase"
             )
         self.assertEqual(result["file_count"], 1)
-        self.assertEqual((restored / "settings.json").read_text(), '{"theme":"dark"}')
+        self.assertEqual((restored / ".yuki" / "settings.json").read_text(), '{"theme":"dark"}')
         self.assertTrue((profile / "settings.json").exists())
 
     def test_restore_refuses_active_profile_and_parent_directory(self):
