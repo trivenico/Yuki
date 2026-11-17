@@ -197,6 +197,7 @@ class ConversationStore:
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
         generation_request_id: str | None = None,
+        lease_token: str | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -210,10 +211,22 @@ class ConversationStore:
             raise ValueError("generation_request_id must be non-empty text for user messages.")
         if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise ValueError("expected_version must be a non-negative integer.")
+        if lease_token is not None and (
+            not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200
+        ):
+            raise ValueError("lease_token must be non-empty text of at most 200 characters.")
         now, message_id = self._now(), str(uuid.uuid4())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                if lease_token is not None:
+                    lease = db.execute(
+                        """SELECT expires_at FROM conversation_generation_leases
+                           WHERE conversation_id=? AND owner_id=? AND lease_token=?""",
+                        (conversation_id, owner, lease_token.strip()),
+                    ).fetchone()
+                    if lease is None or lease["expires_at"] <= time.time():
+                        raise ConversationConflict("conversation generation lease was lost.")
                 conversation = db.execute(
                     "SELECT * FROM conversations WHERE conversation_id=? AND owner_id=?",
                     (conversation_id, owner),
