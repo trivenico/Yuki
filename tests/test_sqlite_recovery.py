@@ -88,6 +88,36 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
         self.assertEqual(statuses["conversation_history"], "corrupt_or_unreadable")
         self.assertEqual(conversation.read_bytes(), b"not a sqlite database")
 
+    def test_existing_encrypted_memory_without_key_is_reported_unreadable(self):
+        class Keyring:
+            def get_keyring(self):
+                return type("Backend", (), {"priority": 1})()
+            def get_password(self, service, account):
+                return None
+            def set_password(self, service, account, value):
+                raise AssertionError("must not create a replacement key")
+        path = self.root / "memory.enc.json"
+        path.write_text('{"version":1,"nonce":"AAAAAAAAAAAAAAAA","ciphertext":"AAAAAAAAAAAAAAAAAAAAAA=="}')
+        from core.sqlite_recovery import inspect_encrypted_memory_store
+        result = inspect_encrypted_memory_store(path, Keyring())
+        self.assertEqual(result["component"], "encrypted_memory")
+        self.assertEqual(result["status"], "corrupt_or_unreadable")
+        self.assertTrue(path.exists())
+
+    def test_additional_memory_check_blocks_sqlite_startup_report(self):
+        path = self.root / "auth.sqlite3"
+        sqlite3.connect(path).close()
+        report = build_sqlite_recovery_report(
+            {"authentication": path},
+            additional_checks=({
+                "component": "encrypted_memory",
+                "status": "corrupt_or_unreadable",
+                "action": "Preserve encrypted memory.",
+            },),
+        )
+        self.assertFalse(report["startup_safe"])
+        self.assertEqual(report["stores"][-1]["component"], "encrypted_memory")
+
     def test_owner_facing_report_names_component_without_disclosing_path(self):
         from core.sqlite_recovery import format_sqlite_recovery_report
         path = self.root / "secret-location.sqlite3"
