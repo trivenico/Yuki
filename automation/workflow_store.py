@@ -383,6 +383,40 @@ class WorkflowRunStore:
                 ).fetchall()
             return [self._row(row) for row in rows]
 
+    def list_queued_approved_by_session(
+        self, session_hash: str, *, limit: int = 100,
+        after: tuple[str, str] | None = None,
+    ) -> list[WorkflowRun]:
+        """Page queued tasks approved by one exact session without exposing other tasks."""
+        if not isinstance(session_hash, str) or len(session_hash) != 64 or any(
+            char not in "0123456789abcdef" for char in session_hash
+        ):
+            raise ValueError("session_hash must be a lowercase SHA-256 digest.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        if after is not None and (
+            not isinstance(after, tuple) or len(after) != 2
+            or not all(isinstance(value, str) and value for value in after)
+        ):
+            raise ValueError("after must be a (created_at, run_id) cursor.")
+        with self._connect() as db:
+            if after is None:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    "AND approved_session_hash=? AND approved_by IS NOT NULL "
+                    "ORDER BY created_at, run_id LIMIT ?",
+                    (session_hash, limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    "AND approved_session_hash=? AND approved_by IS NOT NULL "
+                    "AND (created_at>? OR (created_at=? AND run_id>?)) "
+                    "ORDER BY created_at, run_id LIMIT ?",
+                    (session_hash, after[0], after[0], after[1], limit),
+                ).fetchall()
+            return [self._row(row) for row in rows]
+
     def transition(
         self,
         run_id: str,
