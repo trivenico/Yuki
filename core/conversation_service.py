@@ -13,6 +13,10 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
 
 
+GENERATION_LEASE_TTL_SECONDS = 120
+GENERATION_LEASE_RENEW_INTERVAL_SECONDS = 30
+
+
 class ConversationService:
     """Synchronous conversation orchestration for a single application worker.
 
@@ -100,7 +104,7 @@ class ConversationService:
         with self._lock:
             self._ensure_open()
             token = str(uuid.uuid4())
-            lease_ttl = 120
+            lease_ttl = GENERATION_LEASE_TTL_SECONDS
             self.store.acquire_generation_lease(
                 owner_id=owner_id, conversation_id=conversation_id,
                 lease_token=token, ttl_seconds=lease_ttl,
@@ -109,7 +113,7 @@ class ConversationService:
             lease_lost = threading.Event()
 
             def renew_lease() -> None:
-                while not stop_heartbeat.wait(30):
+                while not stop_heartbeat.wait(GENERATION_LEASE_RENEW_INTERVAL_SECONDS):
                     try:
                         renewed = self.store.renew_generation_lease(
                             owner_id=owner_id, conversation_id=conversation_id,
