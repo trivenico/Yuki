@@ -802,10 +802,16 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self._open_session(identity)
             except Exception as exc:
                 self.login_button.setEnabled(False)
-                self.login_status.setText(
-                    "Desktop setup is unavailable (" + type(exc).__name__ + "). "
-                    "Check the OS credential store and local configuration."
+                from core.sqlite_recovery import (
+                    SQLiteRecoveryRequired, format_sqlite_recovery_report,
                 )
+                if isinstance(exc, SQLiteRecoveryRequired):
+                    self.login_status.setText(format_sqlite_recovery_report(exc.report))
+                else:
+                    self.login_status.setText(
+                        "Desktop setup is unavailable (" + type(exc).__name__ + "). "
+                        "Check the OS credential store and local configuration."
+                    )
 
         def _login(self):
             if self.sessions is None:
