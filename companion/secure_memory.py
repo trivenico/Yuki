@@ -166,7 +166,7 @@ class EncryptedMemoryStore(MemoryStore):
 
     def _load(self) -> list[dict]:
         try:
-            if self.path.stat().st_size > self.MAX_FILE_BYTES:
+            if self.path.stat().st_size > MemoryStore.MAX_FILE_BYTES:
                 raise RuntimeError("Encrypted memory file exceeds the 10 MB safety limit.")
             envelope = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -203,7 +203,7 @@ class EncryptedMemoryStore(MemoryStore):
             "nonce": base64.b64encode(nonce).decode("ascii"),
             "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
         }, separators=(",", ":"))
-        if len(envelope.encode("utf-8")) > self.MAX_FILE_BYTES:
+        if len(envelope.encode("utf-8")) > MemoryStore.MAX_FILE_BYTES:
             raise RuntimeError("Encrypted memory file would exceed the 10 MB safety limit.")
         fd, temp_name = tempfile.mkstemp(prefix=".yuki-memory-", suffix=".tmp", dir=str(self.path.parent))
         try:
