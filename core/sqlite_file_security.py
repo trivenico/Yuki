@@ -65,15 +65,21 @@ class SQLiteIntegrityError(RuntimeError):
     """An existing SQLite database failed its read-only integrity check."""
 
 
-def verify_sqlite_integrity(database_path: str | Path) -> None:
+def verify_sqlite_integrity(database_path: str | Path, *, allow_empty: bool = False) -> None:
     """Run a read-only quick_check before schema migrations or application writes.
 
     Missing or zero-byte files are new stores. Existing databases must pass;
     corruption is never treated as permission to recreate user data.
     """
     path = Path(database_path)
-    if not path.exists() or path.stat().st_size == 0:
+    if not path.exists():
         return
+    if path.stat().st_size == 0:
+        if allow_empty:
+            return
+        raise SQLiteIntegrityError(
+            "Existing Yuki database is empty; preserve it for recovery instead of reinitializing it."
+        )
     try:
         connection = sqlite3.connect(
             f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5,
