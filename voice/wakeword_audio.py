@@ -52,6 +52,8 @@ class SoundDeviceWakeWordAudioSource:
             try:
                 import sounddevice as sd
             except ImportError as exc:
+                with self._lock:
+                    self._starting = False
                 raise WakeWordAudioError(
                     "Install the optional desktop voice dependencies to use a microphone."
                 ) from exc
