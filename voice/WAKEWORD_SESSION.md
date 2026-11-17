@@ -12,7 +12,8 @@ a selected wake-word model.
 - Only an explicit `start()` call constructs adapters and opens the source.
 - State transitions are observable: disabled, starting, listening, stopping,
   triggered, failed, and closed.
-- Audio adapters return bounded mono PCM16 frames (at most 16 KiB each).
+- Audio adapters return bounded 16 kHz mono signed PCM16 frames (at most 16 KiB each).
+- Adapter/model initialization is run from a background worker, never the desktop GUI thread.
 - Frames are passed directly to the detector and are not persisted, logged,
   transcribed, queued, or added to memory by this controller.
 - The detector adapter must run inference locally and must not make network
