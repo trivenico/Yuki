@@ -87,6 +87,21 @@ class SQLiteFileSecurityTests(unittest.TestCase):
             ConversationStore(path)
         self.assertEqual(path.read_bytes(), original)
 
+    def test_approval_stores_do_not_initialize_over_corrupt_databases(self):
+        constructors = (
+            ("corrupt-audit.sqlite3", SQLiteApprovalAuditLog),
+            ("corrupt-pending.sqlite3", SQLitePendingApprovalStore),
+            ("corrupt-workflow.sqlite3", WorkflowRunStore),
+        )
+        for filename, construct in constructors:
+            with self.subTest(filename=filename):
+                path = self.root / filename
+                original = b"preserve corrupt user state"
+                path.write_bytes(original)
+                with self.assertRaises(SQLiteIntegrityError):
+                    construct(str(path))
+                self.assertEqual(path.read_bytes(), original)
+
     def test_directory_is_rejected_as_database_file(self):
         directory = self.root / "database.sqlite3"
         directory.mkdir()
