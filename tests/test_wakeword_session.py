@@ -93,7 +93,7 @@ class WakeWordSessionTests(unittest.TestCase):
 
             def start(inner_self):
                 inner_self.start_entered.set()
-                inner_self.allow_start_to_finish.wait(2)
+                inner_self.allow_start_to_finish.wait(4)
                 inner_self.started = True
 
         source = SlowStartSource()
@@ -151,7 +151,7 @@ class WakeWordSessionTests(unittest.TestCase):
         starter = threading.Thread(target=start_session)
         starter.start()
         self.assertTrue(source.start_entered.wait(2))
-        self.assertFalse(session.close() if False else session.stop(timeout=0))
+        self.assertFalse(session.stop(timeout=0))
         # close() marks the session terminal even if the first bounded join
         # times out; a subsequent close must still join the startup thread.
         self.assertFalse(session.close())
