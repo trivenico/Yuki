@@ -43,3 +43,8 @@ New backups use manifest schema version 2 and restore as a `YUKI_HOME` package:
 Choose an empty parent folder as the restore destination. To use the restored profile, configure `YUKI_HOME` to that parent folder and configure the workspace to its `workspace/` child. Yuki will then resolve its desktop profile as `YUKI_HOME/.yuki`. Restore does not change the running configuration or activate the profile automatically.
 
 Schema version 1 backups remain readable. Their root-level desktop files are normalized into `.yuki/` during restore, while existing `workspace/` entries retain their location.
+
+
+## Cross-device encrypted-memory limitation
+
+The encrypted memory file is protected by a key stored only in the source operating system's credential store. That key is not currently exported into the passphrase-encrypted backup package. A restore on the same OS account can continue using its existing key; a restore on another computer or OS account cannot decrypt that memory file and startup will correctly stop rather than replace it. Treat cross-device encrypted-memory transfer as unsupported until a separately reviewed key-wrapping and import flow is implemented. Do not copy the raw OS keyring secret into the profile directory.
