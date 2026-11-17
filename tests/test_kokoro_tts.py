@@ -149,6 +149,19 @@ class KokoroAdapterTests(unittest.TestCase):
                     adapter.speak("Hello.")
         self.assertEqual(self.sd.play_calls, [])
 
+    def test_stop_during_generation_prevents_current_and_queued_audio(self):
+        adapter = self.make(enabled=True)
+        original_generate = None
+
+        def stop_during_generation(text, config):
+            adapter.stop()
+            return FakeAudio([0.0] * 240)
+
+        adapter._load = lambda: types.SimpleNamespace(generate=stop_during_generation)
+        with self.assertRaisesRegex(KokoroTTSError, "stopped during synthesis"):
+            adapter.speak_stream(["first", "second"])
+        self.assertEqual(self.sd.play_calls, [])
+
     def test_stop_stops_audio_device_and_close_releases_model(self):
         adapter = self.make(enabled=True)
         adapter._tts = object()
