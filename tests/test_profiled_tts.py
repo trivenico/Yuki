@@ -52,6 +52,21 @@ class ProfiledTTSTests(unittest.TestCase):
         )
         self.assertAlmostEqual(synth.speed, DEFAULT_VOICE_PROFILE.speaking_rate / 170.0)
 
+    def test_close_releases_backend_resources_when_supported(self):
+        class CloseableSynthesizer(FakeSynthesizer):
+            def __init__(self, backend):
+                super().__init__(backend)
+                self.close_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+
+        synth = CloseableSynthesizer("kokoro")
+        output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
+        output.close()
+        self.assertEqual(synth.close_calls, 1)
+        self.assertEqual(synth.stop_calls, 0)
+
     def test_adapter_exposes_backend_enable_state_and_stop(self):
         synth = FakeSynthesizer("pyttsx3")
         output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
