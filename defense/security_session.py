@@ -72,13 +72,17 @@ class SecuritySessionController:
                 if self._generation == generation:
                     self._active = False
                     self._generation += 1
-                if self._starting_generation == generation:
-                    self._starting = False
-                    self._starting_generation = None
+            # Keep startup reserved until cleanup finishes. Otherwise another
+            # Start could race this compensating disable and be disabled by it.
             try:
                 self._disable_monitor()
             except Exception:
                 pass
+            finally:
+                with self._lock:
+                    if self._starting_generation == generation:
+                        self._starting = False
+                        self._starting_generation = None
             raise SecuritySessionError("Security monitoring could not be enabled.") from exc
         with self._lock:
             startup_current = self._active and self._starting and not self._closed and self._generation == generation
