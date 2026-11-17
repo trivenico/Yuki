@@ -158,6 +158,14 @@ class DesktopCompanionController:
         live_data = desktop_data_root().resolve()
         if target == live_data or live_data in target.parents or target in live_data.parents:
             raise ValueError("Restore destination must be separate from the active Yuki profile.")
+        if self.workspace_path is not None:
+            live_workspace = self.workspace_path.resolve()
+            if (
+                target == live_workspace
+                or live_workspace in target.parents
+                or target in live_workspace.parents
+            ):
+                raise ValueError("Restore destination must be separate from the active Yuki workspace.")
         return restore_encrypted_backup(Path(backup), target, passphrase)
 
     def logout(self) -> bool:
