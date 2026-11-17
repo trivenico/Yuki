@@ -64,6 +64,7 @@ def build_conversation_runtime(
     *,
     auth_service: BuiltInAuthService,
     agent_loop: AgentExecutionLoop,
+    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
@@ -126,7 +127,7 @@ def build_conversation_runtime(
         raise ValueError("OAuth provider catalog requires authorization service configuration")
 
     application = build_conversation_application_runtime(
-        config, agent_loop=agent_loop,
+        config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
     )
     try:
         app = YukiConversationAPI(
