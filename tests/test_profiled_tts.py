@@ -8,10 +8,15 @@ class FakeSynthesizer:
     def __init__(self, backend):
         self.backend = backend
         self.rate = 170
+        self.enabled = True
         self.spoken = []
+        self.stop_calls = 0
 
     def speak(self, text):
         self.spoken.append(text)
+
+    def stop(self):
+        self.stop_calls += 1
 
 
 class ProfiledTTSTests(unittest.TestCase):
@@ -35,6 +40,27 @@ class ProfiledTTSTests(unittest.TestCase):
             output.capabilities.unsupported_controls,
             frozenset({"speaking_rate", "pitch", "expressiveness", "style"}),
         )
+
+    def test_adapter_exposes_backend_enable_state_and_stop(self):
+        synth = FakeSynthesizer("pyttsx3")
+        output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
+        self.assertTrue(output.enabled)
+        output.enabled = False
+        self.assertFalse(synth.enabled)
+        output.enabled = True
+        self.assertTrue(synth.enabled)
+        output.stop()
+        self.assertEqual(synth.stop_calls, 1)
+
+    def test_backend_without_stop_is_rejected(self):
+        class NoStopSynth:
+            backend = "test"
+
+            def speak(self, text):
+                pass
+
+        with self.assertRaisesRegex(TypeError, "stop"):
+            ProfiledLocalSpeechOutput(NoStopSynth(), DEFAULT_VOICE_PROFILE)
 
     def test_construction_never_starts_playback(self):
         synth = FakeSynthesizer("pyttsx3")
