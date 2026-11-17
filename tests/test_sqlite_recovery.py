@@ -97,7 +97,7 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
             },))
         with self.assertRaisesRegex(ValueError, "additional_check_component_invalid"):
             build_sqlite_recovery_report({}, additional_checks=({
-                "component": "plugin\\nInjected", "status": "unsafe",
+                "component": "plugin\nInjected", "status": "unsafe",
                 "action": "Preserve data",
             },))
 
