@@ -26,6 +26,8 @@ class ProfileIdentityTests(unittest.TestCase):
     def test_separate_profiles_receive_distinct_identities(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / "one").mkdir()
+            (root / "two").mkdir()
             first = load_or_create_profile_id(root / "one")
             second = load_or_create_profile_id(root / "two")
             self.assertNotEqual(first, second)
