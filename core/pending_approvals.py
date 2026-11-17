@@ -45,7 +45,9 @@ class SQLitePendingApprovalStore:
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
         with self._connect() as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS pending_approvals (
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("""CREATE TABLE IF NOT EXISTS pending_approvals (
                 pending_id TEXT PRIMARY KEY,
                 skill_id TEXT NOT NULL,
                 arguments_json TEXT NOT NULL,
@@ -59,7 +61,11 @@ class SQLitePendingApprovalStore:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN actor_hash TEXT")
             if "session_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
+                db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
 
     @contextmanager
     def _connect(self):
