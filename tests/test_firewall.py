@@ -1,4 +1,6 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 from defense.firewall import FirewallError, FirewallManager
 
@@ -47,6 +49,26 @@ class FirewallManagerTests(unittest.TestCase):
             manager.block_temporary("203.0.113.11")
         self.assertTrue(manager.remove(result["rule_id"]))
         self.assertFalse(manager.remove(result["rule_id"]))
+
+
+    def test_concurrent_approvals_cannot_exceed_plan_limit(self):
+        barrier = Barrier(2)
+        def approve(prompt):
+            barrier.wait(timeout=2)
+            return True
+        manager = FirewallManager(enabled=True, approver=approve, max_rules=1)
+
+        def create(address):
+            try:
+                manager.block_temporary(address)
+                return "created"
+            except FirewallError:
+                return "rejected"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(create, ("203.0.113.10", "203.0.113.11")))
+        self.assertCountEqual(results, ["created", "rejected"])
+        self.assertEqual(len(manager._rules), 1)
 
     def test_rejects_special_and_malformed_addresses(self):
         manager = FirewallManager(enabled=True, approver=lambda prompt: True)
