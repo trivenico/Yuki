@@ -40,16 +40,13 @@ python -m PyInstaller --noconfirm --clean --windowed --onedir --name Yuki --path
 
 The output is under `dist/Yuki/` on Windows/Linux and `dist/Yuki.app/` on macOS. Keep the complete directory or app bundle; the executable depends on its bundled support files.
 
-## CI artifacts
+## CI coverage and release blockers
 
-The `Yuki quality gates` workflow builds on native Windows, macOS, and Linux
-runners, executes the packaged binary in Qt offscreen smoke-test mode, and
-uploads short-lived unsigned developer bundles together with a CycloneDX SBOM
-for the build environment and a portable SHA-256 manifest for
-every regular bundle file. The manifest records relative paths, sizes, file
-modes, hashes, source commit/ref, and platform metadata; it does not contain
-absolute build paths. These artifacts are for developer validation, not public release.
-The workflow does not sign, notarize, publish, or auto-update the application.
+The current `Yuki quality gates` workflow runs the Python test suite on
+Windows, macOS, and Linux and verifies installed CLI behavior. It does not yet
+build or launch packaged Qt desktop bundles. Add native packaging, Qt
+offscreen smoke tests, artifact provenance, SBOM generation, and checksum
+publication as separate release gates before distributing a desktop build.
 
 ## Release blockers
 
