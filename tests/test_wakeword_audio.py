@@ -19,7 +19,7 @@ class FakeRawInputStream:
         self.started = True
 
     def emit(self, data):
-        self.callback(data, 1280, None, None)
+        self.callback(data, 512, None, None)
 
     def stop(self):
         self.stopped = True
@@ -53,8 +53,8 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         self.assertEqual(stream.kwargs["samplerate"], 16000)
         self.assertEqual(stream.kwargs["channels"], 1)
         self.assertEqual(stream.kwargs["dtype"], "int16")
-        self.assertEqual(stream.kwargs["blocksize"], 1280)
-        frame = bytes([1, 0]) * 1280
+        self.assertEqual(stream.kwargs["blocksize"], 512)
+        frame = bytes([1, 0]) * 512
         stream.emit(frame)
         self.assertEqual(source.read(), frame)
         source.close()
@@ -66,8 +66,8 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         source = SoundDeviceWakeWordAudioSource(sounddevice_module=sd)
         source.start()
         stream = sd.streams[0]
-        first = bytes([1, 0]) * 1280
-        latest = bytes([2, 0]) * 1280
+        first = bytes([1, 0]) * 512
+        latest = bytes([2, 0]) * 512
         stream.emit(first)
         stream.emit(latest)
         self.assertEqual(source.read(), latest)
@@ -78,7 +78,7 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         source = SoundDeviceWakeWordAudioSource(sounddevice_module=sd)
         source.start()
         stream = sd.streams[0]
-        stream.emit(bytes([1, 0]) * 1280)
+        stream.emit(bytes([1, 0]) * 512)
         source.stop()
         self.assertIsNone(source.read())
         self.assertTrue(stream.stopped)
