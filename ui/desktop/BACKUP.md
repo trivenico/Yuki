@@ -47,7 +47,7 @@ Schema version 1 backups remain readable. Their root-level desktop files are nor
 
 ## Portable encrypted-memory option
 
-The backup UI offers an opt-in checkbox to include the profile's memory key. When selected, key metadata is placed inside the archive that is encrypted as a whole with the backup passphrase and memory-hard KDF. The key is never written as a separate plaintext file or extracted to the restore staging directory.
+The backup UI offers an opt-in checkbox to include the profile's memory key. When selected, key metadata is first wrapped with AES-256-GCM using a key derived from the backup passphrase and bound to the profile UUID with authenticated associated data. The wrapped value is then included in the archive, which is itself encrypted with the backup passphrase and memory-hard KDF. The raw data-encryption key is never written to the temporary plaintext tar archive, a separate file, or the restore staging directory.
 
 On restore, the owner must enable the memory-key import checkbox. Yuki validates the backup manifest, profile identity, key metadata, and AES-GCM authentication of the restored memory ciphertext before installing the key into the destination OS keyring. Keyring collisions with a different existing key fail closed. If filesystem publication fails after a new key is installed, Yuki attempts to remove that newly created keyring entry.
 
