@@ -6,7 +6,16 @@ threads, capture packets, persist telemetry, or perform response actions.
 from __future__ import annotations
 
 from collections import deque
+import re
 from threading import RLock
+
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _safe_label(value, limit=300):
+    if not isinstance(value, str):
+        return "unknown"
+    return _CONTROL_CHARS.sub("", value[:limit]).strip() or "unknown"
 
 
 class SecurityMonitorError(RuntimeError):
@@ -14,11 +23,7 @@ class SecurityMonitorError(RuntimeError):
 
 
 class DesktopSecurityMonitor:
-    """Combine process inventory and connection alerts behind one safe interface.
-
-    Sensor objects are injected so optional OS dependencies remain lazy and each
-    sensor can be independently permission-gated by the desktop application.
-    """
+    """Combine process inventory and connection alerts behind one safe interface."""
 
     def __init__(self, *, process_monitor=None, port_scan_detector=None,
                  enabled=False, max_alerts=100):
@@ -39,7 +44,8 @@ class DesktopSecurityMonitor:
 
     @property
     def enabled(self):
-        return self._enabled
+        with self._lock:
+            return self._enabled
 
     def enable(self):
         """Enable explicit calls; this does not start capture or background work."""
@@ -63,17 +69,17 @@ class DesktopSecurityMonitor:
                 alert = self._port_scan_detector.observe(
                     source_ip, destination_port, timestamp=timestamp
                 )
-            except TypeError as exc:
-                # Do not silently retry with fewer arguments: that could change
-                # the timestamp semantics of a detector implementation.
+            except (TypeError, ValueError) as exc:
                 raise SecurityMonitorError("Connection metadata was rejected.") from exc
-            except ValueError as exc:
-                raise SecurityMonitorError("Connection metadata was rejected.") from exc
+            except Exception as exc:
+                raise SecurityMonitorError("Connection detector failed safely.") from exc
             if alert is not None:
+                if not isinstance(alert, dict):
+                    raise SecurityMonitorError("Connection detector returned an invalid alert.")
                 self._alerts.append({
                     "source": "network",
-                    "type": str(alert.get("type", "security_alert"))[:80],
-                    "message": str(alert.get("message", "Security event detected."))[:300],
+                    "type": _safe_label(alert.get("type", "security_alert"), 80),
+                    "message": _safe_label(alert.get("message", "Security event detected.")),
                 })
             return alert
 
@@ -98,14 +104,41 @@ class DesktopSecurityMonitor:
                     if isinstance(alert, dict):
                         process_alerts.append({
                             "source": "process",
-                            "type": str(alert.get("type", "security_alert"))[:80],
-                            "message": str(alert.get("message", "Process watchlist match."))[:300],
+                            "type": _safe_label(alert.get("type", "security_alert"), 80),
+                            "message": _safe_label(alert.get("message", "Process watchlist match.")),
                         })
+
+            processes = []
+            process_count = 0
+            process_truncated = False
+            if process_data is not None:
+                raw_processes = process_data.get("processes", [])
+                if not isinstance(raw_processes, list):
+                    raise SecurityMonitorError("Process inventory returned invalid process records.")
+                for item in raw_processes[:5000]:
+                    if not isinstance(item, dict):
+                        continue
+                    pid = item.get("pid")
+                    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+                        continue
+                    processes.append({
+                        "pid": pid,
+                        "name": _safe_label(item.get("name"), 160),
+                        "status": _safe_label(item.get("status"), 80),
+                    })
+                supplied_count = process_data.get("process_count", len(processes))
+                if (isinstance(supplied_count, int) and not isinstance(supplied_count, bool)
+                        and len(processes) <= supplied_count <= 10_000_000):
+                    process_count = supplied_count
+                else:
+                    process_count = len(processes)
+                process_truncated = process_data.get("truncated") is True
+
             return {
                 "enabled": True,
-                "processes": process_data.get("processes", []) if process_data else [],
-                "process_count": process_data.get("process_count", 0) if process_data else 0,
-                "process_truncated": process_data.get("truncated", False) if process_data else False,
+                "processes": processes,
+                "process_count": process_count,
+                "process_truncated": process_truncated,
                 "alerts": process_alerts + list(self._alerts),
                 "read_only": True,
                 "persisted": False,
