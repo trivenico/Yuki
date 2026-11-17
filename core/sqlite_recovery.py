@@ -111,3 +111,20 @@ def require_healthy_sqlite_stores(stores: Mapping[str, str | Path]) -> dict:
     if not report["startup_safe"]:
         raise SQLiteRecoveryRequired(report)
     return report
+
+
+def format_sqlite_recovery_report(report: dict) -> str:
+    """Render an owner-facing, path-free startup recovery explanation."""
+    if not isinstance(report, dict) or not isinstance(report.get("stores"), list):
+        raise ValueError("recovery_report_invalid")
+    lines = ["Yuki paused startup to protect existing data."]
+    for item in report["stores"]:
+        component = item.get("component", "unknown")
+        status = item.get("status", "unknown")
+        if status in {"healthy", "missing"}:
+            continue
+        action = item.get("action", "Preserve the data and inspect storage before retrying.")
+        lines.append(f"{component}: {status}. {action}")
+    if len(lines) == 1:
+        lines.append(report.get("summary", "Review the local data store before retrying."))
+    return "\\n".join(lines)
