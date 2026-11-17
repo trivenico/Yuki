@@ -301,9 +301,9 @@ def run() -> int:
                 result = self.session.speak_reply(
                     self.reply, voice_mode_active=True,
                 )
-                self.signals.finished.emit(result, None)
+                self.signals.finished.emit(result, None, self.session)
             except Exception as exc:
-                self.signals.finished.emit(None, exc)
+                self.signals.finished.emit(None, exc, self.session)
 
     class PlanWorkerSignals(QObject):
         finished = Signal(object, object)
@@ -1602,6 +1602,15 @@ Version: {version}",
             if self.voice_session is not None:
                 self.voice_session.close()
             self.voice_session = None
+            if self.speech_session is not None:
+                self.speech_session.close()
+            self.speech_session = None
+            self.speech_worker = None
+            self.spoken_replies_checkbox.blockSignals(True)
+            self.spoken_replies_checkbox.setChecked(False)
+            self.spoken_replies_checkbox.blockSignals(False)
+            self.spoken_replies_checkbox.setEnabled(False)
+            self.speech_stop_button.setEnabled(False)
             self.voice_checkbox.blockSignals(True)
             self.voice_checkbox.setChecked(False)
             self.voice_checkbox.blockSignals(False)
