@@ -92,6 +92,39 @@ class SecurityDashboardPanelTests(unittest.TestCase):
         self.assertEqual(calls, ["refresh", "stop"])
         page.close()
 
+    def test_render_rejects_oversized_snapshot_before_mutating_widgets(self):
+        page, _calls = self.make_panel()
+        presenter = page.security_presenter
+        controls = page.security_controls
+        with self.assertRaisesRegex(ValueError, "limits"):
+            presenter.render({
+                "enabled": True,
+                "read_only": True,
+                "persisted": False,
+                "automated_response": False,
+                "processes": [{}] * 5001,
+                "alerts": [],
+            })
+        self.assertEqual(controls["processes"].count(), 0)
+        page.close()
+
+    def test_render_discloses_process_inventory_truncation(self):
+        page, _calls = self.make_panel()
+        page.security_presenter.render({
+            "enabled": True,
+            "read_only": True,
+            "persisted": False,
+            "automated_response": False,
+            "process_count": 2048,
+            "process_truncated": True,
+            "processes": [{"pid": 1, "name": "example", "status": "running"}],
+            "alerts": [],
+        })
+        summary = page.security_controls["process_summary"].text()
+        self.assertIn("capped", summary)
+        self.assertIn("not inspected", summary)
+        page.close()
+
 
 if __name__ == "__main__":
     unittest.main()
