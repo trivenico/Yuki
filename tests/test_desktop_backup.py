@@ -75,6 +75,42 @@ class DesktopBackupTests(unittest.TestCase):
             restored.close()
             self.assertFalse((destination / "tasks.sqlite3-wal").exists())
 
+    def test_sqlite_wal_committed_data_is_included_in_consistent_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            database_path = source / "live.sqlite3"
+            writer = sqlite3.connect(database_path)
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, value TEXT)")
+            writer.commit()
+            writer.execute("INSERT INTO events(value) VALUES ('committed-in-wal')")
+            writer.commit()
+            wal_path = Path(str(database_path) + "-wal")
+            self.assertTrue(wal_path.exists())
+            self.assertGreater(wal_path.stat().st_size, 0)
+
+            backup = root / "live-backup.yukibak"
+            try:
+                create_encrypted_backup(source, backup, "a sufficiently long passphrase")
+            finally:
+                writer.close()
+
+            destination = root / "restored"
+            restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
+            restored = sqlite3.connect(destination / "live.sqlite3")
+            try:
+                self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(
+                    restored.execute("SELECT value FROM events").fetchone()[0],
+                    "committed-in-wal",
+                )
+            finally:
+                restored.close()
+            self.assertFalse((destination / "live.sqlite3-wal").exists())
+            self.assertFalse((destination / "live.sqlite3-shm").exists())
+
     def test_rejects_cross_platform_archive_path_traversal(self):
         from ui.desktop.backup import _safe_archive_path
         for name in ("../escape", "..\\\\escape", "C:/Windows/system.ini", "/absolute/path", "folder/./file", "CON", "nul.txt", "LPT1.log", "trailing. ", "name:stream", "bad?.txt"):
