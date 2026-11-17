@@ -144,7 +144,7 @@ class DesktopBackupTests(unittest.TestCase):
             root = Path(directory)
             source = root / "desktop"
             source.mkdir()
-            (source / "auth.sqlite3").write_bytes(b"opaque-profile-data")
+            (source / "owner-profile.json").write_bytes(b"opaque-profile-data")
             workspace = root / "workspace"
             workspace.mkdir()
             (workspace / "notes.json").write_text('{"saved": true}', encoding="utf-8")
@@ -156,7 +156,7 @@ class DesktopBackupTests(unittest.TestCase):
             destination = root / "restored-home"
             restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
             self.assertEqual(
-                (destination / ".yuki" / "auth.sqlite3").read_bytes(),
+                (destination / ".yuki" / "owner-profile.json").read_bytes(),
                 b"opaque-profile-data",
             )
             self.assertEqual(
