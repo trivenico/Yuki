@@ -1385,9 +1385,8 @@ Version: {version}",
                 self.voice_session is not None and self.voice_session.enabled
             )
             if error is not None:
-                self.voice_status.setText(
-                    "Voice capture stopped or failed (" + type(error).__name__ + ")."
-                )
+                detail = str(error).strip()[:180] or type(error).__name__
+                self.voice_status.setText("Voice capture stopped or failed: " + detail)
                 self.chat_status.setText("Ready")
                 return
             if not transcript.strip():
