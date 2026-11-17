@@ -68,6 +68,63 @@ class EncryptedMemoryTests(unittest.TestCase):
         self.assertEqual(self.keyring.values, {})
         self.assertEqual(self.path.read_bytes(), original)
 
+    def test_profile_scoped_keys_are_isolated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first_path = Path(directory) / "one.enc.json"
+            second_path = Path(directory) / "two.enc.json"
+            first = EncryptedMemoryStore(
+                first_path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+                keyring_account="profile:one",
+            )
+            second = EncryptedMemoryStore(
+                second_path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+                keyring_account="profile:two",
+            )
+            first.add("first profile secret")
+            second.add("second profile secret")
+            first_key = self.keyring.get_password("yuki-companion-memory", "profile:one")
+            second_key = self.keyring.get_password("yuki-companion-memory", "profile:two")
+            self.assertNotEqual(first_key, second_key)
+            self.assertEqual(
+                EncryptedMemoryStore(
+                    first_path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+                    keyring_account="profile:one",
+                ).list()[0]["text"],
+                "first profile secret",
+            )
+            with self.assertRaisesRegex(RuntimeError, "authentication failed"):
+                EncryptedMemoryStore(
+                    first_path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+                    keyring_account="profile:two",
+                ).list()
+
+    def test_existing_legacy_key_is_migrated_to_profile_account_without_changing_ciphertext(self):
+        legacy = EncryptedMemoryStore(
+            self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+        )
+        legacy.add("preserve old memory")
+        original = self.path.read_bytes()
+        legacy_key = self.keyring.get_password("yuki-companion-memory", "default")
+        migrated = EncryptedMemoryStore(
+            self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+            keyring_account="profile:existing",
+        )
+        self.assertEqual(
+            self.keyring.get_password("yuki-companion-memory", "profile:existing"),
+            legacy_key,
+        )
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(migrated.list()[0]["text"], "preserve old memory")
+
+    def test_existing_memory_without_legacy_or_profile_key_still_fails_closed(self):
+        self.path.write_text('{"version":1,"nonce":"AAAAAAAAAAAAAAAA","ciphertext":"AAAAAAAAAAAAAAAAAAAAAA=="}')
+        with self.assertRaisesRegex(RuntimeError, "Could not safely access"):
+            EncryptedMemoryStore(
+                self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+                keyring_account="profile:missing",
+            )
+        self.assertNotIn(("yuki-companion-memory", "profile:missing"), self.keyring.values)
+
     def test_invalid_keyring_backend_fails_closed(self):
         keyring = FakeKeyring()
         keyring.backend.priority = 0
