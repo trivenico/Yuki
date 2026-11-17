@@ -78,6 +78,24 @@ class WakeWordAssetManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "Duplicate"):
             validate_manifest(self.manifest)
 
+    def test_non_string_path_is_rejected_cleanly(self):
+        entry = dict(self.entry, path=["background", "room.wav"])
+        self.write_manifest([entry])
+        with self.assertRaisesRegex(ManifestError, "Asset path must be"):
+            validate_manifest(self.manifest)
+
+    def test_non_https_provenance_url_is_rejected(self):
+        entry = dict(self.entry, source_url="http://example.invalid/audio")
+        self.write_manifest([entry])
+        with self.assertRaisesRegex(ManifestError, "invalid HTTPS source_url"):
+            validate_manifest(self.manifest)
+
+    def test_redistribution_flag_must_be_boolean(self):
+        entry = dict(self.entry, allow_redistribution="yes")
+        self.write_manifest([entry])
+        with self.assertRaisesRegex(ManifestError, "allow_redistribution"):
+            validate_manifest(self.manifest)
+
     def test_invalid_digest_is_rejected(self):
         entry = dict(self.entry, sha256="not-a-hash")
         self.write_manifest([entry])
