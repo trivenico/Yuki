@@ -239,3 +239,21 @@ The shared desktop controller bridge now treats an authorization failure from ei
 ## Launcher cutover on the integration branch
 
 The authenticated `_open_session()` path now builds the shared durable chat controller with the verified local identity and the existing encrypted memory instance. The previous `CompanionApplicationService` remains instantiated as the specialist/task/backup/migration authority, but its in-memory chat response path is no longer the launcher's chat authority. The Qt worker still invokes the compatible `respond(message)` method. The conversation session is closed by bridge logout; the process lifecycle closes the provider once. The launcher imports its configuration and encrypted-memory factory in the Qt run scope so the session composition does not depend on names local to the separate service factory.
+
+
+## Portable desktop volume boundary
+
+When `YUKI_HOME` is explicitly configured, the desktop now requires the
+configured data directory's parent to exist and verifies that it resides on a
+separate mounted volume from the host operating-system volume before creating
+the private `.yuki` directory. POSIX uses filesystem device IDs at the mount
+boundary; Windows compares the configured directory's volume ID with the
+system drive. If the external volume is absent and only its ordinary mount
+directory remains, the check fails before Yuki creates local data there.
+The normal per-user desktop data directory is unchanged when `YUKI_HOME` is
+not set.
+
+This is a fail-closed mount-boundary check, not yet a complete proof of
+portable-device identity: removable-drive replacement, volume cloning, unusual
+network filesystems, and clean-machine USB packaging still require dedicated
+platform validation. Do not describe zero-install portability as complete.
