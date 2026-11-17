@@ -1,6 +1,5 @@
-import threading
-import time
 import unittest
+from queue import Empty
 
 from voice.wakeword_audio import (
     SoundDeviceWakeWordAudioSource,
@@ -92,7 +91,7 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         source.start()
         stream = sd.streams[0]
         stream.emit(b"short")
-        with self.assertRaises(TimeoutError):
+        with self.assertRaises(Empty):
             # No malformed data should be made available to the detector.
             source._frames.get(timeout=0.01)
         source.close()
