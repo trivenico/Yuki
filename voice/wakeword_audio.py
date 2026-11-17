@@ -70,7 +70,9 @@ class SoundDeviceWakeWordAudioSource:
                 ) from exc
 
         def on_audio(indata, frames, time_info, status):
-            if self._stop_event.is_set() or frames != self.BLOCKSIZE:
+            # Drop driver-overrun/underflow frames rather than feeding
+            # potentially discontinuous PCM into the detector.
+            if status or self._stop_event.is_set() or frames != self.BLOCKSIZE:
                 return
             # Validate the callback buffer before copying; never allocate an
             # unbounded frame from unexpected device callback metadata.
