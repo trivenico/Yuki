@@ -100,17 +100,62 @@ class ConversationService:
         with self._lock:
             self._ensure_open()
             token = str(uuid.uuid4())
-            self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
+            lease_ttl = 120
+            self.store.acquire_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id,
+                lease_token=token, ttl_seconds=lease_ttl,
+            )
+            stop_heartbeat = threading.Event()
+            lease_lost = threading.Event()
+
+            def renew_lease() -> None:
+                while not stop_heartbeat.wait(30):
+                    try:
+                        renewed = self.store.renew_generation_lease(
+                            owner_id=owner_id, conversation_id=conversation_id,
+                            lease_token=token, ttl_seconds=lease_ttl,
+                        )
+                    except Exception:
+                        renewed = False
+                    if not renewed:
+                        lease_lost.set()
+                        return
+
+            heartbeat = threading.Thread(
+                target=renew_lease, name="yuki-conversation-lease", daemon=True,
+            )
+            heartbeat.start()
+
+            def guarded_cancellation() -> bool:
+                if lease_lost.is_set():
+                    return True
+                return bool(cancellation_requested()) if cancellation_requested is not None else False
+
             try:
-                return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
+                result = self._reply_unleased(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    user_text=user_text, request_id=request_id,
+                    expected_version=expected_version, tools=tools,
+                    system_text=system_text, on_text_delta=on_text_delta,
+                    cancellation_requested=guarded_cancellation,
+                    lease_lost=lease_lost,
+                )
+                if lease_lost.is_set():
+                    raise ConversationConflict("conversation generation lease was lost.")
+                return result
             finally:
-                self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
+                stop_heartbeat.set()
+                heartbeat.join(timeout=5)
+                self.store.release_generation_lease(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    lease_token=token,
+                )
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
-        on_text_delta=None, cancellation_requested=None,
+        on_text_delta=None, cancellation_requested=None, lease_lost=None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
@@ -239,6 +284,11 @@ class ConversationService:
             except Exception:
                 status = "failed"
                 answer = "I couldn't complete that request because the AI service or a guarded operation failed."
+
+            # A lost lease fences this worker from committing a result. The next
+            # owner of the lease will reconcile the still-running durable record.
+            if lease_lost is not None and lease_lost.is_set():
+                raise ConversationConflict("conversation generation lease was lost.")
 
             assistant_result = self.store.append_message(
                 owner_id=owner_id, conversation_id=conversation_id,
