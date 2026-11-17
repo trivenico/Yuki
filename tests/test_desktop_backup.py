@@ -194,7 +194,7 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(restored.execute("SELECT name FROM tasks").fetchone()[0], "preserved")
             restored.close()
-            self.assertFalse((destination / "tasks.sqlite3-wal").exists())
+            self.assertFalse((destination / ".yuki" / "tasks.sqlite3-wal").exists())
 
     def test_orphan_sqlite_sidecar_is_rejected_instead_of_archived(self):
         with tempfile.TemporaryDirectory() as directory:
