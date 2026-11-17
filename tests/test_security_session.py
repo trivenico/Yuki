@@ -293,6 +293,65 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.controller.start(consent=True)
         self.assertTrue(self.controller.active)
 
+    def test_restart_is_blocked_from_stop_reservation_until_disable_finishes(self):
+        self.controller.start(consent=True)
+        entered = threading.Event()
+        release = threading.Event()
+        original_disable = self.controller._disable_monitor
+
+        def delayed_disable():
+            entered.set()
+            release.wait(2)
+            original_disable()
+
+        self.controller._disable_monitor = delayed_disable
+        errors = []
+        stopper = threading.Thread(
+            target=lambda: self._capture_error(self.controller.stop, errors)
+        )
+        stopper.start()
+        self.assertTrue(entered.wait(1))
+        with self.assertRaisesRegex(SecuritySessionError, "starting or stopping"):
+            self.controller.start(consent=True)
+        release.set()
+        stopper.join(2)
+        self.assertFalse(stopper.is_alive())
+        self.assertFalse(errors)
+        self.controller._disable_monitor = original_disable
+        self.controller.start(consent=True)
+        self.assertTrue(self.controller.active)
+
+    def test_restart_is_blocked_during_generation_revocation_cleanup(self):
+        self.controller.start(consent=True)
+        generation = self.controller._generation
+        entered = threading.Event()
+        release = threading.Event()
+        original_disable = self.controller._disable_monitor
+
+        def delayed_disable():
+            entered.set()
+            release.wait(2)
+            original_disable()
+
+        self.controller._disable_monitor = delayed_disable
+        errors = []
+        revoker = threading.Thread(
+            target=lambda: self._capture_error(
+                lambda: self.controller._revoke_generation(generation), errors
+            )
+        )
+        revoker.start()
+        self.assertTrue(entered.wait(1))
+        with self.assertRaisesRegex(SecuritySessionError, "starting or stopping"):
+            self.controller.start(consent=True)
+        release.set()
+        revoker.join(2)
+        self.assertFalse(revoker.is_alive())
+        self.assertFalse(errors)
+        self.controller._disable_monitor = original_disable
+        self.controller.start(consent=True)
+        self.assertTrue(self.controller.active)
+
     def test_failed_disable_requires_successful_cleanup_retry(self):
         self.controller.start(consent=True)
 
