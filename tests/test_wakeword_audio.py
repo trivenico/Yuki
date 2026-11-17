@@ -18,8 +18,8 @@ class FakeRawInputStream:
     def start(self):
         self.started = True
 
-    def emit(self, data):
-        self.callback(data, 512, None, None)
+    def emit(self, data, status=None):
+        self.callback(data, 512, None, status)
 
     def stop(self):
         self.stopped = True
@@ -93,6 +93,16 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         stream.emit(b"short")
         with self.assertRaises(Empty):
             # No malformed data should be made available to the detector.
+            source._frames.get(timeout=0.01)
+        source.close()
+
+    def test_driver_status_frames_are_discarded(self):
+        sd = FakeSoundDevice()
+        source = SoundDeviceWakeWordAudioSource(sounddevice_module=sd)
+        source.start()
+        stream = sd.streams[0]
+        stream.emit(bytes([1, 0]) * 512, status="input overflow")
+        with self.assertRaises(Empty):
             source._frames.get(timeout=0.01)
         source.close()
 
