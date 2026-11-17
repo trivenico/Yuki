@@ -68,6 +68,28 @@ class ReadOnlyProcessMonitorTests(unittest.TestCase):
         with self.assertRaises(ProcessMonitorError):
             ReadOnlyProcessMonitor(provider=broken).snapshot()
 
+
+    def test_skips_process_that_exits_during_metadata_read(self):
+        class VanishedProcess:
+            @property
+            def info(self):
+                raise ProcessLookupError("private process detail")
+
+        monitor = ReadOnlyProcessMonitor(provider=lambda: [
+            VanishedProcess(),
+            {"pid": 2, "name": "stable", "status": "running"},
+        ])
+        result = monitor.snapshot()
+        self.assertEqual(result["process_count"], 1)
+        self.assertEqual(result["processes"][0]["pid"], 2)
+
+    def test_watchlist_normalizes_control_characters(self):
+        monitor = ReadOnlyProcessMonitor(
+            suspicious_names=["bad\\n-tool"],
+            provider=lambda: [{"pid": 9, "name": "bad-tool", "status": "running"}],
+        )
+        self.assertEqual(len(monitor.snapshot()["alerts"]), 1)
+
     def test_configuration_validation(self):
         for value in (0, 5001, True):
             with self.assertRaises(ValueError):
