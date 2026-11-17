@@ -82,11 +82,21 @@ def _inventory(root: Path) -> list[Path]:
     database_paths = {
         item for item in files if item.suffix.lower() in SQLITE_SUFFIXES
     }
+    database_names = {item.as_posix() for item in database_paths}
     sqlite_sidecars = {
         Path(str(database) + suffix)
         for database in database_paths
         for suffix in ("-wal", "-shm", "-journal")
     }
+    # Sidecars only have meaning alongside their database. An orphan WAL or
+    # rollback journal may be evidence of interrupted storage activity; never
+    # archive it as an ordinary file and later restore it without its database.
+    for item in files:
+        if item.name.endswith(("-wal", "-shm", "-journal")):
+            base = item.as_posix()
+            suffix = next(s for s in ("-wal", "-shm", "-journal") if base.endswith(s))
+            if base[:-len(suffix)] not in database_names:
+                raise BackupError("Backup source contains an orphan SQLite sidecar.")
     files = [item for item in files if item not in sqlite_sidecars]
     if len(files) > MAX_FILES:
         raise BackupError("Backup contains too many files.")
