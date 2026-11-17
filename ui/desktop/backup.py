@@ -221,6 +221,8 @@ def create_encrypted_backup(
             raise BackupError("An additional backup directory is unavailable.") from exc
         if extra_root == root or extra_root in root.parents or root in extra_root.parents:
             raise BackupError("Additional backup directories must be separate from the desktop profile.")
+        if extra_root == output or extra_root in output.parents:
+            raise BackupError("Backup output must be outside every source data directory.")
         for extra_file in _inventory(extra_root):
             relative = (safe_prefix / extra_file.relative_to(extra_root)).as_posix()
             portable_key = _portable_archive_key(_safe_archive_path(relative))
