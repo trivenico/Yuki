@@ -101,7 +101,7 @@ class VoiceRecordingSecurityTests(unittest.TestCase):
             numpy = types.ModuleType("numpy")
             numpy.int16 = int
             numpy.asarray = lambda values, dtype=None: types.SimpleNamespace(
-                tobytes=lambda: b"\\x01\\x00" * len(values)
+                tobytes=lambda: b"\x01\x00" * len(values)
             )
             timer = Timer(0.05, cancelled.set)
             timer.start()
