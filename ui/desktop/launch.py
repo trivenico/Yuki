@@ -284,6 +284,27 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit("", exc, self.session)
 
+
+    class SpeechWorkerSignals(QObject):
+        finished = Signal(object, object, object)
+
+    class SpeechWorker(QRunnable):
+        def __init__(self, session, reply: str):
+            super().__init__()
+            self.session = session
+            self.reply = reply
+            self.signals = SpeechWorkerSignals()
+
+        @Slot()
+        def run(self):
+            try:
+                result = self.session.speak_reply(
+                    self.reply, voice_mode_active=True,
+                )
+                self.signals.finished.emit(result, None, self.session)
+            except Exception as exc:
+                self.signals.finished.emit(None, exc, self.session)
+
     class PlanWorkerSignals(QObject):
         finished = Signal(object, object)
 
@@ -380,6 +401,8 @@ def run() -> int:
             self.lifecycle = None
             self.controller = None
             self.voice_session = None
+            self.speech_session = None
+            self.speech_worker = None
             self.busy = False
             self._logout_started = False
             self._logout_worker = None
@@ -462,11 +485,19 @@ def run() -> int:
             self.voice_stop_button = QPushButton("Stop microphone")
             self.voice_stop_button.setEnabled(False)
             self.voice_stop_button.clicked.connect(self._stop_voice_capture)
+            self.spoken_replies_checkbox = QCheckBox("Enable spoken replies")
+            self.spoken_replies_checkbox.setChecked(False)
+            self.spoken_replies_checkbox.toggled.connect(self._set_spoken_replies_enabled)
+            self.speech_stop_button = QPushButton("Stop speaking")
+            self.speech_stop_button.setEnabled(False)
+            self.speech_stop_button.clicked.connect(self._stop_spoken_reply)
             voice_controls.addWidget(self.voice_checkbox)
             voice_controls.addWidget(self.voice_button)
             voice_controls.addWidget(self.voice_stop_button)
+            voice_controls.addWidget(self.spoken_replies_checkbox)
+            voice_controls.addWidget(self.speech_stop_button)
             chat_layout.addLayout(voice_controls)
-            self.voice_status = QLabel("Microphone off. No background listening.")
+            self.voice_status = QLabel("Microphone off. Spoken replies off. No background listening.")
             self.voice_status.setWordWrap(True)
             chat_layout.addWidget(self.voice_status)
             self.chat_status = QLabel("Ready")
@@ -986,6 +1017,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             for widget in (
                 self.memory_toggle, self.transcript, self.message, self.send_button,
                 self.voice_checkbox, self.voice_status,
+                self.spoken_replies_checkbox, self.speech_stop_button,
             ):
                 widget.setEnabled(True)
             if self.voice_session is not None:
@@ -996,7 +1028,15 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.voice_checkbox.blockSignals(False)
             self.voice_button.setEnabled(False)
             self.voice_stop_button.setEnabled(False)
-            self.voice_status.setText("Microphone off. No background listening.")
+            if self.speech_session is not None:
+                self.speech_session.close()
+            self.speech_session = None
+            self.spoken_replies_checkbox.blockSignals(True)
+            self.spoken_replies_checkbox.setChecked(False)
+            self.spoken_replies_checkbox.blockSignals(False)
+            self.spoken_replies_checkbox.setEnabled(True)
+            self.speech_stop_button.setEnabled(False)
+            self.voice_status.setText("Microphone off. Spoken replies off. No background listening.")
             self.logout_button.setText("Sign out")
             config = load_config()
             memory = create_desktop_memory(self.sessions.keyring)
@@ -1365,6 +1405,100 @@ Version: {version}",
                 self.voice_checkbox.blockSignals(False)
                 self.voice_status.setText("Voice setup unavailable (" + type(exc).__name__ + ").")
 
+        def _set_spoken_replies_enabled(self, enabled: bool):
+            if not enabled:
+                session = self.speech_session
+                self.speech_session = None
+                if session is not None:
+                    session.close()
+                self.speech_stop_button.setEnabled(False)
+                self.voice_status.setText("Spoken replies off. Microphone permission is independent.")
+                return
+            if self.controller is None:
+                self.spoken_replies_checkbox.blockSignals(True)
+                self.spoken_replies_checkbox.setChecked(False)
+                self.spoken_replies_checkbox.blockSignals(False)
+                return
+            answer = QMessageBox.question(
+                self, "Enable spoken replies",
+                "Yuki will speak its text replies using the configured local TTS backend. "
+                "Speech is generated on this device and runs in a background worker. "
+                "No microphone access or background listening is enabled by this setting. "
+                "You can stop playback or disable spoken replies at any time. Continue?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                self.spoken_replies_checkbox.blockSignals(True)
+                self.spoken_replies_checkbox.setChecked(False)
+                self.spoken_replies_checkbox.blockSignals(False)
+                return
+            try:
+                from voice.desktop_output import create_desktop_voice_output
+                self.speech_session = create_desktop_voice_output(load_config())
+                self.speech_session.enable()
+                self.voice_status.setText(
+                    "Spoken replies enabled for this sign-in session. "
+                    "Microphone permission remains separate."
+                )
+            except Exception as exc:
+                self.speech_session = None
+                self.spoken_replies_checkbox.blockSignals(True)
+                self.spoken_replies_checkbox.setChecked(False)
+                self.spoken_replies_checkbox.blockSignals(False)
+                self.voice_status.setText(
+                    "Spoken replies unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _stop_spoken_reply(self):
+            session = self.speech_session
+            if session is None:
+                return
+            try:
+                session.stop()
+                self.speech_stop_button.setEnabled(False)
+                self.voice_status.setText("Stopping spoken reply…")
+            except Exception as exc:
+                self.voice_status.setText(
+                    "Speech stop failed (" + type(exc).__name__ + ")."
+                )
+
+        def _start_spoken_reply(self, reply: str):
+            session = self.speech_session
+            if session is None or not session.enabled or not reply.strip():
+                return
+            if self.speech_worker is not None:
+                return
+            worker = SpeechWorker(session, reply)
+            worker.signals.finished.connect(self._spoken_reply_finished)
+            self.speech_worker = worker
+            self.speech_stop_button.setEnabled(True)
+            self.send_button.setEnabled(False)
+            self.message.setEnabled(False)
+            self.voice_status.setText("Yuki is speaking. Press Stop speaking to interrupt.")
+            self.pool.start(worker)
+
+        @Slot(object, object, object)
+        def _spoken_reply_finished(self, result: Any, error: Any, captured_session: Any):
+            self.speech_worker = None
+            if captured_session is not self.speech_session:
+                if self.controller is not None and not self._logout_started and not self._shutdown_started:
+                    self.speech_stop_button.setEnabled(False)
+                    self.send_button.setEnabled(not self.busy)
+                    self.message.setEnabled(not self.busy)
+                return
+            self.speech_stop_button.setEnabled(False)
+            if self.controller is not None and not self._logout_started and not self._shutdown_started:
+                self.send_button.setEnabled(not self.busy)
+                self.message.setEnabled(not self.busy)
+            if error is not None:
+                self.voice_status.setText(
+                    "Spoken reply stopped or unavailable (" + type(error).__name__ + ")."
+                )
+            elif result is not None and result.get("interrupted"):
+                self.voice_status.setText("Spoken reply interrupted.")
+            elif self.speech_session is not None and self.speech_session.enabled:
+                self.voice_status.setText("Spoken reply finished.")
+
         def _start_voice_capture(self):
             if self.controller is None or self.busy or self.voice_session is None:
                 return
@@ -1466,11 +1600,21 @@ Version: {version}",
             else:
                 self.transcript.appendPlainText("Yuki: " + reply)
                 self.chat_status.setText("Ready")
+                self._start_spoken_reply(reply)
 
         def _clear_authenticated_session_ui(self):
             if self.voice_session is not None:
                 self.voice_session.close()
             self.voice_session = None
+            if self.speech_session is not None:
+                self.speech_session.close()
+            self.speech_session = None
+            self.speech_worker = None
+            self.spoken_replies_checkbox.blockSignals(True)
+            self.spoken_replies_checkbox.setChecked(False)
+            self.spoken_replies_checkbox.blockSignals(False)
+            self.spoken_replies_checkbox.setEnabled(False)
+            self.speech_stop_button.setEnabled(False)
             self.voice_checkbox.blockSignals(True)
             self.voice_checkbox.setChecked(False)
             self.voice_checkbox.blockSignals(False)
@@ -1574,6 +1718,9 @@ Version: {version}",
             self._logout_started = True
             if self.voice_session is not None:
                 self.voice_session.close()
+            if self.speech_session is not None:
+                self.speech_session.close()
+            self.speech_session = None
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is finishing active work before signing out…"
@@ -1618,6 +1765,9 @@ Version: {version}",
             self._shutdown_started = True
             if self.voice_session is not None:
                 self.voice_session.close()
+            if self.speech_session is not None:
+                self.speech_session.close()
+            self.speech_session = None
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is safely signing out and shutting down…"
