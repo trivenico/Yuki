@@ -23,7 +23,7 @@ class DesktopBackupTests(unittest.TestCase):
             destination = root / "restored"
             restored = restore_encrypted_backup(backup, destination, "correct horse battery staple")
             self.assertEqual(restored["file_count"], 1)
-            self.assertEqual((destination / "memory.json").read_text(), '{"private": true}')
+            self.assertEqual((destination / ".yuki" / "memory.json").read_text(), '{"private": true}')
             self.assertTrue((source / "memory.json").exists())
 
     def test_restore_flushes_staged_tree_before_publication(self):
@@ -40,14 +40,14 @@ class DesktopBackupTests(unittest.TestCase):
             original = backup_module._fsync_staged_tree
 
             def verify_then_sync(stage):
-                self.assertTrue((stage / "nested" / "notes.txt").is_file())
+                self.assertTrue((stage / ".yuki" / "nested" / "notes.txt").is_file())
                 self.assertFalse(destination.exists())
                 original(stage)
 
             with patch("ui.desktop.backup._fsync_staged_tree", side_effect=verify_then_sync) as sync:
                 restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
             sync.assert_called_once()
-            self.assertEqual((destination / "nested" / "notes.txt").read_text(), "durable")
+            self.assertEqual((destination / ".yuki" / "nested" / "notes.txt").read_text(), "durable")
 
     def test_wrong_passphrase_does_not_create_destination(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -76,6 +76,31 @@ class DesktopBackupTests(unittest.TestCase):
             with self.assertRaises(BackupError):
                 restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
             self.assertEqual((destination / "keep.txt").read_text(), "keep")
+
+    def test_restore_reconstructs_yuki_home_profile_and_workspace_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            (source / "auth.sqlite3").write_bytes(b"opaque-profile-data")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            (workspace / "notes.json").write_text('{"saved": true}', encoding="utf-8")
+            backup = root / "profile.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                additional_files={"workspace/notes.json": workspace / "notes.json"},
+            )
+            destination = root / "restored-home"
+            restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
+            self.assertEqual(
+                (destination / ".yuki" / "auth.sqlite3").read_bytes(),
+                b"opaque-profile-data",
+            )
+            self.assertEqual(
+                (destination / "workspace" / "notes.json").read_text(encoding="utf-8"),
+                '{"saved": true}',
+            )
 
     def test_additional_workspace_database_is_included_and_snapshotted(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -165,7 +190,7 @@ class DesktopBackupTests(unittest.TestCase):
             create_encrypted_backup(source, backup, "a sufficiently long passphrase")
             destination = root / "restore"
             restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
-            restored = sqlite3.connect(destination / "tasks.sqlite3")
+            restored = sqlite3.connect(destination / ".yuki" / "tasks.sqlite3")
             self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(restored.execute("SELECT name FROM tasks").fetchone()[0], "preserved")
             restored.close()
@@ -207,7 +232,7 @@ class DesktopBackupTests(unittest.TestCase):
 
             destination = root / "restored"
             restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
-            restored = sqlite3.connect(destination / "live.sqlite3")
+            restored = sqlite3.connect(destination / ".yuki" / "live.sqlite3")
             try:
                 self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(
@@ -216,8 +241,8 @@ class DesktopBackupTests(unittest.TestCase):
                 )
             finally:
                 restored.close()
-            self.assertFalse((destination / "live.sqlite3-wal").exists())
-            self.assertFalse((destination / "live.sqlite3-shm").exists())
+            self.assertFalse((destination / ".yuki" / "live.sqlite3-wal").exists())
+            self.assertFalse((destination / ".yuki" / "live.sqlite3-shm").exists())
 
     def test_rejects_cross_platform_archive_path_traversal(self):
         from ui.desktop.backup import _safe_archive_path
