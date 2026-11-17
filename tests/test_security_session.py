@@ -390,6 +390,57 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.assertFalse(self.monitor.enabled)
         self.assertFalse(self.controller.active)
 
+
+    def test_authorization_must_return_literal_true(self):
+        controller = SecuritySessionController(
+            self.monitor, authorize=lambda: 1,
+        )
+        with self.assertRaises(SecuritySessionError):
+            controller.start(consent=True)
+        self.assertFalse(self.monitor.enabled)
+
+    def test_authorization_exception_fails_closed(self):
+        def broken_authorizer():
+            raise RuntimeError("session provider unavailable")
+
+        controller = SecuritySessionController(
+            self.monitor, authorize=broken_authorizer,
+        )
+        with self.assertRaises(SecuritySessionError):
+            controller.start(consent=True)
+        self.assertFalse(self.monitor.enabled)
+
+    def test_close_during_startup_prevents_late_activation(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def delayed_enable():
+            entered.set()
+            release.wait(2)
+            self.monitor.enabled = True
+
+        self.monitor.enable = delayed_enable
+        errors = []
+
+        def start():
+            try:
+                self.controller.start(consent=True)
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=start)
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        self.controller.close()
+        release.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(errors)
+        self.assertFalse(self.monitor.enabled)
+        self.assertFalse(self.controller.active)
+        with self.assertRaises(SecuritySessionError):
+            self.controller.start(consent=True)
+
     def test_close_is_terminal(self):
         self.controller.start(consent=True)
         self.controller.close()
