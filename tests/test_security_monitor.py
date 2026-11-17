@@ -113,6 +113,26 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
         self.assertNotIn("\n", result["alerts"][0]["message"])
 
 
+    def test_process_labels_are_html_escaped_and_messages_are_fixed(self):
+        class Untrusted:
+            def snapshot(self):
+                return {
+                    "processes": [{"pid": 9, "name": "<img src=x onerror=alert(1)>", "status": "running"}],
+                    "process_count": 1,
+                    "truncated": False,
+                    "alerts": [{"type": "configured_process_name_match",
+                                "message": "<script>attacker-controlled</script>"}],
+                }
+        monitor = DesktopSecurityMonitor(process_monitor=Untrusted(), enabled=True)
+        result = monitor.snapshot()
+        self.assertNotIn("<img", result["processes"][0]["name"])
+        self.assertIn("&lt;img", result["processes"][0]["name"])
+        self.assertNotIn("<script>", result["alerts"][0]["message"])
+        self.assertEqual(
+            result["alerts"][0]["message"],
+            "A process matched your configured watchlist; verify its origin.",
+        )
+
     def test_disable_invalidates_in_flight_sensor_snapshot(self):
         entered = Event()
         release = Event()
