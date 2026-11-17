@@ -94,8 +94,14 @@ class SecurityDashboardPanel:
                 refresh.setEnabled(enabled)
 
             def render(self, snapshot: dict):
-                if not isinstance(snapshot, dict) or snapshot.get("read_only") is not True:
-                    raise ValueError("A read-only security snapshot is required.")
+                if (
+                    not isinstance(snapshot, dict)
+                    or snapshot.get("read_only") is not True
+                    or snapshot.get("persisted") is not False
+                    or snapshot.get("automated_response") is not False
+                    or snapshot.get("enabled") is not True
+                ):
+                    raise ValueError("An enabled, read-only, non-persistent snapshot is required.")
                 raw_processes = snapshot.get("processes", [])
                 raw_alerts = snapshot.get("alerts", [])
                 if not isinstance(raw_processes, list) or not isinstance(raw_alerts, list):
