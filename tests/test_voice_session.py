@@ -40,8 +40,12 @@ class VoiceSessionTests(unittest.TestCase):
     def test_audio_is_ephemeral_and_transcript_is_trimmed(self):
         stt = FakeSTT()
         session = VoiceSession(enabled=True, stt=stt)
-        transcript = session.capture_and_transcribe(seconds=3)
+        phases = []
+        transcript = session.capture_and_transcribe(
+            seconds=3, on_capture_complete=lambda: phases.append("capture-complete")
+        )
         self.assertEqual(transcript, "Hello Yuki.")
+        self.assertEqual(phases, ["capture-complete"])
         self.assertTrue(stt.assert_exists_during_transcription)
         self.assertFalse(stt.audio_path.exists())
         self.assertFalse(stt.transcribed_path.exists())
