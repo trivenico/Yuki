@@ -128,7 +128,7 @@ class ConversationService:
             heartbeat = threading.Thread(
                 target=renew_lease, name="yuki-conversation-lease", daemon=True,
             )
-            heartbeat.start()
+            heartbeat_started = False
 
             def guarded_cancellation() -> bool:
                 if lease_lost.is_set():
@@ -136,6 +136,8 @@ class ConversationService:
                 return bool(cancellation_requested()) if cancellation_requested is not None else False
 
             try:
+                heartbeat.start()
+                heartbeat_started = True
                 result = self._reply_unleased(
                     owner_id=owner_id, conversation_id=conversation_id,
                     user_text=user_text, request_id=request_id,
@@ -150,7 +152,8 @@ class ConversationService:
                 return result
             finally:
                 stop_heartbeat.set()
-                heartbeat.join()
+                if heartbeat_started:
+                    heartbeat.join()
                 self.store.release_generation_lease(
                     owner_id=owner_id, conversation_id=conversation_id,
                     lease_token=token,
