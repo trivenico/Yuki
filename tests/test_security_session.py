@@ -330,6 +330,66 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.active)
         self.assertTrue(self.monitor.enabled)
 
+
+    def test_late_startup_cleanup_waits_for_stop_cleanup(self):
+        enable_entered = threading.Event()
+        release_enable = threading.Event()
+        disable_entered = threading.Event()
+        release_first_disable = threading.Event()
+        disable_count = 0
+        disable_lock = threading.Lock()
+
+        def delayed_enable():
+            enable_entered.set()
+            release_enable.wait(2)
+            self.monitor.enabled = True
+
+        def delayed_first_disable():
+            nonlocal disable_count
+            with disable_lock:
+                disable_count += 1
+                current = disable_count
+            if current == 1:
+                disable_entered.set()
+                release_first_disable.wait(2)
+
+        self.monitor.enable = delayed_enable
+        self.monitor.disable_hook = delayed_first_disable
+        start_errors = []
+        stop_errors = []
+
+        def start():
+            try:
+                self.controller.start(consent=True)
+            except Exception as exc:
+                start_errors.append(exc)
+
+        def stop():
+            try:
+                self.controller.stop()
+            except Exception as exc:
+                stop_errors.append(exc)
+
+        starter = threading.Thread(target=start)
+        starter.start()
+        self.assertTrue(enable_entered.wait(1))
+        stopper = threading.Thread(target=stop)
+        stopper.start()
+        self.assertTrue(disable_entered.wait(1))
+        release_enable.set()
+        # The startup thread must wait for Stop's disable, then perform its
+        # own compensating disable before releasing the startup reservation.
+        release_first_disable.set()
+        stopper.join(2)
+        starter.join(2)
+        self.assertFalse(stopper.is_alive())
+        self.assertFalse(starter.is_alive())
+        self.assertFalse(stop_errors)
+        self.assertTrue(start_errors)
+        self.assertGreaterEqual(disable_count, 2)
+        self.assertFalse(self.monitor.enabled)
+        self.assertFalse(self.controller.active)
+
     def test_close_is_terminal(self):
         self.controller.start(consent=True)
         self.controller.close()
