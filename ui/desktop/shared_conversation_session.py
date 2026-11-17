@@ -78,7 +78,6 @@ def build_authenticated_desktop_conversation(
         provider=provider,
         owner_id=actor_id,
         store_factory=store_factory,
-        close_provider=False,
     )
     try:
         facade = AuthenticatedDesktopConversation(
