@@ -207,7 +207,8 @@ class WakeWordSession:
                 if self._stop_event.is_set():
                     break
                 if frame is None:
-                    continue
+                    # None is the source contract's end-of-stream signal.
+                    break
                 if not isinstance(frame, (bytes, bytearray, memoryview)):
                     raise WakeWordError("Audio source returned a non-bytes PCM frame.")
                 if not 0 < len(frame) <= self.MAX_FRAME_BYTES:
@@ -230,7 +231,6 @@ class WakeWordSession:
                 if self._thread is current_thread():
                     self._thread = None
                 closed = self._closed
-                cancelled = self._stop_event.is_set()
                 if closed:
                     next_state = "closed"
                 elif failure is not None:
