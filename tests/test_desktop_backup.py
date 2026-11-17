@@ -173,6 +173,7 @@ class DesktopBackupTests(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             database_path = workspace / "conversations.sqlite3"
+            (workspace / "notes.json").write_text('{"workspace": true}', encoding="utf-8")
             writer = sqlite3.connect(database_path)
             writer.execute("PRAGMA journal_mode=WAL")
             writer.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, body TEXT)")
@@ -182,7 +183,7 @@ class DesktopBackupTests(unittest.TestCase):
             try:
                 create_encrypted_backup(
                     source, backup, "a sufficiently long passphrase",
-                    additional_files={"workspace/conversations.sqlite3": database_path},
+                    additional_roots={"workspace": workspace},
                 )
             finally:
                 writer.close()
@@ -190,7 +191,11 @@ class DesktopBackupTests(unittest.TestCase):
             result = restore_encrypted_backup(
                 backup, destination, "a sufficiently long passphrase",
             )
-            self.assertEqual(result["file_count"], 2)
+            self.assertEqual(result["file_count"], 3)
+            self.assertEqual(
+                (destination / "workspace" / "notes.json").read_text(encoding="utf-8"),
+                '{"workspace": true}',
+            )
             restored = sqlite3.connect(destination / "workspace" / "conversations.sqlite3")
             try:
                 self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
