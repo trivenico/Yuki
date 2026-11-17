@@ -70,11 +70,6 @@ class ConversationService:
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
 
-        agent_loop = self.agent_loop
-        if self.agent_loop_for_owner is not None:
-            agent_loop = self.agent_loop_for_owner(owner_id)
-            if not isinstance(agent_loop, AgentExecutionLoop):
-                raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
         with self._lock:
             starting_version = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
@@ -151,6 +146,15 @@ class ConversationService:
                 raise ConversationConflict(
                     "the previous turn has no persisted assistant response; reconcile it before sending another."
                 )
+
+            # Resolve the owner-specific model only after ownership, version,
+            # interrupted-generation and idempotent-replay checks have passed.
+            # Replays and rejected requests must not construct provider clients.
+            agent_loop = self.agent_loop
+            if self.agent_loop_for_owner is not None:
+                agent_loop = self.agent_loop_for_owner(owner_id)
+                if not isinstance(agent_loop, AgentExecutionLoop):
+                    raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
 
             user_result = self.store.append_message(
                 owner_id=owner_id, conversation_id=conversation_id,
