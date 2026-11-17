@@ -111,6 +111,29 @@ class EncryptedMemoryStore(MemoryStore):
             key = base64.b64decode(metadata["key"], validate=True)
             if len(key) != 32:
                 raise ValueError("invalid portable memory key length")
+            memory_file = Path(memory_path).expanduser()
+            info = memory_file.lstat()
+            if (
+                not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_size <= 0 or info.st_size > MemoryStore.MAX_FILE_BYTES
+            ):
+                raise ValueError("invalid encrypted memory file")
+            envelope = json.loads(memory_file.read_text(encoding="utf-8"))
+            if (
+                not isinstance(envelope, dict)
+                or envelope.get("version") != EncryptedMemoryStore.VERSION
+                or not isinstance(envelope.get("nonce"), str)
+                or not isinstance(envelope.get("ciphertext"), str)
+            ):
+                raise ValueError("invalid encrypted memory envelope")
+            nonce = base64.b64decode(envelope["nonce"], validate=True)
+            ciphertext = base64.b64decode(envelope["ciphertext"], validate=True)
+            if len(nonce) != 12 or len(ciphertext) < 16:
+                raise ValueError("invalid encrypted memory payload")
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            plaintext = AESGCM(key).decrypt(nonce, ciphertext, _AAD)
+            entries = json.loads(plaintext.decode("utf-8"))
+            MemoryStore(memory_file)._validate_entries(entries)
             backend = keyring_module.get_keyring()
             priority = getattr(backend, "priority", 0)
             if not isinstance(priority, (int, float)) or priority <= 0:
@@ -120,7 +143,7 @@ class EncryptedMemoryStore(MemoryStore):
             existing = keyring_module.get_password(_SERVICE, account)
             if existing is not None:
                 existing_key = base64.b64decode(existing, validate=True)
-                if len(existing_key) != 32 or not __import__("hmac").compare_digest(existing_key, key):
+                if len(existing_key) != 32 or not hmac.compare_digest(existing_key, key):
                     raise ValueError("destination profile already has a different memory key")
                 return False
             keyring_module.set_password(_SERVICE, account, encoded)
