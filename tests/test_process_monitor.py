@@ -91,6 +91,10 @@ class ReadOnlyProcessMonitorTests(unittest.TestCase):
         self.assertEqual(len(monitor.snapshot()["alerts"]), 1)
 
 
+    def test_watchlist_rejects_names_removed_by_normalization(self):
+        with self.assertRaisesRegex(ValueError, "visible characters"):
+            ReadOnlyProcessMonitor(suspicious_names=["\\n\\t"])
+
     def test_watchlist_size_is_bounded(self):
         def unbounded_names():
             index = 0
