@@ -70,6 +70,35 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
             monitor.snapshot()
         self.assertNotIn("/private/user/path", str(caught.exception))
 
+
+    def test_sanitizes_and_bounds_injected_process_data(self):
+        class Untrusted:
+            def snapshot(self):
+                return {
+                    "processes": [
+                        {"pid": 4, "name": "editor\\n" + "x" * 300,
+                         "status": "running", "cmdline": "secret"},
+                        {"pid": True, "name": "invalid", "status": "running"},
+                    ],
+                    "process_count": 2,
+                    "truncated": False,
+                    "alerts": [{"type": "watch\\nmatch", "message": "safe\\nmessage"}],
+                }
+        monitor = DesktopSecurityMonitor(process_monitor=Untrusted(), enabled=True)
+        result = monitor.snapshot()
+        self.assertEqual(len(result["processes"]), 1)
+        self.assertLessEqual(len(result["processes"][0]["name"]), 160)
+        self.assertNotIn("cmdline", result["processes"][0])
+        self.assertNotIn("\\n", result["alerts"][0]["message"])
+
+    def test_rejects_malformed_detector_alert(self):
+        class BadDetector:
+            def observe(self, source_ip, destination_port, *, timestamp=None):
+                return ["not", "an", "alert"]
+        monitor = DesktopSecurityMonitor(port_scan_detector=BadDetector(), enabled=True)
+        with self.assertRaisesRegex(SecurityMonitorError, "invalid alert"):
+            monitor.observe_connection("192.0.2.1", 80)
+
     def test_rejects_invalid_sensor_and_configuration(self):
         with self.assertRaises(ValueError):
             DesktopSecurityMonitor(enabled=1)
