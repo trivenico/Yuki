@@ -42,6 +42,24 @@ class ConversationServiceTests(unittest.TestCase):
             tools=[],
         )
 
+    def test_lease_is_released_when_heartbeat_thread_cannot_start(self):
+        from unittest.mock import patch
+
+        with patch(
+            "core.conversation_service.threading.Thread.start",
+            side_effect=RuntimeError("thread start unavailable"),
+        ), patch.object(self.store, "release_generation_lease") as release:
+            with self.assertRaisesRegex(RuntimeError, "thread start unavailable"):
+                self.send()
+        release.assert_called_once()
+        self.assertEqual(
+            self.store.list_interrupted_generations(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+            ),
+            [],
+        )
+
     def test_active_generation_renews_lease_for_other_service_instances(self):
         import threading
         import time
