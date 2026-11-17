@@ -11,3 +11,16 @@ Voice remains **off by default**. The desktop app now provides an explicit, boun
 - No wake-word detector, always-listening service, ambient audio archive, or hands-free duplex conversation is implemented yet. The `openwakeword` dependency is not currently used by a runtime listener.
 
 Microphone permission is independent from camera and screen observation. Sign-out and session cleanup disable voice. If audio capture or the speech model is unavailable, text chat remains available.
+
+
+## Local speech-output safety limits
+
+The local Piper playback adapter bounds a single stream to 100 non-empty chunks and
+20,000 total text characters (2,000 characters per chunk). Generated WAV output is
+limited to 25 MiB, 120 seconds, 8–96 kHz, and one or two channels. Playback has a
+125-second watchdog and checks the interruption signal while audio is playing.
+The pyttsx3 engine is stopped and released in a `finally` block.
+
+These are resource and lifecycle safeguards, not proof that a selected voice sounds
+natural or matches the requested expressive style. Voice selection still requires
+auditioning on supported desktop operating systems.
