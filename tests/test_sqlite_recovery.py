@@ -88,6 +88,19 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
         self.assertNotIn(str(path), repr(report))
         self.assertFalse(report["startup_safe"])
 
+    def test_additional_recovery_checks_require_a_bounded_schema(self):
+        with self.assertRaisesRegex(ValueError, "additional_check_schema_invalid"):
+            build_sqlite_recovery_report({}, additional_checks=({"status": "unsafe"},))
+        with self.assertRaisesRegex(ValueError, "additional_check_status_invalid"):
+            build_sqlite_recovery_report({}, additional_checks=({
+                "component": "plugin", "status": [], "action": "Preserve data",
+            },))
+        with self.assertRaisesRegex(ValueError, "additional_check_component_invalid"):
+            build_sqlite_recovery_report({}, additional_checks=({
+                "component": "plugin\\nInjected", "status": "unsafe",
+                "action": "Preserve data",
+            },))
+
 
 if __name__ == "__main__":
     unittest.main()
