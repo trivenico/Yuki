@@ -16,7 +16,7 @@ python -m ui.desktop.launch
 Create the first local account through the CLI before signing in:
 
 ```bash
-yuki auth bootstrap-admin
+python yuki_cli.py auth bootstrap-admin
 ```
 
 A supported operating-system credential store is required. The desktop does
