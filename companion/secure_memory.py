@@ -116,7 +116,7 @@ class EncryptedMemoryStore(MemoryStore):
             info = memory_file.lstat()
             if (
                 not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size <= 0 or info.st_size > EncryptedEncryptedMemoryStore.MAX_FILE_BYTES
+                or info.st_size <= 0 or info.st_size > EncryptedMemoryStore.MAX_FILE_BYTES
             ):
                 raise ValueError("invalid encrypted memory file")
             envelope = json.loads(memory_file.read_text(encoding="utf-8"))
@@ -164,6 +164,30 @@ class EncryptedMemoryStore(MemoryStore):
             return True
         except Exception as exc:
             raise RuntimeError("Could not safely import the encrypted-memory key into the OS keyring.") from exc
+
+    @staticmethod
+    def _validate_entries(entries: object) -> list[dict]:
+        """Apply the same bounded entry contract before accepting decrypted data."""
+        if not isinstance(entries, list) or len(entries) > MemoryStore.MAX_ENTRIES:
+            raise ValueError("Memory payload has an invalid structure or exceeds limits.")
+        validated = []
+        for item in entries:
+            if not isinstance(item, dict) or not all(
+                key in item for key in ("id", "created_at", "text")
+            ):
+                raise ValueError("Memory payload contains an invalid entry.")
+            if (
+                not isinstance(item["id"], str) or not item["id"]
+                or not isinstance(item["created_at"], str) or not item["created_at"]
+                or not isinstance(item["text"], str)
+                or not item["text"].strip() or len(item["text"]) > MemoryStore.MAX_TEXT
+            ):
+                raise ValueError("Memory payload contains invalid bounded fields.")
+            category = item.get("category", "note")
+            if category not in {"note", "preference", "lesson"}:
+                raise ValueError("Memory payload contains an invalid category.")
+            validated.append(dict(item))
+        return validated
 
     def _load(self) -> list[dict]:
         try:
