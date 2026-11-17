@@ -32,25 +32,32 @@ The requested Japanese-anime-inspired delivery remains a voice-direction target,
 
 ## Runtime and packaging
 
-The documented English package contains:
-- `model.onnx` (approximately 330 MB in the published package listing)
+The documented English v0.19 package listing contains:
+- `model.onnx` (approximately 330 MB)
 - `voices.bin` (approximately 5.5 MB)
 - `tokens.txt`
-- `espeak-ng-data/`
+- `espeak-ng-data/` in the legacy model archive
 - `LICENSE` and package README
 
-sherpa-onnx exposes an offline TTS API and supports Kokoro through ONNX. The project advertises Apache-2.0 for the sherpa-onnx runtime. The model repository separately identifies Kokoro v0.19 weights as Apache-2.0. These facts do not automatically license every file in the sherpa model archive or every binary dependency.
+sherpa-onnx exposes an offline TTS API and supports Kokoro through ONNX. Its runtime repository is Apache-2.0. The Kokoro model repository separately identifies the model weights as Apache-2.0. These facts do not automatically license every file in a sherpa model archive or every binary dependency.
 
-### Compliance gate — unresolved
+The official sherpa-onnx installation documentation lists CPU Python wheels for Linux x64/aarch64/armv7l, macOS x64/arm64, and Windows x64/x86. This is promising for the desktop target, but the exact selected release, Python version, native libraries, and packaged executable still need CI validation on all three desktop operating systems.
 
-A sherpa-onnx maintainer issue opened on 2026-09-29 requests release-specific provenance and licensing evidence for the `espeak-ng-data` archive used by `kokoro-en-v0_19`. Treat that as an open compliance risk until the exact data source, version, license, and notices are verified.
+### eSpeak-NG archive finding
+
+The previously open sherpa-onnx issue [#4002](https://github.com/k2-fsa/sherpa-onnx/issues/4002) is **closed**. On 2026-10-26, a sherpa-onnx maintainer stated that eSpeak-NG had been removed since sherpa-onnx v2.0.0 and that `espeak-ng-data` can be deleted from the model directory.
+
+Implementation consequence:
+- Prefer a sherpa-onnx v2.0.0-or-newer runtime and verify the exact Kokoro model configuration against that release.
+- Do not package or redistribute the legacy `espeak-ng-data/` directory if the selected runtime/model path does not require it.
+- Do not describe the legacy directory's provenance as resolved. The maintainer response explains that it is no longer needed with v2.0.0+, but does not provide provenance or license evidence for the old archive's copy.
+- Keep the model package optional and user-installed until a release-specific manifest, hash, and license review is complete.
 
 Before distribution:
-- Record exact release URL, archive SHA-256, file manifest, and upstream commit/tag for every asset.
-- Inspect the archive's `LICENSE` and `README.md`; do not assume they cover all embedded data.
-- Verify eSpeak-NG data provenance and licensing independently.
-- Record licenses/notices for sherpa-onnx, ONNX Runtime, phonemizer/data, and all platform-specific native libraries.
-- Preserve required notices and source offers/attribution.
+- Record exact release URL, archive SHA-256, file manifest, and upstream revision for every asset actually shipped.
+- Verify the selected model's license and notices independently from the runtime.
+- Record licenses/notices for sherpa-onnx, ONNX Runtime, phonemizer/data actually used, and platform-specific native libraries.
+- Preserve required notices and attribution.
 - Keep model assets as user-downloaded optional components until the compliance gate is closed.
 
 ## Performance and acceptance plan
@@ -86,7 +93,8 @@ The adapter must pass the existing output-session lifecycle and TTS resource-lim
 ## Primary references
 
 - sherpa-onnx Kokoro English model documentation: https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html
+- sherpa-onnx Python wheel/platform installation: https://k2-fsa.github.io/sherpa/onnx/python/install.html
 - sherpa-onnx TTS API and Kokoro model configuration: https://github.com/k2-fsa/sherpa-onnx/blob/master/sherpa-onnx/c-api/docs/tts.dox
 - sherpa-onnx repository and runtime license: https://github.com/k2-fsa/sherpa-onnx
 - Kokoro model card and weight license: https://huggingface.co/hexgrad/Kokoro-82M
-- eSpeak-NG provenance/licensing question for the model package: https://github.com/k2-fsa/sherpa-onnx/issues/4002
+- eSpeak-NG provenance/licensing question and maintainer response: https://github.com/k2-fsa/sherpa-onnx/issues/4002
