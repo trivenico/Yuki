@@ -156,38 +156,47 @@ def run() -> int:
         from pathlib import Path
         from tempfile import TemporaryDirectory
 
+        log_path = os.environ.get("YUKI_SMOKE_TEST_LOG")
+        def smoke_log(message):
+            if log_path:
+                try:
+                    with Path(log_path).open("a", encoding="utf-8") as stream:
+                        stream.write(message + "\\n")
+                except OSError:
+                    pass
+
+        smoke_log("stage: python-entry")
         try:
             with TemporaryDirectory(prefix="yuki-desktop-smoke-") as temporary_root:
                 os.environ["YUKI_CONFIG"] = str(Path(temporary_root) / "config.yaml")
                 from core.config import load_config
 
-                smoke_config = load_config()
+                smoke_config = load_config()\n                smoke_log("stage: packaged-config-loaded")
                 if smoke_config.get("name") != "Yuki":
                     raise RuntimeError("Packaged first-run configuration did not load.")
                 if not (Path(temporary_root) / "config.yaml").is_file():
                     raise RuntimeError("Packaged first-run configuration was not created.")
 
-            try:
-                from PySide6.QtWidgets import QApplication, QLabel
+            smoke_log("stage: before-qt-import")\n            try:\n                from PySide6.QtWidgets import QApplication, QLabel
             except ImportError as exc:
                 raise RuntimeError(
                     "Yuki Desktop could not load PySide6 or its native Qt runtime libraries. "
                     "Install requirements-desktop.txt and the platform's Qt system dependencies."
                 ) from exc
-            app = QApplication.instance() or QApplication([sys.argv[0]])
+            smoke_log("stage: qt-imported")\n            app = QApplication.instance() or QApplication([sys.argv[0]])
             probe = QLabel("Yuki Desktop runtime OK")
-            probe.show()
+            smoke_log("stage: app-created")\n            probe.show()
             app.processEvents()
             if not probe.isVisible():
                 raise RuntimeError("Qt could not initialize a visible desktop widget.")
-            probe.close()
+            smoke_log("stage: widget-visible")\n            probe.close()
             app.processEvents()
-            return 0
+            smoke_log("stage: success")\n            return 0
         except BaseException:
             log_path = os.environ.get("YUKI_SMOKE_TEST_LOG")
             if log_path:
                 try:
-                    Path(log_path).write_text(traceback.format_exc(), encoding="utf-8")
+                    Path(log_path).write_text("stage: python-exception\\n" + traceback.format_exc(), encoding="utf-8")
                 except OSError:
                     pass
             raise
