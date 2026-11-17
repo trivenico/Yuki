@@ -15,6 +15,8 @@ import re
 import secrets
 import sqlite3
 
+from core.sqlite_file_security import verify_sqlite_integrity
+
 _MIN_ITERATIONS = 100_000
 _DEFAULT_ITERATIONS = 600_000
 _MAX_PASSWORD_LENGTH = 1024
@@ -76,6 +78,7 @@ class BuiltInAuthService:
         self.max_failed_logins = max_failed_logins
         self.lockout_seconds = lockout_seconds
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        verify_sqlite_integrity(self.database_path)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
