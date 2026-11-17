@@ -23,3 +23,11 @@ does not depend on the source computer's OS keyring.
 
 The native desktop client now exposes a Backup & Restore tab. Backup creation asks for a passphrase twice and runs off the UI thread. Restore requires a selected backup, passphrase, and a user-selected destination folder; the active Yuki profile and its parent directories are rejected, and the destination must be empty. The passphrase fields are cleared before work begins and are not logged or persisted.
 Remaining UI work: add passphrase strength guidance, cancellable progress reporting, and an end-to-end clean-device restore walkthrough. The current worker prevents window close/sign-out while an operation is running. Do not log passphrases or archive contents. Production qualification still requires large-dataset, interrupted-write, and clean-device restore tests. Restore currently writes to a separate folder and does not activate or hot-swap the restored profile.
+
+
+The desktop profile backup includes the private desktop data root and the
+canonical conversation database from the configured workspace at
+`workspace/conversations.sqlite3`. The conversation database is snapshotted
+using SQLite's backup API and checked during restore. Restore always writes to
+a separate empty folder; retain its `workspace/` directory when configuring a
+restored profile. It does not activate or overwrite the running profile.
