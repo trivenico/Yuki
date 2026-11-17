@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
 from pathlib import Path
 
 
@@ -42,6 +43,27 @@ def prepare_private_desktop_root(root: Path, *, require_existing_parent: bool = 
     except OSError as exc:
         raise DesktopStorageError(
             "Yuki cannot establish private permissions for its desktop data directory."
+        ) from exc
+    # A successful mkdir/stat does not prove the volume is writable. Probe
+    # the exact directory Yuki will use before any SQLite store is initialized.
+    probe_path = None
+    try:
+        descriptor, probe_name = tempfile.mkstemp(prefix=".yuki-write-test-", dir=str(path))
+        probe_path = Path(probe_name)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        probe_path.unlink()
+        probe_path = None
+    except OSError as exc:
+        if probe_path is not None:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise DesktopStorageError(
+            "Yuki data storage is not writable; check the drive and filesystem permissions."
         ) from exc
     return path.resolve()
 
