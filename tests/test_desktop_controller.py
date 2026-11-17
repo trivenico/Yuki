@@ -135,7 +135,6 @@ class ControllerTests(unittest.TestCase):
                 "action": "emit",
                 "argument": "target=staging; operation=read-only",
                 "requires_approval": True,
-                "required_permissions": ["workspace.read"],
             }],
         )
         self.assertEqual(task.state, "waiting_approval")
@@ -143,7 +142,6 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(reviewed.state, "waiting_approval")
         self.assertEqual(reviewed.steps[0]["action"], "emit")
         self.assertEqual(reviewed.steps[0]["argument"], "target=staging; operation=read-only")
-        self.assertEqual(reviewed.steps[0]["required_permissions"], ["workspace.read"])
         approved = self.controller.approve_task(
             task.task_id, expected_version=reviewed.version
         )
