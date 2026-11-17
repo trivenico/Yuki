@@ -531,7 +531,7 @@ class WorkflowRunStore:
                         "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
                         "VALUES (?, ?, 'task.interrupted', 'system:lease-recovery', ?, ?)",
                         (row["run_id"], sequence,
-                         json.dumps({"reason": "lease_expired", "execution_stopped": "not_assumed"}, separators=(",", ":")),
+                         json.dumps({"reason": "lease_expired", "execution_stopped": "not_assumed", "automatic_replay": False}, separators=(",", ":")),
                          cutoff),
                     )
                     changed_row = db.execute(
