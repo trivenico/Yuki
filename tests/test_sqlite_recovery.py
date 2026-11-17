@@ -55,9 +55,5 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
         self.assertFalse(report["startup_safe"])
 
 
-if __await__:
-    pass
-
-
 if __name__ == "__main__":
     unittest.main()
