@@ -1180,32 +1180,36 @@ def run() -> int:
                 self.transcript.appendPlainText("Yuki: " + reply)
                 self.chat_status.setText("Ready")
 
+        def _clear_authenticated_session_ui(self):
+                self.memory_toggle.blockSignals(True)
+                self.memory_toggle.setChecked(False)
+                self.memory_toggle.blockSignals(False)
+                self.transcript.clear()
+                self.specialist_list.clear()
+                self.task_list.clear()
+                self.task_progress_view.clear()
+                self.backup_passphrase.clear()
+                self.backup_confirmation.clear()
+                self.restore_passphrase.clear()
+                self.migration_source.clear()
+                self.migration_destination.clear()
+                self._clear_migration_preview()
+                self.migration_source_button.setEnabled(True)
+                self.migration_destination_button.setEnabled(True)
+                self.migration_status.setText("Sign in to use migration.")
+                self.backup_status.setText("Sign in to use backup and restore.")
+                self.task_approve_button.setEnabled(False)
+                self.task_cancel_button.setEnabled(False)
+                self.current_plan = None
+                self.plan_details.clear()
+                self.plan_dispatch_button.setEnabled(False)
+                self.plan_cancel_button.setEnabled(False)
+    
+
         def _return_to_login(self):
             controller = self.controller
             cleanup_error = _close_expired_controller(controller)
-            self.memory_toggle.blockSignals(True)
-            self.memory_toggle.setChecked(False)
-            self.memory_toggle.blockSignals(False)
-            self.transcript.clear()
-            self.specialist_list.clear()
-            self.task_list.clear()
-            self.task_progress_view.clear()
-            self.backup_passphrase.clear()
-            self.backup_confirmation.clear()
-            self.restore_passphrase.clear()
-            self.migration_source.clear()
-            self.migration_destination.clear()
-            self._clear_migration_preview()
-            self.migration_source_button.setEnabled(True)
-            self.migration_destination_button.setEnabled(True)
-            self.migration_status.setText("Sign in to use migration.")
-            self.backup_status.setText("Sign in to use backup and restore.")
-            self.task_approve_button.setEnabled(False)
-            self.task_cancel_button.setEnabled(False)
-            self.current_plan = None
-            self.plan_details.clear()
-            self.plan_dispatch_button.setEnabled(False)
-            self.plan_cancel_button.setEnabled(False)
+            self._clear_authenticated_session_ui()
             if cleanup_error is not None:
                 # Keep the closed controller reachable so cleanup can be retried.
                 # Only the sign-out action remains enabled; the bridge rejects all
@@ -1240,6 +1244,7 @@ def run() -> int:
                 # Keep the closed bridge attached so a second sign-out attempt
                 # can retry any cleanup step that failed. Returning to login and
                 # discarding it here would make the retry path unreachable.
+                self._clear_authenticated_session_ui()
                 self.logout_button.setText("Retry sign out")
                 self.chat_status.setText(
                     "Sign-out cleanup incomplete. Other session actions are blocked; retry sign out."
