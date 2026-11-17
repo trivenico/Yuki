@@ -278,6 +278,29 @@ class WakeWordSession:
                 if self._thread is current_thread():
                     self._thread = None
 
+    def request_stop(self) -> None:
+        """Signal immediate capture shutdown without joining worker threads.
+
+        Safe to call from a UI thread: it sets the cancellation event and asks
+        the current source to stop, but never waits for startup or inference.
+        Call stop()/close() from a background worker to await full cleanup.
+        """
+        with self._lock:
+            self._stop_event.set()
+            source = self._source
+            if not self._closed and self._state not in {"disabled", "failed", "triggered"}:
+                self._state = "stopping"
+                notify = True
+            else:
+                notify = False
+        if notify:
+            self._notify_state("stopping")
+        if source is not None:
+            try:
+                source.stop()
+            except Exception as exc:
+                self._report_error(exc)
+
     def stop(self, timeout: float | None = None) -> bool:
         """Stop capture and wait briefly for the audio worker to release devices."""
         if timeout is None:
