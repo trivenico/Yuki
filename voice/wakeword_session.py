@@ -285,13 +285,11 @@ class WakeWordSession:
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0:
             raise ValueError("timeout must be a non-negative number.")
         with self._lock:
-            if self._closed:
-                return True
             self._stop_event.set()
             source = self._source
             startup = self._startup_thread
             worker = self._thread
-            if self._state not in {"disabled", "failed", "triggered"}:
+            if not self._closed and self._state not in {"disabled", "failed", "triggered"}:
                 self._state = "stopping"
                 notify = True
             else:
