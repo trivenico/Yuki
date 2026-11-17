@@ -1530,6 +1530,12 @@ Version: {version}",
                     self._wake_stop_requested = False
                     self._stop_wakeword_listener(capture=self._wake_capture_after_stop)
             else:
+                if result is False:
+                    self.wakeword_status.setText(
+                        "Wake-word microphone has not fully stopped. Press Stop listening to retry."
+                    )
+                    self.wakeword_stop_button.setEnabled(True)
+                    return
                 self.wakeword_session = None
                 self.wakeword_model_button.setEnabled(True)
                 self.wakeword_start_button.setEnabled(
@@ -1558,6 +1564,10 @@ Version: {version}",
             self.wakeword_status.setText(labels.get(state, "Wake-word state: " + state))
             if state == "triggered":
                 self._stop_wakeword_listener(capture=True)
+            elif state in {"disabled", "failed"} and self._wakeword_operation is None:
+                # The input stream ended or inference failed independently of
+                # a user stop. Reconcile the UI and release the session handle.
+                self._stop_wakeword_listener(capture=False)
 
         @Slot(object)
         def _wakeword_detected(self, captured_session):
