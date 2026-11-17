@@ -286,7 +286,7 @@ def run() -> int:
 
 
     class SpeechWorkerSignals(QObject):
-        finished = Signal(object, object)
+        finished = Signal(object, object, object)
 
     class SpeechWorker(QRunnable):
         def __init__(self, session, reply: str):
@@ -1023,15 +1023,6 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if self.voice_session is not None:
                 self.voice_session.close()
             self.voice_session = None
-            if self.speech_session is not None:
-                self.speech_session.close()
-            self.speech_session = None
-            self.speech_worker = None
-            self.spoken_replies_checkbox.blockSignals(True)
-            self.spoken_replies_checkbox.setChecked(False)
-            self.spoken_replies_checkbox.blockSignals(False)
-            self.spoken_replies_checkbox.setEnabled(False)
-            self.speech_stop_button.setEnabled(False)
             self.voice_checkbox.blockSignals(True)
             self.voice_checkbox.setChecked(False)
             self.voice_checkbox.blockSignals(False)
@@ -1481,13 +1472,20 @@ Version: {version}",
             worker.signals.finished.connect(self._spoken_reply_finished)
             self.speech_worker = worker
             self.speech_stop_button.setEnabled(True)
+            self.send_button.setEnabled(False)
+            self.message.setEnabled(False)
             self.voice_status.setText("Yuki is speaking. Press Stop speaking to interrupt.")
             self.pool.start(worker)
 
-        @Slot(object, object)
-        def _spoken_reply_finished(self, result: Any, error: Any):
+        @Slot(object, object, object)
+        def _spoken_reply_finished(self, result: Any, error: Any, captured_session: Any):
             self.speech_worker = None
+            if captured_session is not self.speech_session:
+                return
             self.speech_stop_button.setEnabled(False)
+            if self.controller is not None and not self._logout_started and not self._shutdown_started:
+                self.send_button.setEnabled(not self.busy)
+                self.message.setEnabled(not self.busy)
             if error is not None:
                 self.voice_status.setText(
                     "Spoken reply stopped or unavailable (" + type(error).__name__ + ")."
