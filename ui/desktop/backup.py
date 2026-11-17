@@ -193,6 +193,7 @@ def _sha256_file(path: Path) -> str:
 def create_encrypted_backup(
     source: Path, destination: Path, passphrase: str, *,
     additional_files: Mapping[str, Path] | None = None,
+    additional_roots: Mapping[str, Path] | None = None,
 ) -> dict:
     AESGCM, Scrypt = _crypto()
     src = source.expanduser()
@@ -207,6 +208,26 @@ def create_encrypted_backup(
     # The backup is a restorable Yuki_HOME package: desktop state lives in .yuki/ and the configured workspace is a sibling directory.
     archive_items = [('.yuki/' + p.relative_to(root).as_posix(), p) for p in files]
     used_paths = {_portable_archive_key(_safe_archive_path(rel)) for rel, _ in archive_items}
+    for prefix, additional_root in (additional_roots or {}).items():
+        safe_prefix = _safe_archive_path(prefix)
+        if len(safe_prefix.parts) != 1:
+            raise BackupError("Additional backup directory prefix must be one path segment.")
+        extra_root = Path(additional_root).expanduser()
+        if extra_root.is_symlink():
+            raise BackupError("Additional backup directory must not be a symbolic link.")
+        try:
+            extra_root = extra_root.resolve(strict=True)
+        except OSError as exc:
+            raise BackupError("An additional backup directory is unavailable.") from exc
+        if extra_root == root or extra_root in root.parents or root in extra_root.parents:
+            raise BackupError("Additional backup directories must be separate from the desktop profile.")
+        for extra_file in _inventory(extra_root):
+            relative = (safe_prefix / extra_file.relative_to(extra_root)).as_posix()
+            portable_key = _portable_archive_key(_safe_archive_path(relative))
+            if portable_key in used_paths:
+                raise BackupError("Additional backup directory collides with an existing archive path.")
+            used_paths.add(portable_key)
+            archive_items.append((relative, extra_file))
     for relative, external_path in (additional_files or {}).items():
         safe_relative = _safe_archive_path(relative)
         portable_key = _portable_archive_key(safe_relative)
