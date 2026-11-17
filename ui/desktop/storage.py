@@ -10,7 +10,7 @@ class DesktopStorageError(RuntimeError):
     """Raised when the desktop cannot establish a private data directory."""
 
 
-def prepare_private_desktop_root(root: Path) -> Path:
+def prepare_private_desktop_root(root: Path, *, require_existing_parent: bool = False) -> Path:
     """Create and verify the desktop data root before opening any local stores.
 
     POSIX installations require owner-only directory permissions. Windows
@@ -18,6 +18,10 @@ def prepare_private_desktop_root(root: Path) -> Path:
     misleading chmod-based security claim.
     """
     path = Path(root).expanduser()
+    if require_existing_parent and not path.parent.is_dir():
+        raise DesktopStorageError(
+            "Configured YUKI_HOME is unavailable; refusing to create data on another filesystem."
+        )
     if path.is_symlink():
         raise DesktopStorageError("Desktop data root must not be a symbolic link.")
     try:
