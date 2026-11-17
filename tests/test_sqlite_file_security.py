@@ -72,6 +72,13 @@ class SQLiteFileSecurityTests(unittest.TestCase):
             verify_sqlite_integrity(path)
         self.assertEqual(path.read_bytes(), original)
 
+    def test_preexisting_empty_database_is_not_reinitialized(self):
+        path = self.root / "empty-existing.sqlite3"
+        path.touch()
+        with self.assertRaises(SQLiteIntegrityError):
+            ConversationStore(path)
+        self.assertEqual(path.stat().st_size, 0)
+
     def test_conversation_store_does_not_initialize_over_corrupt_database(self):
         path = self.root / "corrupt-conversations.sqlite3"
         original = b"corrupt user data must be preserved"
