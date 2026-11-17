@@ -349,7 +349,12 @@ def create_encrypted_backup(
             os.unlink(temporary)
         except FileNotFoundError:
             pass
-    return {"path": str(output), "file_count": len(manifest_files), "size_bytes": output.stat().st_size}
+    return {
+        "path": str(output),
+        "file_count": len(manifest_files),
+        "size_bytes": output.stat().st_size,
+        "memory_key_included": memory_key_export is not None,
+    }
 
 
 def restore_encrypted_backup(
