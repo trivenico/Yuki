@@ -40,9 +40,14 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
             lifecycle.close()
 
         self.assertEqual(events, ["last", "broken", "first"])
-        self.assertTrue(lifecycle.closed)
+        self.assertFalse(lifecycle.closed)
+
+        # A transient failure remains retryable; successful resources are not
+        # closed again when the failed hook succeeds on a later attempt.
+        broken.error = None
         lifecycle.close()
-        self.assertEqual(events, ["last", "broken", "first"])
+        self.assertTrue(lifecycle.closed)
+        self.assertEqual(events, ["last", "broken", "first", "broken"])
 
     def test_desktop_lifecycle_closes_hybrid_provider_after_dependents_once(self):
         events = []
