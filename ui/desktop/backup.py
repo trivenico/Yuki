@@ -253,7 +253,7 @@ def create_encrypted_backup(
                         src_db.close()
                 else:
                     payload = item.read_bytes()
-                if rel == "YUKI_BACKUP_MANIFEST.json":
+                if rel.casefold() == "yuki_backup_manifest.json":
                     raise BackupError("Source contains a reserved backup manifest filename.")
                 digest = hashlib.sha256(payload).hexdigest()
                 manifest_files.append({"path": rel, "size": len(payload), "sha256": digest})
