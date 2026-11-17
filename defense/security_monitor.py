@@ -90,7 +90,11 @@ class DesktopSecurityMonitor:
                 summary = {
                     "source": "network",
                     "type": _safe_label(alert.get("type", "security_alert"), 80),
-                    "message": _safe_label(alert.get("message", "Security event detected.")),
+                    "message": (
+                        "Possible port scan detected; verify network activity."
+                        if _safe_label(alert.get("type", ""), 80) == "possible_port_scan"
+                        else "A network security event was detected; review activity."
+                    ),
                 }
                 self._alerts.append(summary)
         return summary
@@ -115,7 +119,11 @@ class DesktopSecurityMonitor:
                     process_alerts.append({
                         "source": "process",
                         "type": _safe_label(alert.get("type", "security_alert"), 80),
-                        "message": _safe_label(alert.get("message", "Process watchlist match.")),
+                        "message": (
+                            "A process matched your configured watchlist; verify its origin."
+                            if _safe_label(alert.get("type", ""), 80) == "configured_process_name_match"
+                            else "A process security event was detected; review activity."
+                        ),
                     })
 
         processes = []
