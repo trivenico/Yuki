@@ -135,24 +135,24 @@ class PorcupineDetectorTests(unittest.TestCase):
         porcupine = FakePorcupineModule(engine)
         sounddevice = FakeSoundDevice()
         woke = threading.Event()
-        with create_porcupine_wakeword_session(
+        session = create_porcupine_wakeword_session(
             access_key="test-access-key",
             keyword_model_path=str(self.model_path),
             on_wake=woke.set,
             porcupine_module=porcupine,
             sounddevice_module=sounddevice,
-        ) as session:
-            self.assertEqual(porcupine.create_calls, [])
-            self.assertEqual(sounddevice.streams, [])
-            session.start()
-            self.assertEqual(len(porcupine.create_calls), 1)
-            stream = sounddevice.streams[0]
-            self.assertEqual(stream.kwargs["samplerate"], 16000)
-            self.assertEqual(stream.kwargs["blocksize"], 4)
-            stream.emit(bytes([1, 0, 2, 0, 3, 0, 4, 0]))
-            self.assertTrue(woke.wait(2))
-            self.assertEqual(engine.frames, [[1, 2, 3, 4]])
-            self.assertTrue(session.stop())
+        )
+        self.assertEqual(porcupine.create_calls, [])
+        self.assertEqual(sounddevice.streams, [])
+        session.start()
+        self.assertEqual(len(porcupine.create_calls), 1)
+        stream = sounddevice.streams[0]
+        self.assertEqual(stream.kwargs["samplerate"], 16000)
+        self.assertEqual(stream.kwargs["blocksize"], 4)
+        stream.emit(bytes([1, 0, 2, 0, 3, 0, 4, 0]))
+        self.assertTrue(woke.wait(2))
+        self.assertEqual(engine.frames, [[1, 2, 3, 4]])
+        self.assertTrue(session.stop())
         self.assertTrue(engine.deleted)
 
 
