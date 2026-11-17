@@ -31,7 +31,7 @@ before taking any action.
 - Does not collect command lines, environment variables, usernames, or
   executable paths.
 - Does not persist snapshots or send process data over a network.
-- Bounds each snapshot to at most 5,000 process records.
+- Bounds each snapshot to at most 5,000 process records and the configured watchlist to 1,000 names.
 - Does not terminate, suspend, inject into, or modify processes.
 - Does not elevate privileges or request administrator access.
 - Permission and provider failures produce a safe error; they do not trigger
