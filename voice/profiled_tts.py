@@ -76,6 +76,16 @@ class ProfiledLocalSpeechOutput:
             self._stream_generation += 1
         self.synthesizer.stop()
 
+    def close(self) -> None:
+        """Invalidate streams and release backend resources when supported."""
+        with self._stream_lock:
+            self._stream_generation += 1
+        close = getattr(self.synthesizer, "close", None)
+        if callable(close):
+            close()
+        else:
+            self.synthesizer.stop()
+
     def speak(self, text: str):
         """Speak only when explicitly called by the voice-session controller."""
         return self.synthesizer.speak(text)
