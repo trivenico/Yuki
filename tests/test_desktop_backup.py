@@ -139,6 +139,100 @@ class DesktopBackupTests(unittest.TestCase):
                 payload,
             )
 
+    def test_portable_memory_key_round_trips_inside_encrypted_archive_only(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+            def delete_password(self, service, account):
+                self.values.pop((service, account), None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / "memory.enc.json",
+                keyring_module=source_keyring,
+                keyring_account=profile_memory_keyring_account(profile_id),
+            )
+            store.add("portable private memory")
+            encoded_key = source_keyring.get_password(
+                "yuki-companion-memory", profile_memory_keyring_account(profile_id),
+            ).encode("ascii")
+            export = store.export_key_for_encrypted_backup(profile_id)
+            backup = root / "portable.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=export,
+            )
+            self.assertNotIn(encoded_key, backup.read_bytes())
+            destination = root / "restored"
+            destination_keyring = Keyring()
+            result = restore_encrypted_backup(
+                backup, destination, "a sufficiently long passphrase",
+                keyring_module=destination_keyring, import_memory_key=True,
+            )
+            self.assertTrue(result["memory_key_imported"])
+            self.assertFalse((destination / ".yuki" / "memory_key_export.json").exists())
+            restored_id = load_or_create_profile_id(destination / ".yuki")
+            restored = EncryptedMemoryStore(
+                destination / ".yuki" / "memory.enc.json",
+                keyring_module=destination_keyring,
+                keyring_account=profile_memory_keyring_account(restored_id),
+            )
+            self.assertEqual(restored.list()[0]["text"], "portable private memory")
+
+    def test_portable_memory_key_restore_requires_explicit_import(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / "memory.enc.json", keyring_module=source_keyring,
+                keyring_account=profile_memory_keyring_account(profile_id),
+            )
+            store.add("private")
+            backup = root / "portable.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=store.export_key_for_encrypted_backup(profile_id),
+            )
+            destination = root / "restored"
+            with self.assertRaisesRegex(BackupError, "Explicitly enable memory-key import"):
+                restore_encrypted_backup(
+                    backup, destination, "a sufficiently long passphrase",
+                    keyring_module=Keyring(), import_memory_key=False,
+                )
+            self.assertFalse(destination.exists())
+
     def test_restore_reconstructs_yuki_home_profile_and_workspace_layout(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
