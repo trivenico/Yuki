@@ -15,7 +15,7 @@ import secrets
 import sqlite3
 from typing import Any
 
-from core.sqlite_file_security import prepare_private_sqlite_path
+from core.sqlite_file_security import prepare_private_sqlite_path, verify_sqlite_integrity
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,9 @@ class SQLitePendingApprovalStore:
             raise ValueError("ttl_seconds must be between 1 and 3600.")
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        database_preexisted = Path(database_path).expanduser().exists()
         self.database_path = prepare_private_sqlite_path(database_path)
+        verify_sqlite_integrity(self.database_path, allow_empty=not database_preexisted)
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
         with self._connect() as db:
