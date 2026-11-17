@@ -1563,7 +1563,7 @@ Version: {version}",
                 return
             self._logout_started = True
             if self.voice_session is not None:
-                self.voice_session.cancel()
+                self.voice_session.close()
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is finishing active work before signing out…"
@@ -1607,7 +1607,7 @@ Version: {version}",
                 return
             self._shutdown_started = True
             if self.voice_session is not None:
-                self.voice_session.cancel()
+                self.voice_session.close()
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is safely signing out and shutting down…"
