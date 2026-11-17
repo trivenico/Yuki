@@ -78,6 +78,30 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertIsNone(self.worker({"code-review": lambda _: "should not run"}).run_once())
         self.assertEqual(self.store.get(task_id).state, "queued")
 
+    def test_worker_startup_recovers_expired_tasks_without_replaying_them(self):
+        task_id = self.create_task()
+        queued = self.store.get(task_id)
+        running = self.store.transition(
+            task_id, expected_version=queued.version, to_state="running",
+            lease_owner="abandoned-worker", lease_seconds=1,
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat(), task_id),
+            )
+
+        result = self.worker({"code-review": lambda _: "must not execute"}).run_once()
+
+        self.assertIsNone(result)
+        recovered = self.store.get(task_id)
+        self.assertEqual(recovered.state, "interrupted")
+        self.assertEqual(recovered.error_code, "lease_expired")
+        self.assertEqual(recovered.attempts, 1)
+        events = self.store.list_task_events(task_id)
+        self.assertEqual(events[-1].kind, "task.interrupted")
+        self.assertEqual(events[-1].payload["reason"], "lease_expired")
+
     def test_approved_task_can_execute(self):
         task_id = self.create_task(approval=True)
         queued = self.store.get(task_id)
