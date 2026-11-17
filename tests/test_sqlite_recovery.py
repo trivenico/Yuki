@@ -6,7 +6,7 @@ from pathlib import Path
 from core.sqlite_recovery import (
     SQLiteRecoveryRequired,
     build_sqlite_recovery_report,
-    inspect_sqlite_store,
+    inspect_sqlite_store,\n    format_sqlite_recovery_report,
     require_healthy_sqlite_stores,
 )
 
@@ -66,6 +66,16 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
             "authentication": self.root / "new-auth.sqlite3",
         })
         self.assertTrue(report["startup_safe"])
+
+    def test_owner_facing_report_names_component_without_disclosing_path(self):
+        from core.sqlite_recovery import format_sqlite_recovery_report
+        path = self.root / "secret-location.sqlite3"
+        path.write_bytes(b"damaged")
+        report = build_sqlite_recovery_report({"authentication": path})
+        message = format_sqlite_recovery_report(report)
+        self.assertIn("authentication", message)
+        self.assertNotIn(str(path), message)
+        self.assertIn("Preserve", message)
 
     def test_report_does_not_disclose_database_paths(self):
         path = self.root / "private-name.sqlite3"
