@@ -83,7 +83,10 @@ class VoiceSession:
         *,
         seconds: int = 5,
         language: str | None = None,
+        on_capture_complete=None,
     ) -> str:
+        if on_capture_complete is not None and not callable(on_capture_complete):
+            raise TypeError("on_capture_complete must be callable.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 10:
             raise ValueError("Voice capture duration must be 1-10 seconds.")
         if not self._operation_lock.acquire(blocking=False):
@@ -107,6 +110,8 @@ class VoiceSession:
                 )
                 if self._cancel.is_set():
                     raise VoiceSessionError("Voice capture was cancelled.")
+                if on_capture_complete is not None:
+                    on_capture_complete()
                 result = self._stt.transcribe_file(audio_path, language=language)
                 if self._cancel.is_set():
                     raise VoiceSessionError("Voice session was stopped.")
