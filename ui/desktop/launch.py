@@ -433,7 +433,7 @@ def run() -> int:
 
             backup_page = QWidget()
             backup_layout = QVBoxLayout(backup_page)
-            backup_layout.addWidget(QLabel("Create a portable encrypted backup of your Yuki profile."))
+            backup_layout.addWidget(QLabel("Create a portable encrypted backup of your Yuki profile, including its workspace conversation history."))
             backup_layout.addWidget(QLabel(
                 "Choose a new backup file and a passphrase of at least 12 characters. "
                 "Yuki cannot recover a lost passphrase."
@@ -478,7 +478,7 @@ def run() -> int:
             self.restore_passphrase.setEchoMode(QLineEdit.Password)
             self.restore_passphrase.setPlaceholderText("Backup passphrase")
             backup_layout.addWidget(self.restore_passphrase)
-            self.backup_restore_button = QPushButton("Restore into selected folder")
+            self.backup_restore_button = QPushButton("Restore profile package into selected folder")
             self.backup_restore_button.clicked.connect(self._restore_backup)
             backup_layout.addWidget(self.backup_restore_button)
             self.backup_status = QLabel("Backup and restore are available after signing in.")
@@ -763,8 +763,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 return
             answer = QMessageBox.warning(
                 self, "Restore backup",
-                "Restore will create a separate data directory. Existing files are never overwritten. "
-                "This will not replace the currently running Yuki profile. Continue?",
+                "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
+                "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
