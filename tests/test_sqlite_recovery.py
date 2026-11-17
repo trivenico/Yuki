@@ -24,8 +24,12 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
 
     def test_healthy_store_passes_read_only_check(self):
         path = self.root / "healthy.sqlite3"
-        with sqlite3.connect(path) as db:
+        db = sqlite3.connect(path)
+        try:
             db.execute("CREATE TABLE sample (value TEXT)")
+            db.commit()
+        finally:
+            db.close()
         result = inspect_sqlite_store("conversation", path)
         self.assertEqual(result["status"], "healthy")
 
