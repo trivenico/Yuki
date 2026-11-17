@@ -73,6 +73,7 @@ class SoundDeviceWakeWordAudioSource:
                 except Full:
                     pass
 
+        stream = None
         try:
             stream = sd.RawInputStream(
                 samplerate=self.SAMPLE_RATE,
@@ -83,10 +84,11 @@ class SoundDeviceWakeWordAudioSource:
             )
             stream.start()
         except Exception as exc:
-            try:
-                stream.close()
-            except Exception:
-                pass
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             raise WakeWordAudioError(
                 "Could not open the microphone in 16 kHz mono PCM16 mode."
             ) from exc
