@@ -178,6 +178,6 @@ class SharedDesktopControllerBridge:
     close = logout
 
     def _ensure_open(self) -> None:
-        with self._lock:
+        with self._logout_condition:
             if self._closed:
                 raise RuntimeError("desktop controller bridge is closed.")
