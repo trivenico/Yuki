@@ -32,6 +32,7 @@ class SecuritySessionController:
         self._starting = False
         self._starting_generation = None
         self._stopping = False
+        self._stop_requests = 0
         self._cleanup_required = False
         self._closed = False
         self._generation = 0
@@ -60,7 +61,7 @@ class SecuritySessionController:
         with self._lock:
             if self._closed:
                 raise SecuritySessionError("The security session controller is closed.")
-            if self._starting or self._stopping:
+            if self._starting or self._stopping or self._stop_requests:
                 raise SecuritySessionError("Security monitoring is still starting or stopping.")
             if self._cleanup_required:
                 raise SecuritySessionError("Security monitor cleanup must be retried before restart.")
@@ -139,20 +140,32 @@ class SecuritySessionController:
     def stop(self) -> None:
         with self._condition:
             self._active = False
-            # Wait for a late enable() to return and complete its compensating
-            # disable before Stop reports completion to the desktop owner.
+            # Reserve the lifecycle against new starts before releasing the
+            # lock, including while a late startup performs compensating cleanup.
             self._generation += 1
+            self._stop_requests += 1
             while self._starting:
                 self._condition.wait()
-        self._disable_monitor()
+        try:
+            self._disable_monitor()
+        finally:
+            with self._condition:
+                self._stop_requests -= 1
+                self._condition.notify_all()
 
     def _revoke_generation(self, generation: int) -> None:
-        with self._lock:
+        with self._condition:
             if not self._active or self._generation != generation:
                 return
             self._active = False
             self._generation += 1
-        self._disable_monitor()
+            self._stop_requests += 1
+        try:
+            self._disable_monitor()
+        finally:
+            with self._condition:
+                self._stop_requests -= 1
+                self._condition.notify_all()
 
     def snapshot(self) -> dict:
         if not self._authorized():
