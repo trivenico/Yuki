@@ -17,7 +17,10 @@ Create the first local account through the CLI before signing in:
 
 ```bash
 python yuki_cli.py auth bootstrap-admin
+python -m ui.desktop.launch
 ```
+
+Complete sign-in in the desktop window. The CLI bootstrap command creates the owner account only; it does not create a CLI session token. Desktop sessions are stored in the operating-system credential store.
 
 A supported operating-system credential store is required. The desktop does
 not fall back to plaintext session-token storage or plaintext saved-memory
