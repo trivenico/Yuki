@@ -24,3 +24,11 @@ The pyttsx3 engine is stopped and released in a `finally` block.
 These are resource and lifecycle safeguards, not proof that a selected voice sounds
 natural or matches the requested expressive style. Voice selection still requires
 auditioning on supported desktop operating systems.
+
+
+## Explicit desktop spoken replies
+
+- `voice/output_session.py` is the per-session permission gate. It never opens an audio device at construction, requires explicit enablement, bounds reply size and invalidates queued chunks when stopped or revoked.
+- `voice/desktop_output.py` validates local backend prerequisites before reporting spoken replies as enabled. Piper requires an existing local model file, the Piper executable, and optional `sounddevice` / `soundfile` packages. pyttsx3 requires its optional package.
+- The desktop chat exposes a separate **Enable spoken replies** control and **Stop speaking** action. It does not grant microphone permission. Speech runs on a background worker and permission is revoked on sign-out and shutdown.
+- Text chat remains available when local speech dependencies or model files are missing. No wake-word listener, always-on microphone capture, or camera monitoring is enabled by this feature.
