@@ -35,8 +35,10 @@ jobs:
           python -m unittest discover -s tests -p "test_wakeword_asset_manifest.py" -v
       - name: Verify example manifest fails closed
         run: |
+          set +e
           python training/wakeword/validate_assets.py training/wakeword/assets.manifest.example.json
           status=$?
+          set -e
           if [ "$status" -eq 0 ]; then
             echo "The placeholder manifest unexpectedly passed validation."
             exit 1
