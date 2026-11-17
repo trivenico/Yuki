@@ -106,6 +106,33 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result[0]["status"], "completed")
         self.assertEqual(result[0]["answer"], "long-running answer")
 
+    def test_message_commit_requires_current_generation_lease_token(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token="current-fence", ttl_seconds=120,
+        )
+        with self.assertRaises(ConversationConflict):
+            self.store.append_message(
+                owner_id="owner-a", conversation_id=conversation_id,
+                role="user", content="Stale worker write",
+                idempotency_key="stale-worker-write", expected_version=0,
+                generation_request_id="stale-worker-write",
+                lease_token="obsolete-fence",
+            )
+        self.assertEqual(
+            self.store.list_messages(owner_id="owner-a", conversation_id=conversation_id),
+            [],
+        )
+        committed = self.store.append_message(
+            owner_id="owner-a", conversation_id=conversation_id,
+            role="user", content="Current worker write",
+            idempotency_key="current-worker-write", expected_version=0,
+            generation_request_id="current-worker-write",
+            lease_token="current-fence",
+        )
+        self.assertTrue(committed["created"])
+
     def test_closed_service_rejects_new_operations(self):
         self.service.close()
         self.service.close()
