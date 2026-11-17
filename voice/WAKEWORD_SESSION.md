@@ -26,11 +26,14 @@ a selected wake-word model.
 
 ## Not yet implemented
 
-- A platform-specific wake-word model/detector adapter. The new
-  `SoundDeviceWakeWordAudioSource` uses the optional sounddevice dependency
-  to capture 16 kHz mono PCM16 frames into a one-frame volatile queue; actual
-  hardware and OS permission behavior still need desktop testing.
-- A model/engine adapter and a legally redistributable "Hey Yuki" model.
+- The optional `OpenWakeWordDetector` accepts one user-supplied ONNX model,
+  uses 16 kHz mono PCM16 in 1280-sample (80 ms) frames, and requires a
+  configurable consecutive-frame threshold. It loads only after explicit
+  session start.
+- The `SoundDeviceWakeWordAudioSource` captures engine-sized PCM16 frames
+  into a one-frame volatile queue; actual hardware and OS permission behavior
+  still need desktop testing.
+- A legally redistributable "Hey Yuki" model.
 - Desktop settings, OS permission integration, tray indicator, and mute UI.
 - Real-device false-accept/false-reject testing and CPU usage measurements.
 
@@ -56,10 +59,13 @@ https://picovoice.ai/docs/porcupine/
 https://picovoice.ai/docs/terms-of-use/
 https://picovoice.ai/docs/faq/general/
 
-The controller is engine-agnostic so Yuki does not become locked to either
-option. A model will not be downloaded or bundled automatically. Before
-shipping an engine, record separate licenses/provenance for runtime, model,
-training data and any generated keyword asset.
+An optional openWakeWord ONNX adapter is now implemented for one explicit
+user-supplied model path. The upstream v0.6.0 runtime code is Apache-2.0, but
+pretrained model assets have separate terms and are not bundled. Yuki will
+train a custom "Hey Yuki" model using the Kaggle runbook at
+`training/wakeword/README.md`. The controller remains engine-agnostic and
+does not download models automatically. Before shipping, record separate
+licenses/provenance for runtime, model, training data and generated asset.
 
 ## Privacy acceptance criteria
 
