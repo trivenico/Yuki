@@ -480,6 +480,21 @@ def restore_encrypted_backup(
             if schema_version == 2:
                 (stage / ".yuki").mkdir(mode=0o700, exist_ok=True)
             actual = {p.relative_to(stage).as_posix(): p for p in stage.rglob("*") if p.is_file()}
+            secret_entry = expected.pop(".yuki/memory_key_export.json", None)
+            if memory_key_export is not None:
+                if secret_entry is None:
+                    raise BackupError("Portable memory key export is missing from the authenticated manifest.")
+                if (
+                    len(memory_key_export) != secret_entry["size"]
+                    or not hmac.compare_digest(
+                        hashlib.sha256(memory_key_export).hexdigest(), secret_entry["sha256"],
+                    )
+                ):
+                    raise BackupError("Portable memory key export failed integrity validation.")
+                if not import_memory_key:
+                    raise BackupError("This backup contains a portable memory key. Explicitly enable memory-key import to restore it safely.")
+                if keyring_module is None:
+                    raise BackupError("A secure OS keyring is required to import portable encrypted memory.")
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
             if os.name == "posix":
