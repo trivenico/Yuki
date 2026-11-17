@@ -67,9 +67,13 @@ class SecuritySessionController:
             except Exception:
                 pass
             raise SecuritySessionError("Security monitoring could not be enabled.") from exc
-        if not self._authorized():
+        with self._lock:
+            startup_current = self._active and not self._closed and self._generation == generation
+        if not startup_current or not self._authorized():
+            # A concurrent Stop/close may have run before enable() returned.
+            # Disable again so a late enable cannot resurrect monitoring.
             self.stop()
-            raise SecuritySessionError("The authenticated session expired during startup.")
+            raise SecuritySessionError("The authenticated session ended during startup.")
 
     def stop(self) -> None:
         with self._lock:
