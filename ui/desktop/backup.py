@@ -658,7 +658,7 @@ def restore_encrypted_backup(
                         memory_path=stage / ".yuki" / "memory.enc.json",
                     )
                 except Exception as exc:
-                    raise BackupError("Portable memory key could not be safely installed in the destination OS keyring.") from exc
+                    raise BackupError("Portable memory key metadata is invalid or could not be safely installed in the destination OS keyring.") from exc
             try:
                 stage.rename(target)
             except Exception as exc:
