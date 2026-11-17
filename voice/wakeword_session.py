@@ -238,8 +238,6 @@ class WakeWordSession:
                     self._source = None
                 if self._detector is detector:
                     self._detector = None
-                if self._thread is current_thread():
-                    self._thread = None
                 closed = self._closed
                 if closed:
                     next_state = "closed"
@@ -252,13 +250,27 @@ class WakeWordSession:
                 self._state = next_state
             self._notify_state(next_state)
 
-        if failure is not None:
-            self._report_error(failure)
-        elif detected and not self._stop_event.is_set():
-            try:
-                self._on_wake()
-            except Exception as exc:
-                self._report_error(exc)
+        try:
+            if failure is not None:
+                self._report_error(failure)
+            elif detected:
+                with self._lock:
+                    should_notify_wake = (
+                        not self._closed
+                        and generation == self._generation
+                        and not self._stop_event.is_set()
+                    )
+                if should_notify_wake:
+                    try:
+                        self._on_wake()
+                    except Exception as exc:
+                        self._report_error(exc)
+        finally:
+            # Keep the worker registered until callbacks finish so start()
+            # cannot race a stale state/wake callback from the previous run.
+            with self._lock:
+                if self._thread is current_thread():
+                    self._thread = None
 
     def stop(self, timeout: float | None = None) -> bool:
         """Stop capture and wait briefly for the audio worker to release devices."""
