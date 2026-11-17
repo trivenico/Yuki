@@ -23,8 +23,6 @@ class FasterWhisperSTT:
             raise STTError("Speech recognition is disabled.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 20:
             raise ValueError("Recording duration must be 1-20 seconds.")
-        if sample_rate not in {16000, 22050, 44100}:
-            raise ValueError("Unsupported sample rate.")
         if isinstance(sample_rate, bool) or not isinstance(sample_rate, int) or sample_rate not in {16000, 22050, 44100}:
             raise ValueError("Unsupported sample rate.")
         requested_path = Path(output_path).expanduser()
