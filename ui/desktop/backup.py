@@ -210,8 +210,8 @@ def create_encrypted_backup(
     used_paths = {_portable_archive_key(_safe_archive_path(rel)) for rel, _ in archive_items}
     for prefix, additional_root in (additional_roots or {}).items():
         safe_prefix = _safe_archive_path(prefix)
-        if len(safe_prefix.parts) != 1:
-            raise BackupError("Additional backup directory prefix must be one path segment.")
+        if safe_prefix.as_posix() != "workspace":
+            raise BackupError("Additional backup directories must be placed under workspace/.")
         extra_root = Path(additional_root).expanduser()
         if extra_root.is_symlink():
             raise BackupError("Additional backup directory must not be a symbolic link.")
@@ -230,6 +230,10 @@ def create_encrypted_backup(
             archive_items.append((relative, extra_file))
     for relative, external_path in (additional_files or {}).items():
         safe_relative = _safe_archive_path(relative)
+        if safe_relative.as_posix().casefold() == "yuki_backup_manifest.json":
+            raise BackupError("Additional backup file cannot shadow the reserved backup manifest.")
+        if not safe_relative.as_posix().startswith((".yuki/", "workspace/")):
+            raise BackupError("Additional backup files must be placed under .yuki/ or workspace/.")
         portable_key = _portable_archive_key(safe_relative)
         if portable_key in used_paths:
             raise BackupError("Additional backup file collides with an existing archive path.")
