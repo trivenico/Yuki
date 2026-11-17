@@ -55,7 +55,10 @@ class SecurityDashboardPanelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "read-only"):
             presenter.render({"processes": [], "alerts": []})
         presenter.render({
+            "enabled": True,
             "read_only": True,
+            "persisted": False,
+            "automated_response": False,
             "process_count": 1,
             "processes": [{
                 "pid": 7,
