@@ -99,6 +99,9 @@ class WorkflowRunStore:
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
+            # SQLite DDL is not automatically grouped into a transaction by
+            # Python's legacy transaction mode. Keep every schema change atomic.
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_runs (
                     run_id TEXT PRIMARY KEY,
