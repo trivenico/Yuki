@@ -59,3 +59,11 @@ def test_stream_fallback_skips_empty_chunks_and_enforces_bound():
 def test_invalid_backend_object_is_rejected():
     with pytest.raises(TypeError):
         ProfiledLocalSpeechOutput(object(), DEFAULT_VOICE_PROFILE)
+
+
+def test_stream_fallback_enforces_total_chunk_limit():
+    synth = FakeSynthesizer("unknown")
+    output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
+    with pytest.raises(ValueError, match="100-chunk"):
+        output.speak_stream(["x"] * 101)
+    assert len(synth.spoken) == 100
