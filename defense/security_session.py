@@ -85,10 +85,11 @@ class SecuritySessionController:
             except Exception:
                 pass
             finally:
-                with self._lock:
+                with self._condition:
                     if self._starting_generation == generation:
                         self._starting = False
                         self._starting_generation = None
+                        self._condition.notify_all()
             raise SecuritySessionError("Security monitoring could not be enabled.") from exc
         with self._lock:
             startup_current = self._active and self._starting and not self._closed and self._generation == generation
@@ -101,6 +102,7 @@ class SecuritySessionController:
             if startup_current:
                 self._starting = False
                 self._starting_generation = None
+                self._condition.notify_all()
         if not startup_current:
             # A concurrent Stop/close may have run before enable() returned.
             # Keep subsequent starts blocked until this late enable is disabled.
@@ -109,10 +111,11 @@ class SecuritySessionController:
             except Exception as exc:
                 raise SecuritySessionError("Security monitor cleanup failed after startup cancellation.") from exc
             finally:
-                with self._lock:
+                with self._condition:
                     if self._starting_generation == generation:
                         self._starting = False
                         self._starting_generation = None
+                        self._condition.notify_all()
             raise SecuritySessionError("The authenticated session ended during startup.")
 
     def _disable_monitor(self) -> None:
@@ -134,12 +137,13 @@ class SecuritySessionController:
             self._condition.notify_all()
 
     def stop(self) -> None:
-        with self._lock:
+        with self._condition:
             self._active = False
-            # Keep _starting set until an in-flight enable() returns and its
-            # compensating disable() completes. _stopping also blocks a fresh
-            # enable while this disable operation is in flight.
+            # Wait for a late enable() to return and complete its compensating
+            # disable before Stop reports completion to the desktop owner.
             self._generation += 1
+            while self._starting:
+                self._condition.wait()
         self._disable_monitor()
 
     def _revoke_generation(self, generation: int) -> None:
@@ -187,8 +191,12 @@ class SecuritySessionController:
         return result
 
     def close(self) -> None:
-        with self._lock:
+        with self._condition:
             self._closed = True
             self._active = False
             self._generation += 1
+            # Do not return while an in-flight startup could still enable the
+            # monitor after shutdown has completed.
+            while self._starting:
+                self._condition.wait()
         self._disable_monitor()
