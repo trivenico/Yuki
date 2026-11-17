@@ -15,7 +15,7 @@ import secrets
 import sqlite3
 from typing import Any
 
-from core.sqlite_file_security import prepare_private_sqlite_path
+from core.sqlite_file_security import prepare_private_sqlite_path, verify_sqlite_integrity
 
 
 class WorkflowStoreError(RuntimeError):
@@ -94,6 +94,7 @@ class WorkflowRunStore:
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         self.database_path = prepare_private_sqlite_path(database_path)
+        verify_sqlite_integrity(self.database_path)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
