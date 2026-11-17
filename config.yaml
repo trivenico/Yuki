@@ -14,6 +14,11 @@ stt_model: small
 tts_rate: 170
 tts_backend: piper
 piper_model_path: ""
+# Optional Kokoro assets are never downloaded or bundled automatically.
+kokoro_model_dir: ""
+kokoro_lexicon_path: ""
+kokoro_voice: af_bella
+kokoro_speed: 1.0
 wakeword_enabled: false
 wakeword_model_path: ""
 gmail_enabled: false
