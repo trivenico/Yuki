@@ -82,16 +82,15 @@ class DesktopSecurityMonitor:
             raise SecurityMonitorError("Connection detector failed safely.") from exc
         if alert is not None and not isinstance(alert, dict):
             raise SecurityMonitorError("Connection detector returned an invalid alert.")
-        if alert is not None:
-            stored = {
-                "source": "network",
-                "type": _safe_label(alert.get("type", "security_alert"), 80),
-                "message": _safe_label(alert.get("message", "Security event detected.")),
-            }
-            with self._lock:
-                if not self._enabled or self._generation != generation:
-                    raise SecurityMonitorError("Monitoring was disabled during collection.")
-                self._alerts.append(stored)
+        with self._lock:
+            if not self._enabled or self._generation != generation:
+                raise SecurityMonitorError("Monitoring was disabled during collection.")
+            if alert is not None:
+                self._alerts.append({
+                    "source": "network",
+                    "type": _safe_label(alert.get("type", "security_alert"), 80),
+                    "message": _safe_label(alert.get("message", "Security event detected.")),
+                })
         return alert
 
     def snapshot(self):
