@@ -32,7 +32,7 @@ class VoiceRecordingSecurityTests(unittest.TestCase):
             output = Path(directory) / "recording.wav"
             with patch.dict(sys.modules, self._mock_audio_modules()):
                 result = self.stt.record_wav(output, seconds=1)
-            self.assertEqual(result, output)
+            self.assertEqual(result, output.parent.resolve() / output.name)
             with wave.open(str(output), "rb") as audio:
                 self.assertEqual(audio.getnchannels(), 1)
                 self.assertEqual(audio.getframerate(), 16000)
