@@ -95,12 +95,6 @@ def _build_services():
         require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
-
-    require_healthy_sqlite_stores({
-        "authentication": root / "auth.sqlite3",
-        "task_workflow": root / "tasks.sqlite3",
-        "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
-    })
     keyring = load_os_keyring()
     from core.sqlite_recovery import inspect_encrypted_memory_store
     require_healthy_sqlite_stores(
