@@ -114,6 +114,20 @@ class DesktopBackupTests(unittest.TestCase):
             finally:
                 restored.close()
 
+    def test_additional_backup_file_cannot_shadow_reserved_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            extra = root / "manifest.json"
+            extra.write_text("not the archive manifest")
+            with self.assertRaisesRegex(BackupError, "reserved backup manifest"):
+                create_encrypted_backup(
+                    source, root / "backup", "a sufficiently long passphrase",
+                    additional_files={"yuki_backup_manifest.json": extra},
+                )
+            self.assertFalse((root / "backup").exists())
+
     def test_additional_backup_file_rejects_unsafe_or_colliding_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
