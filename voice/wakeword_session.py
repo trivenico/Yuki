@@ -164,12 +164,15 @@ class WakeWordSession:
                     self._source = None
                 if self._detector is detector:
                     self._detector = None
+                cancelled = self._closed or self._stop_event.is_set() or generation != self._generation
                 if not self._closed and generation == self._generation:
-                    self._state = "failed"
-            self._notify_state("failed")
+                    self._state = "disabled" if cancelled else "failed"
+                next_state = "closed" if self._closed else ("disabled" if cancelled else "failed")
+            self._notify_state(next_state)
             if isinstance(exc, WakeWordError):
                 raise
-            self._report_error(exc)
+            if not cancelled:
+                self._report_error(exc)
             raise WakeWordError("Local wake-word listener could not start safely.") from exc
 
     def _report_error(self, error: Exception) -> None:
