@@ -1401,7 +1401,7 @@ Version: {version}",
             self.voice_stop_button.setEnabled(False)
             self.voice_status.setText("Stopping microphone capture…")
 
-        @Slot(str, object)
+        @Slot(str, object, object)
         def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
             self.busy = False
             self.send_button.setEnabled(True)
