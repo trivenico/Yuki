@@ -1605,15 +1605,26 @@ Version: {version}",
 
         def _close_wakeword_session(self):
             session = self.wakeword_session
-            self.wakeword_session = None
             self._wake_capture_after_stop = False
             self._wake_stop_requested = False
             self._wakeword_operation = None
             if session is not None:
                 try:
-                    session.close()
+                    stopped = session.close()
                 except Exception:
-                    pass
+                    stopped = False
+                if not stopped:
+                    # Retain the terminal session handle so a later cleanup
+                    # attempt can join a slow-starting worker before any new
+                    # microphone session is permitted.
+                    self.wakeword_model_button.setEnabled(False)
+                    self.wakeword_start_button.setEnabled(False)
+                    self.wakeword_stop_button.setEnabled(True)
+                    self.wakeword_status.setText(
+                        "Wake-word shutdown is still releasing the microphone. Retry Stop listening before re-enabling it."
+                    )
+                    return
+            self.wakeword_session = None
             self.wakeword_model_button.setEnabled(True)
             self.wakeword_stop_button.setEnabled(False)
             self.wakeword_start_button.setEnabled(False)
