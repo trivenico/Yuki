@@ -36,7 +36,7 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         broken = Resource("broken", fail=True)
         last = Resource("last")
         _close_startup_resources((first, broken, last, first, None))
-        self.assertEqual(events, ["last", "broken", "first"])
+        self.assertEqual(events, ["first", "last", "broken"])
 
     def test_shutdown_revokes_session_before_closing_lifecycle(self):
         events = []
