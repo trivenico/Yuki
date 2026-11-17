@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.portable_paths import config_path, data_root, workspace_path
+from core.portable_paths import config_path, data_root, desktop_data_root, workspace_path
 
 
 class PortablePathTests(unittest.TestCase):
@@ -16,6 +16,7 @@ class PortablePathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {"YUKI_HOME": directory}, clear=True):
                 self.assertEqual(data_root(), Path(directory).resolve())
+                self.assertEqual(desktop_data_root(), (Path(directory) / ".yuki").resolve())
                 self.assertEqual(workspace_path("./yuki_workspace"), (Path(directory) / "yuki_workspace").resolve())
 
     def test_absolute_workspace_is_preserved(self):

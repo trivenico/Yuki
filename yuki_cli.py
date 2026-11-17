@@ -4,10 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import uuid
+from getpass import getpass
+from pathlib import Path
 from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
+from core.portable_paths import desktop_data_root
+from core.auth import BuiltInAuthService
+from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
@@ -23,6 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start persistent local conversation chat")
+
+    auth = sub.add_parser("auth", help="Manage the local Yuki owner account")
+    auth_commands = auth.add_subparsers(dest="auth_command", required=True)
+    auth_commands.add_parser("bootstrap-admin", help="Create the first local administrator account")
     return parser
 
 
@@ -139,8 +148,27 @@ def run_cli(
     conversation_runtime_factory: Callable = build_local_conversation_runtime,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
+    password_input: Callable[[str], str] | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "auth" and args.auth_command == "bootstrap-admin":
+        try:
+            root = prepare_private_desktop_root(desktop_data_root())
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            username = input_fn("Choose Yuki owner username: ").strip()
+            read_password = password_input or getpass
+            password = read_password("Choose a strong Yuki owner password: ")
+            confirmation = read_password("Confirm Yuki owner password: ")
+            if password != confirmation:
+                output_fn("Yuki owner setup cancelled: passwords did not match.")
+                return 2
+            auth_service.bootstrap_admin(username, password)
+            output_fn("Yuki owner account created. Launch Yuki Desktop to sign in.")
+            return 0
+        except Exception as exc:
+            output_fn(f"Yuki owner setup failed ({type(exc).__name__}).")
+            return 2
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()

@@ -1,0 +1,2 @@
+# Native Qt desktop UI. Core/CLI dependencies are installed separately.
+PySide6>=6.7,<7

@@ -1,0 +1,2 @@
+# Build unsigned, platform-native developer bundles.
+PyInstaller>=6.10,<7
