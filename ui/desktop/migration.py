@@ -31,6 +31,17 @@ class MigrationPreview:
     total_bytes: int
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes where directory descriptors are supported."""
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _inventory(source: Path) -> list[Path]:
     root = source.expanduser().resolve(strict=True)
     if not root.is_dir():
@@ -171,6 +182,7 @@ def migrate_data(source: Path, destination: Path) -> dict:
                 raise MigrationError("Destination changed during migration; no data was replaced.")
             target.rmdir()
         stage.rename(target)
+        _fsync_directory(target.parent)
         return manifest
     except Exception:
         shutil.rmtree(stage, ignore_errors=True)
