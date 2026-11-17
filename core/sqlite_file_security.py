@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import stat
+import sqlite3
 
 
 class SQLitePathSecurityError(ValueError):
@@ -58,3 +59,34 @@ def prepare_private_sqlite_path(database_path: str | Path) -> str:
         raise SQLitePathSecurityError("database_path_cannot_be_secured") from exc
 
     return str(target)
+
+
+class SQLiteIntegrityError(RuntimeError):
+    """An existing SQLite database failed its read-only integrity check."""
+
+
+def verify_sqlite_integrity(database_path: str | Path) -> None:
+    """Run a read-only quick_check before schema migrations or application writes.
+
+    Missing or zero-byte files are new stores. Existing databases must pass;
+    corruption is never treated as permission to recreate user data.
+    """
+    path = Path(database_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    try:
+        connection = sqlite3.connect(
+            f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5,
+        )
+        try:
+            results = connection.execute("PRAGMA quick_check").fetchall()
+        finally:
+            connection.close()
+    except sqlite3.DatabaseError as exc:
+        raise SQLiteIntegrityError(
+            "Existing Yuki database cannot be read safely; preserve it for recovery."
+        ) from exc
+    if not results or any(row[0] != "ok" for row in results):
+        raise SQLiteIntegrityError(
+            "Existing Yuki database failed integrity validation; preserve it for recovery."
+        )
