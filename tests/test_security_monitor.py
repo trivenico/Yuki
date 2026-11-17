@@ -1,4 +1,5 @@
 import unittest
+from threading import Event, Thread
 
 from defense.security_monitor import DesktopSecurityMonitor, SecurityMonitorError
 
@@ -90,6 +91,40 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
         self.assertLessEqual(len(result["processes"][0]["name"]), 160)
         self.assertNotIn("cmdline", result["processes"][0])
         self.assertNotIn("\\n", result["alerts"][0]["message"])
+
+
+    def test_disable_invalidates_in_flight_sensor_snapshot(self):
+        entered = Event()
+        release = Event()
+        outcomes = []
+
+        class SlowProcessMonitor:
+            def snapshot(self):
+                entered.set()
+                release.wait(2)
+                return {"processes": [], "process_count": 0,
+                        "truncated": False, "alerts": []}
+
+        monitor = DesktopSecurityMonitor(
+            process_monitor=SlowProcessMonitor(), enabled=True,
+        )
+        worker = Thread(target=lambda: self._capture_snapshot(monitor, outcomes))
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        monitor.disable()
+        self.assertFalse(monitor.enabled)
+        release.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(outcomes, ["disabled"])
+
+    @staticmethod
+    def _capture_snapshot(monitor, outcomes):
+        try:
+            monitor.snapshot()
+            outcomes.append("returned")
+        except SecurityMonitorError:
+            outcomes.append("disabled")
 
     def test_rejects_malformed_detector_alert(self):
         class BadDetector:
