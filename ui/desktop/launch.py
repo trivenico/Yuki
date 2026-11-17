@@ -95,7 +95,10 @@ def _build_services():
         require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
+    from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
     keyring = load_os_keyring()
+    profile_id = load_or_create_profile_id(root)
+    memory_keyring_account = profile_memory_keyring_account(profile_id)
     from core.sqlite_recovery import inspect_encrypted_memory_store
     require_healthy_sqlite_stores(
         {
@@ -103,7 +106,10 @@ def _build_services():
             "task_workflow": root / "tasks.sqlite3",
             "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
         },
-        additional_checks=(inspect_encrypted_memory_store(root / "memory.enc.json", keyring),),
+        additional_checks=(inspect_encrypted_memory_store(
+            root / "memory.enc.json", keyring,
+            keyring_account=memory_keyring_account,
+        ),),
     )
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, keyring)
