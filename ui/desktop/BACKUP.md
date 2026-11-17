@@ -15,6 +15,7 @@ unrecoverable.
 - Restore destination must be empty; existing data is never overwritten.
 - SQLite databases are snapshotted with SQLite's backup API and integrity checked.
 - All restored files are checked against the authenticated manifest.
+- POSIX restores apply owner-only file permissions (`0600`) and directory permissions (`0700`); Windows uses the destination user's inherited ACLs.
 - The source data is never modified by backup creation.
 
 Install `requirements-memory-security.txt` (or the desktop extra) to provide
