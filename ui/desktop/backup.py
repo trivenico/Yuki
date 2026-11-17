@@ -194,6 +194,7 @@ def create_encrypted_backup(
     source: Path, destination: Path, passphrase: str, *,
     additional_files: Mapping[str, Path] | None = None,
     additional_roots: Mapping[str, Path] | None = None,
+    memory_key_export: bytes | None = None,
 ) -> dict:
     AESGCM, Scrypt = _crypto()
     src = source.expanduser()
@@ -248,9 +249,18 @@ def create_encrypted_backup(
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise BackupError("Additional backup source must be a private regular file.")
         archive_items.append((safe_relative.as_posix(), item))
+    if memory_key_export is not None:
+        if not isinstance(memory_key_export, bytes) or not 1 <= len(memory_key_export) <= 2048:
+            raise BackupError("Portable memory key export is invalid.")
+        secret_path = ".yuki/memory_key_export.json"
+        secret_key = _portable_archive_key(_safe_archive_path(secret_path))
+        if secret_key in used_paths:
+            raise BackupError("Portable memory key export collides with profile data.")
+        used_paths.add(secret_key)
+        archive_items.append((secret_path, memory_key_export))
     if len(archive_items) > MAX_FILES:
         raise BackupError("Backup contains too many files.")
-    total = sum(p.stat().st_size for _, p in archive_items)
+    total = sum(len(item) if isinstance(item, bytes) else item.stat().st_size for _, item in archive_items)
     if total > MAX_BACKUP_BYTES:
         raise BackupError("Backup exceeds the 512 MiB uncompressed size limit.")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -261,7 +271,9 @@ def create_encrypted_backup(
     with tempfile.TemporaryFile() as archive_file:
         with tarfile.open(fileobj=archive_file, mode="w:") as archive:
             for rel, item in archive_items:
-                if item.suffix.lower() in SQLITE_SUFFIXES:
+                if isinstance(item, bytes):
+                    payload = item
+                elif item.suffix.lower() in SQLITE_SUFFIXES:
                     src_db = sqlite3.connect(item.resolve().as_uri() + "?mode=ro", uri=True)
                     try:
                         # Close the temporary file handle before SQLite opens it (required on Windows).
@@ -279,7 +291,7 @@ def create_encrypted_backup(
                             payload = snapshot_path.read_bytes()
                     finally:
                         src_db.close()
-                else:
+                elif not isinstance(item, bytes):
                     payload = item.read_bytes()
                 if rel.casefold() == "yuki_backup_manifest.json":
                     raise BackupError("Source contains a reserved backup manifest filename.")
