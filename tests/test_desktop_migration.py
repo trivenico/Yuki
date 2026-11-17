@@ -70,6 +70,20 @@ class DesktopMigrationTests(unittest.TestCase):
             sync.assert_called_once()
             self.assertEqual((destination / "nested" / "notes.txt").read_text(), "durable")
 
+    def test_parent_fsync_failure_reports_published_destination_without_removing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            (source / "notes.txt").write_text("preserve source")
+            destination = root / "new"
+            with patch("ui.desktop.migration._fsync_directory", side_effect=OSError("device error")):
+                with self.assertRaisesRegex(MigrationError, "was published.*Do not retry"):
+                    migrate_data(source, destination)
+            self.assertEqual((destination / "notes.txt").read_text(), "preserve source")
+            self.assertTrue((destination / "migration-manifest.json").is_file())
+            self.assertEqual((source / "notes.txt").read_text(), "preserve source")
+
     def test_sqlite_database_uses_consistent_backup_and_integrity_check(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
