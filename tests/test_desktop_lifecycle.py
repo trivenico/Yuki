@@ -50,6 +50,10 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         class Child:
             def __init__(self, name):
                 self.name = name
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
             def close(self):
                 events.append(self.name)
         class Dependent:
