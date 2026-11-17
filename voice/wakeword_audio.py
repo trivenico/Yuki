@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from queue import Empty, Full, Queue
 from threading import Event, Lock
-import time
 
 
 class WakeWordAudioError(RuntimeError):
