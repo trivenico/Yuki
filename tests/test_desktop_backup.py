@@ -331,6 +331,54 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertEqual(destination_keyring.values, {})
             self.assertFalse(destination.exists())
 
+    def test_plaintext_archive_staging_contains_only_wrapped_memory_key(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+        class CaptureBuffer(BytesIO):
+            def __exit__(self, exc_type, exc, traceback):
+                self.seek(0)
+                self.captured = self.read()
+                return False
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / "memory.enc.json", keyring_module=keyring,
+                keyring_account=profile_memory_keyring_account(profile_id),
+            )
+            store.add("wrapped secret")
+            raw_key = base64.b64decode(
+                keyring.get_password("yuki-companion-memory", profile_memory_keyring_account(profile_id))
+            )
+            captured = CaptureBuffer()
+            with patch("ui.desktop.backup.tempfile.TemporaryFile", return_value=captured):
+                create_encrypted_backup(
+                    source, root / "capture.yukibak", "a sufficiently long passphrase",
+                    memory_key_export=store.export_key_for_encrypted_backup(profile_id),
+                )
+            self.assertNotIn(raw_key, captured.captured)
+            with tarfile.open(fileobj=BytesIO(captured.captured), mode="r:") as archive:
+                member = archive.extractfile(".yuki/memory_key_export.json")
+                wrapped = json.loads(member.read().decode("utf-8"))
+            self.assertEqual(set(wrapped), {"schema_version", "profile_id", "nonce", "ciphertext"})
+            self.assertEqual(wrapped["profile_id"], profile_id)
+
     def test_portable_memory_key_restore_requires_explicit_import(self):
         from companion.secure_memory import EncryptedMemoryStore
         from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
