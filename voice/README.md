@@ -10,9 +10,11 @@ Voice remains **off by default**. The desktop app now provides an explicit, boun
 - The desktop microphone checkbox is session-scoped. The microphone is not opened until the user presses **Speak**. **Stop microphone** cancels an active capture.
 - Recognized text is placed in the message composer for review. It is not sent to Yuki until the user presses **Send**.
 - The first transcription may download the configured faster-whisper model. The desktop UI discloses this before enabling voice. Audio is transcribed locally; only the reviewed text is sent through the authenticated conversation.
-- `voice/wakeword_session.py` adds an opt-in, engine-agnostic local wake-word lifecycle controller. `voice/wakeword_audio.py` adds a lazy sounddevice microphone adapter with a one-frame volatile PCM queue. `voice/openwakeword_detector.py` and `voice/openwakeword_session.py` add an optional local ONNX detector integration for a user-supplied model. No model weights or desktop permission/status integration are bundled; no always-listening runtime is enabled by this foundation.
+- `voice/wakeword_session.py` adds an opt-in, engine-agnostic local wake-word lifecycle controller. `voice/wakeword_audio.py` adds a lazy sounddevice microphone adapter with a one-frame volatile PCM queue. `voice/openwakeword_detector.py` and `voice/openwakeword_session.py` add an optional local ONNX detector integration for a user-supplied model.
+- The desktop chat adds separate model selection, explicit start/stop controls and a dedicated wake-word consent dialog. Wake-word startup and stop run on background workers. The wake session must release the microphone before the existing bounded five-second speech capture begins.
+- See `voice/DESKTOP_WAKEWORD.md` for the desktop user flow, model setup, licensing and limitations. No model weights are bundled and wake-word listening never starts automatically.
 - Wake-word controller privacy and model-license decisions are documented in `voice/WAKEWORD_SESSION.md`. openWakeWord's code is Apache-2.0, but its bundled pretrained models are CC BY-NC-SA 4.0, so those models are not bundled with Yuki.
-- No production wake-word model, always-listening desktop service, ambient audio archive, or hands-free duplex conversation is implemented yet.
+- No trained production wake-word model, hardware-verified listener, ambient audio archive, or hands-free duplex conversation is available yet. The desktop controls are an opt-in integration foundation awaiting CI and real-device testing.
 
 Microphone permission is independent from camera and screen observation. Sign-out and session cleanup disable voice. If audio capture or the speech model is unavailable, text chat remains available.
 
