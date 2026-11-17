@@ -1,0 +1,47 @@
+name: Wake-word training asset validation
+
+on:
+  pull_request:
+    paths:
+      - "training/wakeword/**"
+      - "tests/test_wakeword_asset_manifest.py"
+      - ".github/workflows/wakeword-training-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "training/wakeword/**"
+      - "tests/test_wakeword_asset_manifest.py"
+      - ".github/workflows/wakeword-training-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wakeword-training-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provenance-validator:
+    name: Training asset provenance validator
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run manifest security tests
+        run: |
+          python -m unittest discover -s tests -p "test_wakeword_asset_manifest.py" -v
+      - name: Verify example manifest fails closed
+        run: |
+          python training/wakeword/validate_assets.py training/wakeword/assets.manifest.example.json
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "The placeholder manifest unexpectedly passed validation."
+            exit 1
+          fi
+          if [ "$status" -ne 2 ]; then
+            echo "Validator failed with unexpected exit code $status."
+            exit "$status"
+          fi
