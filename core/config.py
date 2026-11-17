@@ -143,8 +143,22 @@ def load_config(path=None):
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
-    voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
-    if voice_style != "natural_realistic_female": raise RuntimeError("voice_style must be natural_realistic_female.")
+    voice_style = str(raw.get("voice_style", "japanese_anime_female_english")).strip().lower()
+    if voice_style not in {"natural_realistic_female", "japanese_anime_female_english"}:
+        raise RuntimeError("voice_style is unsupported.")
+    tts_backend = os.environ.get("YUKI_TTS_BACKEND", str(raw.get("tts_backend", "piper"))).strip().lower()
+    if tts_backend not in {"piper", "pyttsx3", "kokoro"}:
+        raise RuntimeError("tts_backend must be piper, pyttsx3, or kokoro.")
+    kokoro_model_dir = os.environ.get("YUKI_KOKORO_MODEL_DIR", str(raw.get("kokoro_model_dir", ""))).strip()
+    kokoro_lexicon_path = os.environ.get("YUKI_KOKORO_LEXICON_PATH", str(raw.get("kokoro_lexicon_path", ""))).strip()
+    if len(kokoro_model_dir) > 1024 or len(kokoro_lexicon_path) > 1024:
+        raise RuntimeError("Kokoro model and lexicon paths must be at most 1024 characters.")
+    kokoro_voice = str(raw.get("kokoro_voice", "af_bella")).strip()
+    if kokoro_voice not in {"af_bella", "af_nicole", "af_sarah", "af_sky", "bf_emma", "bf_isabella"}:
+        raise RuntimeError("kokoro_voice must be a supported English female preset.")
+    kokoro_speed = raw.get("kokoro_speed", 1.0)
+    if isinstance(kokoro_speed, bool) or not isinstance(kokoro_speed, (int, float)) or not 0.5 <= kokoro_speed <= 2.0:
+        raise RuntimeError("kokoro_speed must be between 0.5 and 2.0.")
     spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
     if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
     return {
@@ -172,7 +186,11 @@ def load_config(path=None):
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),
-        "tts_backend": str(raw.get("tts_backend", "piper")),
+        "tts_backend": tts_backend,
         "piper_model_path": str(raw.get("piper_model_path", "")),
+        "kokoro_model_dir": kokoro_model_dir,
+        "kokoro_lexicon_path": kokoro_lexicon_path,
+        "kokoro_voice": kokoro_voice,
+        "kokoro_speed": float(kokoro_speed),
         "wakeword_model_path": str(raw.get("wakeword_model_path", "")),
     }

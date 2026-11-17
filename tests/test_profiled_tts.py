@@ -8,6 +8,7 @@ class FakeSynthesizer:
     def __init__(self, backend):
         self.backend = backend
         self.rate = 170
+        self.speed = 1.0
         self.enabled = True
         self.spoken = []
         self.stop_calls = 0
@@ -40,6 +41,31 @@ class ProfiledTTSTests(unittest.TestCase):
             output.capabilities.unsupported_controls,
             frozenset({"speaking_rate", "pitch", "expressiveness", "style"}),
         )
+
+    def test_kokoro_maps_profile_rate_to_relative_speed(self):
+        synth = FakeSynthesizer("kokoro")
+        output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
+        self.assertEqual(output.capabilities.supported_controls, frozenset({"speaking_rate"}))
+        self.assertEqual(
+            output.capabilities.unsupported_controls,
+            frozenset({"pitch", "expressiveness", "style"}),
+        )
+        self.assertAlmostEqual(synth.speed, DEFAULT_VOICE_PROFILE.speaking_rate / 170.0)
+
+    def test_close_releases_backend_resources_when_supported(self):
+        class CloseableSynthesizer(FakeSynthesizer):
+            def __init__(self, backend):
+                super().__init__(backend)
+                self.close_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+
+        synth = CloseableSynthesizer("kokoro")
+        output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
+        output.close()
+        self.assertEqual(synth.close_calls, 1)
+        self.assertEqual(synth.stop_calls, 0)
 
     def test_adapter_exposes_backend_enable_state_and_stop(self):
         synth = FakeSynthesizer("pyttsx3")

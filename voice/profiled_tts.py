@@ -48,6 +48,11 @@ class ProfiledLocalSpeechOutput:
         if backend == "pyttsx3" and hasattr(synthesizer, "rate"):
             synthesizer.rate = profile.speaking_rate
             supported.add("speaking_rate")
+        elif backend == "kokoro" and hasattr(synthesizer, "speed"):
+            # Kokoro uses a relative speed multiplier; normalize around the
+            # existing Yuki profile's 170 WPM reference point.
+            synthesizer.speed = profile.speaking_rate / 170.0
+            supported.add("speaking_rate")
         self.capabilities = VoiceOutputCapabilities(
             backend=str(backend),
             supported_controls=frozenset(supported),
@@ -70,6 +75,16 @@ class ProfiledLocalSpeechOutput:
         with self._stream_lock:
             self._stream_generation += 1
         self.synthesizer.stop()
+
+    def close(self) -> None:
+        """Invalidate streams and release backend resources when supported."""
+        with self._stream_lock:
+            self._stream_generation += 1
+        close = getattr(self.synthesizer, "close", None)
+        if callable(close):
+            close()
+        else:
+            self.synthesizer.stop()
 
     def speak(self, text: str):
         """Speak only when explicitly called by the voice-session controller."""

@@ -1,0 +1,4 @@
+# Optional Kokoro local TTS runtime. Install only when the user opts into Kokoro.
+sherpa-onnx>=2.0.0,<3.0
+numpy>=1.26,<3.0
+sounddevice>=0.5.6,<1.0
