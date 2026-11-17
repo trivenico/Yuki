@@ -128,4 +128,4 @@ def format_sqlite_recovery_report(report: dict) -> str:
     if len(lines) == 1:
         lines.append(report.get("summary", "Review the local data store before retrying."))
     return "\
-".join(lines)
+    return "\n".join(lines)
