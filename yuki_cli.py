@@ -12,6 +12,7 @@ from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.portable_paths import desktop_data_root
 from core.auth import BuiltInAuthService
+from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
@@ -153,8 +154,7 @@ def run_cli(
 
     if args.command == "auth" and args.auth_command == "bootstrap-admin":
         try:
-            root = desktop_data_root()
-            root.mkdir(parents=True, exist_ok=True)
+            root = prepare_private_desktop_root(desktop_data_root())
             auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
             username = input_fn("Choose Yuki owner username: ").strip()
             read_password = password_input or getpass
