@@ -91,7 +91,13 @@ def _build_services():
     root = prepare_private_desktop_root(
         desktop_data_root(), require_existing_parent=portable_storage,
     )
-    from core.sqlite_recovery import require_healthy_sqlite_stores\n\n    require_healthy_sqlite_stores({\n        "authentication": root / "auth.sqlite3",\n        "task_workflow": root / "tasks.sqlite3",\n    })\n    auth = BuiltInAuthService(str(root / "auth.sqlite3"))
+    from core.sqlite_recovery import require_healthy_sqlite_stores
+
+    require_healthy_sqlite_stores({
+        "authentication": root / "auth.sqlite3",
+        "task_workflow": root / "tasks.sqlite3",
+    })
+    auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, load_os_keyring())
     provider = None
     try:
@@ -601,7 +607,8 @@ def run() -> int:
                 "Initial safety limits: 20,000 files and 2 GiB total.",
                 "For more than 200 files, only the first 200 paths are displayed.",
             ])
-            self.migration_preview_view.setPlainText("\\n".join(lines))
+            self.migration_preview_view.setPlainText("\
+".join(lines))
             self.migration_status.setText(
                 "Preview complete. Review the source, destination, size, file count and displayed paths."
             )
@@ -621,7 +628,9 @@ def run() -> int:
             answer = QMessageBox.warning(
                 self, "Confirm Yuki data migration",
                 f"Copy {len(preview.files)} files ({preview.total_bytes:,} bytes) "
-                f"from the selected source into a separate destination?\\n\\n"
+                f"from the selected source into a separate destination?\
+\
+"
                 "The original data will be retained. Existing destination data will not be overwritten. "
                 "This will not replace the currently running Yuki profile.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
@@ -666,7 +675,9 @@ def run() -> int:
                 "Original source retained."
             )
             self.migration_preview_view.appendPlainText(
-                "\\n\\nMIGRATION COMPLETE — verified manifest written to destination."
+                "\
+\
+MIGRATION COMPLETE — verified manifest written to destination."
             )
 
         def _choose_backup_path(self):
@@ -892,7 +903,8 @@ def run() -> int:
                     status = "enabled" if specialist.get("enabled") else "disabled"
                     item = QListWidgetItem(
                         f'{specialist.get("name", "Specialist")} '
-                        f'[{specialist.get("agent_id", "")}] — {status}\\n'
+                        f'[{specialist.get("agent_id", "")}] — {status}\
+'
                         f'Capabilities: {capabilities}'
                     )
                     self.specialist_list.addItem(item)
@@ -940,7 +952,8 @@ def run() -> int:
                     f"  Status: {task.status}",
                     "",
                 ])
-            self.plan_details.setPlainText("\\n".join(lines))
+            self.plan_details.setPlainText("\
+".join(lines))
             self.plan_dispatch_button.setEnabled(
                 bool(plan.subtasks) and all(task.status == "pending" for task in plan.subtasks)
             )
@@ -992,7 +1005,8 @@ def run() -> int:
                 for task in self.controller.list_tasks(limit=50):
                     item = QListWidgetItem(
                         f"{task.name} — {task.state} — v{task.version} — "
-                        f"{task.task_id}\\nUpdated: {task.updated_at}"
+                        f"{task.task_id}\
+Updated: {task.updated_at}"
                     )
                     item.setData(256, (task.task_id, task.name, task.state, task.version))
                     self.task_list.addItem(item)
@@ -1029,7 +1043,8 @@ def run() -> int:
                     + (f" ({update.percent}%)" if update.percent is not None else "")
                     for update in updates
                 ]
-                self.task_progress_view.setPlainText("\\n".join(lines))
+                self.task_progress_view.setPlainText("\
+".join(lines))
             except Exception as exc:
                 self.task_progress_view.setPlainText(
                     "Task progress unavailable (" + type(exc).__name__ + ")."
@@ -1099,7 +1114,8 @@ def run() -> int:
             layout = QVBoxLayout(dialog)
             review = QPlainTextEdit()
             review.setReadOnly(True)
-            review.setPlainText("\\n".join(lines))
+            review.setPlainText("\
+".join(lines))
             layout.addWidget(review, 1)
             buttons = QDialogButtonBox(
                 QDialogButtonBox.Ok | QDialogButtonBox.Cancel
@@ -1136,7 +1152,10 @@ def run() -> int:
             task_id, name, state, version = item.data(256)
             answer = QMessageBox.question(
                 self, "Cancel task",
-                f"Cancel task '{name}'?\\nID: {task_id}\\nState: {state}\\nVersion: {version}",
+                f"Cancel task '{name}'?\
+ID: {task_id}\
+State: {state}\
+Version: {version}",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
