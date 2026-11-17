@@ -15,7 +15,6 @@ class FakeLocalTTS:
         self.rate = kwargs.get("rate", 170)
         self.backend = kwargs.get("backend", "kokoro")
         self.speed = kwargs.get("speed", 1.0)
-        self.speed = kwargs.get("speed", 1.0)
         self.calls = []
 
     def speak(self, text):
@@ -95,6 +94,8 @@ class DesktopVoiceOutputFactoryTests(unittest.TestCase):
             create_desktop_voice_output({"tts_backend": "kokoro"})
         with tempfile.TemporaryDirectory() as directory:
             model_dir = Path(directory)
+            for name in ("model.onnx", "voices.bin", "tokens.txt"):
+                (model_dir / name).write_bytes(b"model")
             with self.assertRaisesRegex(ValueError, "English lexicon"):
                 create_desktop_voice_output({
                     "tts_backend": "kokoro",
