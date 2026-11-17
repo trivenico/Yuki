@@ -65,6 +65,21 @@ class VoiceOutputSessionTests(unittest.TestCase):
         with self.assertRaises(VoiceOutputError):
             self.session.speak_reply("No", voice_mode_active=True)
 
+    def test_close_releases_backend_when_supported(self):
+        class CloseableSynthesizer(FakeSynthesizer):
+            def __init__(inner_self):
+                super().__init__()
+                inner_self.close_calls = 0
+
+            def close(inner_self):
+                inner_self.close_calls += 1
+
+        synth = CloseableSynthesizer()
+        session = VoiceOutputSession(synth)
+        session.close()
+        self.assertEqual(synth.close_calls, 1)
+        self.assertEqual(synth.stop_calls, 0)
+
     def test_stop_invalidates_remaining_chunks_even_if_backend_keeps_consuming(self):
         class StopAfterFirstChunk(FakeSynthesizer):
             def speak_stream(inner_self, chunks):
