@@ -767,10 +767,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if answer != QMessageBox.Yes:
                 return
             controller = self.controller
+            include_memory_key = self.include_memory_key.isChecked()
             self._run_backup_operation(
                 lambda: controller.create_backup(
                     destination, passphrase,
-                    include_memory_key=self.include_memory_key.isChecked(),
+                    include_memory_key=include_memory_key,
                 ),
                 "Creating and verifying encrypted backup…",
             )
@@ -794,10 +795,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if answer != QMessageBox.Yes:
                 return
             controller = self.controller
+            import_memory_key = self.import_memory_key.isChecked()
             self._run_backup_operation(
                 lambda: controller.restore_backup(
                     backup, destination, passphrase,
-                    import_memory_key=self.import_memory_key.isChecked(),
+                    import_memory_key=import_memory_key,
                 ),
                 "Authenticating and restoring backup into the selected folder…",
             )
