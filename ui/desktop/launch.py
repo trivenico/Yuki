@@ -304,7 +304,12 @@ def run() -> int:
         @Slot()
         def run(self):
             try:
-                result = self.session.start() if self.operation == "start" else self.session.stop()
+                if self.operation == "start":
+                    result = self.session.start()
+                elif self.operation == "close":
+                    result = self.session.close()
+                else:
+                    result = self.session.stop()
                 self.signals.finished.emit(result, None)
             except Exception as exc:
                 self.signals.finished.emit(None, exc)
@@ -432,6 +437,7 @@ def run() -> int:
             self._wake_capture_after_stop = False
             self._wake_stop_requested = False
             self._wakeword_operation = None
+            self._wakeword_close_failed = False
             self.speech_session = None
             self.speech_worker = None
             self.busy = False
@@ -1500,27 +1506,42 @@ Version: {version}",
             self.pool.start(worker)
 
         def _wakeword_operation_finished(self, result, error, captured_session, operation):
-            if captured_session is not self.wakeword_session:
+            if (
+                captured_session is not self.wakeword_session
+                or operation != self._wakeword_operation
+            ):
                 return
             self.wakeword_worker = None
             self._wakeword_operation = None
+            if operation == "close":
+                if error is None and result is True:
+                    self.wakeword_session = None
+                    self._wakeword_close_failed = False
+                    self.wakeword_model_button.setEnabled(True)
+                    self.wakeword_start_button.setEnabled(False)
+                    self.wakeword_stop_button.setEnabled(False)
+                    self.wakeword_status.setText(
+                        "Hey Yuki listening is off. Microphone released."
+                    )
+                else:
+                    self._wakeword_close_failed = True
+                    self.wakeword_model_button.setEnabled(False)
+                    self.wakeword_start_button.setEnabled(False)
+                    self.wakeword_stop_button.setEnabled(True)
+                    reason = type(error).__name__ if error is not None else "timeout"
+                    self.wakeword_status.setText(
+                        "Wake-word shutdown is still releasing the microphone ("
+                        + reason + "). Press Stop listening to retry cleanup."
+                    )
+                return
             if error is not None:
                 self.wakeword_status.setText(
                     "Wake-word " + operation + " failed (" + type(error).__name__ + ")."
                 )
                 if operation == "start":
-                    try:
-                        captured_session.close()
-                    except Exception:
-                        pass
-                    self.wakeword_session = None
-                    self._wake_capture_after_stop = False
-                    self._wake_stop_requested = False
-                    self.wakeword_model_button.setEnabled(True)
-                    self.wakeword_start_button.setEnabled(
-                        self.voice_session is not None and self.voice_session.enabled
-                    )
-                    self.wakeword_stop_button.setEnabled(False)
+                    # Close on the worker pool rather than blocking the UI
+                    # while an audio driver/model unwinds.
+                    self._close_wakeword_session()
                 return
             if operation == "start":
                 self.wakeword_status.setText(
@@ -1585,6 +1606,9 @@ Version: {version}",
             )
 
         def _stop_wakeword_listener(self, *, capture: bool = False):
+            if self._wakeword_close_failed:
+                self._close_wakeword_session()
+                return
             if capture:
                 self._wake_capture_after_stop = True
             else:
@@ -1607,28 +1631,23 @@ Version: {version}",
             session = self.wakeword_session
             self._wake_capture_after_stop = False
             self._wake_stop_requested = False
-            self._wakeword_operation = None
-            if session is not None:
-                try:
-                    stopped = session.close()
-                except Exception:
-                    stopped = False
-                if not stopped:
-                    # Retain the terminal session handle so a later cleanup
-                    # attempt can join a slow-starting worker before any new
-                    # microphone session is permitted.
-                    self.wakeword_model_button.setEnabled(False)
-                    self.wakeword_start_button.setEnabled(False)
-                    self.wakeword_stop_button.setEnabled(True)
-                    self.wakeword_status.setText(
-                        "Wake-word shutdown is still releasing the microphone. Retry Stop listening before re-enabling it."
-                    )
-                    return
-            self.wakeword_session = None
-            self.wakeword_model_button.setEnabled(True)
-            self.wakeword_stop_button.setEnabled(False)
+            if session is None:
+                self._wakeword_close_failed = False
+                self.wakeword_model_button.setEnabled(True)
+                self.wakeword_stop_button.setEnabled(False)
+                self.wakeword_start_button.setEnabled(False)
+                self.wakeword_status.setText("Hey Yuki listening is off. Microphone released.")
+                return
+            if self._wakeword_operation == "close":
+                return
+            # QThreadPool is single-threaded: queue terminal close behind any
+            # in-flight start/stop operation. Never join audio workers on Qt's
+            # UI thread during microphone revocation, logout, or shutdown.
+            self.wakeword_model_button.setEnabled(False)
             self.wakeword_start_button.setEnabled(False)
-            self.wakeword_status.setText("Hey Yuki listening is off. Microphone released.")
+            self.wakeword_stop_button.setEnabled(False)
+            self.wakeword_status.setText("Closing wake-word listener and releasing microphone…")
+            self._run_wakeword_operation("close")
 
         def _set_voice_enabled(self, enabled: bool):
             if enabled and self.wakeword_session is not None:
