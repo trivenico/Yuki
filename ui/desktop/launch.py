@@ -161,7 +161,7 @@ def run() -> int:
             if log_path:
                 try:
                     with Path(log_path).open("a", encoding="utf-8") as stream:
-                        stream.write(message + "\\n")
+                        stream.write(message + "\n")
                 except OSError:
                     pass
 
@@ -203,7 +203,7 @@ def run() -> int:
             log_path = os.environ.get("YUKI_SMOKE_TEST_LOG")
             if log_path:
                 try:
-                    Path(log_path).write_text("stage: python-exception\\n" + traceback.format_exc(), encoding="utf-8")
+                    Path(log_path).write_text("stage: python-exception\n" + traceback.format_exc(), encoding="utf-8")
                 except OSError:
                     pass
             raise
