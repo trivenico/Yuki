@@ -11,6 +11,25 @@ Install `requirements-kokoro.txt` only when enabling Kokoro. Install the officia
 
 The adapter does not download assets, load weights, or open an audio device at construction. It loads the model on the first explicitly enabled speech request. Speech generation and playback must run on a background worker.
 
+Install the optional Python dependencies with:
+
+```bash
+python -m pip install -r requirements-kokoro.txt
+```
+
+Set these values in Yuki's user `config.yaml` (paths are examples; use the actual local asset locations):
+
+```yaml
+tts_backend: kokoro
+voice_style: japanese_anime_female_english
+kokoro_model_dir: /path/to/kokoro-en-v0_19
+kokoro_lexicon_path: /path/to/verified/en-lexicon.txt
+kokoro_voice: af_bella
+kokoro_speed: 1.0
+```
+
+The desktop app still requires the user to explicitly enable spoken replies each sign-in session. Microphone permission is separate.
+
 ## Safety and limits
 
 - Off by default; explicit caller enablement required.
