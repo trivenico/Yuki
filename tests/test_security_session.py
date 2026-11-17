@@ -119,6 +119,58 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.assertFalse(self.monitor.enabled)
         self.assertFalse(self.controller.active)
 
+
+    def test_snapshot_rejected_while_monitor_is_starting(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def delayed_enable():
+            entered.set()
+            release.wait(2)
+            self.monitor.enabled = True
+
+        self.monitor.enable = delayed_enable
+        errors = []
+        worker = threading.Thread(
+            target=lambda: self.controller.start(consent=True)
+        )
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        with self.assertRaises(SecuritySessionError):
+            self.controller.snapshot()
+        release.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(self.controller.active)
+
+    def test_duplicate_start_during_initialization_is_rejected(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def delayed_enable():
+            entered.set()
+            release.wait(2)
+            self.monitor.enabled = True
+
+        self.monitor.enable = delayed_enable
+        errors = []
+
+        def start():
+            try:
+                self.controller.start(consent=True)
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=start)
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        with self.assertRaisesRegex(SecuritySessionError, "still starting"):
+            self.controller.start(consent=True)
+        release.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(errors)
+
     def test_close_is_terminal(self):
         self.controller.start(consent=True)
         self.controller.close()
