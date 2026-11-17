@@ -348,6 +348,27 @@ class ConversationStore:
                 raise
         return {"conversation_id": conversation_id, "expires_at": expires_at}
 
+    def renew_generation_lease(
+        self, *, owner_id: str, conversation_id: str, lease_token: str,
+        ttl_seconds: int = 120,
+    ) -> bool:
+        """Renew only the lease still owned by this fencing token."""
+        owner = self._owner(owner_id)
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id must be non-empty text.")
+        if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
+            raise ValueError("lease_token must be non-empty text of at most 200 characters.")
+        if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 3600:
+            raise ValueError("ttl_seconds must be an integer from 5 to 3600.")
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE conversation_generation_leases
+                   SET expires_at=?
+                   WHERE conversation_id=? AND owner_id=? AND lease_token=?""",
+                (time.time() + ttl_seconds, conversation_id, owner, lease_token.strip()),
+            )
+            return cursor.rowcount == 1
+
     def release_generation_lease(self, *, owner_id: str, conversation_id: str, lease_token: str) -> bool:
         """Release only a lease matching its owner and unique fencing token."""
         owner = self._owner(owner_id)
