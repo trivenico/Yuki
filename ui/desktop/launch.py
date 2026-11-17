@@ -263,11 +263,15 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit("", exc)
 
+    class VoiceWorkerSignals(QObject):
+        finished = Signal(str, object, object)
+        phase = Signal(str)
+
     class VoiceWorker(QRunnable):
         def __init__(self, session):
             super().__init__()
             self.session = session
-            self.signals = WorkerSignals()
+            self.signals = VoiceWorkerSignals()
 
         @Slot()
         def run(self):
@@ -276,9 +280,9 @@ def run() -> int:
                     seconds=5,
                     on_capture_complete=lambda: self.signals.phase.emit("transcribing"),
                 )
-                self.signals.finished.emit(transcript, None)
+                self.signals.finished.emit(transcript, None, self.session)
             except Exception as exc:
-                self.signals.finished.emit("", exc)
+                self.signals.finished.emit("", exc, self.session)
 
     class PlanWorkerSignals(QObject):
         finished = Signal(object, object)
@@ -1398,7 +1402,7 @@ Version: {version}",
             self.voice_status.setText("Stopping microphone capture…")
 
         @Slot(str, object)
-        def _voice_finished(self, transcript: str, error: Any):
+        def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
@@ -1406,6 +1410,12 @@ Version: {version}",
             self.voice_button.setEnabled(
                 self.voice_session is not None and self.voice_session.enabled
             )
+            # Disabling/replacing a voice session revokes permission and also
+            # invalidates any result whose worker completion was already queued.
+            if captured_session is not self.voice_session or not captured_session.enabled:
+                self.voice_status.setText("Microphone off. The revoked session's transcript was discarded.")
+                self.chat_status.setText("Ready")
+                return
             if error is not None:
                 detail = str(error).strip()[:180] or type(error).__name__
                 self.voice_status.setText("Voice capture stopped or failed: " + detail)
