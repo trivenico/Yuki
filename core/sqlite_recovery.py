@@ -45,8 +45,28 @@ def inspect_sqlite_store(component: str, database_path: str | Path) -> dict[str,
 def build_sqlite_recovery_report(
     stores: Mapping[str, str | Path], *, additional_checks: tuple[dict[str, str], ...] = (),
 ) -> dict:
+    if not isinstance(stores, Mapping):
+        raise TypeError("stores_must_be_a_mapping")
+    if not isinstance(additional_checks, tuple):
+        raise TypeError("additional_checks_must_be_a_tuple")
     results = [inspect_sqlite_store(component, path) for component, path in stores.items()]
-    results.extend(dict(item) for item in additional_checks)
+    allowed_statuses = {
+        "missing", "healthy", "unsafe", "empty", "invalid", "corrupt",
+        "corrupt_or_unreadable", "unavailable",
+    }
+    for item in additional_checks:
+        if not isinstance(item, dict) or set(item) != {"component", "status", "action"}:
+            raise ValueError("additional_check_schema_invalid")
+        component, status, action = item["component"], item["status"], item["action"]
+        if (not isinstance(component, str) or not component.strip() or len(component) > 80
+                or any(ord(char) < 32 for char in component)):
+            raise ValueError("additional_check_component_invalid")
+        if status not in allowed_statuses:
+            raise ValueError("additional_check_status_invalid")
+        if (not isinstance(action, str) or not action.strip() or len(action) > 500
+                or any(ord(char) < 32 and char not in "\\n\\t" for char in action)):
+            raise ValueError("additional_check_action_invalid")
+        results.append({"component": component, "status": status, "action": action})
     blocking = {"unsafe", "empty", "invalid", "corrupt", "corrupt_or_unreadable", "unavailable"}
     blocked = any(item["status"] in blocking for item in results)
     return {
