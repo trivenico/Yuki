@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ def create_desktop_voice_output(config: dict[str, Any]):
     if backend not in {"piper", "pyttsx3"}:
         raise ValueError("Configured TTS backend is not supported.")
     rate = config.get("tts_rate", DEFAULT_VOICE_PROFILE.speaking_rate)
+    profile = replace(DEFAULT_VOICE_PROFILE, speaking_rate=rate)
     model_path = config.get("piper_model_path") or None
     if backend == "piper":
         if model_path is None or not Path(model_path).expanduser().is_file():
@@ -38,7 +40,5 @@ def create_desktop_voice_output(config: dict[str, Any]):
         backend=backend,
         model_path=model_path,
     )
-    profiled_synthesizer = ProfiledLocalSpeechOutput(
-        synthesizer, DEFAULT_VOICE_PROFILE,
-    )
+    profiled_synthesizer = ProfiledLocalSpeechOutput(synthesizer, profile)
     return VoiceOutputSession(profiled_synthesizer)
