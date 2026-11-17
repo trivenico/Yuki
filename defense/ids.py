@@ -61,11 +61,13 @@ class PortScanDetector:
             events = deque(maxlen=self.max_events_per_source)
             self._events[source_ip] = events
         else:
+            if events and now < events[-1][0]:
+                raise ValueError("timestamp must not move backwards for a source")
             self._events.move_to_end(source_ip)
 
         events.append((now, destination_port))
         cutoff = now - self.window_seconds
-        while events and events[0][0] < cutoff:
+        while events and events[0][0] <= cutoff:
             events.popleft()
 
         if self._alerted_until.get(source_ip, float("-inf")) > now:
