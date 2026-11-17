@@ -125,6 +125,42 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertTrue(source.closed)
         self.assertTrue(detector.closed)
 
+    def test_request_stop_during_startup_cancels_before_listening(self):
+        class SlowStartSource(FakeAudioSource):
+            def __init__(inner_self):
+                super().__init__()
+                inner_self.start_entered = threading.Event()
+                inner_self.allow_start_to_finish = threading.Event()
+
+            def start(inner_self):
+                inner_self.start_entered.set()
+                inner_self.allow_start_to_finish.wait(3)
+                inner_self.started = True
+
+        source = SlowStartSource()
+        detector = FakeDetector()
+        session = self.make_session(source, detector)
+        errors = []
+
+        def start_session():
+            try:
+                session.start()
+            except WakeWordError as exc:
+                errors.append(exc)
+
+        starter = threading.Thread(target=start_session)
+        starter.start()
+        self.assertTrue(source.start_entered.wait(2))
+        session.request_stop()
+        self.assertTrue(source.stopped)
+        source.allow_start_to_finish.set()
+        starter.join(2)
+        self.assertFalse(starter.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertFalse(session.listening)
+        self.assertTrue(source.closed)
+        self.assertTrue(detector.closed)
+
     def test_close_can_be_retried_after_startup_exceeds_first_join_timeout(self):
         class SlowStartSource(FakeAudioSource):
             def __init__(inner_self):
