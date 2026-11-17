@@ -29,8 +29,28 @@ from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
 
+class YukiArgumentParser(argparse.ArgumentParser):
+    """Accept opaque 24-character task IDs even when they begin with '-'.
+
+    Workflow IDs are URL-safe random tokens. argparse otherwise interprets a
+    leading hyphen as an option and rejects a valid identifier as missing.
+    Exact registered options retain their normal meaning.
+    """
+
+    def _parse_optional(self, arg_string):
+        token_alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        if (
+            len(arg_string) == 24
+            and arg_string.startswith("-")
+            and arg_string not in self._option_string_actions
+            and all(character in token_alphabet for character in arg_string)
+        ):
+            return None
+        return super()._parse_optional(arg_string)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="yuki", description="Yuki AI assistant")
+    parser = YukiArgumentParser(prog="yuki", description="Yuki AI assistant")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
