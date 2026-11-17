@@ -19,7 +19,8 @@ class WakeWordSession:
 
     The audio source contract is:
       - start(): open the microphone only when called
-      - read(): return one bytes-like mono PCM16 frame, or None while stopping
+      - read(): return one bytes-like, mono, signed 16-bit little-endian PCM
+        frame at 16 kHz, or None when the stream ends
       - stop(): interrupt a blocked read
       - close(): release the device
 
@@ -109,7 +110,11 @@ class WakeWordSession:
                 raise TypeError(f"wake-word detector must provide {method}().")
 
     def start(self) -> None:
-        """Start only after an explicit user action; never called at construction."""
+        """Start after explicit user action; call from a background worker.
+
+        Adapter/model initialization may take time, so desktop UI code must not
+        invoke this method on the GUI thread.
+        """
         with self._lock:
             if self._closed:
                 raise WakeWordError("This wake-word session is closed.")
@@ -211,11 +216,14 @@ class WakeWordSession:
                     break
                 if not isinstance(frame, (bytes, bytearray, memoryview)):
                     raise WakeWordError("Audio source returned a non-bytes PCM frame.")
-                if not 0 < len(frame) <= self.MAX_FRAME_BYTES:
-                    raise WakeWordError("Audio source returned an empty or oversized PCM frame.")
+                if not 0 < len(frame) <= self.MAX_FRAME_BYTES or len(frame) % 2:
+                    raise WakeWordError("Audio source returned an invalid or oversized PCM16 frame.")
                 # Frame bytes are passed directly to the local detector and are
                 # not appended to a queue, file, log, transcript, or memory.
-                if detector.process(frame) is True:
+                prediction = detector.process(frame)
+                if type(prediction) is not bool:
+                    raise WakeWordError("Wake-word detector must return a boolean prediction.")
+                if prediction:
                     detected = True
                     break
         except Exception as exc:
