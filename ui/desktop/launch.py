@@ -287,9 +287,9 @@ def run() -> int:
 
 
     class WakeWordUiSignals(QObject):
-        state = Signal(str)
-        wake = Signal()
-        error = Signal(object)
+        state = Signal(object, str)
+        wake = Signal(object)
+        error = Signal(object, object)
 
     class WakeWordWorkerSignals(QObject):
         finished = Signal(object, object)
@@ -1466,12 +1466,14 @@ Version: {version}",
                 return
             try:
                 from voice.openwakeword_session import create_openwakeword_session
+                session_ref = {}
                 session = create_openwakeword_session(
                     model_path=self.wakeword_model_path,
-                    on_wake=self.wakeword_signals.wake.emit,
-                    on_state=self.wakeword_signals.state.emit,
-                    on_error=self.wakeword_signals.error.emit,
+                    on_wake=lambda: self.wakeword_signals.wake.emit(session_ref.get("session")),
+                    on_state=lambda state: self.wakeword_signals.state.emit(session_ref.get("session"), state),
+                    on_error=lambda error: self.wakeword_signals.error.emit(session_ref.get("session"), error),
                 )
+                session_ref["session"] = session
                 self.wakeword_session = session
                 self.wakeword_start_button.setEnabled(False)
                 self.wakeword_model_button.setEnabled(False)
@@ -1540,8 +1542,10 @@ Version: {version}",
                     self._wake_capture_after_stop = False
                     self._start_voice_capture()
 
-        @Slot(str)
-        def _wakeword_state_changed(self, state: str):
+        @Slot(object, str)
+        def _wakeword_state_changed(self, captured_session, state: str):
+            if captured_session is not self.wakeword_session:
+                return
             labels = {
                 "starting": "Loading local wake-word model and opening microphone…",
                 "listening": "Listening locally for Hey Yuki. No audio is saved or uploaded.",
@@ -1555,15 +1559,17 @@ Version: {version}",
             if state == "triggered":
                 self._stop_wakeword_listener(capture=True)
 
-        @Slot()
-        def _wakeword_detected(self):
+        @Slot(object)
+        def _wakeword_detected(self, captured_session):
             # The audio worker only emits this queued UI event; capture begins
             # after the wake-word device has been stopped and released.
-            if self.wakeword_session is not None:
+            if captured_session is self.wakeword_session and self.wakeword_session is not None:
                 self._stop_wakeword_listener(capture=True)
 
-        @Slot(object)
-        def _wakeword_error(self, error):
+        @Slot(object, object)
+        def _wakeword_error(self, captured_session, error):
+            if captured_session is not self.wakeword_session:
+                return
             self.wakeword_status.setText(
                 "Wake-word detection failed (" + type(error).__name__ + ")."
             )
