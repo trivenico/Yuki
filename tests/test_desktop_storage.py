@@ -71,6 +71,14 @@ class DesktopStorageTests(unittest.TestCase):
             if os.name == "posix":
                 self.assertEqual(root.stat().st_mode & 0o777, 0o700)
 
+    def test_fails_closed_when_storage_write_probe_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "private"
+            with patch("ui.desktop.storage.tempfile.mkstemp", side_effect=OSError("read-only")):
+                with self.assertRaisesRegex(DesktopStorageError, "not writable"):
+                    prepare_private_desktop_root(root)
+            self.assertTrue(root.is_dir())
+
     @unittest.skipUnless(os.name == "posix", "POSIX permissions are not used on Windows")
     def test_fails_closed_when_private_permissions_cannot_be_set(self):
         with tempfile.TemporaryDirectory() as directory:
