@@ -283,6 +283,7 @@ class TaskRuntimeTests(unittest.TestCase):
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(events[-1].kind, "task.interrupted")
         self.assertFalse(events[-1].payload["automatic_replay"])
+        self.assertEqual(events[-1].actor_id, "system:lease-recovery")
 
 
 if __name__ == "__main__":
