@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "dataset_id": "yuki-hey-yuki-v1",
+  "notes": "Copy this file into the dataset root, add each exact asset, review its terms, and replace placeholder values. This example is intentionally invalid until completed.",
+  "assets": [
+    {
+      "path": "background/replace-with-audio-file.wav",
+      "role": "background_audio",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "license": "REPLACE_WITH_EXACT_LICENSE_IDENTIFIER",
+      "license_url": "https://replace-with-authoritative-license-url.invalid/",
+      "source_url": "https://replace-with-source-record.invalid/",
+      "rights_reviewed": false,
+      "allow_training": false,
+      "allow_redistribution": false
+    }
+  ]
+}
