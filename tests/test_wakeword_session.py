@@ -84,6 +84,27 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertTrue(session.stop())
         self.assertEqual(session.state, "disabled")
 
+    def test_worker_remains_registered_until_wake_callback_finishes(self):
+        source = FakeAudioSource([b"wake"])
+        detector = FakeDetector()
+        callback_entered = threading.Event()
+        callback_release = threading.Event()
+
+        def on_wake():
+            callback_entered.set()
+            callback_release.wait(2)
+
+        session = self.make_session(source, detector, on_wake=on_wake)
+        session.start()
+        worker = session._thread
+        self.assertTrue(callback_entered.wait(2))
+        with self.assertRaises(WakeWordError):
+            session.start()
+        callback_release.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(session.state, "triggered")
+
     def test_stop_interrupts_blocked_audio_read_and_releases_resources(self):
         source = FakeAudioSource()
         detector = FakeDetector()
