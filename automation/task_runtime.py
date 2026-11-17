@@ -176,23 +176,32 @@ class TaskRuntime:
             raise ValueError("session_id must be non-empty bounded text.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         revoked: list[TaskRecord] = []
-        # This operation is invoked only by the authenticated logout boundary.
-        # It never touches unapproved or already-running work.
-        for run in self.store.list_runs(state="queued", limit=100):
-            if run.approved_session_hash != session_hash or not run.approved_by:
-                continue
-            if not self._allowed(run.approved_by, "task:cancel", run.run_id):
-                continue
-            cancelled = self.store.transition(
-                run.run_id, expected_version=run.version,
-                to_state="cancelled", error_code="session_revoked",
-            )
-            self.store.append_task_event(
-                run.run_id, kind="task.cancelled", actor_id=run.approved_by,
-                payload={"state_version": cancelled.version, "reason": "session_revoked"},
-                expected_version=cancelled.version,
-            )
-            revoked.append(self._record(self.store.get(run.run_id)))
+        # Page by stable creation cursor, not a fixed recent-task window. Only
+        # queued tasks approved by this exact session are ever considered.
+        cursor: tuple[str, str] | None = None
+        while True:
+            page = self.store.list_queued_approved_by_session(session_hash, limit=100, after=cursor)
+            if not page:
+                break
+            for run in page:
+                cursor = (run.created_at, run.run_id)
+                if not run.approved_by or not self._allowed(run.approved_by, "task:cancel", run.run_id):
+                    continue
+                try:
+                    cancelled = self.store.transition(
+                        run.run_id, expected_version=run.version,
+                        to_state="cancelled", error_code="session_revoked",
+                    )
+                except WorkflowConflict:
+                    # A concurrent worker/state change won the race; never
+                    # overwrite it with a stale logout cancellation.
+                    continue
+                self.store.append_task_event(
+                    run.run_id, kind="task.cancelled", actor_id=run.approved_by,
+                    payload={"state_version": cancelled.version, "reason": "session_revoked"},
+                    expected_version=cancelled.version,
+                )
+                revoked.append(self._record(self.store.get(run.run_id)))
         return revoked
 
     def events(
