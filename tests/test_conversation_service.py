@@ -118,6 +118,37 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertTrue(replay["replayed"])
         self.assertEqual(len(self.observed), 1)
 
+    def test_idempotent_retry_does_not_construct_owner_model(self):
+        selected = []
+        service = ConversationService(
+            self.store, self.loop,
+            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or self.loop,
+        )
+        first = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Hello", request_id="factory-replay", expected_version=0, tools=[],
+        )
+        replay = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Hello", request_id="factory-replay", expected_version=0, tools=[],
+        )
+        self.assertFalse(first["replayed"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(selected, ["owner-a"])
+
+    def test_wrong_owner_does_not_construct_owner_model(self):
+        selected = []
+        service = ConversationService(
+            self.store, self.loop,
+            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or self.loop,
+        )
+        with self.assertRaises(ConversationNotFound):
+            service.reply(
+                owner_id="owner-b", conversation_id=self.conversation["conversation_id"],
+                user_text="Unauthorized", request_id="wrong-owner", expected_version=0, tools=[],
+            )
+        self.assertEqual(selected, [])
+
     def test_stale_version_fails_before_model_call(self):
         self.send()
         with self.assertRaises(ConversationConflict):
