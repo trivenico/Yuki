@@ -298,7 +298,7 @@ class WakeWordSession:
                 self._report_error(exc)
         if worker is not None and worker is not current_thread():
             worker.join(timeout)
-        stopped = worker is None or not worker.is_alive()
+        stopped = worker is None or worker is current_thread() or not worker.is_alive()
         if stopped:
             with self._lock:
                 if not self._closed and self._state != "failed":
