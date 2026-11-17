@@ -58,6 +58,7 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
         self.assertEqual(alert["type"], "possible_port_scan")
         self.assertNotIn("source_ip", alert)
         self.assertNotIn("unique_ports", alert)
+        self.assertNotIn("192.0.2.44", alert["message"])
         snapshot = monitor.snapshot()
         self.assertEqual(snapshot["alerts"][-1], alert)
         self.assertTrue(snapshot["read_only"])
