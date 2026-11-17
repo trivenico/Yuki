@@ -76,6 +76,59 @@ class EncryptedMemoryStore(MemoryStore):
         except Exception as exc:
             raise RuntimeError("Could not safely access the Yuki memory encryption key.") from exc
 
+    def export_key_for_encrypted_backup(self, profile_id: str) -> bytes:
+        """Return authenticated key metadata for inclusion only inside an encrypted archive."""
+        from core.profile_identity import profile_memory_keyring_account
+        if self._keyring_account != profile_memory_keyring_account(profile_id):
+            raise RuntimeError("Memory key does not belong to the requested profile.")
+        payload = {
+            "schema_version": 1,
+            "profile_id": profile_id,
+            "key": base64.b64encode(self._key).decode("ascii"),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def import_key_from_encrypted_backup(
+        payload: bytes, profile_id: str, *, keyring_module,
+    ) -> bool:
+        """Install a verified backup DEK in the OS keyring; return whether a key was created."""
+        from core.profile_identity import profile_memory_keyring_account
+        if not isinstance(payload, bytes) or len(payload) > 2048:
+            raise RuntimeError("Portable memory key metadata is invalid.")
+        try:
+            metadata = json.loads(payload.decode("utf-8"))
+            if (
+                not isinstance(metadata, dict)
+                or set(metadata) != {"schema_version", "profile_id", "key"}
+                or metadata.get("schema_version") != 1
+                or metadata.get("profile_id") != profile_id
+                or not isinstance(metadata.get("key"), str)
+            ):
+                raise ValueError("invalid portable key metadata")
+            key = base64.b64decode(metadata["key"], validate=True)
+            if len(key) != 32:
+                raise ValueError("invalid portable memory key length")
+            backend = keyring_module.get_keyring()
+            priority = getattr(backend, "priority", 0)
+            if not isinstance(priority, (int, float)) or priority <= 0:
+                raise ValueError("secure OS keyring unavailable")
+            account = profile_memory_keyring_account(profile_id)
+            encoded = base64.b64encode(key).decode("ascii")
+            existing = keyring_module.get_password(_SERVICE, account)
+            if existing is not None:
+                existing_key = base64.b64decode(existing, validate=True)
+                if len(existing_key) != 32 or not __import__("hmac").compare_digest(existing_key, key):
+                    raise ValueError("destination profile already has a different memory key")
+                return False
+            keyring_module.set_password(_SERVICE, account, encoded)
+            stored = keyring_module.get_password(_SERVICE, account)
+            if stored != encoded:
+                raise ValueError("keyring did not persist the imported memory key")
+            return True
+        except Exception as exc:
+            raise RuntimeError("Could not safely import the encrypted-memory key into the OS keyring.") from exc
+
     def _load(self) -> list[dict]:
         try:
             if self.path.stat().st_size > self.MAX_FILE_BYTES:
