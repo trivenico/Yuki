@@ -443,6 +443,20 @@ class SecuritySessionControllerTests(unittest.TestCase):
         with self.assertRaises(SecuritySessionError):
             self.controller.start(consent=True)
 
+
+    def test_auth_expiry_during_failed_snapshot_revokes_monitor(self):
+        self.controller.start(consent=True)
+
+        def fail_after_expiry():
+            self.authorized = False
+            raise RuntimeError("sensor read failed")
+
+        self.monitor.snapshot_hook = fail_after_expiry
+        with self.assertRaisesRegex(SecuritySessionError, "Authorization expired"):
+            self.controller.snapshot()
+        self.assertFalse(self.controller.active)
+        self.assertFalse(self.monitor.enabled)
+
     def test_close_is_terminal(self):
         self.controller.start(consent=True)
         self.controller.close()
