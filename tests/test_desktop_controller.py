@@ -257,6 +257,17 @@ class ControllerTests(unittest.TestCase):
                     "a secure backup passphrase",
                 )
 
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
+    def test_portable_key_is_not_exported_when_profile_has_no_memory_file(self):
+        profile = Path(self.temp.name) / "empty-profile"
+        profile.mkdir()
+        backup = Path(self.temp.name) / "empty-profile.yukibak"
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            result = self.controller.create_backup(
+                backup, "a secure backup passphrase", include_memory_key=True,
+            )
+        self.assertFalse(result["memory_key_included"])
+
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
         with self.assertRaises(PermissionError):
