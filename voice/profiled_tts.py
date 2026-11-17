@@ -48,6 +48,11 @@ class ProfiledLocalSpeechOutput:
         if backend == "pyttsx3" and hasattr(synthesizer, "rate"):
             synthesizer.rate = profile.speaking_rate
             supported.add("speaking_rate")
+        elif backend == "kokoro" and hasattr(synthesizer, "speed"):
+            # Kokoro uses a relative speed multiplier; normalize around the
+            # existing Yuki profile's 170 WPM reference point.
+            synthesizer.speed = profile.speaking_rate / 170.0
+            supported.add("speaking_rate")
         self.capabilities = VoiceOutputCapabilities(
             backend=str(backend),
             supported_controls=frozenset(supported),
