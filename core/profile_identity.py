@@ -70,13 +70,9 @@ def load_or_create_profile_id(profile_root: str | Path) -> str:
         {"schema_version": 1, "profile_id": profile_id},
         sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags, 0o600)
-    except FileExistsError:
-        return _read_profile_id(path)
-    except OSError as exc:
-        raise ProfileIdentityError("Yuki could not safely create its profile identity.") from exc
+    import tempfile
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".yuki-profile-id-", dir=str(root))
+    temporary = Path(temporary_name)
     try:
         if os.name == "posix":
             os.fchmod(descriptor, 0o600)
@@ -84,6 +80,11 @@ def load_or_create_profile_id(profile_root: str | Path) -> str:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
+        try:
+            # Hard-link publication is atomic and never replaces an existing identity.
+            os.link(temporary, path)
+        except FileExistsError:
+            return _read_profile_id(path)
         if os.name == "posix":
             directory_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
             try:
@@ -95,8 +96,12 @@ def load_or_create_profile_id(profile_root: str | Path) -> str:
             os.close(descriptor)
         except OSError:
             pass
-        # Leave an incomplete identity in place rather than silently replacing it.
         raise ProfileIdentityError("Yuki could not durably create its profile identity.") from exc
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
     return profile_id
 
 
