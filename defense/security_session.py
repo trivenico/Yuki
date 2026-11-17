@@ -39,7 +39,12 @@ class SecuritySessionController:
     @property
     def active(self) -> bool:
         with self._lock:
-            return self._active and not self._closed
+            return self._active and not self._starting and not self._closed
+
+    @property
+    def starting(self) -> bool:
+        with self._lock:
+            return self._starting and not self._closed
 
     def _authorized(self) -> bool:
         try:
