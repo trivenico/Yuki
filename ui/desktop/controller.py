@@ -139,14 +139,13 @@ class DesktopCompanionController:
 
     def create_backup(self, destination: Path, passphrase: str) -> dict:
         self._require_live_session()
-        additional_files = {}
+        additional_roots = {}
         if self.workspace_path is not None:
-            conversation_db = self.workspace_path / "conversations.sqlite3"
-            if conversation_db.exists() or conversation_db.is_symlink():
-                additional_files["workspace/conversations.sqlite3"] = conversation_db
+            if self.workspace_path.exists() or self.workspace_path.is_symlink():
+                additional_roots["workspace"] = self.workspace_path
         return create_encrypted_backup(
             desktop_data_root(), Path(destination), passphrase,
-            additional_files=additional_files,
+            additional_roots=additional_roots,
         )
 
     def restore_backup(self, backup: Path, destination: Path, passphrase: str) -> dict:
