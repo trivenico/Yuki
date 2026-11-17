@@ -23,6 +23,42 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key=key, workflow_name="release-check", definition=self.definition
         )
 
+    def test_legacy_schema_upgrade_adds_approval_columns_atomically(self):
+        import sqlite3
+
+        path = Path(self.tmp.name) / "legacy-workflows.sqlite3"
+        db = sqlite3.connect(path)
+        db.execute("""CREATE TABLE workflow_runs (
+            run_id TEXT PRIMARY KEY,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            request_digest TEXT NOT NULL,
+            workflow_name TEXT NOT NULL,
+            definition_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            result_json TEXT,
+            error_code TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            lease_owner TEXT,
+            lease_expires_at TEXT
+        )""")
+        db.commit()
+        db.close()
+
+        upgraded = WorkflowRunStore(str(path))
+        with upgraded._connect() as connection:
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(workflow_runs)")}
+        self.assertTrue({
+            "approved_by", "approved_at", "approval_digest", "approved_session_hash",
+        }.issubset(columns))
+        created = upgraded.create(
+            idempotency_key="legacy-upgrade", workflow_name="post-upgrade",
+            definition=self.definition,
+        )
+        self.assertEqual(created.state, "queued")
+
     def test_create_and_idempotent_retry(self):
         first = self.create()
         second = self.create()
