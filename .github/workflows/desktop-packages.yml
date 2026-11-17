@@ -1,0 +1,101 @@
+name: Native desktop packages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-desktop-packages-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Unsigned desktop bundle / ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: yuki-desktop-linux
+          - os: windows-latest
+            artifact: yuki-desktop-windows
+          - os: macos-latest
+            artifact: yuki-desktop-macos
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install desktop runtime and build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --requirement requirements.txt
+          python -m pip install --requirement requirements-desktop.txt
+          python -m pip install --requirement requirements-desktop-build.txt
+          python -m pip install cyclonedx-bom
+      - name: Validate dependency consistency
+        run: python -m pip check
+      - name: Build native unsigned desktop bundle
+        run: >-
+          python -m PyInstaller --noconfirm --clean --windowed --onedir
+          --name Yuki --paths .
+          --collect-all PySide6 --collect-all shiboken6
+          --collect-all keyring --collect-submodules keyring.backends
+          ui/desktop/launch.py
+      - name: Smoke-test packaged desktop runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          & "dist/Yuki/Yuki.exe" --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Packaged desktop smoke test failed" }
+      - name: Smoke-test packaged desktop runtime (Linux)
+        if: runner.os == 'Linux'
+        run: ./dist/Yuki/Yuki --smoke-test
+      - name: Smoke-test packaged desktop runtime (macOS)
+        if: runner.os == 'macOS'
+        run: ./dist/Yuki.app/Contents/MacOS/Yuki --smoke-test
+      - name: Generate Python environment SBOM
+        run: cyclonedx-py environment --output-format JSON --output-file dist/yuki-python-environment.cdx.json
+      - name: Generate SHA-256 checksums
+        run: |
+          python -c "from pathlib import Path; import hashlib; root=Path('dist'); files=sorted(p for p in root.rglob('*') if p.is_file() and p.name != 'SHA256SUMS.txt'); (root/'SHA256SUMS.txt').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(root).as_posix()}\\n' for p in files), encoding='utf-8')"
+      - name: Upload unsigned desktop bundle, SBOM and checksums
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  attest:
+    name: Attest release build provenance
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Attest native desktop artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ runner.temp }}/yuki-desktop-linux
+            ${{ runner.temp }}/yuki-desktop-windows
+            ${{ runner.temp }}/yuki-desktop-macos
