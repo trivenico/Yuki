@@ -1512,6 +1512,8 @@ Version: {version}",
                     except Exception:
                         pass
                     self.wakeword_session = None
+                    self._wake_capture_after_stop = False
+                    self._wake_stop_requested = False
                     self.wakeword_model_button.setEnabled(True)
                     self.wakeword_start_button.setEnabled(
                         self.voice_session is not None and self.voice_session.enabled
@@ -1524,7 +1526,7 @@ Version: {version}",
                 )
                 if self._wake_stop_requested:
                     self._wake_stop_requested = False
-                    self._stop_wakeword_listener()
+                    self._stop_wakeword_listener(capture=self._wake_capture_after_stop)
             else:
                 self.wakeword_session = None
                 self.wakeword_model_button.setEnabled(True)
