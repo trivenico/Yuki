@@ -7,11 +7,12 @@ existing authorized coordinators; this layer never executes worker tools.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from companion.conversation import ConversationError, ConversationReply, ConversationSession
 from companion.memory_consent import CompanionMemory
-from automation.agent_coordinator import AgentPlan, SpecialistAgentCoordinator
+from automation.agent_coordinator import AgentPlan, SpecialistAgentCoordinator, SubtaskSpec
 from automation.task_runtime import TaskRecord, TaskRuntime, TaskSummary
 from automation.workflow_store import WorkflowConflict
 from companion.task_updates import CompanionTaskUpdate, CompanionTaskUpdates
@@ -66,11 +67,52 @@ class CompanionApplicationService:
         """Create a model-assisted proposal without enqueueing or executing tasks."""
         if self.agent_coordinator is None:
             raise ConversationError("Yuki's supervised agent coordinator is not configured.")
-        return self.agent_coordinator.submit_model_plan(
-            provider=self.session.provider,
+        if not isinstance(goal, str) or not goal.strip() or len(goal) > 4000:
+            raise ValueError("goal must contain 1-4000 characters.")
+        prompt = (
+            "Create a bounded task decomposition for the user's goal. Return only JSON "
+            "with a top-level tasks array. Each task must contain task_id, description, "
+            "required_capabilities (array), and optional depends_on (array). Do not include "
+            "permissions, executable code, commands, URLs, or tool arguments.\n"
+            + json.dumps({"goal": goal.strip()}, ensure_ascii=False)
+        )
+        generate = getattr(self.session.provider, "generate_chat", None)
+        if not callable(generate):
+            raise ConversationError("The configured provider does not support structured planning.")
+        raw = generate(
+            "You are a planning-only component. Produce JSON task specifications; "
+            "never claim tasks have been executed or approved.",
+            [{"role": "user", "content": prompt}],
+        )
+        try:
+            payload = json.loads(raw)
+            tasks = payload["tasks"]
+            if not isinstance(tasks, list) or not 1 <= len(tasks) <= 20:
+                raise ValueError("tasks must contain 1-20 items.")
+            subtasks = []
+            for item in tasks:
+                if not isinstance(item, dict):
+                    raise ValueError("task entries must be objects.")
+                allowed = {"task_id", "description", "required_capabilities", "depends_on"}
+                if set(item) - allowed:
+                    raise ValueError("task entry contains unsupported fields.")
+                capabilities = item.get("required_capabilities")
+                dependencies = item.get("depends_on", [])
+                if not isinstance(capabilities, list) or not isinstance(dependencies, list):
+                    raise ValueError("capabilities and dependencies must be arrays.")
+                subtasks.append(SubtaskSpec(
+                    subtask_id=item.get("task_id"),
+                    description=item.get("description"),
+                    required_capabilities=tuple(capabilities),
+                    depends_on=tuple(dependencies),
+                    requires_approval=True,
+                ))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ConversationError("Yuki could not validate the proposed task plan.") from exc
+        return self.agent_coordinator.submit(
             actor_id=actor_id,
             idempotency_key=idempotency_key,
-            goal=goal,
+            subtasks=subtasks,
         )
 
     def dispatch_agent_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
