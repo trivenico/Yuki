@@ -165,6 +165,9 @@ class SecuritySessionController:
                 still_current = self._active and self._generation == generation
             if not still_current:
                 raise SecuritySessionError("Monitoring stopped during collection.") from exc
+            if not self._authorized():
+                self._revoke_generation(generation)
+                raise SecuritySessionError("Authorization expired during collection.") from exc
             raise
         with self._lock:
             current = self._active and not self._closed and self._generation == generation
