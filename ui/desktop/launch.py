@@ -187,6 +187,23 @@ def run() -> int:
                     "Install requirements-desktop.txt and the platform's Qt system dependencies."
                 ) from exc
             smoke_log("stage: qt-imported")
+            # Verify optional local speech packages only in frozen bundles.
+            # Source-only Qt smoke jobs intentionally omit the voice extra.
+            # Importing these modules does not open a microphone or download a model.
+            if getattr(sys, "frozen", False):
+                try:
+                    import faster_whisper  # noqa: F401
+                    import numpy  # noqa: F401
+                    from importlib.util import find_spec
+                    if find_spec("sounddevice") is None:
+                        raise ImportError("sounddevice is not bundled")
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "Packaged local voice dependencies could not be imported."
+                    ) from exc
+                # Do not import sounddevice here: PortAudio initialization can
+                # require an active host audio server, which headless CI lacks.
+                smoke_log("stage: voice-dependencies-discovered")
             app = QApplication.instance() or QApplication([sys.argv[0]])
             probe = QLabel("Yuki Desktop runtime OK")
             smoke_log("stage: app-created")
@@ -230,6 +247,7 @@ def run() -> int:
 
     class WorkerSignals(QObject):
         finished = Signal(str, object)
+        phase = Signal(str)
 
     class ChatWorker(QRunnable):
         def __init__(self, controller: DesktopCompanionController, message: str):
@@ -244,6 +262,27 @@ def run() -> int:
                 self.signals.finished.emit(self.controller.respond(self.message), None)
             except Exception as exc:
                 self.signals.finished.emit("", exc)
+
+    class VoiceWorkerSignals(QObject):
+        finished = Signal(str, object, object)
+        phase = Signal(str)
+
+    class VoiceWorker(QRunnable):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+            self.signals = VoiceWorkerSignals()
+
+        @Slot()
+        def run(self):
+            try:
+                transcript = self.session.capture_and_transcribe(
+                    seconds=5,
+                    on_capture_complete=lambda: self.signals.phase.emit("transcribing"),
+                )
+                self.signals.finished.emit(transcript, None, self.session)
+            except Exception as exc:
+                self.signals.finished.emit("", exc, self.session)
 
     class PlanWorkerSignals(QObject):
         finished = Signal(object, object)
@@ -340,6 +379,7 @@ def run() -> int:
             self.provider = None
             self.lifecycle = None
             self.controller = None
+            self.voice_session = None
             self.busy = False
             self._logout_started = False
             self._logout_worker = None
@@ -412,6 +452,23 @@ def run() -> int:
             composer.addWidget(self.message, 1)
             composer.addWidget(self.send_button)
             chat_layout.addLayout(composer)
+            voice_controls = QHBoxLayout()
+            self.voice_checkbox = QCheckBox("Allow microphone for this session")
+            self.voice_checkbox.setChecked(False)
+            self.voice_checkbox.toggled.connect(self._set_voice_enabled)
+            self.voice_button = QPushButton("Speak (up to 5 seconds)")
+            self.voice_button.setEnabled(False)
+            self.voice_button.clicked.connect(self._start_voice_capture)
+            self.voice_stop_button = QPushButton("Stop microphone")
+            self.voice_stop_button.setEnabled(False)
+            self.voice_stop_button.clicked.connect(self._stop_voice_capture)
+            voice_controls.addWidget(self.voice_checkbox)
+            voice_controls.addWidget(self.voice_button)
+            voice_controls.addWidget(self.voice_stop_button)
+            chat_layout.addLayout(voice_controls)
+            self.voice_status = QLabel("Microphone off. No background listening.")
+            self.voice_status.setWordWrap(True)
+            chat_layout.addWidget(self.voice_status)
             self.chat_status = QLabel("Ready")
             chat_layout.addWidget(self.chat_status)
             tabs = QTabWidget()
@@ -928,8 +985,18 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.authenticated_tabs.setTabEnabled(index, True)
             for widget in (
                 self.memory_toggle, self.transcript, self.message, self.send_button,
+                self.voice_checkbox, self.voice_status,
             ):
                 widget.setEnabled(True)
+            if self.voice_session is not None:
+                self.voice_session.close()
+            self.voice_session = None
+            self.voice_checkbox.blockSignals(True)
+            self.voice_checkbox.setChecked(False)
+            self.voice_checkbox.blockSignals(False)
+            self.voice_button.setEnabled(False)
+            self.voice_stop_button.setEnabled(False)
+            self.voice_status.setText("Microphone off. No background listening.")
             self.logout_button.setText("Sign out")
             config = load_config()
             memory = create_desktop_memory(self.sessions.keyring)
@@ -1260,6 +1327,109 @@ Version: {version}",
                     "The task changed or could not be cancelled (" + type(exc).__name__ + "). Refresh and review it again."
                 )
 
+        def _set_voice_enabled(self, enabled: bool):
+            if not enabled:
+                session = self.voice_session
+                self.voice_session = None
+                if session is not None:
+                    session.disable()
+                self.voice_button.setEnabled(False)
+                self.voice_stop_button.setEnabled(False)
+                self.voice_status.setText("Microphone off. No background listening.")
+                return
+            answer = QMessageBox.question(
+                self, "Enable microphone for this session",
+                "Yuki will access the microphone only after you press Speak. "
+                "Each capture is limited to five seconds and can be stopped. "
+                "Audio is held temporarily for local transcription and then removed. "
+                "The first use may download the local speech-recognition model. "
+                "This does not enable wake-word or background listening. Continue?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                self.voice_checkbox.blockSignals(True)
+                self.voice_checkbox.setChecked(False)
+                self.voice_checkbox.blockSignals(False)
+                return
+            try:
+                from voice.session import VoiceSession
+                self.voice_session = VoiceSession(enabled=True)
+                self.voice_button.setEnabled(self.controller is not None and not self.busy)
+                self.voice_status.setText(
+                    "Microphone permission enabled for this session. Press Speak to start a five-second capture."
+                )
+            except Exception as exc:
+                self.voice_session = None
+                self.voice_checkbox.blockSignals(True)
+                self.voice_checkbox.setChecked(False)
+                self.voice_checkbox.blockSignals(False)
+                self.voice_status.setText("Voice setup unavailable (" + type(exc).__name__ + ").")
+
+        def _start_voice_capture(self):
+            if self.controller is None or self.busy or self.voice_session is None:
+                return
+            if not self.voice_session.enabled:
+                self.voice_status.setText("Enable microphone permission before starting a capture.")
+                return
+            self.busy = True
+            self.send_button.setEnabled(False)
+            self.message.setEnabled(False)
+            self.voice_button.setEnabled(False)
+            self.voice_stop_button.setEnabled(True)
+            self.voice_status.setText(
+                "Microphone active — capture ends within five seconds, then local transcription begins."
+            )
+            self.chat_status.setText("Voice capture started.")
+            worker = VoiceWorker(self.voice_session)
+            worker.signals.phase.connect(self._voice_phase_changed)
+            worker.signals.finished.connect(self._voice_finished)
+            self.pool.start(worker)
+
+        @Slot(str)
+        def _voice_phase_changed(self, phase: str):
+            if phase == "transcribing":
+                self.voice_stop_button.setEnabled(False)
+                self.voice_status.setText(
+                    "Microphone is off. Transcribing locally; you can still disable voice to discard this result."
+                )
+                self.chat_status.setText("Transcribing locally. Review the transcript before sending it.")
+
+        def _stop_voice_capture(self):
+            if self.voice_session is None or not self.busy:
+                return
+            self.voice_session.cancel()
+            self.voice_stop_button.setEnabled(False)
+            self.voice_status.setText("Stopping microphone capture…")
+
+        @Slot(str, object, object)
+        def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
+            self.busy = False
+            self.send_button.setEnabled(True)
+            self.message.setEnabled(True)
+            self.voice_stop_button.setEnabled(False)
+            self.voice_button.setEnabled(
+                self.voice_session is not None and self.voice_session.enabled
+            )
+            # Disabling/replacing a voice session revokes permission and also
+            # invalidates any result whose worker completion was already queued.
+            if captured_session is not self.voice_session or not captured_session.enabled:
+                self.voice_status.setText("Microphone off. The revoked session's transcript was discarded.")
+                self.chat_status.setText("Ready")
+                return
+            if error is not None:
+                detail = str(error).strip()[:180] or type(error).__name__
+                self.voice_status.setText("Voice capture stopped or failed: " + detail)
+                self.chat_status.setText("Ready")
+                return
+            if not transcript.strip():
+                self.voice_status.setText("No speech was recognized. Try again or type a message.")
+                self.chat_status.setText("Ready")
+                return
+            self.message.setText(transcript)
+            self.message.setFocus()
+            self.voice_status.setText("Transcript ready. Review it, then press Send to share it with Yuki.")
+            self.chat_status.setText("Transcript was produced locally; nothing was sent yet.")
+
         def _send(self):
             if self.controller is None or self.busy:
                 return
@@ -1270,6 +1440,7 @@ Version: {version}",
             self.message.clear()
             self.send_button.setEnabled(False)
             self.message.setEnabled(False)
+            self.voice_button.setEnabled(False)
             self.memory_toggle.setEnabled(False)
             self.plan_propose_button.setEnabled(False)
             self.transcript.appendPlainText("You: " + prompt)
@@ -1283,6 +1454,9 @@ Version: {version}",
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
+            self.voice_button.setEnabled(
+                self.voice_session is not None and self.voice_session.enabled
+            )
             self.memory_toggle.setEnabled(True)
             self.plan_propose_button.setEnabled(True)
             if error is not None:
@@ -1294,6 +1468,15 @@ Version: {version}",
                 self.chat_status.setText("Ready")
 
         def _clear_authenticated_session_ui(self):
+            if self.voice_session is not None:
+                self.voice_session.close()
+            self.voice_session = None
+            self.voice_checkbox.blockSignals(True)
+            self.voice_checkbox.setChecked(False)
+            self.voice_checkbox.blockSignals(False)
+            self.voice_button.setEnabled(False)
+            self.voice_stop_button.setEnabled(False)
+            self.voice_status.setText("Microphone off. No background listening.")
             self.memory_toggle.blockSignals(True)
             self.memory_toggle.setChecked(False)
             self.memory_toggle.blockSignals(False)
@@ -1348,7 +1531,11 @@ Version: {version}",
             self.setEnabled(True)
             _restrict_session_to_logout_retry(
                 self.authenticated_tabs,
-                (self.memory_toggle, self.transcript, self.message, self.send_button),
+                (
+                    self.memory_toggle, self.transcript, self.message, self.send_button,
+                    self.voice_checkbox, self.voice_button, self.voice_stop_button,
+                    self.voice_status,
+                ),
                 self.logout_button,
                 self.chat_status,
             )
@@ -1385,6 +1572,8 @@ Version: {version}",
             if self._logout_started or self._shutdown_started:
                 return
             self._logout_started = True
+            if self.voice_session is not None:
+                self.voice_session.close()
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is finishing active work before signing out…"
@@ -1427,6 +1616,8 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            if self.voice_session is not None:
+                self.voice_session.close()
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is safely signing out and shutting down…"

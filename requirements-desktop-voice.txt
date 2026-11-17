@@ -1,0 +1,4 @@
+# Optional local speech-recognition runtime for packaged desktop builds.
+faster-whisper>=1.2.1,<2.0
+sounddevice>=0.5.6,<1.0
+numpy>=1.26,<3.0

@@ -73,6 +73,73 @@ class VoiceRecordingSecurityTests(unittest.TestCase):
                     self.stt.record_wav(output)
             self.assertFalse(output.exists())
 
+    def test_cancelled_capture_does_not_leave_a_recording(self):
+        from threading import Event
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "recording.wav"
+            cancelled = Event()
+            cancelled.set()
+            with patch.dict(sys.modules, self._mock_audio_modules()):
+                with self.assertRaises(STTError):
+                    self.stt.record_wav(output, cancellation_event=cancelled)
+            self.assertFalse(output.exists())
+
+    def test_stop_event_interrupts_active_recording_and_removes_output(self):
+        from threading import Event, Timer
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "recording.wav"
+            cancelled = Event()
+            stream = types.SimpleNamespace(active=True)
+            sounddevice = types.ModuleType("sounddevice")
+            sounddevice.rec = lambda *args, **kwargs: [1, 2, 3, 4]
+            sounddevice.get_stream = lambda: stream
+            def stop():
+                stream.active = False
+            sounddevice.stop = stop
+            numpy = types.ModuleType("numpy")
+            numpy.int16 = int
+            numpy.asarray = lambda values, dtype=None: types.SimpleNamespace(
+                tobytes=lambda: b"\x01\x00" * len(values)
+            )
+            timer = Timer(0.05, cancelled.set)
+            timer.start()
+            try:
+                with patch.dict(sys.modules, {"sounddevice": sounddevice, "numpy": numpy}):
+                    with self.assertRaises(STTError):
+                        self.stt.record_wav(output, cancellation_event=cancelled)
+            finally:
+                timer.cancel()
+                timer.join()
+            self.assertFalse(output.exists())
+
+    def test_transcription_cancellation_stops_segment_iteration(self):
+        from threading import Event
+
+        cancelled = Event()
+        faster_whisper = types.ModuleType("faster_whisper")
+
+        class FakeModel:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def transcribe(self, *args, **kwargs):
+                def segments():
+                    yield types.SimpleNamespace(text="first")
+                    cancelled.set()
+                    yield types.SimpleNamespace(text="second")
+                info = types.SimpleNamespace(language="en", language_probability=1.0)
+                return segments(), info
+
+        faster_whisper.WhisperModel = FakeModel
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "recording.wav"
+            audio.write_bytes(b"mock wav")
+            with patch.dict(sys.modules, {"faster_whisper": faster_whisper}):
+                with self.assertRaises(STTError):
+                    self.stt.transcribe_file(audio, cancellation_event=cancelled)
+
     def test_invalid_sample_rate_is_rejected(self):
         for sample_rate in (True, 0, 48000, "16000"):
             with self.subTest(sample_rate=sample_rate):

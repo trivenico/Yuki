@@ -10,6 +10,7 @@ overrides that location and places desktop state under `$YUKI_HOME/.yuki`.
 
 ```bash
 python -m pip install -r requirements.txt -r requirements-desktop.txt
+python -m pip install -r requirements-desktop-voice.txt  # optional local microphone transcription
 python -m ui.desktop.launch
 ```
 
@@ -33,12 +34,12 @@ Build on the target operating system; PyInstaller does not provide reliable
 cross-compilation between Windows, macOS, and Linux.
 
 ```bash
-python -m pip install -r requirements.txt -r requirements-desktop.txt -r requirements-desktop-build.txt
+python -m pip install -r requirements.txt -r requirements-desktop.txt -r requirements-desktop-voice.txt -r requirements-desktop-build.txt
 python -m pip check
-python -m PyInstaller --noconfirm --clean --windowed --onedir --name Yuki --paths . --collect-all PySide6 --collect-all shiboken6 --collect-all keyring --collect-submodules keyring.backends ui/desktop/launch.py
+python -m PyInstaller --noconfirm --clean --windowed --onedir --name Yuki --paths . --collect-all PySide6 --collect-all shiboken6 --collect-all keyring --collect-submodules keyring.backends --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all sounddevice --collect-all numpy --collect-all huggingface_hub --collect-all tokenizers --collect-all certifi ui/desktop/launch.py
 ```
 
-The output is under `dist/Yuki/` on Windows/Linux and `dist/Yuki.app/` on macOS. Keep the complete directory or app bundle; the executable depends on its bundled support files.
+The output is under `dist/Yuki/` on Windows/Linux and `dist/Yuki.app/` on macOS. Keep the complete directory or app bundle; the executable depends on its bundled support files. The developer bundle includes the optional local speech-recognition runtime; its model is downloaded on first use after the desktop consent prompt and is not embedded in the executable.
 
 ## CI coverage and release blockers
 

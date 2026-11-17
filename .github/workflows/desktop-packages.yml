@@ -44,13 +44,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --requirement requirements.txt
           python -m pip install --requirement requirements-desktop.txt
+          python -m pip install --requirement requirements-desktop-voice.txt
           python -m pip install --requirement requirements-desktop-build.txt
           python -m pip install cyclonedx-bom
       - name: Install Linux Qt runtime libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libegl1 libgl1
+          sudo apt-get install --yes libegl1 libgl1 libportaudio2
       - name: Validate dependency consistency
         run: python -m pip check
       - name: Build native unsigned desktop bundle
@@ -59,6 +60,9 @@ jobs:
           --name Yuki --paths .
           --collect-all PySide6 --collect-all shiboken6
           --collect-all keyring --collect-submodules keyring.backends
+          --collect-all faster_whisper --collect-all ctranslate2 --collect-all av
+          --collect-all sounddevice --collect-all numpy
+          --collect-all huggingface_hub --collect-all tokenizers --collect-all certifi
           --collect-data core
           ui/desktop/launch.py
       - name: Smoke-test packaged desktop runtime (Windows)
