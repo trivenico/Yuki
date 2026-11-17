@@ -92,10 +92,12 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - name: Attest native desktop artifacts
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: yuki-desktop-*
+          path: ${{ runner.temp }}/desktop-artifacts
+      - name: Attest native desktop artifacts and metadata
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: |
-            ${{ runner.temp }}/yuki-desktop-linux
-            ${{ runner.temp }}/yuki-desktop-windows
-            ${{ runner.temp }}/yuki-desktop-macos
+          subject-path: ${{ runner.temp }}/desktop-artifacts/**/*
