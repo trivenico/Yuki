@@ -157,7 +157,7 @@ Runtime voice audio must not directly train or modify models, prompts, policies,
 
 ## Delivery sequence
 
-1. Complete native desktop packaging and the explicit recording security foundation.
+1. Complete native desktop packaging and the explicit recording security foundation. (CI packaging is now merged; physical-device and portable-drive acceptance remain.)
 2. Integrate explicit desktop voice capture/transcription with the authenticated conversation runtime.
 3. Add a local wake-word adapter and testable voice-session state machine.
 4. Add VAD, bounded follow-up conversation, TTS interruption, and mute/quiet-hour controls.
@@ -168,3 +168,40 @@ Runtime voice audio must not directly train or modify models, prompts, policies,
 ## Wake-word engine selection
 
 Do not hard-code a vendor or model in the conversation layer. Before selecting an engine, verify its current license, model-weight license, offline behavior, supported platforms, CPU use, false-accept/false-reject behavior, update mechanism, and whether commercial redistribution is permitted. Keep model assets versioned and checksummed. No model or audio asset is accepted solely because its wrapper package has a permissive license.
+
+
+## Initial wake-word technology review (2026-11)
+
+This is a candidate review, not an approved runtime dependency. Do not bundle a detector or model until the complete code + weights + dataset provenance + redistribution terms are recorded in the software/model bill of materials.
+
+### Candidate A: openWakeWord
+
+- The detector framework source is Apache-2.0 and supports local inference with ONNX; its repository documents Windows ONNX installation and Linux ONNX/TFLite paths.
+- The repository's included pre-trained wake-word models are CC BY-NC-SA 4.0, due to training-data restrictions. They are therefore not acceptable as default redistributable assets for a commercial Yuki distribution without a separately licensed replacement.
+- The documented pre-trained set includes "hey jarvis", not Yuki's desired custom phrase. A custom model must have a separately auditable training-data and model license.
+- Its published performance targets (<5% false rejects and <0.5 false accepts/hour) are project targets, not a guarantee for Yuki hardware, accents, rooms, microphones, or thresholds.
+- Candidate for a replaceable detector adapter and controlled evaluation; do not ship its bundled weights in a commercial build without rights clearance.
+
+### Candidate B: sherpa-onnx keyword spotting
+
+- The sherpa-onnx runtime repository is Apache-2.0 and advertises offline keyword spotting plus Windows, macOS, and Linux x64 support.
+- Runtime license does not grant rights to every downloaded KWS model. Each model card, weight file, training dataset and any tokenizer/config assets must be reviewed independently before bundling.
+- Strong candidate for an offline, cross-platform evaluation because it also offers VAD and speech components behind one runtime. Keep wake detection, VAD, STT and TTS as separate interfaces even if one runtime supplies multiple implementations.
+- A specific KWS model, its supported phrase, accuracy, CPU/RAM use, and commercial redistribution status are not yet qualified.
+
+### Selection decision
+
+Start with a **provider-neutral WakeWordDetector interface** and a benchmark harness; do not yet add openWakeWord or sherpa-onnx to required desktop dependencies. Evaluate at least one eligible model on representative Windows/macOS/Linux x64 hardware, including:
+- false accepts per hour under silence, television/music, meetings, and ordinary conversation;
+- false rejects across voices, distances, accents, microphone types, and background noise;
+- end-to-end activation latency, CPU utilization, memory, thermal impact, and battery impact;
+- behavior when the network is disabled (must continue local wake detection);
+- clean start/stop, mute, device removal, permission loss, and repeated activation;
+- exact code, model, and dataset licenses plus model hashes and update/rollback behavior.
+
+The initial implementation should process fixed-size in-memory PCM frames, use no network-capable detector API, and expose only a detection event and confidence score. Thresholds must be configurable and tuned from measured false-accept/false-reject tradeoffs. A wake event must open a new bounded capture session; it must not itself dispatch a command or bypass authentication. The detector must stop immediately on mute, logout, shutdown, or OS permission revocation.
+
+### Research references
+
+- openWakeWord source and included model license notes: https://github.com/dscripka/openWakeWord
+- sherpa-onnx offline speech and keyword-spotting runtime: https://github.com/k2-fsa/sherpa-onnx
