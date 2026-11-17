@@ -21,6 +21,7 @@ class DesktopCompanionController:
         application: CompanionApplicationService,
         identity: AuthenticatedDesktopIdentity,
         sessions: DesktopSessionManager,
+        *, workspace_path: Path | None = None,
     ) -> None:
         if not isinstance(application, CompanionApplicationService):
             raise TypeError("application must be a CompanionApplicationService.")
@@ -34,6 +35,7 @@ class DesktopCompanionController:
         self.application = application
         self.identity = identity
         self.sessions = sessions
+        self.workspace_path = Path(workspace_path).expanduser().resolve() if workspace_path is not None else None
 
     def respond(self, message: str) -> str:
         if self.sessions.current_identity() != self.identity:
@@ -137,7 +139,15 @@ class DesktopCompanionController:
 
     def create_backup(self, destination: Path, passphrase: str) -> dict:
         self._require_live_session()
-        return create_encrypted_backup(desktop_data_root(), Path(destination), passphrase)
+        additional_files = {}
+        if self.workspace_path is not None:
+            conversation_db = self.workspace_path / "conversations.sqlite3"
+            if conversation_db.exists():
+                additional_files["workspace/conversations.sqlite3"] = conversation_db
+        return create_encrypted_backup(
+            desktop_data_root(), Path(destination), passphrase,
+            additional_files=additional_files,
+        )
 
     def restore_backup(self, backup: Path, destination: Path, passphrase: str) -> dict:
         self._require_live_session()
