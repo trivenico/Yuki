@@ -10,7 +10,9 @@ Voice remains **off by default**. The desktop app now provides an explicit, boun
 - The desktop microphone checkbox is session-scoped. The microphone is not opened until the user presses **Speak**. **Stop microphone** cancels an active capture.
 - Recognized text is placed in the message composer for review. It is not sent to Yuki until the user presses **Send**.
 - The first transcription may download the configured faster-whisper model. The desktop UI discloses this before enabling voice. Audio is transcribed locally; only the reviewed text is sent through the authenticated conversation.
-- No wake-word detector, always-listening service, ambient audio archive, or hands-free duplex conversation is implemented yet. The `openwakeword` dependency is not currently used by a runtime listener.
+- `voice/wakeword_session.py` adds an opt-in, engine-agnostic local wake-word lifecycle controller. It does not yet include a microphone driver or detector model; no always-listening runtime is enabled by this foundation.
+- Wake-word controller privacy and model-license decisions are documented in `voice/WAKEWORD_SESSION.md`. openWakeWord's code is Apache-2.0, but its bundled pretrained models are CC BY-NC-SA 4.0, so those models are not bundled with Yuki.
+- No production wake-word model, always-listening desktop service, ambient audio archive, or hands-free duplex conversation is implemented yet.
 
 Microphone permission is independent from camera and screen observation. Sign-out and session cleanup disable voice. If audio capture or the speech model is unavailable, text chat remains available.
 
