@@ -92,6 +92,12 @@ class SecurityDashboardPanel:
                 start.setEnabled(not enabled)
                 stop.setEnabled(enabled)
                 refresh.setEnabled(enabled)
+                if not enabled:
+                    # Do not leave stale process names or alerts visible after
+                    # monitoring stops, is revoked, or the session expires.
+                    processes.clear()
+                    alerts.clear()
+                    process_summary.setText("No snapshot collected.")
 
             def render(self, snapshot: dict):
                 if (
