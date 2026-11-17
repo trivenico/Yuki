@@ -272,3 +272,7 @@ The restore operation still produces a separate folder and never rewrites the
 active profile. The owner must preserve the restored `workspace/` directory
 when configuring the restored profile's workspace. This is a data export and
 restore boundary, not an automatic profile activation workflow.
+
+## Versioned portable profile restore layout
+
+New encrypted backups use manifest schema version 2 and restore into a YUKI_HOME-compatible package: `.yuki/` contains the private desktop profile and `workspace/` contains the canonical conversation database. The owner chooses an empty parent directory; to activate it later, configure `YUKI_HOME` to that parent and point the workspace setting at its `workspace/` child. Restore never changes the currently running profile or configuration. Legacy schema version 1 archives remain supported and are normalized into the same package layout during restore.
