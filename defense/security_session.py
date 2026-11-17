@@ -30,6 +30,8 @@ class SecuritySessionController:
         self._active = False
         self._starting = False
         self._starting_generation = None
+        self._stopping = False
+        self._cleanup_required = False
         self._closed = False
         self._generation = 0
 
@@ -52,8 +54,10 @@ class SecuritySessionController:
         with self._lock:
             if self._closed:
                 raise SecuritySessionError("The security session controller is closed.")
-            if self._starting:
+            if self._starting or self._stopping:
                 raise SecuritySessionError("Security monitoring is still starting or stopping.")
+            if self._cleanup_required:
+                raise SecuritySessionError("Security monitor cleanup must be retried before restart.")
             if self._active:
                 return
             self._generation += 1
@@ -72,7 +76,7 @@ class SecuritySessionController:
                     self._starting = False
                     self._starting_generation = None
             try:
-                self._monitor.disable()
+                self._disable_monitor()
             except Exception:
                 pass
             raise SecuritySessionError("Security monitoring could not be enabled.") from exc
@@ -91,7 +95,7 @@ class SecuritySessionController:
             # A concurrent Stop/close may have run before enable() returned.
             # Keep subsequent starts blocked until this late enable is disabled.
             try:
-                self._monitor.disable()
+                self._disable_monitor()
             except Exception as exc:
                 raise SecuritySessionError("Security monitor cleanup failed after startup cancellation.") from exc
             finally:
@@ -101,20 +105,30 @@ class SecuritySessionController:
                         self._starting_generation = None
             raise SecuritySessionError("The authenticated session ended during startup.")
 
-    def stop(self) -> None:
+    def _disable_monitor(self) -> None:
         with self._lock:
-            was_active = self._active
-            self._active = False
-            # Keep _starting set until an in-flight enable() returns and its
-            # compensating disable() completes; otherwise a new start could
-            # race the late enable and be disabled underneath the new session.
-            self._generation += 1
-        # Invalidate controller results first; disable must not hold our lock
-        # while a sensor is blocked.
+            if self._stopping:
+                raise SecuritySessionError("Security monitor cleanup is already in progress.")
+            self._stopping = True
         try:
             self._monitor.disable()
         except Exception as exc:
+            with self._lock:
+                self._stopping = False
+                self._cleanup_required = True
             raise SecuritySessionError("Security monitor cleanup failed.") from exc
+        with self._lock:
+            self._stopping = False
+            self._cleanup_required = False
+
+    def stop(self) -> None:
+        with self._lock:
+            self._active = False
+            # Keep _starting set until an in-flight enable() returns and its
+            # compensating disable() completes. _stopping also blocks a fresh
+            # enable while this disable operation is in flight.
+            self._generation += 1
+        self._disable_monitor()
 
     def _revoke_generation(self, generation: int) -> None:
         with self._lock:
@@ -122,10 +136,7 @@ class SecuritySessionController:
                 return
             self._active = False
             self._generation += 1
-        try:
-            self._monitor.disable()
-        except Exception as exc:
-            raise SecuritySessionError("Security monitor cleanup failed.") from exc
+        self._disable_monitor()
 
     def snapshot(self) -> dict:
         if not self._authorized():
@@ -165,7 +176,4 @@ class SecuritySessionController:
             self._closed = True
             self._active = False
             self._generation += 1
-        try:
-            self._monitor.disable()
-        except Exception as exc:
-            raise SecuritySessionError("Security monitor cleanup failed.") from exc
+        self._disable_monitor()
