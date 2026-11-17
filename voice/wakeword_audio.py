@@ -23,11 +23,23 @@ class SoundDeviceWakeWordAudioSource:
 
     SAMPLE_RATE = 16000
     CHANNELS = 1
-    BLOCKSIZE = 1280  # 80 ms at 16 kHz
-    FRAME_BYTES = BLOCKSIZE * 2
+    DEFAULT_BLOCKSIZE = 512  # Porcupine's common 32 ms frame at 16 kHz
     QUEUE_READ_TIMEOUT_SECONDS = 0.1
 
-    def __init__(self, *, sounddevice_module=None) -> None:
+    def __init__(
+        self,
+        *,
+        sample_rate: int = SAMPLE_RATE,
+        frame_length: int = DEFAULT_BLOCKSIZE,
+        sounddevice_module=None,
+    ) -> None:
+        if isinstance(sample_rate, bool) or not isinstance(sample_rate, int) or not 8000 <= sample_rate <= 96000:
+            raise ValueError("sample_rate must be an integer between 8 and 96 kHz.")
+        if isinstance(frame_length, bool) or not isinstance(frame_length, int) or not 1 <= frame_length <= 8192:
+            raise ValueError("frame_length must be an integer between 1 and 8192 samples.")
+        self.SAMPLE_RATE = sample_rate
+        self.BLOCKSIZE = frame_length
+        self.FRAME_BYTES = frame_length * 2
         self._sounddevice = sounddevice_module
         self._stream = None
         self._frames: Queue[bytes] = Queue(maxsize=1)
