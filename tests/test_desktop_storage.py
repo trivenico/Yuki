@@ -50,6 +50,27 @@ class DesktopStorageTests(unittest.TestCase):
             with self.assertRaises(DesktopStorageError):
                 prepare_private_desktop_root(file_path)
 
+    def test_portable_storage_requires_existing_configured_drive_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            missing_drive = base / "disconnected-drive"
+            with self.assertRaisesRegex(DesktopStorageError, "YUKI_HOME is unavailable"):
+                prepare_private_desktop_root(
+                    missing_drive / ".yuki", require_existing_parent=True,
+                )
+            self.assertFalse(missing_drive.exists())
+
+    def test_portable_storage_creates_private_child_on_existing_drive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            drive_root = Path(directory) / "mounted-drive"
+            drive_root.mkdir()
+            root = prepare_private_desktop_root(
+                drive_root / ".yuki", require_existing_parent=True,
+            )
+            self.assertTrue(root.is_dir())
+            if os.name == "posix":
+                self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+
     @unittest.skipUnless(os.name == "posix", "POSIX permissions are not used on Windows")
     def test_fails_closed_when_private_permissions_cannot_be_set(self):
         with tempfile.TemporaryDirectory() as directory:
