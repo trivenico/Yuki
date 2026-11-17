@@ -48,7 +48,7 @@ class ConversationServiceTests(unittest.TestCase):
         with patch(
             "core.conversation_service.threading.Thread.start",
             side_effect=RuntimeError("thread start unavailable"),
-        ), patch.object(self.store, "release_generation_lease") as release:
+        ), patch.object(self.store, "release_generation_lease", wraps=self.store.release_generation_lease) as release:
             with self.assertRaisesRegex(RuntimeError, "thread start unavailable"):
                 self.send()
         release.assert_called_once()
