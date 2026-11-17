@@ -99,7 +99,15 @@ class WakeWordSessionTests(unittest.TestCase):
         source = SlowStartSource()
         detector = FakeDetector()
         session = self.make_session(source, detector)
-        starter = threading.Thread(target=session.start)
+        start_errors = []
+
+        def start_session():
+            try:
+                session.start()
+            except WakeWordError as exc:
+                start_errors.append(exc)
+
+        starter = threading.Thread(target=start_session)
         starter.start()
         self.assertTrue(source.start_entered.wait(2))
 
@@ -112,6 +120,7 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertFalse(closer.is_alive())
         self.assertFalse(starter.is_alive())
         self.assertEqual(close_result, [True])
+        self.assertEqual(len(start_errors), 1)
         self.assertEqual(session.state, "closed")
         self.assertTrue(source.closed)
         self.assertTrue(detector.closed)
