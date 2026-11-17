@@ -971,7 +971,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.authenticated_tabs.setTabEnabled(index, True)
             for widget in (
                 self.memory_toggle, self.transcript, self.message, self.send_button,
-                self.voice_checkbox,
+                self.voice_checkbox, self.voice_status,
             ):
                 widget.setEnabled(True)
             if self.voice_session is not None:
@@ -1500,7 +1500,11 @@ Version: {version}",
             self.setEnabled(True)
             _restrict_session_to_logout_retry(
                 self.authenticated_tabs,
-                (self.memory_toggle, self.transcript, self.message, self.send_button),
+                (
+                    self.memory_toggle, self.transcript, self.message, self.send_button,
+                    self.voice_checkbox, self.voice_button, self.voice_stop_button,
+                    self.voice_status,
+                ),
                 self.logout_button,
                 self.chat_status,
             )
@@ -1537,6 +1541,8 @@ Version: {version}",
             if self._logout_started or self._shutdown_started:
                 return
             self._logout_started = True
+            if self.voice_session is not None:
+                self.voice_session.cancel()
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is finishing active work before signing out…"
@@ -1579,6 +1585,8 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            if self.voice_session is not None:
+                self.voice_session.cancel()
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is safely signing out and shutting down…"
