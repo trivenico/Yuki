@@ -6,7 +6,7 @@
 
 Install `requirements-kokoro.txt` only when enabling Kokoro. Install the official `kokoro-en-v0_19` model archive and an independently verified English lexicon into a user-selected local directory. Configure:
 - Model directory containing `model.onnx`, `voices.bin`, and `tokens.txt`.
-- English lexicon path.
+- Explicit English lexicon path (required; implicit phonemizer fallback is disabled).
 - A supported speaker preset, initially `af_bella`, `af_nicole`, `af_sarah`, `af_sky`, `bf_emma`, or `bf_isabella`.
 
 The adapter does not download assets, load weights, or open an audio device at construction. It loads the model on the first explicitly enabled speech request. Speech generation and playback must run on a background worker.
