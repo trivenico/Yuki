@@ -69,11 +69,21 @@ def _inventory(source: Path) -> list[Path]:
     databases = {
         item for item in found if item.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
     }
+    database_names = {item.as_posix() for item in databases}
     sidecars = {
         Path(str(database) + suffix)
         for database in databases
         for suffix in ("-wal", "-shm", "-journal")
     }
+    # Never migrate an orphan sidecar as an independent file. It may be the
+    # only remnant of an interrupted database write and cannot be safely
+    # interpreted without its matching database.
+    for item in found:
+        if item.name.endswith(("-wal", "-shm", "-journal")):
+            raw = item.as_posix()
+            suffix = next(s for s in ("-wal", "-shm", "-journal") if raw.endswith(s))
+            if raw[:-len(suffix)] not in database_names:
+                raise MigrationError("Migration source contains an orphan SQLite sidecar.")
     found = [item for item in found if item not in sidecars]
     return sorted(found, key=lambda item: item.relative_to(root).as_posix())
 
