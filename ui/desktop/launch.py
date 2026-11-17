@@ -1515,6 +1515,8 @@ Version: {version}",
             self._wakeword_operation = None
             if operation == "close":
                 if error is None and result is True:
+                    capture_after_close = self._wake_capture_after_stop
+                    self._wake_capture_after_stop = False
                     self.wakeword_session = None
                     self._wakeword_close_failed = False
                     self.wakeword_model_button.setEnabled(True)
@@ -1523,6 +1525,8 @@ Version: {version}",
                     self.wakeword_status.setText(
                         "Hey Yuki listening is off. Microphone released."
                     )
+                    if capture_after_close:
+                        self._start_voice_capture()
                 else:
                     self._wakeword_close_failed = True
                     self.wakeword_model_button.setEnabled(False)
@@ -1572,6 +1576,8 @@ Version: {version}",
         @Slot(object, str)
         def _wakeword_state_changed(self, captured_session, state: str):
             if captured_session is not self.wakeword_session:
+                return
+            if self._wakeword_operation == "close" and state not in {"stopping", "closed", "failed"}:
                 return
             labels = {
                 "starting": "Loading local wake-word model and opening microphone…",
