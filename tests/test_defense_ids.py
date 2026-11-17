@@ -53,6 +53,18 @@ class PortScanDetectorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             detector.observe("192.0.2.1", True, timestamp=1)
 
+    def test_rejects_out_of_order_timestamps(self):
+        detector = PortScanDetector(threshold=3)
+        detector.observe("192.0.2.1", 80, timestamp=5)
+        with self.assertRaisesRegex(ValueError, "must not move backwards"):
+            detector.observe("192.0.2.1", 81, timestamp=4)
+
+    def test_event_at_window_boundary_is_expired(self):
+        detector = PortScanDetector(threshold=3, window_seconds=5)
+        detector.observe("192.0.2.1", 80, timestamp=1)
+        detector.observe("192.0.2.1", 81, timestamp=2)
+        self.assertIsNone(detector.observe("192.0.2.1", 82, timestamp=6))
+
     def test_packet_capture_is_disabled_by_default(self):
         with self.assertRaises(IDSError):
             PacketSniffer().sniff()
