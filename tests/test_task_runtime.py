@@ -307,6 +307,28 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(events[-1].kind, "task.interrupted")
         self.assertFalse(events[-1].payload["automatic_replay"])
 
+    def test_expired_lease_and_interruption_event_roll_back_together(self):
+        task = self.create("recover-expired-atomic")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+            db.execute("""
+                CREATE TRIGGER reject_interrupted_audit BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.interrupted'
+                BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.recover_expired(actor_id="supervisor")
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+        self.assertEqual([event.kind for event in self.store.list_task_events(task.task_id)],
+                         ["task.created"])
+
 
 if __name__ == "__main__":
     unittest.main()
