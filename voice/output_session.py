@@ -62,7 +62,11 @@ class VoiceOutputSession:
         self.stop()
 
     def stop(self) -> None:
-        """Request immediate backend interruption; safe to call from a Stop button."""
+        """Invalidate in-flight speech and request immediate backend interruption."""
+        with self._lock:
+            # Invalidate workers that have not reached the backend yet as well
+            # as workers currently yielding chunks. The session stays enabled.
+            self._generation += 1
         try:
             self._synthesizer.stop()
         except Exception as exc:
