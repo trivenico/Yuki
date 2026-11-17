@@ -42,6 +42,51 @@ class ConversationServiceTests(unittest.TestCase):
             tools=[],
         )
 
+    def test_owner_scoped_model_loop_factory_is_used_for_authenticated_owner(self):
+        selected = []
+        owner_messages = []
+
+        def model(*, messages, tools, tool_choice):
+            owner_messages.append(messages)
+            return {"text": "Owner-specific answer", "tool_calls": {"tool_calls": []}}
+
+        owner_loop = AgentExecutionLoop(
+            model, StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        )
+        service = ConversationService(
+            self.store, self.loop,
+            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or owner_loop,
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Use my configured model",
+            request_id="owner-model-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(selected, ["owner-a"])
+        self.assertEqual(result["answer"], "Owner-specific answer")
+        self.assertEqual(len(owner_messages), 1)
+        self.assertEqual(self.observed, [])
+
+    def test_owner_scoped_model_factory_rejects_invalid_result_before_persisting(self):
+        service = ConversationService(
+            self.store, self.loop, agent_loop_for_owner=lambda owner_id: object()
+        )
+        with self.assertRaisesRegex(TypeError, "must return an AgentExecutionLoop"):
+            service.reply(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="Do not persist this",
+                request_id="invalid-owner-model-request",
+                expected_version=0,
+                tools=[],
+            )
+        self.assertEqual(self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        ), [])
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
@@ -72,6 +117,37 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(replay["answer"], first["answer"])
         self.assertTrue(replay["replayed"])
         self.assertEqual(len(self.observed), 1)
+
+    def test_idempotent_retry_does_not_construct_owner_model(self):
+        selected = []
+        service = ConversationService(
+            self.store, self.loop,
+            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or self.loop,
+        )
+        first = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Hello", request_id="factory-replay", expected_version=0, tools=[],
+        )
+        replay = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Hello", request_id="factory-replay", expected_version=0, tools=[],
+        )
+        self.assertFalse(first["replayed"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(selected, ["owner-a"])
+
+    def test_wrong_owner_does_not_construct_owner_model(self):
+        selected = []
+        service = ConversationService(
+            self.store, self.loop,
+            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or self.loop,
+        )
+        with self.assertRaises(ConversationNotFound):
+            service.reply(
+                owner_id="owner-b", conversation_id=self.conversation["conversation_id"],
+                user_text="Unauthorized", request_id="wrong-owner", expected_version=0, tools=[],
+            )
+        self.assertEqual(selected, [])
 
     def test_stale_version_fails_before_model_call(self):
         self.send()
