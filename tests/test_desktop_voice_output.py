@@ -54,6 +54,7 @@ class DesktopVoiceOutputFactoryTests(unittest.TestCase):
         self.assertFalse(session._synthesizer.synthesizer.enabled)
         self.assertEqual(session._synthesizer.synthesizer.kwargs["backend"], "piper")
         self.assertEqual(session._synthesizer.synthesizer.kwargs["rate"], 180)
+        self.assertEqual(session._synthesizer.synthesizer.kwargs["model_path"], str(model))
         self.assertEqual(session._synthesizer.capability_report()["unsupported_controls"],
                          ["expressiveness", "pitch", "speaking_rate", "style"])
         self.assertEqual(session._synthesizer.synthesizer.calls, [])
@@ -87,6 +88,8 @@ class DesktopVoiceOutputFactoryTests(unittest.TestCase):
         self.assertEqual(wrapped.synthesizer.kwargs["enabled"], False)
         self.assertEqual(wrapped.synthesizer.kwargs["voice"], "bf_emma")
         self.assertEqual(wrapped.synthesizer.kwargs["speed"], 1.25)
+        self.assertEqual(wrapped.synthesizer.kwargs["model_dir"], str(model_dir))
+        self.assertEqual(wrapped.synthesizer.kwargs["lexicon_path"], str(lexicon))
         self.assertEqual(wrapped.synthesizer.calls, [])
 
     def test_kokoro_requires_model_directory_and_explicit_lexicon(self):
