@@ -1,12 +1,13 @@
 """Portable authenticated encrypted backups for Yuki desktop data.
 
-Backups use a user-supplied passphrase (scrypt + AES-256-GCM), so they can be
-restored on another device without exporting an OS keyring secret. The source
-is never modified. The first implementation is deliberately bounded to 512 MiB
+Backups use a user-supplied passphrase (scrypt + AES-256-GCM). An opt-in
+portable-memory option embeds the profile key only inside the encrypted archive;
+it is never staged as a plaintext file. The source is never modified. The first implementation is deliberately bounded to 512 MiB
 of uncompressed backup data to keep memory use predictable.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -252,6 +253,24 @@ def create_encrypted_backup(
     if memory_key_export is not None:
         if not isinstance(memory_key_export, bytes) or not 1 <= len(memory_key_export) <= 2048:
             raise BackupError("Portable memory key export is invalid.")
+        try:
+            key_metadata = json.loads(memory_key_export.decode("utf-8"))
+            if (
+                not isinstance(key_metadata, dict)
+                or set(key_metadata) != {"schema_version", "profile_id", "key"}
+                or key_metadata.get("schema_version") != 1
+                or not isinstance(key_metadata.get("profile_id"), str)
+                or not isinstance(key_metadata.get("key"), str)
+                or len(base64.b64decode(key_metadata["key"], validate=True)) != 32
+            ):
+                raise ValueError("invalid key metadata")
+            from core.profile_identity import profile_memory_keyring_account
+            profile_memory_keyring_account(key_metadata["profile_id"])
+            identity = json.loads((root / "profile_identity.json").read_text(encoding="utf-8"))
+            if identity.get("schema_version") != 1 or identity.get("profile_id") != key_metadata["profile_id"]:
+                raise ValueError("profile identity mismatch")
+        except Exception as exc:
+            raise BackupError("Portable memory key export does not match the source profile.") from exc
         secret_path = ".yuki/memory_key_export.json"
         secret_key = _portable_archive_key(_safe_archive_path(secret_path))
         if secret_key in used_paths:
