@@ -26,7 +26,10 @@ a selected wake-word model.
 
 ## Not yet implemented
 
-- A production microphone source for each supported desktop OS.
+- A platform-specific wake-word model/detector adapter. The new
+  `SoundDeviceWakeWordAudioSource` uses the optional sounddevice dependency
+  to capture 16 kHz mono PCM16 frames into a one-frame volatile queue; actual
+  hardware and OS permission behavior still need desktop testing.
 - A model/engine adapter and a legally redistributable "Hey Yuki" model.
 - Desktop settings, OS permission integration, tray indicator, and mute UI.
 - Real-device false-accept/false-reject testing and CPU usage measurements.
