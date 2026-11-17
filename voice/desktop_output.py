@@ -73,4 +73,8 @@ def create_desktop_voice_output(config: dict[str, Any]):
         )
 
     profiled_synthesizer = ProfiledLocalSpeechOutput(synthesizer, profile)
+    if backend == "kokoro":
+        # The dedicated Kokoro speed setting is the explicit backend control;
+        # do not silently replace it with the generic WPM profile conversion.
+        profiled_synthesizer.synthesizer.speed = float(config.get("kokoro_speed", 1.0))
     return VoiceOutputSession(profiled_synthesizer)
