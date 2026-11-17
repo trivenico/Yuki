@@ -30,6 +30,18 @@ class BackupError(RuntimeError):
     """Raised when a backup cannot be safely created or restored."""
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes where directory descriptors are supported."""
+    if os.name != "posix":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _crypto():
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -227,6 +239,7 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
         try:
             # Hard-link publication is atomic and fails if another process created the target.
             os.link(temporary, output)
+            _fsync_directory(output.parent)
         except FileExistsError as exc:
             raise BackupError("Backup output appeared during creation; refusing to overwrite it.") from exc
     except Exception:
@@ -353,6 +366,7 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                 target.rmdir()
             target.parent.mkdir(parents=True, exist_ok=True)
             stage.rename(target)
+            _fsync_directory(target.parent)
             return {"destination": str(target), "file_count": len(actual), "size_bytes": total}
         except (tarfile.TarError, OSError, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, BackupError):
