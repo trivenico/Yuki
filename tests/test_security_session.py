@@ -139,6 +139,8 @@ class SecuritySessionControllerTests(unittest.TestCase):
         )
         worker.start()
         self.assertTrue(entered.wait(1))
+        self.assertTrue(self.controller.starting)
+        self.assertFalse(self.controller.active)
         with self.assertRaises(SecuritySessionError):
             self.controller.snapshot()
         release.set()
