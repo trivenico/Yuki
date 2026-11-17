@@ -23,4 +23,7 @@ def create_desktop_memory(keyring_module: Any) -> CompanionMemory:
         root / "memory.enc.json",
         keyring_module=keyring_module,
     )
+    # Validate existing ciphertext and its authentication tag before exposing
+    # the memory facade; never defer corruption discovery until a chat request.
+    store.list()
     return CompanionMemory(store)
