@@ -11,6 +11,8 @@ from typing import Any, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
+from companion.persona import DEFAULT_PERSONA, Persona
+from core.role_engine import RoleEngine
 
 
 class ConversationService:
@@ -20,7 +22,7 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None, persona: Persona = DEFAULT_PERSONA, role_engine: RoleEngine | None = None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
@@ -28,9 +30,35 @@ class ConversationService:
         if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
             raise TypeError("agent_loop_for_owner must be callable.")
         self.store = store
+        if not isinstance(persona, Persona):
+            raise TypeError("persona must be a Persona instance.")
+        if role_engine is not None and not isinstance(role_engine, RoleEngine):
+            raise TypeError("role_engine must be a RoleEngine instance.")
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
+        self.persona = persona
+        self.role_engine = role_engine or RoleEngine()
         self._lock = threading.RLock()
+
+    def set_role(self, name: str) -> dict[str, Any]:
+        """Select response guidance only; permissions are unchanged."""
+        return self.role_engine.set_role(name)
+
+    def current_role(self) -> dict[str, Any]:
+        return self.role_engine.current()
+
+    def available_roles(self) -> list[dict[str, str]]:
+        return self.role_engine.available()
+
+    def _system_guidance(self, extra: str | None) -> str:
+        guidance = self.persona.system_guidance() + " " + self.role_engine.system_guidance()
+        if extra is not None:
+            if not isinstance(extra, str) or len(extra) > 8_000:
+                raise ValueError("system_text must be text of at most 8000 characters.")
+            guidance += "\n\nAdditional trusted application guidance:\n" + extra
+        if len(guidance) > 10_000:
+            raise ValueError("combined system guidance exceeds the supported limit.")
+        return guidance
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
@@ -48,6 +76,7 @@ class ConversationService:
         )
 
     def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
+        system_text = self._system_guidance(system_text)
         token = str(uuid.uuid4())
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
         try:
