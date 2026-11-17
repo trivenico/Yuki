@@ -3,7 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.sqlite_recovery import (\n    SQLiteRecoveryRequired,\n    build_sqlite_recovery_report,\n    inspect_sqlite_store,\n    require_healthy_sqlite_stores,\n)
+from core.sqlite_recovery import (
+    SQLiteRecoveryRequired,
+    build_sqlite_recovery_report,
+    inspect_sqlite_store,
+    require_healthy_sqlite_stores,
+)
 
 
 class SQLiteRecoveryReportTests(unittest.TestCase):
