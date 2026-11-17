@@ -150,6 +150,51 @@ class TaskRuntime:
             raise KeyError("task not found.")
         return self._record(run)
 
+    def approve(self, *, actor_id: str, task_id: str, session_id: str, expected_version: int) -> TaskRecord:
+        """Approve the exact queued workflow version for the authenticated session."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:approve", task_id):
+            raise PermissionError("task approval is not authorized.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        approved = self.store.approve(
+            task_id, actor_id=actor, session_id=session_id,
+            expected_version=expected_version,
+        )
+        self.store.append_task_event(
+            task_id, kind="task.approved", actor_id=actor,
+            payload={"state_version": approved.version},
+            expected_version=approved.version,
+        )
+        return self._record(self.store.get(task_id))
+
+    def revoke_session_approvals(self, session_id: str) -> list[TaskRecord]:
+        """Cancel queued tasks whose approval was granted by the exact revoked session."""
+        import hashlib
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        revoked: list[TaskRecord] = []
+        # This operation is invoked only by the authenticated logout boundary.
+        # It never touches unapproved or already-running work.
+        for run in self.store.list_runs(state="queued", limit=100):
+            if run.approved_session_hash != session_hash or not run.approved_by:
+                continue
+            if not self._allowed(run.approved_by, "task:cancel", run.run_id):
+                continue
+            cancelled = self.store.transition(
+                run.run_id, expected_version=run.version,
+                to_state="cancelled", error_code="session_revoked",
+            )
+            self.store.append_task_event(
+                run.run_id, kind="task.cancelled", actor_id=run.approved_by,
+                payload={"state_version": cancelled.version, "reason": "session_revoked"},
+                expected_version=cancelled.version,
+            )
+            revoked.append(self._record(self.store.get(run.run_id)))
+        return revoked
+
     def events(
         self, *, actor_id: str, task_id: str, after_sequence: int = 0, limit: int = 100,
     ) -> list[TaskEvent]:
