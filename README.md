@@ -64,9 +64,9 @@ This is the target layout, not a claim that the migration is already complete.
 6. Reorganize tests without losing coverage; validate Windows and Linux clean installs, real Ollama inference, persistence, and rollback.
 7. Remove compatibility facades only when import search and CI prove no supported consumer relies on them.
 
-## Mobile-first cloud access
+## Optional Android access
 
-Yuki's target access model also includes an owner-only mobile browser/PWA backed by a private cloud runtime, so a personal PC is not a prerequisite for daily use. This is an architecture plan, not an implemented mobile client or deployed public API. See [Mobile-first cloud access](docs/MOBILE_FIRST_CLOUD_ACCESS.md).
+The native desktop application is Yuki's primary daily-use interface. Android/mobile-browser access is a secondary enhancement and will not block desktop completion. The future architecture is documented, but no mobile client, public API, or cloud deployment is claimed. See [Optional Android and mobile access](docs/MOBILE_FIRST_CLOUD_ACCESS.md).
 
 ## External SSD portability
 
