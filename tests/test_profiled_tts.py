@@ -84,20 +84,21 @@ class ProfiledTTSTests(unittest.TestCase):
             output.speak_stream(["x" * 2001])
         with self.assertRaisesRegex(ValueError, "must be text"):
             output.speak_stream(["ok", object()])
+        self.assertEqual(synth.spoken, ["Hello", "Yuki"])
 
     def test_stream_fallback_enforces_total_chunk_limit(self):
         synth = FakeSynthesizer("unknown")
         output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
         with self.assertRaisesRegex(ValueError, "100-chunk"):
             output.speak_stream(["x"] * 101)
-        self.assertEqual(len(synth.spoken), 100)
+        self.assertEqual(synth.spoken, [])
 
     def test_stream_fallback_enforces_total_character_limit(self):
         synth = FakeSynthesizer("unknown")
         output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
         with self.assertRaisesRegex(ValueError, "20000-character"):
             output.speak_stream(["x" * 2000] * 11)
-        self.assertEqual(sum(map(len, synth.spoken)), 20000)
+        self.assertEqual(synth.spoken, [])
 
     def test_invalid_backend_object_is_rejected(self):
         with self.assertRaises(TypeError):
