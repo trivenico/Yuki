@@ -21,7 +21,7 @@ class VoiceRecordingSecurityTests(unittest.TestCase):
         numpy = types.ModuleType("numpy")
         numpy.int16 = int
         numpy.asarray = lambda values, dtype=None: types.SimpleNamespace(
-            tobytes=lambda: b"\\x01\\x00" * len(values)
+            tobytes=lambda: b"\x01\x00" * len(values)
         )
         if fail:
             sounddevice.rec = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("device error"))
