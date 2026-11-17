@@ -1800,7 +1800,14 @@ Version: {version}",
             if self.voice_session is not None:
                 self.voice_session.close()
             if self.speech_session is not None:
-                self.speech_session.close()
+                try:
+                    self.speech_session.close()
+                except Exception as exc:
+                    # Audio-driver failures must not prevent the application
+                    # from revoking the authenticated session and shutting down.
+                    self.chat_status.setText(
+                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
+                    )
             self.speech_session = None
             self.setEnabled(False)
             self.login_status.setText(
