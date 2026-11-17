@@ -54,11 +54,7 @@ class ProfiledLocalSpeechOutput:
         """Speak only when explicitly called by the voice-session controller."""
         return self.synthesizer.speak(text)
 
-    def speak_stream(self, chunks):
-        """Delegate streaming when available; otherwise speak chunks serially."""
-        stream = getattr(self.synthesizer, "speak_stream", None)
-        if callable(stream):
-            return stream(chunks)
+    def _bounded_chunks(self, chunks):
         count = 0
         total_characters = 0
         for chunk in chunks:
@@ -71,6 +67,17 @@ class ProfiledLocalSpeechOutput:
             total_characters += len(chunk)
             if total_characters > self._MAX_FALLBACK_CHARACTERS:
                 raise ValueError("Speech stream exceeds the 20000-character limit.")
+            count += 1
+            yield chunk
+
+    def speak_stream(self, chunks):
+        """Delegate a bounded stream when available; otherwise speak chunks serially."""
+        bounded = self._bounded_chunks(chunks)
+        stream = getattr(self.synthesizer, "speak_stream", None)
+        if callable(stream):
+            return stream(bounded)
+        count = 0
+        for chunk in bounded:
             self.synthesizer.speak(chunk)
             count += 1
         return {"chunks_spoken": count, "interrupted": False}
