@@ -1,6 +1,7 @@
 """Optional local TTS with bounded input, audio and cancellable playback."""
 from __future__ import annotations
 
+import math
 import subprocess
 import tempfile
 import time
@@ -137,7 +138,7 @@ class LocalTTS:
                         raise TTSError("Piper audio sample rate is outside the supported safety range.")
                     if info.channels not in (1, 2) or info.frames <= 0:
                         raise TTSError("Piper audio format is invalid.")
-                    if info.duration > _MAX_AUDIO_SECONDS:
+                    if not math.isfinite(info.duration) or info.duration <= 0 or info.duration > _MAX_AUDIO_SECONDS:
                         raise TTSError("Piper audio exceeds the 120-second duration limit.")
                     if self._interrupt_event.is_set():
                         raise TTSError("Speech was interrupted before playback.")
