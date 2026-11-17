@@ -241,6 +241,7 @@ def run() -> int:
 
     class WorkerSignals(QObject):
         finished = Signal(str, object)
+        phase = Signal(str)
 
     class ChatWorker(QRunnable):
         def __init__(self, controller: DesktopCompanionController, message: str):
@@ -265,7 +266,10 @@ def run() -> int:
         @Slot()
         def run(self):
             try:
-                transcript = self.session.capture_and_transcribe(seconds=5)
+                transcript = self.session.capture_and_transcribe(
+                    seconds=5,
+                    on_capture_complete=lambda: self.signals.phase.emit("transcribing"),
+                )
                 self.signals.finished.emit(transcript, None)
             except Exception as exc:
                 self.signals.finished.emit("", exc)
@@ -1362,11 +1366,23 @@ Version: {version}",
             self.message.setEnabled(False)
             self.voice_button.setEnabled(False)
             self.voice_stop_button.setEnabled(True)
-            self.voice_status.setText("Microphone active — listening for up to five seconds.")
-            self.chat_status.setText("Transcribing locally. Review the transcript before sending it.")
+            self.voice_status.setText(
+                "Microphone active — capture ends within five seconds, then local transcription begins."
+            )
+            self.chat_status.setText("Voice capture started.")
             worker = VoiceWorker(self.voice_session)
+            worker.signals.phase.connect(self._voice_phase_changed)
             worker.signals.finished.connect(self._voice_finished)
             self.pool.start(worker)
+
+        @Slot(str)
+        def _voice_phase_changed(self, phase: str):
+            if phase == "transcribing":
+                self.voice_stop_button.setEnabled(False)
+                self.voice_status.setText(
+                    "Microphone is off. Transcribing locally; you can still disable voice to discard this result."
+                )
+                self.chat_status.setText("Transcribing locally. Review the transcript before sending it.")
 
         def _stop_voice_capture(self):
             if self.voice_session is None or not self.busy:
