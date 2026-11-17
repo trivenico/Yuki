@@ -1,9 +1,17 @@
-"""Optional local Piper TTS adapter with chunked speech and best-effort interruption."""
+"""Optional local TTS with bounded input, audio and cancellable playback."""
 from __future__ import annotations
+
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from threading import Event
+
+_MAX_CHUNKS = 100
+_MAX_TOTAL_CHARACTERS = 20_000
+_MAX_CHUNK_CHARACTERS = 2_000
+_MAX_AUDIO_SECONDS = 120
+_MAX_WAV_BYTES = 25 * 1024 * 1024
 
 
 class TTSError(RuntimeError):
@@ -35,32 +43,64 @@ class LocalTTS:
             sd.stop()
         except Exception:
             pass
-        if self._engine is not None:
+        engine = self._engine
+        if engine is not None:
             try:
-                self._engine.stop()
+                engine.stop()
             except Exception:
                 pass
 
+    def _validated_chunks(self, chunks):
+        count = 0
+        total = 0
+        for chunk in chunks:
+            if self._interrupt_event.is_set():
+                break
+            if not isinstance(chunk, str):
+                raise ValueError("Speech chunks must be text.")
+            if not chunk.strip():
+                continue
+            if len(chunk) > _MAX_CHUNK_CHARACTERS:
+                raise ValueError("Each speech chunk must be at most 2000 characters.")
+            count += 1
+            total += len(chunk)
+            if count > _MAX_CHUNKS:
+                raise ValueError("Speech stream exceeds the 100-chunk limit.")
+            if total > _MAX_TOTAL_CHARACTERS:
+                raise ValueError("Speech stream exceeds the 20000-character limit.")
+            yield chunk
+
     def speak_stream(self, chunks):
-        """Speak bounded text chunks sequentially; stop() interrupts current playback."""
+        """Speak at most 100 chunks / 20,000 characters; stop() cancels playback."""
         if not self.enabled:
             raise TTSError("Voice output is disabled.")
         self._interrupt_event.clear()
         self._streaming = True
         spoken = 0
         try:
-            for chunk in chunks:
+            for chunk in self._validated_chunks(chunks):
                 if self._interrupt_event.is_set():
                     break
-                if not isinstance(chunk, str) or not chunk.strip():
-                    continue
-                if len(chunk) > 2000:
-                    raise ValueError("Each speech chunk must be at most 2000 characters.")
                 self.speak(chunk)
                 spoken += 1
             return {"chunks_spoken": spoken, "interrupted": self._interrupt_event.is_set()}
         finally:
             self._streaming = False
+
+    def _play_audio(self, sd, audio, sample_rate):
+        deadline = time.monotonic() + _MAX_AUDIO_SECONDS + 5
+        sd.play(audio * self.volume, sample_rate)
+        while True:
+            if self._interrupt_event.is_set():
+                sd.stop()
+                raise TTSError("Speech was interrupted.")
+            stream = sd.get_stream()
+            if stream is None or not stream.active:
+                return
+            if time.monotonic() >= deadline:
+                sd.stop()
+                raise TTSError("Audio playback exceeded its 125-second safety limit.")
+            self._interrupt_event.wait(0.05)
 
     def speak(self, text):
         if not self._streaming:
@@ -69,7 +109,7 @@ class LocalTTS:
             raise TTSError("Speech was interrupted.")
         if not self.enabled:
             raise TTSError("Voice output is disabled.")
-        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+        if not isinstance(text, str) or not text.strip() or len(text) > _MAX_CHUNK_CHARACTERS:
             raise ValueError("Text must be 1-2000 characters.")
         if self.backend == "piper":
             if self.model_path is None or not self.model_path.is_file():
@@ -82,18 +122,29 @@ class LocalTTS:
             try:
                 with tempfile.TemporaryDirectory(prefix="yuki-tts-") as directory:
                     output = Path(directory) / "speech.wav"
-                    subprocess.run([self.piper_binary, "--model", str(self.model_path),
-                                    "--output_file", str(output)], input=text, text=True,
-                                   capture_output=True, timeout=30, shell=False, check=True)
-                    if not output.is_file() or output.stat().st_size <= 44:
-                        raise TTSError("Piper did not produce a valid audio file.")
+                    subprocess.run(
+                        [self.piper_binary, "--model", str(self.model_path),
+                         "--output_file", str(output)],
+                        input=text, text=True, capture_output=True,
+                        timeout=30, shell=False, check=True,
+                    )
+                    if not output.is_file():
+                        raise TTSError("Piper did not produce an audio file.")
+                    info = sf.info(str(output))
+                    if output.stat().st_size <= 44 or output.stat().st_size > _MAX_WAV_BYTES:
+                        raise TTSError("Piper audio file is empty or exceeds the 25 MiB limit.")
+                    if not 8_000 <= info.samplerate <= 96_000:
+                        raise TTSError("Piper audio sample rate is outside the supported safety range.")
+                    if info.channels not in (1, 2) or info.frames <= 0:
+                        raise TTSError("Piper audio format is invalid.")
+                    if info.duration > _MAX_AUDIO_SECONDS:
+                        raise TTSError("Piper audio exceeds the 120-second duration limit.")
                     if self._interrupt_event.is_set():
                         raise TTSError("Speech was interrupted before playback.")
                     audio, sample_rate = sf.read(str(output), dtype="float32")
-                    sd.play(audio * self.volume, sample_rate)
-                    sd.wait()
-                    if self._interrupt_event.is_set():
-                        raise TTSError("Speech was interrupted.")
+                    if getattr(audio, "ndim", 1) > 2:
+                        raise TTSError("Piper audio has too many channels.")
+                    self._play_audio(sd, audio, sample_rate)
             except TTSError:
                 raise
             except FileNotFoundError as exc:
@@ -113,8 +164,6 @@ class LocalTTS:
             engine.setProperty("volume", self.volume)
             engine.say(text)
             engine.runAndWait()
-            engine.stop()
-            self._engine = None
             if self._interrupt_event.is_set():
                 raise TTSError("Speech was interrupted.")
         except TTSError:
@@ -123,3 +172,11 @@ class LocalTTS:
             raise TTSError("Install optional pyttsx3 to use this backend.") from exc
         except Exception as exc:
             raise TTSError("Local TTS failed safely.") from exc
+        finally:
+            engine = self._engine
+            self._engine = None
+            if engine is not None:
+                try:
+                    engine.stop()
+                except Exception:
+                    pass
