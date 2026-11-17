@@ -12,6 +12,7 @@ import json
 from pathlib import Path, PurePosixPath
 import sys
 from typing import Any
+from urllib.parse import urlparse
 
 
 class ManifestError(ValueError):
@@ -88,6 +89,7 @@ def validate_manifest(
         if not isinstance(asset, dict) or not REQUIRED_ASSET_FIELDS.issubset(asset):
             raise ManifestError(f"Asset entry {index} is missing required provenance fields.")
         path_value = asset["path"]
+        resolved = _safe_asset_path(root, path_value)
         if path_value in seen:
             raise ManifestError(f"Duplicate asset path: {path_value!r}")
         seen.add(path_value)
@@ -95,15 +97,20 @@ def validate_manifest(
             raise ManifestError(f"Asset {path_value!r} has not been approved for training.")
         if require_redistribution and asset["allow_redistribution"] is not True:
             raise ManifestError(f"Asset {path_value!r} is not approved for redistribution.")
+        if not isinstance(asset["allow_redistribution"], bool):
+            raise ManifestError(f"Asset {path_value!r} must set allow_redistribution to true or false.")
         for field in ("role", "license", "license_url", "source_url"):
             value = asset[field]
             if not isinstance(value, str) or not value.strip():
                 raise ManifestError(f"Asset {path_value!r} has an empty {field}.")
+        for field in ("license_url", "source_url"):
+            parsed = urlparse(asset[field])
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise ManifestError(f"Asset {path_value!r} has an invalid HTTPS {field}.")
         checksum = asset["sha256"]
         if not isinstance(checksum, str) or len(checksum) != 64 or any(c not in "0123456789abcdef" for c in checksum):
             raise ManifestError(f"Asset {path_value!r} has an invalid SHA-256 digest.")
 
-        resolved = _safe_asset_path(root, path_value)
         if verify_hashes and _sha256(resolved) != checksum:
             raise ManifestError(f"SHA-256 mismatch for asset {path_value!r}.")
         validated.append(path_value)
