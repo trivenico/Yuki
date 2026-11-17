@@ -44,7 +44,6 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         sd = FakeSoundDevice()
         source = SoundDeviceWakeWordAudioSource(sounddevice_module=sd)
         self.assertEqual(sd.streams, [])
-        self.assertIsNone(source.read()) if False else None
 
     def test_start_uses_fixed_pcm16_format_and_reads_local_frame(self):
         sd = FakeSoundDevice()
@@ -86,6 +85,17 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         self.assertTrue(stream.stopped)
         source.close()
         self.assertTrue(stream.closed)
+
+    def test_malformed_callback_frames_are_discarded(self):
+        sd = FakeSoundDevice()
+        source = SoundDeviceWakeWordAudioSource(sounddevice_module=sd)
+        source.start()
+        stream = sd.streams[0]
+        stream.emit(b"short")
+        with self.assertRaises(TimeoutError):
+            # No malformed data should be made available to the detector.
+            source._frames.get(timeout=0.01)
+        source.close()
 
     def test_start_after_close_is_rejected(self):
         source = SoundDeviceWakeWordAudioSource(sounddevice_module=FakeSoundDevice())
