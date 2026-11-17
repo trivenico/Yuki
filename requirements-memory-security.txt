@@ -1,0 +1,3 @@
+# Encrypted local memory and OS credential-store integration.
+cryptography>=42,<47
+keyring>=25,<27
