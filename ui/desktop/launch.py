@@ -438,6 +438,11 @@ def run() -> int:
                 "Choose a new backup file and a passphrase of at least 12 characters. "
                 "Yuki cannot recover a lost passphrase."
             ))
+            backup_layout.addWidget(QLabel(
+                "Important: encrypted memory remains tied to the source OS credential store. "
+                "Cross-device memory-key transfer is not supported yet; same-device restores "
+                "require the original OS keyring key."
+            ))
             self.backup_path = QLineEdit()
             self.backup_path.setReadOnly(True)
             backup_path_row = QHBoxLayout()
