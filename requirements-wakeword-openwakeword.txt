@@ -1,0 +1,4 @@
+# Optional local wake-word inference. No pretrained wake-word model is bundled.
+openwakeword==0.6.0
+onnxruntime>=1.17,<2.0
+numpy>=1.26,<2.0
