@@ -48,6 +48,15 @@ def data_root() -> Path:
     return _user_data_root().resolve()
 
 
+def desktop_data_root() -> Path:
+    """Return the private profile directory shared by native desktop services.
+
+    YUKI_HOME names the portable application root; desktop state lives in its
+    .yuki child. Source-checkout and installed defaults follow data_root().
+    """
+    return (data_root() / ".yuki").resolve()
+
+
 def config_path() -> Path:
     configured = os.environ.get("YUKI_CONFIG", "").strip()
     if configured:
