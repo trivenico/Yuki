@@ -198,6 +198,11 @@ class KokoroTTS:
 
     def speak(self, text):
         """Generate and play one bounded text segment; call from a worker."""
+        self._stop_event.clear()
+        generation = self._generation
+        return self._speak(text, generation)
+
+    def _speak(self, text, generation):
         if not self.enabled:
             raise KokoroTTSError("Voice output is disabled.")
         if not isinstance(text, str) or not text.strip() or len(text) > _MAX_CHUNK_CHARACTERS:
@@ -205,8 +210,8 @@ class KokoroTTS:
         if not self._operation_lock.acquire(blocking=False):
             raise KokoroTTSError("Kokoro is already processing a speech request.")
         try:
-            self._stop_event.clear()
-            generation = self._generation
+            if self._stop_event.is_set() or generation != self._generation:
+                raise KokoroTTSError("Speech was stopped before synthesis.")
             tts = self._load()
             if self._stop_event.is_set() or generation != self._generation:
                 raise KokoroTTSError("Speech was stopped before synthesis.")
@@ -244,10 +249,15 @@ class KokoroTTS:
             if total > _MAX_TOTAL_CHARACTERS:
                 raise ValueError("Speech stream exceeds the 20000-character limit.")
             validated.append(chunk)
+        self._stop_event.clear()
+        generation = self._generation
         spoken = 0
         for chunk in validated:
-            if self._stop_event.is_set():
+            if self._stop_event.is_set() or generation != self._generation:
                 break
-            self.speak(chunk)
+            self._speak(chunk, generation)
             spoken += 1
-        return {"chunks_spoken": spoken, "interrupted": self._stop_event.is_set()}
+        return {
+            "chunks_spoken": spoken,
+            "interrupted": self._stop_event.is_set() or generation != self._generation,
+        }
