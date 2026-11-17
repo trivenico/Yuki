@@ -32,6 +32,8 @@ class ProfiledLocalSpeechOutput:
     def __init__(self, synthesizer, profile: VoiceProfile):
         if not callable(getattr(synthesizer, "speak", None)):
             raise TypeError("synthesizer must provide a callable speak(text) method")
+        if not callable(getattr(synthesizer, "stop", None)):
+            raise TypeError("synthesizer must provide a callable stop() method")
         if not isinstance(profile, VoiceProfile):
             raise TypeError("profile must be a VoiceProfile")
         self.synthesizer = synthesizer
@@ -49,6 +51,20 @@ class ProfiledLocalSpeechOutput:
             unsupported_controls=self._PROFILE_CONTROLS - supported,
             requested_style=profile.style,
         )
+
+    @property
+    def enabled(self) -> bool:
+        """Expose the wrapped backend's enable state when it has one."""
+        return bool(getattr(self.synthesizer, "enabled", False))
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        if hasattr(self.synthesizer, "enabled"):
+            self.synthesizer.enabled = value is True
+
+    def stop(self) -> None:
+        """Delegate interruption so this adapter can be safely session-wrapped."""
+        self.synthesizer.stop()
 
     def speak(self, text: str):
         """Speak only when explicitly called by the voice-session controller."""
