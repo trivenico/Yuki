@@ -535,6 +535,39 @@ def restore_encrypted_backup(
                     raise BackupError("This backup contains a portable memory key. Explicitly enable memory-key import to restore it safely.")
                 if keyring_module is None:
                     raise BackupError("A secure OS keyring is required to import portable encrypted memory.")
+                try:
+                    identity_payload = json.loads(
+                        (stage / ".yuki" / "profile_identity.json").read_text(encoding="utf-8")
+                    )
+                    if (
+                        not isinstance(identity_payload, dict)
+                        or identity_payload.get("schema_version") != 1
+                        or not isinstance(identity_payload.get("profile_id"), str)
+                    ):
+                        raise ValueError("invalid restored profile identity")
+                    profile_id = identity_payload["profile_id"]
+                    from core.profile_identity import profile_memory_keyring_account
+                    profile_memory_keyring_account(profile_id)
+                    wrapped = json.loads(memory_key_export.decode("utf-8"))
+                    if (
+                        not isinstance(wrapped, dict)
+                        or set(wrapped) != {"schema_version", "profile_id", "nonce", "ciphertext"}
+                        or wrapped.get("schema_version") != 1
+                        or wrapped.get("profile_id") != profile_id
+                        or not isinstance(wrapped.get("nonce"), str)
+                        or not isinstance(wrapped.get("ciphertext"), str)
+                    ):
+                        raise ValueError("invalid wrapped memory key envelope")
+                    memory_nonce = base64.b64decode(wrapped["nonce"], validate=True)
+                    wrapped_ciphertext = base64.b64decode(wrapped["ciphertext"], validate=True)
+                    if len(memory_nonce) != NONCE_BYTES or len(wrapped_ciphertext) < 16:
+                        raise ValueError("invalid wrapped memory key payload")
+                    memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+                    memory_key_export = AESGCM(key).decrypt(
+                        memory_nonce, wrapped_ciphertext, memory_aad,
+                    )
+                except Exception as exc:
+                    raise BackupError("Portable memory key envelope authentication failed.") from exc
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
             if os.name == "posix":
