@@ -142,7 +142,7 @@ class DesktopCompanionController:
         additional_files = {}
         if self.workspace_path is not None:
             conversation_db = self.workspace_path / "conversations.sqlite3"
-            if conversation_db.exists():
+            if conversation_db.exists() or conversation_db.is_symlink():
                 additional_files["workspace/conversations.sqlite3"] = conversation_db
         return create_encrypted_backup(
             desktop_data_root(), Path(destination), passphrase,
