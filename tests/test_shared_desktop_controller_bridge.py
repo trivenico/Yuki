@@ -89,6 +89,18 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
             bridge.logout()
         self.assertEqual(chat.close_count, 1)
 
+    def test_failed_logout_can_retry_specialist_session_revocation(self):
+        bridge, chat, specialists = self.make(fail_logout=True)
+        with self.assertRaisesRegex(RuntimeError, "logout"):
+            bridge.logout()
+        self.assertEqual(chat.close_count, 1)
+        specialists.fail_logout = False
+        self.assertTrue(bridge.logout())
+        self.assertEqual(chat.close_count, 2)
+        self.assertEqual(
+            [call[0] for call in specialists.calls].count("logout"), 2,
+        )
+
     def test_chat_authorization_failure_closes_both_session_surfaces(self):
         bridge, chat, specialists = self.make()
         chat.fail_authorization = True
