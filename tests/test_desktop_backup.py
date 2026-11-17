@@ -194,6 +194,51 @@ class DesktopBackupTests(unittest.TestCase):
             )
             self.assertEqual(restored.list()[0]["text"], "portable private memory")
 
+    def test_invalid_memory_ciphertext_never_installs_portable_key(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / "memory.enc.json", keyring_module=source_keyring,
+                keyring_account=profile_memory_keyring_account(profile_id),
+            )
+            store.add("integrity protected")
+            export = store.export_key_for_encrypted_backup(profile_id)
+            envelope = json.loads((source / "memory.enc.json").read_text())
+            envelope["ciphertext"] = "eHh4eHh4eHh4eHh4eHh4eA=="
+            (source / "memory.enc.json").write_text(json.dumps(envelope))
+            backup = root / "tampered.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=export,
+            )
+            destination = root / "restored"
+            destination_keyring = Keyring()
+            with self.assertRaisesRegex(BackupError, "Portable memory key could not be safely installed"):
+                restore_encrypted_backup(
+                    backup, destination, "a sufficiently long passphrase",
+                    keyring_module=destination_keyring, import_memory_key=True,
+                )
+            self.assertEqual(destination_keyring.values, {})
+            self.assertFalse(destination.exists())
+
     def test_portable_memory_key_restore_requires_explicit_import(self):
         from companion.secure_memory import EncryptedMemoryStore
         from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
