@@ -350,7 +350,7 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.assertTrue(self.monitor.enabled)
 
 
-    def test_late_startup_cleanup_waits_for_stop_cleanup(self):
+    def test_stop_waits_for_late_startup_cleanup(self):
         enable_entered = threading.Event()
         release_enable = threading.Event()
         disable_entered = threading.Event()
@@ -364,7 +364,7 @@ class SecuritySessionControllerTests(unittest.TestCase):
             release_enable.wait(2)
             self.monitor.enabled = True
 
-        def delayed_first_disable():
+        def delayed_disable():
             nonlocal disable_count
             with disable_lock:
                 disable_count += 1
@@ -376,31 +376,26 @@ class SecuritySessionControllerTests(unittest.TestCase):
                 second_disable_entered.set()
 
         self.monitor.enable = delayed_enable
-        self.monitor.disable_hook = delayed_first_disable
+        self.monitor.disable_hook = delayed_disable
         start_errors = []
         stop_errors = []
 
         def start():
-            try:
-                self.controller.start(consent=True)
-            except Exception as exc:
-                start_errors.append(exc)
+            self._capture_error(lambda: self.controller.start(consent=True), start_errors)
 
         def stop():
-            try:
-                self.controller.stop()
-            except Exception as exc:
-                stop_errors.append(exc)
+            self._capture_error(self.controller.stop, stop_errors)
 
         starter = threading.Thread(target=start)
         starter.start()
         self.assertTrue(enable_entered.wait(1))
         stopper = threading.Thread(target=stop)
         stopper.start()
-        self.assertTrue(disable_entered.wait(1))
         release_enable.set()
-        # Startup cleanup must wait behind Stop's still-running disable.
-        self.assertFalse(second_disable_entered.wait(0.1))
+        self.assertTrue(disable_entered.wait(1))
+        # Stop must not report completion while compensating disable is blocked.
+        self.assertTrue(stopper.is_alive())
+        self.assertFalse(second_disable_entered.is_set())
         release_first_disable.set()
         self.assertTrue(second_disable_entered.wait(1))
         stopper.join(2)
@@ -409,10 +404,9 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.assertFalse(starter.is_alive())
         self.assertFalse(stop_errors)
         self.assertTrue(start_errors)
-        self.assertGreaterEqual(disable_count, 2)
+        self.assertEqual(disable_count, 2)
         self.assertFalse(self.monitor.enabled)
         self.assertFalse(self.controller.active)
-
 
     def test_authorization_must_return_literal_true(self):
         controller = SecuritySessionController(
