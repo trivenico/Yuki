@@ -11,6 +11,32 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
     def make_store(self, directory, **kwargs):
         return SQLitePendingApprovalStore(str(Path(directory) / "pending.sqlite3"), **kwargs)
 
+    def test_legacy_schema_is_upgraded_as_one_initialization(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pending.sqlite3"
+            db = sqlite3.connect(path)
+            db.execute("""CREATE TABLE pending_approvals (
+                pending_id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                arguments_json TEXT NOT NULL,
+                action_json TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )""")
+            db.commit()
+            db.close()
+
+            store = SQLitePendingApprovalStore(str(path))
+            db = sqlite3.connect(path)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(pending_approvals)")}
+            index_names = {row[1] for row in db.execute("PRAGMA index_list(pending_approvals)")}
+            db.close()
+            self.assertTrue({"actor_hash", "session_hash"}.issubset(columns))
+            self.assertIn("idx_pending_approval_expiry", index_names)
+            item = store.put("notes.write", {}, {}, actor="owner", session_id="session-a")
+            self.assertIsNotNone(store.consume(item.pending_id, actor="owner", session_id="session-a"))
+
     def test_consume_is_bound_to_actor_and_session(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
