@@ -1,4 +1,5 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from defense.ids import IDSError, PacketSniffer, PortScanDetector
 
@@ -64,6 +65,19 @@ class PortScanDetectorTests(unittest.TestCase):
         detector.observe("192.0.2.1", 80, timestamp=1)
         detector.observe("192.0.2.1", 81, timestamp=2)
         self.assertIsNone(detector.observe("192.0.2.1", 82, timestamp=6))
+
+
+    def test_concurrent_observations_keep_state_consistent(self):
+        detector = PortScanDetector(threshold=3, max_sources=4,
+                                    max_events_per_source=64)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(
+                lambda port: detector.observe("192.0.2.44", port),
+                range(100, 140),
+            ))
+        self.assertEqual(detector.tracked_source_count, 1)
+        self.assertEqual(sum(result is not None for result in results), 1)
+        self.assertLessEqual(len(detector._events["192.0.2.44"]), 64)
 
     def test_packet_capture_is_disabled_by_default(self):
         with self.assertRaises(IDSError):
