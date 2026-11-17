@@ -90,6 +90,17 @@ class ReadOnlyProcessMonitorTests(unittest.TestCase):
         )
         self.assertEqual(len(monitor.snapshot()["alerts"]), 1)
 
+
+    def test_watchlist_size_is_bounded(self):
+        def unbounded_names():
+            index = 0
+            while True:
+                yield f"process-{index}"
+                index += 1
+
+        with self.assertRaisesRegex(ValueError, "more than 1000"):
+            ReadOnlyProcessMonitor(suspicious_names=unbounded_names())
+
     def test_configuration_validation(self):
         for value in (0, 5001, True):
             with self.assertRaises(ValueError):
