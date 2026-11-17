@@ -123,5 +123,7 @@ class FasterWhisperSTT:
                     "language_probability": float(info.language_probability)}
         except ImportError as exc:
             raise STTError("Install faster-whisper to enable STT.") from exc
+        except STTError:
+            raise
         except Exception as exc:
             raise STTError("Audio transcription failed safely.") from exc
