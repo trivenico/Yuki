@@ -33,11 +33,12 @@ def create_desktop_voice_output(config: dict[str, Any]):
         model_dir = config.get("kokoro_model_dir") or None
         lexicon_path = config.get("kokoro_lexicon_path") or None
         model_root = Path(model_dir).expanduser() if model_dir else None
+        lexicon_file = Path(lexicon_path).expanduser() if lexicon_path else None
         if model_root is None or not model_root.is_dir():
             raise ValueError("Configure an existing local Kokoro model directory before enabling spoken replies.")
         if any(not (model_root / asset).is_file() for asset in ("model.onnx", "voices.bin", "tokens.txt")):
             raise ValueError("The local Kokoro model directory is incomplete; model.onnx, voices.bin, and tokens.txt are required.")
-        if lexicon_path is None or not Path(lexicon_path).expanduser().is_file():
+        if lexicon_file is None or not lexicon_file.is_file():
             raise ValueError("Configure an existing explicit Kokoro English lexicon before enabling spoken replies.")
         _require_optional_module("sherpa_onnx", "sherpa-onnx")
         _require_optional_module("numpy", "NumPy")
@@ -45,8 +46,8 @@ def create_desktop_voice_output(config: dict[str, Any]):
         from voice.kokoro_tts import KokoroTTS
 
         synthesizer = KokoroTTS(
-            model_dir=model_dir,
-            lexicon_path=lexicon_path,
+            model_dir=str(model_root),
+            lexicon_path=str(lexicon_file),
             voice=config.get("kokoro_voice", "af_bella"),
             speed=config.get("kokoro_speed", 1.0),
             enabled=False,
@@ -56,8 +57,10 @@ def create_desktop_voice_output(config: dict[str, Any]):
 
         model_path = config.get("piper_model_path") or None
         if backend == "piper":
-            if model_path is None or not Path(model_path).expanduser().is_file():
+            model_file = Path(model_path).expanduser() if model_path else None
+            if model_file is None or not model_file.is_file():
                 raise ValueError("Configure an existing local Piper voice model before enabling spoken replies.")
+            model_path = str(model_file)
             if shutil.which("piper") is None:
                 raise ValueError("Piper executable is unavailable; install Piper before enabling spoken replies.")
             _require_optional_module("sounddevice", "sounddevice")
