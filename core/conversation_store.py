@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 
-from core.sqlite_file_security import prepare_private_sqlite_path
+from core.sqlite_file_security import prepare_private_sqlite_path, verify_sqlite_integrity
 import time
 import uuid
 from typing import Any
@@ -42,6 +42,7 @@ class ConversationStore:
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
             raise ValueError("database_path must be a non-empty path.")
         self.database_path = prepare_private_sqlite_path(database_path)
+        verify_sqlite_integrity(self.database_path)
         with self._connect() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
