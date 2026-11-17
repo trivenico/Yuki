@@ -42,6 +42,35 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _fsync_staged_tree(root: Path) -> None:
+    """Flush staged regular files and directories before atomic publication.
+
+    POSIX filesystems that honor fsync can then persist both file contents and
+    the directory entries that make up the staged tree. Other platforms retain
+    their native durability behavior.
+    """
+    if os.name != "posix":
+        return
+    for current, _dirs, files in os.walk(root, topdown=False, followlinks=False):
+        directory = Path(current)
+        for name in files:
+            path = directory / name
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                if not __import__("stat").S_ISREG(os.fstat(descriptor).st_mode):
+                    raise OSError("staged entry is not a regular file")
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        descriptor = os.open(directory, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def _inventory(source: Path) -> list[Path]:
     root = source.expanduser().resolve(strict=True)
     if not root.is_dir():
@@ -176,6 +205,8 @@ def migrate_data(source: Path, destination: Path) -> dict:
         (stage / "migration-manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        # Persist staged contents before the atomic directory publication.
+        _fsync_staged_tree(stage)
         # Re-check target immediately before publication; never merge/overwrite.
         if target.exists():
             if any(target.iterdir()):
