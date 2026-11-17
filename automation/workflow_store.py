@@ -507,6 +507,9 @@ class WorkflowRunStore:
         cutoff = current_time.astimezone(timezone.utc).isoformat()
         changed: list[WorkflowRun] = []
         with self._connect() as db:
+            # Serialize recovery with worker completion/lease renewal. The version
+            # predicate remains a second guard against stale writers.
+            db.execute("BEGIN IMMEDIATE")
             rows = db.execute("""
                 SELECT * FROM workflow_runs
                 WHERE state='running' AND lease_expires_at IS NOT NULL
@@ -520,6 +523,17 @@ class WorkflowRunStore:
                     WHERE run_id=? AND version=? AND state='running'
                 """, (cutoff, row["run_id"], row["version"]))
                 if updated.rowcount == 1:
+                    sequence = db.execute(
+                        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                        (row["run_id"],),
+                    ).fetchone()[0]
+                    db.execute(
+                        "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                        "VALUES (?, ?, 'task.interrupted', 'system:lease-recovery', ?, ?)",
+                        (row["run_id"], sequence,
+                         json.dumps({"reason": "lease_expired", "execution_stopped": "not_assumed"}, separators=(",", ":")),
+                         cutoff),
+                    )
                     changed_row = db.execute(
                         "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
                     ).fetchone()
