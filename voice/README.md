@@ -4,7 +4,10 @@ Voice remains **off by default**. The desktop app now provides an explicit, boun
 
 - `voice/stt.py`: faster-whisper transcription and finite microphone capture. Captures are bounded to 1–20 seconds at the adapter boundary; the desktop UI currently requests five seconds.
 - `voice/session.py`: coordinates an opt-in capture, local transcription, cancellation and temporary-file cleanup. Audio is stored only in a private temporary directory while transcription runs, then removed.
-- `voice/tts.py`: optional local Piper or pyttsx3 speech output. It is not yet wired into desktop replies.
+- `voice/tts.py`: optional local Piper or pyttsx3 speech output. Playback runs only from the desktop background worker.
+- `voice/output_session.py`: requires explicit spoken-reply opt-in, bounds reply size, and supports Stop/disable/close with per-chunk permission checks.
+- `voice/desktop_output.py`: constructs the configured local TTS backend lazily and keeps it disabled until the user confirms the spoken-reply prompt.
+- Desktop chat has a separate **Enable spoken replies** control. It does not grant microphone access; spoken replies are off by default and stop/disable on sign-out or application shutdown. TTS backend errors are reported without disabling text chat.
 - The desktop microphone checkbox is session-scoped. The microphone is not opened until the user presses **Speak**. **Stop microphone** cancels an active capture.
 - Recognized text is placed in the message composer for review. It is not sent to Yuki until the user presses **Send**.
 - The first transcription may download the configured faster-whisper model. The desktop UI discloses this before enabling voice. Audio is transcribed locally; only the reviewed text is sent through the authenticated conversation.
