@@ -104,11 +104,18 @@ class VoiceOutputSession:
                 raise VoiceOutputError("Speech output is already in progress.")
             self._speaking = True
             generation = self._generation
+        def guarded_chunks():
+            # Recheck this session's generation immediately before each chunk.
+            # This closes the startup race where a backend resets its own
+            # interruption flag as speak_stream() begins.
+            for chunk in chunks:
+                with self._lock:
+                    if self._closed or not self._enabled or generation != self._generation:
+                        raise VoiceOutputError("Speech output permission was revoked.")
+                yield chunk
+
         try:
-            with self._lock:
-                if self._closed or not self._enabled or generation != self._generation:
-                    raise VoiceOutputError("Speech output permission was revoked.")
-            return self._synthesizer.speak_stream(chunks)
+            return self._synthesizer.speak_stream(guarded_chunks())
         finally:
             with self._lock:
                 self._speaking = False
