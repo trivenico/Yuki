@@ -125,6 +125,26 @@ class SecurityDashboardPanelTests(unittest.TestCase):
         self.assertIn("not inspected", summary)
         page.close()
 
+    def test_disabling_monitoring_clears_stale_snapshot_data(self):
+        page, _calls = self.make_panel()
+        presenter = page.security_presenter
+        presenter.render({
+            "enabled": True,
+            "read_only": True,
+            "persisted": False,
+            "automated_response": False,
+            "processes": [{"pid": 1, "name": "example", "status": "running"}],
+            "alerts": [{"type": "possible_port_scan"}],
+        })
+        controls = page.security_controls
+        self.assertEqual(controls["processes"].count(), 1)
+        self.assertEqual(controls["alerts"].count(), 1)
+        presenter.set_state("off", enabled=False)
+        self.assertEqual(controls["processes"].count(), 0)
+        self.assertEqual(controls["alerts"].count(), 0)
+        self.assertEqual(controls["process_summary"].text(), "No snapshot collected.")
+        page.close()
+
 
 if __name__ == "__main__":
     unittest.main()
