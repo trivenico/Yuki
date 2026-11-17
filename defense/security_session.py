@@ -116,6 +116,17 @@ class SecuritySessionController:
         except Exception as exc:
             raise SecuritySessionError("Security monitor cleanup failed.") from exc
 
+    def _revoke_generation(self, generation: int) -> None:
+        with self._lock:
+            if not self._active or self._generation != generation:
+                return
+            self._active = False
+            self._generation += 1
+        try:
+            self._monitor.disable()
+        except Exception as exc:
+            raise SecuritySessionError("Security monitor cleanup failed.") from exc
+
     def snapshot(self) -> dict:
         if not self._authorized():
             self.stop()
@@ -134,14 +145,18 @@ class SecuritySessionController:
             raise
         with self._lock:
             current = self._active and not self._closed and self._generation == generation
-        if not current or not self._authorized():
-            self.stop()
-            raise SecuritySessionError("Monitoring stopped or authorization expired during collection.")
+        if not current:
+            raise SecuritySessionError("Monitoring stopped during collection.")
+        if not self._authorized():
+            self._revoke_generation(generation)
+            raise SecuritySessionError("Authorization expired during collection.")
         if not isinstance(result, dict):
+            self._revoke_generation(generation)
             raise SecuritySessionError("The security monitor returned an invalid snapshot.")
         if (result.get("enabled") is not True or result.get("read_only") is not True
                 or result.get("persisted") is not False
                 or result.get("automated_response") is not False):
+            self._revoke_generation(generation)
             raise SecuritySessionError("The security monitor violated its read-only contract.")
         return result
 
