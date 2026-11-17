@@ -158,16 +158,11 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        approved = self.store.approve(
+        approved = self.store.approve_with_event(
             task_id, actor_id=actor, session_id=session_id,
             expected_version=expected_version,
         )
-        self.store.append_task_event(
-            task_id, kind="task.approved", actor_id=actor,
-            payload={"state_version": approved.version},
-            expected_version=approved.version,
-        )
-        return self._record(self.store.get(task_id))
+        return self._record(approved)
 
     def revoke_session_approvals(self, session_id: str) -> list[TaskRecord]:
         """Cancel queued tasks whose approval was granted by the exact revoked session."""
@@ -188,20 +183,17 @@ class TaskRuntime:
                 if not run.approved_by or not self._allowed(run.approved_by, "task:cancel", run.run_id):
                     continue
                 try:
-                    cancelled = self.store.transition(
+                    cancelled = self.store.transition_with_event(
                         run.run_id, expected_version=run.version,
                         to_state="cancelled", error_code="session_revoked",
+                        event_kind="task.cancelled", actor_id=run.approved_by,
+                        event_payload={"state_version": run.version + 1, "reason": "session_revoked"},
                     )
                 except WorkflowConflict:
                     # A concurrent worker/state change won the race; never
                     # overwrite it with a stale logout cancellation.
                     continue
-                self.store.append_task_event(
-                    run.run_id, kind="task.cancelled", actor_id=run.approved_by,
-                    payload={"state_version": cancelled.version, "reason": "session_revoked"},
-                    expected_version=cancelled.version,
-                )
-                revoked.append(self._record(self.store.get(run.run_id)))
+                revoked.append(self._record(cancelled))
         return revoked
 
     def events(
@@ -292,12 +284,12 @@ class TaskRuntime:
             raise WorkflowTransitionError("only the current worker may complete a running task.")
         if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
             raise WorkflowConflict("expired lease cannot complete task.")
-        completed = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="succeeded", result=result)
-        self.store.append_task_event(task_id, kind="task.completed", actor_id=actor,
-                                     payload={"state_version": completed.version},
-                                     expected_version=completed.version)
-        return self._record(self.store.get(task_id))
+        completed = self.store.transition_with_event(
+            task_id, expected_version=expected_version, to_state="succeeded",
+            result=result, event_kind="task.completed", actor_id=actor,
+            event_payload={"state_version": expected_version + 1},
+        )
+        return self._record(completed)
 
     def fail(self, *, actor_id: str, task_id: str, expected_version: int,
              worker_id: str, error_code: str) -> TaskRecord:
@@ -311,12 +303,12 @@ class TaskRuntime:
             raise WorkflowTransitionError("only the current worker may fail a running task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
             raise ValueError("error_code must be a bounded identifier.")
-        failed = self.store.transition(task_id, expected_version=expected_version,
-                                       to_state="failed", error_code=error_code)
-        self.store.append_task_event(task_id, kind="task.failed", actor_id=actor,
-                                     payload={"error_code": error_code, "state_version": failed.version},
-                                     expected_version=failed.version)
-        return self._record(self.store.get(task_id))
+        failed = self.store.transition_with_event(
+            task_id, expected_version=expected_version, to_state="failed",
+            error_code=error_code, event_kind="task.failed", actor_id=actor,
+            event_payload={"error_code": error_code, "state_version": expected_version + 1},
+        )
+        return self._record(failed)
 
 
 
@@ -386,9 +378,9 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        cancelled = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="cancelled", error_code="cancelled")
-        self.store.append_task_event(task_id, kind="task.cancelled", actor_id=actor,
-                                     payload={"state_version": cancelled.version},
-                                     expected_version=cancelled.version)
-        return self._record(self.store.get(task_id))
+        cancelled = self.store.transition_with_event(
+            task_id, expected_version=expected_version, to_state="cancelled",
+            error_code="cancelled", event_kind="task.cancelled", actor_id=actor,
+            event_payload={"state_version": expected_version + 1},
+        )
+        return self._record(cancelled)
