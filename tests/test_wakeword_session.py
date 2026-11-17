@@ -95,6 +95,25 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertTrue(source.closed)
         self.assertTrue(detector.closed)
 
+    def test_stop_from_listening_state_callback_is_race_safe(self):
+        source = FakeAudioSource()
+        detector = FakeDetector()
+        states = []
+        holder = {}
+
+        def on_state(state):
+            states.append(state)
+            if state == "listening":
+                holder["session"].stop(timeout=2)
+
+        session = self.make_session(source, detector, on_state=on_state)
+        holder["session"] = session
+        session.start()
+        self.assertEqual(session.state, "disabled")
+        self.assertIn("listening", states)
+        self.assertTrue(source.closed)
+        self.assertTrue(detector.closed)
+
     def test_invalid_audio_frame_fails_closed_and_reports_error(self):
         source = FakeAudioSource([object()])
         detector = FakeDetector()
