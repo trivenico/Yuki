@@ -60,6 +60,20 @@ class ControllerTests(unittest.TestCase):
         )
         self.controller = DesktopCompanionController(self.app, self.identity, self.sessions)
 
+    def test_restore_rejects_active_workspace_as_destination(self):
+        workspace = Path(self.temp.name) / "workspace"
+        workspace.mkdir()
+        self.controller.workspace_path = workspace
+        with patch("ui.desktop.controller.desktop_data_root", return_value=Path(self.temp.name) / ".yuki"):
+            with patch("ui.desktop.controller.restore_encrypted_backup") as restore:
+                with self.assertRaisesRegex(ValueError, "active Yuki workspace"):
+                    self.controller.restore_backup(
+                        Path(self.temp.name) / "backup.yukibak",
+                        workspace,
+                        "a sufficiently long passphrase",
+                    )
+                restore.assert_not_called()
+
     def test_chat_uses_shared_application_service(self):
         self.assertEqual(self.controller.respond("hello"), "Yuki reply")
         self.assertEqual(self.app.session.conversation_turns, 1)
