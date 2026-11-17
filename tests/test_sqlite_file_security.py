@@ -12,6 +12,8 @@ from core.pending_approvals import SQLitePendingApprovalStore
 from core.sqlite_file_security import (
     SQLitePathSecurityError,
     prepare_private_sqlite_path,
+    SQLiteIntegrityError,
+    verify_sqlite_integrity,
 )
 
 
@@ -61,6 +63,22 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         os.link(target, alias)
         with self.assertRaises(SQLitePathSecurityError):
             prepare_private_sqlite_path(alias)
+
+    def test_corrupt_database_fails_integrity_check_without_modification(self):
+        path = self.root / "corrupt.sqlite3"
+        original = b"not a sqlite database"
+        path.write_bytes(original)
+        with self.assertRaises(SQLiteIntegrityError):
+            verify_sqlite_integrity(path)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_conversation_store_does_not_initialize_over_corrupt_database(self):
+        path = self.root / "corrupt-conversations.sqlite3"
+        original = b"corrupt user data must be preserved"
+        path.write_bytes(original)
+        with self.assertRaises(SQLiteIntegrityError):
+            ConversationStore(path)
+        self.assertEqual(path.read_bytes(), original)
 
     def test_directory_is_rejected_as_database_file(self):
         directory = self.root / "database.sqlite3"
