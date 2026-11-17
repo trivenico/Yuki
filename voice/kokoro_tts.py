@@ -62,7 +62,11 @@ class KokoroTTS:
             raise ValueError("speed must be between 0.5 and 2.0.")
         if isinstance(num_threads, bool) or not isinstance(num_threads, int) or not 1 <= num_threads <= 8:
             raise ValueError("num_threads must be between 1 and 8.")
-        if isinstance(playback_watchdog_seconds, bool) or not isinstance(playback_watchdog_seconds, (int, float)) or not 1 <= playback_watchdog_seconds <= 130:
+        if (
+            isinstance(playback_watchdog_seconds, bool)
+            or not isinstance(playback_watchdog_seconds, (int, float))
+            or not 1 <= playback_watchdog_seconds <= 130
+        ):
             raise ValueError("playback_watchdog_seconds must be between 1 and 130.")
         self.model_dir = Path(model_dir).expanduser().resolve()
         self.lexicon_path = Path(lexicon_path).expanduser().resolve() if lexicon_path else None
