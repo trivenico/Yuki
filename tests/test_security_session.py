@@ -89,6 +89,36 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.assertTrue(errors)
         self.assertIsInstance(errors[0], SecuritySessionError)
 
+
+    def test_stop_during_startup_cannot_be_undone_by_late_enable(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def delayed_enable():
+            entered.set()
+            release.wait(2)
+            self.monitor.enabled = True
+
+        self.monitor.enable = delayed_enable
+        errors = []
+
+        def start():
+            try:
+                self.controller.start(consent=True)
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=start)
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        self.controller.stop()
+        release.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(errors)
+        self.assertFalse(self.monitor.enabled)
+        self.assertFalse(self.controller.active)
+
     def test_close_is_terminal(self):
         self.controller.start(consent=True)
         self.controller.close()
