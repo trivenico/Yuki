@@ -1193,21 +1193,28 @@ def run() -> int:
         def _logout_finished(self, error: Any):
             self._logout_started = False
             self._logout_worker = None
+            if error is not None:
+                # Keep the closed bridge attached so a second sign-out attempt
+                # can retry any cleanup step that failed. Returning to login and
+                # discarding it here would make the retry path unreachable.
+                self.logout_button.setText("Retry sign out")
+                self.chat_status.setText(
+                    "Sign-out cleanup incomplete. Other session actions are blocked; retry sign out."
+                )
+                if not self._shutdown_started:
+                    self.setEnabled(True)
+                QMessageBox.warning(
+                    self, "Sign out",
+                    "Session cleanup did not fully complete (" + type(error).__name__ + "). "
+                    "Yuki has closed the session action gate. Retry sign out to finish cleanup."
+                )
+                return
             self.controller = None
             self._return_to_login()
             if not self._shutdown_started:
                 self.setEnabled(True)
-            if error is not None:
-                self.login_status.setText(
-                    "Sign-out cleanup was incomplete. Verify session status before continuing."
-                )
-                QMessageBox.warning(
-                    self, "Sign out",
-                    "Local cleanup was attempted, but session revocation may not have "
-                    "completed (" + type(error).__name__ + "). Verify session status."
-                )
-            else:
-                self.login_status.setText("You are signed out.")
+            self.logout_button.setText("Sign out")
+            self.login_status.setText("You are signed out.")
 
         def _logout(self):
             if self._logout_started or self._shutdown_started:
