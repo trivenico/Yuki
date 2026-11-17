@@ -34,7 +34,9 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
             port_scan_detector=FakeDetector(),
             enabled=True,
         )
-        monitor.observe_connection("192.0.2.8", 443, timestamp=10)
+        observed = monitor.observe_connection("192.0.2.8", 443, timestamp=10)
+        self.assertEqual(observed["source"], "network")
+        self.assertNotIn("source_ip", observed)
         result = monitor.snapshot()
         self.assertEqual(result["process_count"], 1)
         self.assertEqual(result["processes"][0]["pid"], 42)
