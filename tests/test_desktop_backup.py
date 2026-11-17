@@ -25,6 +25,29 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertEqual((destination / "memory.json").read_text(), '{"private": true}')
             self.assertTrue((source / "memory.json").exists())
 
+    def test_restore_flushes_staged_tree_before_publication(self):
+        from ui.desktop import backup as backup_module
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            (source / "nested").mkdir()
+            (source / "nested" / "notes.txt").write_text("durable")
+            backup = root / "backup"
+            create_encrypted_backup(source, backup, "a sufficiently long passphrase")
+            destination = root / "restored"
+            original = backup_module._fsync_staged_tree
+
+            def verify_then_sync(stage):
+                self.assertTrue((stage / "nested" / "notes.txt").is_file())
+                self.assertFalse(destination.exists())
+                original(stage)
+
+            with patch("ui.desktop.backup._fsync_staged_tree", side_effect=verify_then_sync) as sync:
+                restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
+            sync.assert_called_once()
+            self.assertEqual((destination / "nested" / "notes.txt").read_text(), "durable")
+
     def test_wrong_passphrase_does_not_create_destination(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
