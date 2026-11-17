@@ -445,9 +445,8 @@ def run() -> int:
                 "Yuki cannot recover a lost passphrase."
             ))
             backup_layout.addWidget(QLabel(
-                "Important: encrypted memory remains tied to the source OS credential store. "
-                "Cross-device memory-key transfer is not supported yet; same-device restores "
-                "require the original OS keyring key."
+                "Portable memory is optional. When enabled, its profile key is included only "
+                "inside the passphrase-encrypted archive and imported into the destination OS keyring."
             ))
             self.backup_path = QLineEdit()
             self.backup_path.setReadOnly(True)
@@ -465,6 +464,11 @@ def run() -> int:
             self.backup_confirmation.setPlaceholderText("Confirm backup passphrase")
             backup_layout.addWidget(self.backup_passphrase)
             backup_layout.addWidget(self.backup_confirmation)
+            self.include_memory_key = QCheckBox(
+                "Include portable encrypted-memory key (recommended for cross-device restore)"
+            )
+            self.include_memory_key.setChecked(False)
+            backup_layout.addWidget(self.include_memory_key)
             self.backup_create_button = QPushButton("Create encrypted backup")
             self.backup_create_button.clicked.connect(self._create_backup)
             backup_layout.addWidget(self.backup_create_button)
@@ -489,6 +493,11 @@ def run() -> int:
             self.restore_passphrase.setEchoMode(QLineEdit.Password)
             self.restore_passphrase.setPlaceholderText("Backup passphrase")
             backup_layout.addWidget(self.restore_passphrase)
+            self.import_memory_key = QCheckBox(
+                "Import portable encrypted-memory key into this computer's OS keyring"
+            )
+            self.import_memory_key.setChecked(True)
+            backup_layout.addWidget(self.import_memory_key)
             self.backup_restore_button = QPushButton("Restore profile package into selected folder")
             self.backup_restore_button.clicked.connect(self._restore_backup)
             backup_layout.addWidget(self.backup_restore_button)
