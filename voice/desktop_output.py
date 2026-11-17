@@ -12,14 +12,16 @@ from typing import Any
 
 
 def create_desktop_voice_output(config: dict[str, Any]):
-    """Build a disabled speech-output session after validating local prerequisites."""
+    """Build a disabled, profile-aware speech session after validating prerequisites."""
     from voice.output_session import VoiceOutputSession
+    from voice.profile import DEFAULT_VOICE_PROFILE
+    from voice.profiled_tts import ProfiledLocalSpeechOutput
     from voice.tts import LocalTTS
 
     backend = config.get("tts_backend", "piper")
     if backend not in {"piper", "pyttsx3"}:
         raise ValueError("Configured TTS backend is not supported.")
-    rate = config.get("tts_rate", 170)
+    rate = config.get("tts_rate", DEFAULT_VOICE_PROFILE.speaking_rate)
     model_path = config.get("piper_model_path") or None
     if backend == "piper":
         if model_path is None or not Path(model_path).expanduser().is_file():
@@ -36,4 +38,7 @@ def create_desktop_voice_output(config: dict[str, Any]):
         backend=backend,
         model_path=model_path,
     )
-    return VoiceOutputSession(synthesizer)
+    profiled_synthesizer = ProfiledLocalSpeechOutput(
+        synthesizer, DEFAULT_VOICE_PROFILE,
+    )
+    return VoiceOutputSession(profiled_synthesizer)
