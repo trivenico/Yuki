@@ -76,17 +76,17 @@ class DesktopVoiceOutputFactoryTests(unittest.TestCase):
                     "kokoro_model_dir": str(model_dir),
                     "kokoro_lexicon_path": str(lexicon),
                     "kokoro_voice": "bf_emma",
-                    "kokoro_speed": 1.1,
+                    "kokoro_speed": 1.25,
                 })
         wrapped = session._synthesizer
         self.assertFalse(session.enabled)
         self.assertEqual(wrapped.capabilities.backend, "kokoro")
         self.assertEqual(wrapped.profile.speaking_rate, 187)
-        self.assertAlmostEqual(wrapped.synthesizer.speed, 187 / 170.0)
+        self.assertAlmostEqual(wrapped.synthesizer.speed, 1.25)
         self.assertFalse(wrapped.enabled)
         self.assertEqual(wrapped.synthesizer.kwargs["enabled"], False)
         self.assertEqual(wrapped.synthesizer.kwargs["voice"], "bf_emma")
-        self.assertEqual(wrapped.synthesizer.kwargs["speed"], 1.1)
+        self.assertEqual(wrapped.synthesizer.kwargs["speed"], 1.25)
         self.assertEqual(wrapped.synthesizer.calls, [])
 
     def test_kokoro_requires_model_directory_and_explicit_lexicon(self):
