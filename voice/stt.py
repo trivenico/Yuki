@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import wave
+import time
 
 
 class STTError(RuntimeError):
@@ -18,7 +19,7 @@ class FasterWhisperSTT:
         self.enabled, self.model_size, self.device, self.compute_type = enabled, model_size, device, compute_type
         self._model = None
 
-    def record_wav(self, output_path, *, seconds=5, sample_rate=16000):
+    def record_wav(self, output_path, *, seconds=5, sample_rate=16000, cancellation_event=None):
         if not self.enabled:
             raise STTError("Speech recognition is disabled.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 20:
@@ -49,8 +50,22 @@ class FasterWhisperSTT:
             raise STTError("Could not securely create the recording file.") from exc
 
         try:
+            if cancellation_event is not None and not callable(getattr(cancellation_event, "is_set", None)):
+                raise ValueError("cancellation_event must provide is_set().")
+            if cancellation_event is not None and cancellation_event.is_set():
+                raise STTError("Recording was cancelled.")
             audio = sd.rec(int(seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
-            sd.wait()
+            if cancellation_event is None:
+                sd.wait()
+            else:
+                stream = sd.get_stream()
+                while stream.active:
+                    if cancellation_event.is_set():
+                        sd.stop()
+                        raise STTError("Recording was cancelled.")
+                    time.sleep(0.05)
+                if cancellation_event.is_set():
+                    raise STTError("Recording was cancelled.")
             with os.fdopen(descriptor, "wb") as output:
                 descriptor = -1
                 with wave.open(output, "wb") as handle:
@@ -59,6 +74,14 @@ class FasterWhisperSTT:
                     handle.setframerate(sample_rate)
                     handle.writeframes(np.asarray(audio, dtype=np.int16).tobytes())
             return path
+        except STTError:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         except Exception as exc:
             if descriptor >= 0:
                 os.close(descriptor)
