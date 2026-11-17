@@ -49,6 +49,8 @@ def _read_profile_id(path: Path) -> str:
         return str(parsed)
     except ProfileIdentityError:
         raise
+    except FileNotFoundError:
+        raise
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise ProfileIdentityError("Yuki profile identity is unreadable; preserve the profile and recover it before continuing.") from exc
 
