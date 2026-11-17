@@ -499,6 +499,7 @@ def run() -> int:
             self.migration_status.setWordWrap(True)
             migration_layout.addWidget(self.migration_status)
             tabs.addTab(migration_page, "Migration")
+            self.authenticated_tabs = tabs
 
             self.pages.addWidget(tabs)
 
@@ -801,6 +802,15 @@ def run() -> int:
                 self.login_button.setEnabled(True)
 
         def _open_session(self, identity):
+            # A fresh authenticated session restores the chat controls and tabs
+            # after any prior fail-closed cleanup-retry state.
+            for index in range(self.authenticated_tabs.count()):
+                self.authenticated_tabs.setTabEnabled(index, True)
+            for widget in (
+                self.memory_toggle, self.transcript, self.message, self.send_button,
+            ):
+                widget.setEnabled(True)
+            self.logout_button.setText("Sign out")
             config = load_config()
             memory = create_desktop_memory(self.sessions.keyring)
             context = build_desktop_context(
@@ -1156,7 +1166,6 @@ def run() -> int:
 
         def _return_to_login(self):
             controller = self.controller
-            self.controller = None
             cleanup_error = _close_expired_controller(controller)
             self.memory_toggle.blockSignals(True)
             self.memory_toggle.setChecked(False)
@@ -1181,13 +1190,34 @@ def run() -> int:
             self.plan_details.clear()
             self.plan_dispatch_button.setEnabled(False)
             self.plan_cancel_button.setEnabled(False)
-            self.pages.setCurrentIndex(0)
             if cleanup_error is not None:
-                self.login_status.setText(
-                    "The session expired, but local cleanup was incomplete. "
-                    "Verify session status before signing in again ("
-                    + type(cleanup_error).__name__ + ")."
+                # Keep the closed controller reachable so cleanup can be retried.
+                # Only the sign-out action remains enabled; the bridge rejects all
+                # chat and specialist operations while its authorization gate is shut.
+                self.pages.setCurrentIndex(1)
+                self._restrict_to_logout_retry()
+                self.chat_status.setText(
+                    "Session expired; cleanup is incomplete. Retry sign out before signing in again."
                 )
+                self.login_status.setText(
+                    "Local session cleanup is incomplete ("
+                    + type(cleanup_error).__name__ + "). Retry sign out."
+                )
+                return
+            self.controller = None
+            self.pages.setCurrentIndex(0)
+
+        def _restrict_to_logout_retry(self):
+            self.setEnabled(True)
+            for index in range(self.authenticated_tabs.count()):
+                self.authenticated_tabs.setTabEnabled(index, index == 0)
+            for widget in (
+                self.memory_toggle, self.transcript, self.message, self.send_button,
+            ):
+                widget.setEnabled(False)
+            self.logout_button.setText("Retry sign out")
+            self.logout_button.setEnabled(True)
+            self.chat_status.setEnabled(True)
 
         @Slot(object)
         def _logout_finished(self, error: Any):
@@ -1202,7 +1232,7 @@ def run() -> int:
                     "Sign-out cleanup incomplete. Other session actions are blocked; retry sign out."
                 )
                 if not self._shutdown_started:
-                    self.setEnabled(True)
+                    self._restrict_to_logout_retry()
                 QMessageBox.warning(
                     self, "Sign out",
                     "Session cleanup did not fully complete (" + type(error).__name__ + "). "
