@@ -43,11 +43,18 @@ The available pretrained list includes "hey jarvis", not "hey yuki"; English
 is currently the supported language. See the upstream README:
 https://github.com/dscripka/openWakeWord
 
-Picovoice Porcupine supports Windows, macOS and Linux and can run inference
-on-device, but requires a Picovoice AccessKey and platform-specific keyword
-model assets. Its account, redistribution and commercial terms must be
-reviewed before selecting it as a default. See:
+An optional Porcupine adapter is provided for evaluation with a user-owned
+`.ppn` model and AccessKey. The SDK processes audio on-device, but requires
+an AccessKey and its terms describe usage reporting that can be buffered
+locally and synchronized when internet connectivity returns. Picovoice's
+FAQ currently says it does not offer dedicated personal/non-commercial
+plans. Therefore this adapter is NOT Yuki's default or recommended personal
+wake-word provider; use it only if the account and deployment are explicitly
+covered by an appropriate Picovoice agreement. Do not bundle the AccessKey
+or user model in Yuki. See:
 https://picovoice.ai/docs/porcupine/
+https://picovoice.ai/docs/terms-of-use/
+https://picovoice.ai/docs/faq/general/
 
 The controller is engine-agnostic so Yuki does not become locked to either
 option. A model will not be downloaded or bundled automatically. Before
