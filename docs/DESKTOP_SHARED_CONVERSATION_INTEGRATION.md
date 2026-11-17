@@ -257,3 +257,18 @@ This is a fail-closed mount-boundary check, not yet a complete proof of
 portable-device identity: removable-drive replacement, volume cloning, unusual
 network filesystems, and clean-machine USB packaging still require dedicated
 platform validation. Do not describe zero-install portability as complete.
+
+
+## Complete desktop profile backup boundary
+
+The desktop backup controller includes the canonical conversation database from
+the configured workspace as `workspace/conversations.sqlite3` in addition to
+the private desktop data root (authentication, task workflow, and encrypted
+memory). The additional database is snapshotted with SQLite's backup API and
+covered by the encrypted archive manifest's size and SHA-256 checks; restore
+then runs SQLite integrity validation before atomic publication.
+
+The restore operation still produces a separate folder and never rewrites the
+active profile. The owner must preserve the restored `workspace/` directory
+when configuring the restored profile's workspace. This is a data export and
+restore boundary, not an automatic profile activation workflow.
