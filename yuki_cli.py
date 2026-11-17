@@ -156,7 +156,7 @@ def run_cli(
             except Exception as exc:
                 output_fn("Yuki authentication failed (" + type(exc).__name__ + ").")
                 return 5
-            output_fn("Yuki: Initial administrator created for " + user.username + ". Run python yuki_cli.py auth login to sign in.")
+            output_fn("Yuki: Initial administrator created for " + user.username + ". Launch Yuki Desktop and sign in with this account.")
             return 0
 
         if args.auth_command == "login":
