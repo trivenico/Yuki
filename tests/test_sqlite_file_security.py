@@ -2,6 +2,7 @@ import os
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from automation.workflow_store import WorkflowRunStore
@@ -71,6 +72,24 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         with self.assertRaises(SQLiteIntegrityError):
             verify_sqlite_integrity(path)
         self.assertEqual(path.read_bytes(), original)
+
+    def test_integrity_check_fails_closed_when_path_inspection_is_denied(self):
+        path = self.root / "unavailable.sqlite3"
+        with patch("core.sqlite_file_security.Path.lstat", side_effect=PermissionError("denied")):
+            with self.assertRaisesRegex(SQLiteIntegrityError, "cannot be inspected safely"):
+                verify_sqlite_integrity(path)
+
+    def test_integrity_check_rejects_symbolic_link_without_opening_target(self):
+        target = self.root / "target.sqlite3"
+        target.write_bytes(b"not a database")
+        link = self.root / "linked.sqlite3"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        with self.assertRaisesRegex(SQLiteIntegrityError, "not a private regular file"):
+            verify_sqlite_integrity(link)
+        self.assertEqual(target.read_bytes(), b"not a database")
 
     def test_preexisting_empty_database_is_not_reinitialized(self):
         path = self.root / "empty-existing.sqlite3"
