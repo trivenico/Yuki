@@ -68,7 +68,7 @@ class SQLiteIntegrityError(RuntimeError):
 def verify_sqlite_integrity(database_path: str | Path, *, allow_empty: bool = False) -> None:
     """Run a read-only quick_check before schema migrations or application writes.
 
-    Missing or zero-byte files are new stores. Existing databases must pass;
+    Missing files are new stores. Pre-existing empty or populated databases must pass;
     corruption is never treated as permission to recreate user data.
     """
     path = Path(database_path)
