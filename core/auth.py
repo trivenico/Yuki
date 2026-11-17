@@ -82,6 +82,7 @@ class BuiltInAuthService:
         verify_sqlite_integrity(self.database_path, allow_empty=not database_preexisted)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS auth_users (
                     user_id TEXT PRIMARY KEY,
