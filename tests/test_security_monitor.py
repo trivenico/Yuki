@@ -77,20 +77,20 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
             def snapshot(self):
                 return {
                     "processes": [
-                        {"pid": 4, "name": "editor\\n" + "x" * 300,
+                        {"pid": 4, "name": "editor\n" + "x" * 300,
                          "status": "running", "cmdline": "secret"},
                         {"pid": True, "name": "invalid", "status": "running"},
                     ],
                     "process_count": 2,
                     "truncated": False,
-                    "alerts": [{"type": "watch\\nmatch", "message": "safe\\nmessage"}],
+                    "alerts": [{"type": "watch\nmatch", "message": "safe\nmessage"}],
                 }
         monitor = DesktopSecurityMonitor(process_monitor=Untrusted(), enabled=True)
         result = monitor.snapshot()
         self.assertEqual(len(result["processes"]), 1)
         self.assertLessEqual(len(result["processes"][0]["name"]), 160)
         self.assertNotIn("cmdline", result["processes"][0])
-        self.assertNotIn("\\n", result["alerts"][0]["message"])
+        self.assertNotIn("\n", result["alerts"][0]["message"])
 
 
     def test_disable_invalidates_in_flight_sensor_snapshot(self):
