@@ -106,6 +106,10 @@ class SecurityDashboardPanel:
                 raw_alerts = snapshot.get("alerts", [])
                 if not isinstance(raw_processes, list) or not isinstance(raw_alerts, list):
                     raise ValueError("Security snapshot lists are invalid.")
+                # Match the upstream monitor contract and reject malformed or
+                # unexpectedly large snapshots before touching any Qt widgets.
+                if len(raw_processes) > 5000 or len(raw_alerts) > 1100:
+                    raise ValueError("Security snapshot exceeds the dashboard limits.")
                 processes.clear()
                 for item in raw_processes[:500]:
                     if not isinstance(item, dict):
@@ -118,10 +122,14 @@ class SecurityDashboardPanel:
                 count = snapshot.get("process_count", len(raw_processes))
                 if isinstance(count, bool) or not isinstance(count, int) or count < 0:
                     count = len(raw_processes)
-                process_summary.setText(
-                    f"{min(count, 10_000_000)} processes observed; "
+                truncated = snapshot.get("process_truncated") is True
+                summary = (
+                    f"{min(count, 10_000_000)} process records collected; "
                     f"{len(processes)} displayed."
                 )
+                if truncated:
+                    summary += " Inventory capped; additional processes were not inspected."
+                process_summary.setText(summary)
                 alerts.clear()
                 for alert in raw_alerts[:100]:
                     if not isinstance(alert, dict):
