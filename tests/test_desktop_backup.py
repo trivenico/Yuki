@@ -169,7 +169,7 @@ class DesktopBackupTests(unittest.TestCase):
             with self.assertRaises(BackupError):
                 create_encrypted_backup(
                     source, root / "collision.yukibak", "a sufficiently long passphrase",
-                    additional_files={"CONFIG.JSON": external},
+                    additional_files={".yuki/CONFIG.JSON": external},
                 )
             self.assertFalse((root / "unsafe.yukibak").exists())
             self.assertFalse((root / "collision.yukibak").exists())
