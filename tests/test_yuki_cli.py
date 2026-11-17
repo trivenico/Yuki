@@ -171,7 +171,7 @@ class YukiCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             outputs = []
             root = Path(temp_dir)
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 bootstrap_passwords = iter(["Correct horse battery staple 9!", "Correct horse battery staple 9!"])
                 code = run_cli(["auth", "bootstrap-admin"], input_fn=lambda prompt: "root.user", password_input=lambda prompt: next(bootstrap_passwords), output_fn=outputs.append)
                 self.assertEqual(code, 0)
@@ -196,7 +196,7 @@ class YukiCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             outputs = []
             passwords = iter(["first secure password 3!", "second secure password 4!"])
-            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+            with patch("yuki_cli.desktop_data_root", return_value=Path(temp_dir) / ".yuki"):
                 code = run_cli(["auth", "bootstrap-admin"], input_fn=lambda prompt: "root.user", password_input=lambda prompt: next(passwords), output_fn=outputs.append)
             self.assertEqual(code, 2)
             self.assertIn("do not match", outputs[-1])
@@ -222,7 +222,7 @@ class YukiCliTests(unittest.TestCase):
                 }],
             )
             outputs = []
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 code = run_cli(["tasks", "list"], output_fn=outputs.append)
                 self.assertEqual(code, 0)
                 self.assertIn(task.task_id, outputs[-1])
@@ -237,7 +237,7 @@ class YukiCliTests(unittest.TestCase):
     def test_authenticated_cli_denies_task_commands_after_logout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 outputs = []
                 code = run_cli(["tasks", "list"], output_fn=outputs.append)
             self.assertEqual(code, 1)
@@ -262,7 +262,7 @@ class YukiCliTests(unittest.TestCase):
             issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
             (root / ".yuki" / "session.token").write_text(issued.token, encoding="utf-8")
             outputs = []
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 code = run_cli(["agents", "list"], output_fn=outputs.append)
                 self.assertEqual(code, 0)
                 self.assertIn("coding", outputs[-1])
@@ -292,7 +292,7 @@ class YukiCliTests(unittest.TestCase):
     def test_signed_out_user_cannot_list_or_plan_agents(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             outputs = []
-            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+            with patch("yuki_cli.desktop_data_root", return_value=Path(temp_dir) / ".yuki"):
                 code = run_cli(["agents", "list"], output_fn=outputs.append)
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
@@ -329,7 +329,7 @@ class YukiCliTests(unittest.TestCase):
                 expected_version=task.version,
             )
             outputs = []
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 code = run_cli(
                     ["workers", "run-cycle", "--max-tasks", "2"],
                     config_loader=lambda: {},
@@ -343,7 +343,7 @@ class YukiCliTests(unittest.TestCase):
     def test_worker_cycle_requires_sign_in(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             outputs = []
-            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+            with patch("yuki_cli.desktop_data_root", return_value=Path(temp_dir) / ".yuki"):
                 code = run_cli(["workers", "run-cycle"], output_fn=outputs.append)
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
@@ -369,7 +369,7 @@ class YukiCliTests(unittest.TestCase):
             events = runtime.events(actor_id=user.user_id, task_id=task.task_id)
             self.assertEqual([event.sequence for event in events], [1])
             outputs = []
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 code = run_cli(["tasks", "events", task.task_id], output_fn=outputs.append)
                 self.assertEqual(code, 0)
                 payload = json.loads(outputs[-1])
@@ -390,7 +390,7 @@ class YukiCliTests(unittest.TestCase):
     def test_task_event_history_requires_authentication(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             outputs = []
-            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+            with patch("yuki_cli.desktop_data_root", return_value=Path(temp_dir) / ".yuki"):
                 code = run_cli(["tasks", "events", "unknown"], output_fn=outputs.append)
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
@@ -405,7 +405,7 @@ class YukiCliTests(unittest.TestCase):
             issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
             (root / ".yuki" / "session.token").write_text(issued.token, encoding="utf-8")
             outputs = []
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 code = run_cli(["conversations", "create", "--title", "Yuki project"], output_fn=outputs.append)
                 self.assertEqual(code, 0)
                 created = json.loads(outputs[-1])
@@ -424,7 +424,7 @@ class YukiCliTests(unittest.TestCase):
     def test_conversation_cli_requires_authentication(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             outputs = []
-            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+            with patch("yuki_cli.desktop_data_root", return_value=Path(temp_dir) / ".yuki"):
                 code = run_cli(["conversations", "list"], output_fn=outputs.append)
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
@@ -445,7 +445,7 @@ class YukiCliTests(unittest.TestCase):
             provider = FakeProvider(answer="Hello, I am Yuki.")
             inputs = iter(["Hello Yuki", "/quit"])
             outputs = []
-            with patch("yuki_cli.data_root", return_value=root):
+            with patch("yuki_cli.desktop_data_root", return_value=root / ".yuki"):
                 code = run_cli(
                     ["chat", "--conversation-id", saved.conversation_id],
                     config_loader=lambda: {},
