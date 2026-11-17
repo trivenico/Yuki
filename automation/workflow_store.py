@@ -600,6 +600,46 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def recover_expired_with_events(
+        self, *, actor_id: str, limit: int = 50,
+    ) -> list[WorkflowRun]:
+        """Atomically interrupt expired leases and append their audit events."""
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        changed: list[WorkflowRun] = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM workflow_runs WHERE state='running' "
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
+                "ORDER BY lease_expires_at LIMIT ?",
+                (now, limit),
+            ).fetchall()
+            for row in rows:
+                updated = db.execute(
+                    "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
+                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
+                    "WHERE run_id=? AND version=? AND state='running'",
+                    (now, row["run_id"], row["version"]),
+                )
+                if updated.rowcount != 1:
+                    continue
+                self._append_task_event_in_transaction(
+                    db, row["run_id"], kind="task.interrupted", actor_id=actor_id,
+                    payload={"state": "interrupted", "error_code": "lease_expired",
+                             "automatic_replay": False, "state_version": row["version"] + 1},
+                    expected_version=row["version"] + 1, now=now,
+                )
+                changed_row = db.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
+                ).fetchone()
+                changed.append(self._row(changed_row))
+        return changed
+
     def transition_with_event(
         self, run_id: str, *, expected_version: int, to_state: str,
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
@@ -609,6 +649,15 @@ class WorkflowRunStore:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
+        terminal_events = {
+            "succeeded": "task.completed", "failed": "task.failed",
+            "cancelled": "task.cancelled", "interrupted": "task.interrupted",
+        }
+        expected_event = terminal_events.get(to_state)
+        if (expected_event is not None and event_kind != expected_event) or (
+            expected_event is None and event_kind in terminal_events.values()
+        ):
+            raise ValueError("event_kind must match the resulting terminal state.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         if error_code is not None and (
