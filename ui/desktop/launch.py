@@ -101,8 +101,18 @@ def _build_services():
         "task_workflow": root / "tasks.sqlite3",
         "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
     })
+    keyring = load_os_keyring()
+    from core.sqlite_recovery import inspect_encrypted_memory_store
+    require_healthy_sqlite_stores(
+        {
+            "authentication": root / "auth.sqlite3",
+            "task_workflow": root / "tasks.sqlite3",
+            "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
+        },
+        additional_checks=(inspect_encrypted_memory_store(root / "memory.enc.json", keyring),),
+    )
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
-    sessions = DesktopSessionManager(auth, load_os_keyring())
+    sessions = DesktopSessionManager(auth, keyring)
     provider = None
     try:
         provider = create_provider(config)
