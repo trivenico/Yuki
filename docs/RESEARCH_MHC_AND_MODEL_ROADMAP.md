@@ -60,13 +60,13 @@ Yuki currently encrypts memory with AES-256-GCM and stores its key in the operat
 The next implementation must be designed around these constraints:
 - Generate a random per-profile data-encryption key (DEK); do not share one global key across profiles.
 - Keep the active DEK in the OS keyring for normal operation.
-- For a portable backup, wrap the DEK using a key derived from the user-supplied backup passphrase with a memory-hard KDF and a unique salt; bind profile ID, key version, and purpose using authenticated metadata/AAD.
-- Keep wrapped key material inside the already encrypted backup archive. Never stage a plaintext DEK on disk.
+- For a portable backup, include the DEK metadata only inside the archive's existing passphrase-encrypted AES-GCM envelope (which uses the backup's memory-hard KDF and unique salt); bind it to the profile UUID and key schema.
+- Never write the DEK to a separate file or extract it to the restore staging directory. Validate the memory ciphertext with the candidate key before installing it into the destination OS keyring.
 - On restore, verify the backup and memory ciphertext before importing. Require explicit owner intent to import the portable key; install it into the destination OS keyring under a profile-scoped key identifier.
 - Define rollback behavior if keyring installation or filesystem publication fails. Never silently replace an existing profile key; collisions require an explicit safe recovery path.
 - Preserve legacy same-device backups and existing memory ciphertext. Version the envelope and backup manifest; provide migration and downgrade behavior.
 - Add tests for wrong passphrase, tampering, profile-key collision, missing keyring, keyring write failure, interrupted restore, duplicate restore, cross-device restore, and no plaintext key leakage.
-- Do not implement until the key lifecycle, transaction ordering, and failure recovery are reviewed.
+- Implemented in the integration branch: stable profile UUID, profile-scoped keyring account, lossless legacy key migration, opt-in key export inside the encrypted archive, ciphertext validation before import, and rollback of a newly installed key if profile publication fails. CI and clean-machine validation remain required.
 
 ## Scope decision
 
