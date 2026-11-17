@@ -65,6 +65,34 @@ class VoiceOutputSessionTests(unittest.TestCase):
         with self.assertRaises(VoiceOutputError):
             self.session.speak_reply("No", voice_mode_active=True)
 
+    def test_stop_invalidates_remaining_chunks_even_if_backend_keeps_consuming(self):
+        class StopAfterFirstChunk(FakeSynthesizer):
+            def speak_stream(inner_self, chunks):
+                spoken = []
+                for chunk in chunks:
+                    spoken.append(chunk)
+                    if len(spoken) == 1:
+                        self.session.stop()
+                inner_self.calls.append(spoken)
+                return {"chunks_spoken": len(spoken)}
+
+        synth = StopAfterFirstChunk()
+        self.session = VoiceOutputSession(synth)
+        self.session.enable()
+        with self.assertRaises(VoiceOutputError):
+            self.session.speak_reply("x" * 4001, voice_mode_active=True)
+        self.assertEqual(synth.calls, [])
+        self.assertFalse(self.session.speaking)
+
+    def test_stop_failure_is_reported(self):
+        class BrokenStop(FakeSynthesizer):
+            def stop(inner_self):
+                raise OSError("device unavailable")
+
+        session = VoiceOutputSession(BrokenStop())
+        with self.assertRaises(VoiceOutputError):
+            session.stop()
+
 
 if __name__ == "__main__":
     unittest.main()
