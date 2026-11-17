@@ -240,9 +240,16 @@ class KokoroTTS:
 
     def speak_stream(self, chunks):
         """Validate the full bounded stream before producing any audio."""
+        # A new request clears a previous Stop, but capture its generation
+        # before consuming caller-provided chunks. A Stop during validation
+        # must invalidate this request rather than being erased afterward.
+        self._stop_event.clear()
+        generation = self._generation
         validated = []
         total = 0
         for chunk in chunks:
+            if self._stop_event.is_set() or generation != self._generation:
+                raise KokoroTTSError("Speech was stopped while preparing the stream.")
             if not isinstance(chunk, str):
                 raise ValueError("Speech chunks must be text.")
             if not chunk.strip():
@@ -255,8 +262,8 @@ class KokoroTTS:
             if total > _MAX_TOTAL_CHARACTERS:
                 raise ValueError("Speech stream exceeds the 20000-character limit.")
             validated.append(chunk)
-        self._stop_event.clear()
-        generation = self._generation
+        if self._stop_event.is_set() or generation != self._generation:
+            raise KokoroTTSError("Speech was stopped while preparing the stream.")
         spoken = 0
         # Hold the re-entrant operation lock for the entire stream so another
         # caller cannot interleave unrelated speech between consecutive chunks.
