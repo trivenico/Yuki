@@ -194,12 +194,16 @@ def run() -> int:
                 try:
                     import faster_whisper  # noqa: F401
                     import numpy  # noqa: F401
-                    import sounddevice  # noqa: F401
+                    from importlib.util import find_spec
+                    if find_spec("sounddevice") is None:
+                        raise ImportError("sounddevice is not bundled")
                 except ImportError as exc:
                     raise RuntimeError(
                         "Packaged local voice dependencies could not be imported."
                     ) from exc
-                smoke_log("stage: voice-dependencies-imported")
+                # Do not import sounddevice here: PortAudio initialization can
+                # require an active host audio server, which headless CI lacks.
+                smoke_log("stage: voice-dependencies-discovered")
             app = QApplication.instance() or QApplication([sys.argv[0]])
             probe = QLabel("Yuki Desktop runtime OK")
             smoke_log("stage: app-created")
