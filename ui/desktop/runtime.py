@@ -32,14 +32,13 @@ def build_desktop_conversation_runtime(
     provider: Any,
     owner_id: str,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
-    close_provider: bool = True,
 ) -> ConversationApplicationRuntime:
     """Build the shared runtime for one authenticated desktop owner.
 
     `owner_id` must come from the trusted desktop session manager's authenticated
     account ID (not a widget field, username, or caller-controlled message).
-    By default the runtime owns and closes the provider. Set close_provider=False
-    only when an outer desktop lifecycle is the provider's explicit owner.
+    Provider lifecycle remains owned by the outer desktop process; this runtime
+    closes only its conversation store and never closes a shared provider.
     """
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
@@ -50,9 +49,6 @@ def build_desktop_conversation_runtime(
         or any(ord(char) < 32 or ord(char) == 127 for char in owner_id)
     ):
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
-    if type(close_provider) is not bool:
-        raise TypeError("close_provider must be a boolean.")
-
     adapter = ProviderAgentAdapter(provider)
     protocol = StructuredToolProtocol(GuardedToolRuntime({}, _DenyAllTools()))
     stream_model = (
@@ -68,12 +64,9 @@ def build_desktop_conversation_runtime(
         max_tool_calls=1,
         max_duration_seconds=120,
     )
-    close = getattr(provider, "close", None)
-    callbacks = (close,) if close_provider and callable(close) else ()
     return build_conversation_application_runtime(
         config,
         agent_loop=agent_loop,
         owner_id=owner_id.strip(),
         store_factory=store_factory,
-        close_callbacks=callbacks,
     )
