@@ -113,6 +113,8 @@ class DesktopSecurityMonitor:
                 raise SecurityMonitorError("Process inventory failed safely.") from exc
             if not isinstance(process_data, dict):
                 raise SecurityMonitorError("Process inventory returned an invalid result.")
+            if process_data.get("read_only") is not True or process_data.get("persisted") is not False:
+                raise SecurityMonitorError("Process inventory did not satisfy the read-only, non-persistent contract.")
             raw_alerts = process_data.get("alerts", [])
             if not isinstance(raw_alerts, list):
                 raise SecurityMonitorError("Process inventory returned invalid alerts.")
