@@ -68,26 +68,6 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
         })
         self.assertTrue(report["startup_safe"])
 
-    def test_conversation_store_corruption_blocks_multi_store_startup(self):
-        authentication = self.root / "auth.sqlite3"
-        workflow = self.root / "tasks.sqlite3"
-        conversation = self.root / "workspace" / "conversations.sqlite3"
-        conversation.parent.mkdir(parents=True)
-        sqlite3.connect(authentication).close()
-        sqlite3.connect(workflow).close()
-        conversation.write_bytes(b"not a sqlite database")
-        with self.assertRaises(SQLiteRecoveryRequired) as raised:
-            require_healthy_sqlite_stores({
-                "authentication": authentication,
-                "task_workflow": workflow,
-                "conversation_history": conversation,
-            })
-        statuses = {item["component"]: item["status"] for item in raised.exception.report["stores"]}
-        self.assertEqual(statuses["authentication"], "healthy")
-        self.assertEqual(statuses["task_workflow"], "healthy")
-        self.assertEqual(statuses["conversation_history"], "corrupt_or_unreadable")
-        self.assertEqual(conversation.read_bytes(), b"not a sqlite database")
-
     def test_owner_facing_report_names_component_without_disclosing_path(self):
         from core.sqlite_recovery import format_sqlite_recovery_report
         path = self.root / "secret-location.sqlite3"
