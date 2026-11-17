@@ -760,14 +760,18 @@ MIGRATION COMPLETE — verified manifest written to destination."
             answer = QMessageBox.question(
                 self, "Create encrypted backup",
                 "Yuki will create an encrypted copy of its local profile. "
-                "Keep the passphrase safe; it cannot be recovered. Continue?",
+                + ("The portable memory key will be included inside the encrypted archive. " if self.include_memory_key.isChecked() else "Memory will remain tied to the source OS keyring. ")
+                + "Keep the passphrase safe; it cannot be recovered. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
                 return
             controller = self.controller
             self._run_backup_operation(
-                lambda: controller.create_backup(destination, passphrase),
+                lambda: controller.create_backup(
+                    destination, passphrase,
+                    include_memory_key=self.include_memory_key.isChecked(),
+                ),
                 "Creating and verifying encrypted backup…",
             )
 
@@ -791,7 +795,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 return
             controller = self.controller
             self._run_backup_operation(
-                lambda: controller.restore_backup(backup, destination, passphrase),
+                lambda: controller.restore_backup(
+                    backup, destination, passphrase,
+                    import_memory_key=self.import_memory_key.isChecked(),
+                ),
                 "Authenticating and restoring backup into the selected folder…",
             )
 
@@ -817,6 +824,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.backup_status.setText(
                     f"Restore verified: {result['file_count']} files, "
                     f"{result['size_bytes']} bytes. Destination: {result['destination']}"
+                    + (" Portable memory key imported." if result.get("memory_key_imported") else "")
                 )
 
         def _initialize(self):
