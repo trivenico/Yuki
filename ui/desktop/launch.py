@@ -1481,6 +1481,10 @@ Version: {version}",
         def _spoken_reply_finished(self, result: Any, error: Any, captured_session: Any):
             self.speech_worker = None
             if captured_session is not self.speech_session:
+                if self.controller is not None and not self._logout_started and not self._shutdown_started:
+                    self.speech_stop_button.setEnabled(False)
+                    self.send_button.setEnabled(not self.busy)
+                    self.message.setEnabled(not self.busy)
                 return
             self.speech_stop_button.setEnabled(False)
             if self.controller is not None and not self._logout_started and not self._shutdown_started:
