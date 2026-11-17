@@ -135,16 +135,30 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
         add_methods(specialists)
         bridge = SharedDesktopControllerBridge(chat, specialists)
         results = []
-        worker = threading.Thread(target=lambda: results.append(bridge.logout()))
+        second_started = threading.Event()
+
+        def logout_and_record():
+            try:
+                results.append(("ok", bridge.logout()))
+            except Exception as exc:
+                results.append(("error", exc))
+
+        worker = threading.Thread(target=logout_and_record)
         worker.start()
         self.assertTrue(entered.wait(timeout=1))
-        self.assertFalse(bridge.logout())
+        second_worker = threading.Thread(
+            target=lambda: (second_started.set(), logout_and_record())
+        )
+        second_worker.start()
+        self.assertTrue(second_started.wait(timeout=1))
         with self.assertRaises(RuntimeError):
             bridge.respond("must be rejected during logout")
         release.set()
         worker.join(timeout=2)
+        second_worker.join(timeout=2)
         self.assertFalse(worker.is_alive())
-        self.assertEqual(results, [True])
+        self.assertFalse(second_worker.is_alive())
+        self.assertCountEqual(results, [("ok", True), ("ok", False)])
         self.assertEqual(chat.close_count, 1)
         self.assertEqual(
             [call[0] for call in specialists.calls].count("logout"), 1,
