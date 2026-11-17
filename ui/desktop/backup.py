@@ -481,6 +481,8 @@ def restore_encrypted_backup(
                 (stage / ".yuki").mkdir(mode=0o700, exist_ok=True)
             actual = {p.relative_to(stage).as_posix(): p for p in stage.rglob("*") if p.is_file()}
             secret_entry = expected.pop(".yuki/memory_key_export.json", None)
+            if secret_entry is not None and memory_key_export is None:
+                raise BackupError("Portable memory key export is missing from the authenticated archive.")
             if memory_key_export is not None:
                 if secret_entry is None:
                     raise BackupError("Portable memory key export is missing from the authenticated manifest.")
