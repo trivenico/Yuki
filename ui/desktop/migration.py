@@ -184,6 +184,7 @@ def migrate_data(source: Path, destination: Path) -> dict:
     target = preview.destination
     target.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".yuki-migrate-", dir=target.parent))
+    published = False
     try:
         for relative in preview.files:
             src = preview.source / relative
@@ -214,8 +215,19 @@ def migrate_data(source: Path, destination: Path) -> dict:
                 raise MigrationError("Destination changed during migration; no data was replaced.")
             target.rmdir()
         stage.rename(target)
-        _fsync_directory(target.parent)
+        published = True
+        try:
+            _fsync_directory(target.parent)
+        except OSError as exc:
+            raise MigrationError(
+                "Migration was published, but the destination directory could not be "
+                "confirmed durable. Do not retry or remove the destination; verify it "
+                "and keep the original source until recovery is complete."
+            ) from exc
         return manifest
     except Exception:
-        shutil.rmtree(stage, ignore_errors=True)
+        # Once rename succeeds, the destination is the published copy. Never
+        # describe it as rolled back or attempt to remove it after a later error.
+        if not published:
+            shutil.rmtree(stage, ignore_errors=True)
         raise
