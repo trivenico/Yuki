@@ -511,6 +511,191 @@ class WorkflowRunStore:
         return changed
 
 
+    @staticmethod
+    def _append_task_event_in_transaction(
+        db: sqlite3.Connection, task_id: str, *, kind: str, actor_id: str,
+        payload: dict[str, Any], expected_version: int, now: str,
+    ):
+        """Insert one event and advance its task version inside the caller's transaction."""
+        from automation.task_runtime import TaskEvent, _EVENT_KINDS
+        if kind not in _EVENT_KINDS:
+            raise ValueError("Unknown task event kind.")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(payload, dict):
+            raise ValueError("task event payload must be an object.")
+        payload_json = _bounded_json(payload, 8 * 1024, "task event payload")
+        row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (task_id,)).fetchone()
+        if row is None:
+            raise KeyError("task not found.")
+        if row["version"] != expected_version:
+            raise WorkflowConflict("task version changed; reload before appending an event.")
+        if row["state"] in _TERMINAL:
+            expected_terminal_event = {
+                "succeeded": "task.completed", "failed": "task.failed",
+                "cancelled": "task.cancelled", "interrupted": "task.interrupted",
+            }.get(row["state"])
+            if kind != expected_terminal_event:
+                raise WorkflowTransitionError("cannot append events to a terminal task.")
+            prior_terminal = db.execute(
+                "SELECT 1 FROM task_events WHERE task_id=? AND kind IN "
+                "('task.completed', 'task.failed', 'task.cancelled', 'task.interrupted') LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if prior_terminal:
+                raise WorkflowTransitionError("terminal event has already been recorded.")
+        updated = db.execute(
+            "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
+            (now, task_id, expected_version),
+        )
+        if updated.rowcount != 1:
+            raise WorkflowConflict("task changed concurrently.")
+        sequence = db.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+            (task_id,),
+        ).fetchone()[0]
+        cursor = db.execute(
+            "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (task_id, sequence, kind, actor_id.strip(), payload_json, now),
+        )
+        return TaskEvent(cursor.lastrowid, task_id, sequence, kind, actor_id.strip(),
+                         json.loads(payload_json), now)
+
+    def approve_with_event(
+        self, run_id: str, *, actor_id: str, session_id: str, expected_version: int,
+    ) -> WorkflowRun:
+        """Commit session approval and its audit event as one SQLite transaction."""
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or chr(0) in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("workflow run version changed; reload before approving.")
+            if row["state"] != "queued":
+                raise WorkflowTransitionError("only queued workflows can be approved.")
+            updated = db.execute("""
+                UPDATE workflow_runs SET approved_by=?, approved_at=?,
+                    approval_digest=request_digest, approved_session_hash=?,
+                    updated_at=?, version=version+1
+                WHERE run_id=? AND version=? AND state='queued'
+            """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow run changed concurrently.")
+            self._append_task_event_in_transaction(
+                db, run_id, kind="task.approved", actor_id=actor_id,
+                payload={"state_version": expected_version + 1},
+                expected_version=expected_version + 1, now=now,
+            )
+            return self._row(db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone())
+
+    def recover_expired_with_events(
+        self, *, actor_id: str, limit: int = 50,
+    ) -> list[WorkflowRun]:
+        """Atomically interrupt expired leases and append their audit events."""
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        changed: list[WorkflowRun] = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM workflow_runs WHERE state='running' "
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
+                "ORDER BY lease_expires_at LIMIT ?",
+                (now, limit),
+            ).fetchall()
+            for row in rows:
+                updated = db.execute(
+                    "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
+                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
+                    "WHERE run_id=? AND version=? AND state='running'",
+                    (now, row["run_id"], row["version"]),
+                )
+                if updated.rowcount != 1:
+                    continue
+                self._append_task_event_in_transaction(
+                    db, row["run_id"], kind="task.interrupted", actor_id=actor_id,
+                    payload={"state": "interrupted", "error_code": "lease_expired",
+                             "automatic_replay": False, "state_version": row["version"] + 1},
+                    expected_version=row["version"] + 1, now=now,
+                )
+                changed_row = db.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
+                ).fetchone()
+                changed.append(self._row(changed_row))
+        return changed
+
+    def transition_with_event(
+        self, run_id: str, *, expected_version: int, to_state: str,
+        event_kind: str, actor_id: str, event_payload: dict[str, Any],
+        result: dict[str, Any] | list[Any] | None = None,
+        error_code: str | None = None,
+    ) -> WorkflowRun:
+        """Commit a state transition and its audit event atomically."""
+        if to_state not in _STATES:
+            raise ValueError("Unknown workflow state.")
+        terminal_events = {
+            "succeeded": "task.completed", "failed": "task.failed",
+            "cancelled": "task.cancelled", "interrupted": "task.interrupted",
+        }
+        expected_event = terminal_events.get(to_state)
+        if (expected_event is not None and event_kind != expected_event) or (
+            expected_event is None and event_kind in terminal_events.values()
+        ):
+            raise ValueError("event_kind must match the resulting terminal state.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        if error_code is not None and (
+            not isinstance(error_code, str) or not error_code or len(error_code) > 100
+            or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in error_code)
+        ):
+            raise ValueError("error_code must be a bounded machine-readable code.")
+        result_json = None if result is None else _bounded_json(result, _MAX_RESULT_BYTES, "result")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            current = self._row(row)
+            if current.version != expected_version:
+                raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if to_state == "running" and self._requires_approval(current.definition):
+                if not (row["approved_by"] and row["approved_at"] and row["approved_session_hash"]
+                        and row["approval_digest"] == row["request_digest"]):
+                    raise WorkflowTransitionError("workflow requires explicit approval before execution.")
+            if to_state not in _TRANSITIONS[current.state]:
+                raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
+            updated = db.execute("""
+                UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
+                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                WHERE run_id=? AND version=?
+            """, (to_state, result_json, error_code, now, run_id, expected_version))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow run changed concurrently.")
+            self._append_task_event_in_transaction(
+                db, run_id, kind=event_kind, actor_id=actor_id,
+                payload=event_payload, expected_version=expected_version + 1, now=now,
+            )
+            return self._row(db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone())
+
     def append_task_event(
         self, task_id: str, *, kind: str, actor_id: str,
         payload: dict[str, Any], expected_version: int,
