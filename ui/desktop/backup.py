@@ -350,7 +350,10 @@ def create_encrypted_backup(
     return {"path": str(output), "file_count": len(manifest_files), "size_bytes": output.stat().st_size}
 
 
-def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -> dict:
+def restore_encrypted_backup(
+    backup: Path, destination: Path, passphrase: str, *,
+    keyring_module=None, import_memory_key: bool = False,
+) -> dict:
     AESGCM, Scrypt = _crypto()
     backup_path = backup.expanduser()
     target_path = destination.expanduser()
@@ -381,6 +384,7 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
         stage = Path(tmp) / "data"
         stage.mkdir(mode=0o700)
         manifest = None
+        memory_key_export = None
         seen = set()
         seen_portable = set()
         total = 0
@@ -401,6 +405,16 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                             raise BackupError("Backup manifest is not a regular file.")
                         stream = archive.extractfile(member)
                         manifest = json.loads(stream.read(2 * 1024 * 1024).decode("utf-8"))
+                        continue
+                    if member.name == ".yuki/memory_key_export.json":
+                        if not member.isfile() or member.size > 2048:
+                            raise BackupError("Portable memory key export is invalid.")
+                        memory_key_export = archive.extractfile(member).read(2049)
+                        if len(memory_key_export) != member.size or len(memory_key_export) > 2048:
+                            raise BackupError("Portable memory key export is invalid.")
+                        total += member.size
+                        if total > MAX_BACKUP_BYTES:
+                            raise BackupError("Restored data exceeds the supported size limit.")
                         continue
                     if not member.isfile():
                         raise BackupError("Backup contains a non-regular file.")
