@@ -71,6 +71,31 @@ class DesktopStorageTests(unittest.TestCase):
             if os.name == "posix":
                 self.assertEqual(root.stat().st_mode & 0o777, 0o700)
 
+    def test_portable_storage_rejects_unmounted_fallback_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            drive_root = Path(directory) / "mount"
+            drive_root.mkdir()
+            with patch("ui.desktop.storage._is_separate_volume", return_value=False):
+                with self.assertRaisesRegex(DesktopStorageError, "separately mounted volume"):
+                    prepare_private_desktop_root(
+                        drive_root / ".yuki",
+                        require_existing_parent=True,
+                        require_separate_volume=True,
+                    )
+            self.assertFalse((drive_root / ".yuki").exists())
+
+    def test_portable_storage_accepts_verified_separate_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            drive_root = Path(directory) / "mount"
+            drive_root.mkdir()
+            with patch("ui.desktop.storage._is_separate_volume", return_value=True):
+                root = prepare_private_desktop_root(
+                    drive_root / ".yuki",
+                    require_existing_parent=True,
+                    require_separate_volume=True,
+                )
+            self.assertTrue(root.is_dir())
+
     def test_fails_closed_when_storage_write_probe_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "private"
