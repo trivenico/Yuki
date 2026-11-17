@@ -76,6 +76,64 @@ class DesktopBackupTests(unittest.TestCase):
                 restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
             self.assertEqual((destination / "keep.txt").read_text(), "keep")
 
+    def test_additional_workspace_database_is_included_and_snapshotted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            (source / "auth.txt").write_text("owner profile")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            database_path = workspace / "conversations.sqlite3"
+            writer = sqlite3.connect(database_path)
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, body TEXT)")
+            writer.execute("INSERT INTO messages(body) VALUES ('durable conversation')")
+            writer.commit()
+            backup = root / "profile.yukibak"
+            try:
+                create_encrypted_backup(
+                    source, backup, "a sufficiently long passphrase",
+                    additional_files={"workspace/conversations.sqlite3": database_path},
+                )
+            finally:
+                writer.close()
+            destination = root / "restored"
+            result = restore_encrypted_backup(
+                backup, destination, "a sufficiently long passphrase",
+            )
+            self.assertEqual(result["file_count"], 2)
+            restored = sqlite3.connect(destination / "workspace" / "conversations.sqlite3")
+            try:
+                self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(
+                    restored.execute("SELECT body FROM messages").fetchone()[0],
+                    "durable conversation",
+                )
+            finally:
+                restored.close()
+
+    def test_additional_backup_file_rejects_unsafe_or_colliding_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            (source / "config.json").write_text("{}")
+            external = root / "extra.txt"
+            external.write_text("extra")
+            with self.assertRaises(BackupError):
+                create_encrypted_backup(
+                    source, root / "unsafe.yukibak", "a sufficiently long passphrase",
+                    additional_files={"../escape.txt": external},
+                )
+            with self.assertRaises(BackupError):
+                create_encrypted_backup(
+                    source, root / "collision.yukibak", "a sufficiently long passphrase",
+                    additional_files={"CONFIG.JSON": external},
+                )
+            self.assertFalse((root / "unsafe.yukibak").exists())
+            self.assertFalse((root / "collision.yukibak").exists())
+
     def test_sqlite_is_snapshotted_and_integrity_checked(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
