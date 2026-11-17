@@ -156,6 +156,19 @@ class KokoroAdapterTests(unittest.TestCase):
                     adapter.speak("Hello.")
         self.assertEqual(self.sd.play_calls, [])
 
+    def test_stop_during_stream_validation_invalidates_request(self):
+        adapter = self.make(enabled=True)
+
+        def chunks():
+            yield "first"
+            adapter.stop()
+            yield "second"
+
+        with self.assertRaisesRegex(KokoroTTSError, "stopped while preparing"):
+            adapter.speak_stream(chunks())
+        self.assertIsNone(adapter._tts)
+        self.assertEqual(self.sd.play_calls, [])
+
     def test_stop_during_generation_prevents_current_and_queued_audio(self):
         adapter = self.make(enabled=True)
         def stop_during_generation(text, config):
