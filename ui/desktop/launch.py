@@ -868,7 +868,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
             specialist_controller = DesktopCompanionController(
-                context.application, context.identity, self.sessions
+                context.application, context.identity, self.sessions,
+                workspace_path=Path(config["workspace"]),
             )
             # Durable chat uses the canonical owner-scoped conversation runtime.
             # The existing specialist controller remains the authority for task
