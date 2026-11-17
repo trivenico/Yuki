@@ -89,13 +89,16 @@ class ProfiledLocalSpeechOutput:
             yield chunk
 
     def speak_stream(self, chunks):
-        """Delegate a bounded stream when available; otherwise speak chunks serially."""
-        bounded = self._bounded_chunks(chunks)
+        """Validate the entire bounded stream before allowing any audio side effect."""
+        # Materialization is safe because _bounded_chunks caps the collection at
+        # 100 chunks / 20,000 characters. It also prevents a malformed late
+        # chunk from causing partial speech before the input is rejected.
+        validated_chunks = list(self._bounded_chunks(chunks))
         stream = getattr(self.synthesizer, "speak_stream", None)
         if callable(stream):
-            return stream(bounded)
+            return stream(validated_chunks)
         count = 0
-        for chunk in bounded:
+        for chunk in validated_chunks:
             self.synthesizer.speak(chunk)
             count += 1
         return {"chunks_spoken": count, "interrupted": False}
