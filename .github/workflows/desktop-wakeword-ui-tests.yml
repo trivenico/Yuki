@@ -11,7 +11,7 @@ on:
       - "requirements-wakeword-openwakeword.txt"
       - ".github/workflows/desktop-wakeword-ui-tests.yml"
   push:
-    branches: [main]
+    branches: [main, feat/desktop-wakeword-controls]
     paths:
       - "ui/desktop/launch.py"
       - "voice/**"
