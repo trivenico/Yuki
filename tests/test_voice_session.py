@@ -22,7 +22,7 @@ class FakeSTT:
                 pass
             raise RuntimeError("capture cancelled")
 
-    def transcribe_file(self, path, *, language=None):
+    def transcribe_file(self, path, *, language=None, cancellation_event=None):
         self.transcribed_path = Path(path)
         self.assert_exists_during_transcription = self.transcribed_path.is_file()
         return {"text": "  Hello Yuki.  ", "language": "en"}
