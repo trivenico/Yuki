@@ -160,8 +160,10 @@ class WakeWordSession:
                     daemon=True,
                 )
                 self._thread = worker
+                # Start while holding the lifecycle lock so stop()/close()
+                # cannot attempt to join a Thread object before start().
+                worker.start()
             self._notify_state("listening")
-            worker.start()
         except Exception as exc:
             self._release(source, detector)
             with self._lock:
