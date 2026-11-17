@@ -20,7 +20,9 @@ session and selected a local ONNX model.
    capture. The recognized transcript is inserted into the composer for
    review. It is not automatically sent.
 7. **Stop listening**, microphone disable, sign-out, and application shutdown
-   stop the wake-word session. A closed session cannot restart itself.
+   signal capture cancellation immediately. Device joins and terminal cleanup
+   run on a background worker so the desktop interface does not wait for an
+   audio thread. A closed session cannot restart itself.
 
 Wake-word detection does not grant permission to execute tools, control the
 computer, or approve an action. Any such action still follows its own
