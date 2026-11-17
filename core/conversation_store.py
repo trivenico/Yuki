@@ -398,7 +398,7 @@ class ConversationStore:
 
     def update_generation_checkpoint(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        checkpoint: dict[str, Any],
+        checkpoint: dict[str, Any], lease_token: str | None = None,
     ) -> bool:
         """Persist a bounded, non-sensitive execution checkpoint for recovery."""
         owner = self._owner(owner_id)
@@ -411,30 +411,58 @@ class ConversationStore:
         if len(encoded) > 4096:
             raise ValueError("checkpoint exceeds 4096 characters.")
         with self._connect() as db:
-            cursor = db.execute(
-                """UPDATE conversation_generation_runs
-                   SET checkpoint=?, updated_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (encoded, self._now(), owner, conversation_id, request_id.strip()),
-            )
-            return cursor.rowcount == 1
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if lease_token is not None:
+                    lease = db.execute(
+                        """SELECT expires_at FROM conversation_generation_leases
+                           WHERE conversation_id=? AND owner_id=? AND lease_token=?""",
+                        (conversation_id, owner, lease_token.strip()),
+                    ).fetchone()
+                    if lease is None or lease["expires_at"] <= time.time():
+                        raise ConversationConflict("conversation generation lease was lost.")
+                cursor = db.execute(
+                    """UPDATE conversation_generation_runs
+                       SET checkpoint=?, updated_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
+                    (encoded, self._now(), owner, conversation_id, request_id.strip()),
+                )
+                db.commit()
+                return cursor.rowcount == 1
+            except Exception:
+                db.rollback()
+                raise
 
     def finish_generation(
         self, *, owner_id: str, conversation_id: str, request_id: str,
-        status: str,
+        status: str, lease_token: str | None = None,
     ) -> bool:
         owner = self._owner(owner_id)
         if status not in {"completed", "interrupted", "failed", "cancelled"}:
             raise ValueError("invalid generation terminal status.")
         now = self._now()
         with self._connect() as db:
-            cursor = db.execute(
-                """UPDATE conversation_generation_runs
-                   SET status=?, updated_at=?, finished_at=?
-                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
-                (status, now, now, owner, conversation_id, request_id.strip()),
-            )
-            return cursor.rowcount == 1
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if lease_token is not None:
+                    lease = db.execute(
+                        """SELECT expires_at FROM conversation_generation_leases
+                           WHERE conversation_id=? AND owner_id=? AND lease_token=?""",
+                        (conversation_id, owner, lease_token.strip()),
+                    ).fetchone()
+                    if lease is None or lease["expires_at"] <= time.time():
+                        raise ConversationConflict("conversation generation lease was lost.")
+                cursor = db.execute(
+                    """UPDATE conversation_generation_runs
+                       SET status=?, updated_at=?, finished_at=?
+                       WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
+                    (status, now, now, owner, conversation_id, request_id.strip()),
+                )
+                db.commit()
+                return cursor.rowcount == 1
+            except Exception:
+                db.rollback()
+                raise
 
     def list_interrupted_generations(
         self, *, owner_id: str, conversation_id: str | None = None, limit: int = 100,
