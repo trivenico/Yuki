@@ -73,6 +73,18 @@ class VoiceRecordingSecurityTests(unittest.TestCase):
                     self.stt.record_wav(output)
             self.assertFalse(output.exists())
 
+    def test_cancelled_capture_does_not_leave_a_recording(self):
+        from threading import Event
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "recording.wav"
+            cancelled = Event()
+            cancelled.set()
+            with patch.dict(sys.modules, self._mock_audio_modules()):
+                with self.assertRaises(STTError):
+                    self.stt.record_wav(output, cancellation_event=cancelled)
+            self.assertFalse(output.exists())
+
     def test_invalid_sample_rate_is_rejected(self):
         for sample_rate in (True, 0, 48000, "16000"):
             with self.subTest(sample_rate=sample_rate):
