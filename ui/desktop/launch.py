@@ -87,7 +87,7 @@ def _build_services():
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
     from ui.desktop.lifecycle import DesktopServiceLifecycle
 
-    portable_storage = bool(__import__("os").environ.get("YUKI_HOME", "").strip())
+    config = load_config()\n    portable_storage = bool(__import__("os").environ.get("YUKI_HOME", "").strip())
     root = prepare_private_desktop_root(
         desktop_data_root(), require_existing_parent=portable_storage,
         require_separate_volume=portable_storage,
@@ -96,13 +96,13 @@ def _build_services():
 
     require_healthy_sqlite_stores({
         "authentication": root / "auth.sqlite3",
-        "task_workflow": root / "tasks.sqlite3",
+        "task_workflow": root / "tasks.sqlite3",\n        "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
     })
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, load_os_keyring())
     provider = None
     try:
-        provider = create_provider(load_config())
+        provider = create_provider(config)
         permission_check = task_permission_authorizer(
             auth,
             session_token_provider=lambda: (
