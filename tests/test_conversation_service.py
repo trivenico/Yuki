@@ -106,6 +106,35 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result[0]["status"], "completed")
         self.assertEqual(result[0]["answer"], "long-running answer")
 
+    def test_checkpoint_and_terminal_state_require_current_lease_token(self):
+        conversation_id = self.conversation["conversation_id"]
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=conversation_id,
+            role="user", content="In-flight generation",
+            idempotency_key="fenced-state-request", expected_version=0,
+            generation_request_id="fenced-state-request",
+        )
+        self.store.acquire_generation_lease(
+            owner_id="owner-a", conversation_id=conversation_id,
+            lease_token="current-state-fence", ttl_seconds=120,
+        )
+        with self.assertRaises(ConversationConflict):
+            self.store.update_generation_checkpoint(
+                owner_id="owner-a", conversation_id=conversation_id,
+                request_id="fenced-state-request", checkpoint={"phase": "stale"},
+                lease_token="obsolete-state-fence",
+            )
+        with self.assertRaises(ConversationConflict):
+            self.store.finish_generation(
+                owner_id="owner-a", conversation_id=conversation_id,
+                request_id="fenced-state-request", status="completed",
+                lease_token="obsolete-state-fence",
+            )
+        pending = self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=conversation_id
+        )
+        self.assertEqual([item["request_id"] for item in pending], ["fenced-state-request"])
+
     def test_message_commit_requires_current_generation_lease_token(self):
         conversation_id = self.conversation["conversation_id"]
         self.store.acquire_generation_lease(
