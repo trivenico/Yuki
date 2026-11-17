@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.sqlite_recovery import build_sqlite_recovery_report, inspect_sqlite_store
+from core.sqlite_recovery import (\n    SQLiteRecoveryRequired,\n    build_sqlite_recovery_report,\n    inspect_sqlite_store,\n    require_healthy_sqlite_stores,\n)
 
 
 class SQLiteRecoveryReportTests(unittest.TestCase):
@@ -46,6 +46,21 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
         result = inspect_sqlite_store("auth", link)
         self.assertEqual(result["status"], "unsafe")
         self.assertEqual(target.read_bytes(), b"keep")
+
+    def test_recovery_gate_stops_before_initialization_when_store_is_corrupt(self):
+        path = self.root / "broken.sqlite3"
+        original = b"preserve"
+        path.write_bytes(original)
+        with self.assertRaises(SQLiteRecoveryRequired) as caught:
+            require_healthy_sqlite_stores({"authentication": path})
+        self.assertFalse(caught.exception.report["startup_safe"])
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_recovery_gate_allows_missing_first_run_stores(self):
+        report = require_healthy_sqlite_stores({
+            "authentication": self.root / "new-auth.sqlite3",
+        })
+        self.assertTrue(report["startup_safe"])
 
     def test_report_does_not_disclose_database_paths(self):
         path = self.root / "private-name.sqlite3"
