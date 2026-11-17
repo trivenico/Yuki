@@ -42,6 +42,51 @@ class ConversationServiceTests(unittest.TestCase):
             tools=[],
         )
 
+    def test_owner_scoped_model_loop_factory_is_used_for_authenticated_owner(self):
+        selected = []
+        owner_messages = []
+
+        def model(*, messages, tools, tool_choice):
+            owner_messages.append(messages)
+            return {"text": "Owner-specific answer", "tool_calls": {"tool_calls": []}}
+
+        owner_loop = AgentExecutionLoop(
+            model, StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        )
+        service = ConversationService(
+            self.store, self.loop,
+            agent_loop_for_owner=lambda owner_id: selected.append(owner_id) or owner_loop,
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Use my configured model",
+            request_id="owner-model-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(selected, ["owner-a"])
+        self.assertEqual(result["answer"], "Owner-specific answer")
+        self.assertEqual(len(owner_messages), 1)
+        self.assertEqual(self.observed, [])
+
+    def test_owner_scoped_model_factory_rejects_invalid_result_before_persisting(self):
+        service = ConversationService(
+            self.store, self.loop, agent_loop_for_owner=lambda owner_id: object()
+        )
+        with self.assertRaisesRegex(TypeError, "must return an AgentExecutionLoop"):
+            service.reply(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="Do not persist this",
+                request_id="invalid-owner-model-request",
+                expected_version=0,
+                tools=[],
+            )
+        self.assertEqual(self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        ), [])
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
