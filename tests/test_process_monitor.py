@@ -85,7 +85,7 @@ class ReadOnlyProcessMonitorTests(unittest.TestCase):
 
     def test_watchlist_normalizes_control_characters(self):
         monitor = ReadOnlyProcessMonitor(
-            suspicious_names=["bad\\n-tool"],
+            suspicious_names=["bad\n-tool"],
             provider=lambda: [{"pid": 9, "name": "bad-tool", "status": "running"}],
         )
         self.assertEqual(len(monitor.snapshot()["alerts"]), 1)
