@@ -74,9 +74,15 @@ class SecuritySessionController:
             raise SecuritySessionError("Security monitoring could not be enabled.") from exc
         with self._lock:
             startup_current = self._active and self._starting and not self._closed and self._generation == generation
-            if startup_current and self._authorized():
+        authorization_current = self._authorized() if startup_current else False
+        with self._lock:
+            startup_current = (
+                startup_current and authorization_current and self._active
+                and self._starting and not self._closed and self._generation == generation
+            )
+            if startup_current:
                 self._starting = False
-        if not startup_current or not self._authorized():
+        if not startup_current:
             # A concurrent Stop/close may have run before enable() returned.
             # Disable again so a late enable cannot resurrect monitoring.
             self.stop()
