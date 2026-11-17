@@ -91,7 +91,7 @@ def _build_services():
     root = prepare_private_desktop_root(
         desktop_data_root(), require_existing_parent=portable_storage,
     )
-    auth = BuiltInAuthService(str(root / "auth.sqlite3"))
+    from core.sqlite_recovery import require_healthy_sqlite_stores\n\n    require_healthy_sqlite_stores({\n        "authentication": root / "auth.sqlite3",\n        "task_workflow": root / "tasks.sqlite3",\n    })\n    auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, load_os_keyring())
     provider = None
     try:
