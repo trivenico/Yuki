@@ -206,6 +206,32 @@ class DesktopBackupTests(unittest.TestCase):
             finally:
                 restored.close()
 
+    def test_additional_workspace_root_rejects_symlink_and_backup_output_inside_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            (workspace / "notes.txt").write_text("private")
+            with self.assertRaisesRegex(BackupError, "outside every source data directory"):
+                create_encrypted_backup(
+                    source, workspace / "backup.yukibak",
+                    "a sufficiently long passphrase",
+                    additional_roots={"workspace": workspace},
+                )
+            link = root / "workspace-link"
+            try:
+                link.symlink_to(workspace, target_is_directory=True)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+            with self.assertRaisesRegex(BackupError, "symbolic link"):
+                create_encrypted_backup(
+                    source, root / "backup.yukibak",
+                    "a sufficiently long passphrase",
+                    additional_roots={"workspace": link},
+                )
+
     def test_additional_backup_file_cannot_shadow_reserved_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
