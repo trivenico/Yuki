@@ -42,6 +42,35 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _fsync_staged_tree(root: Path) -> None:
+    """Flush staged regular files and directories before atomic publication.
+
+    POSIX filesystems that honor fsync can then persist both file contents and
+    the directory entries that make up the staged tree. Other platforms retain
+    their native durability behavior.
+    """
+    if os.name != "posix":
+        return
+    for current, _dirs, files in os.walk(root, topdown=False, followlinks=False):
+        directory = Path(current)
+        for name in files:
+            path = directory / name
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                if not __import__("stat").S_ISREG(os.fstat(descriptor).st_mode):
+                    raise OSError("staged entry is not a regular file")
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        descriptor = os.open(directory, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def _crypto():
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -360,6 +389,7 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                             raise BackupError(f"Restored SQLite database is invalid: {rel}")
                     finally:
                         db.close()
+            _fsync_staged_tree(stage)
             if target.exists():
                 if any(target.iterdir()):
                     raise BackupError("Restore destination changed; refusing to overwrite data.")
