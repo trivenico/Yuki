@@ -134,7 +134,7 @@ class EncryptedMemoryStore(MemoryStore):
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
             plaintext = AESGCM(key).decrypt(nonce, ciphertext, _AAD)
             entries = json.loads(plaintext.decode("utf-8"))
-            MemoryStore(memory_file)._validate_entries(entries)
+            EncryptedMemoryStore._validate_entries(entries)
             backend = keyring_module.get_keyring()
             priority = getattr(backend, "priority", 0)
             if not isinstance(priority, (int, float)) or priority <= 0:
