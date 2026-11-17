@@ -171,27 +171,34 @@ def run() -> int:
                 os.environ["YUKI_CONFIG"] = str(Path(temporary_root) / "config.yaml")
                 from core.config import load_config
 
-                smoke_config = load_config()\n                smoke_log("stage: packaged-config-loaded")
+                smoke_config = load_config()
+                smoke_log("stage: packaged-config-loaded")
                 if smoke_config.get("name") != "Yuki":
                     raise RuntimeError("Packaged first-run configuration did not load.")
                 if not (Path(temporary_root) / "config.yaml").is_file():
                     raise RuntimeError("Packaged first-run configuration was not created.")
 
-            smoke_log("stage: before-qt-import")\n            try:\n                from PySide6.QtWidgets import QApplication, QLabel
+            smoke_log("stage: before-qt-import")
+            try:
+                from PySide6.QtWidgets import QApplication, QLabel
             except ImportError as exc:
                 raise RuntimeError(
                     "Yuki Desktop could not load PySide6 or its native Qt runtime libraries. "
                     "Install requirements-desktop.txt and the platform's Qt system dependencies."
                 ) from exc
-            smoke_log("stage: qt-imported")\n            app = QApplication.instance() or QApplication([sys.argv[0]])
+            smoke_log("stage: qt-imported")
+            app = QApplication.instance() or QApplication([sys.argv[0]])
             probe = QLabel("Yuki Desktop runtime OK")
-            smoke_log("stage: app-created")\n            probe.show()
+            smoke_log("stage: app-created")
+            probe.show()
             app.processEvents()
             if not probe.isVisible():
                 raise RuntimeError("Qt could not initialize a visible desktop widget.")
-            smoke_log("stage: widget-visible")\n            probe.close()
+            smoke_log("stage: widget-visible")
+            probe.close()
             app.processEvents()
-            smoke_log("stage: success")\n            return 0
+            smoke_log("stage: success")
+            return 0
         except BaseException:
             log_path = os.environ.get("YUKI_SMOKE_TEST_LOG")
             if log_path:
