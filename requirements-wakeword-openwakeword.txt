@@ -1,4 +1,5 @@
 # Optional local wake-word inference. No pretrained wake-word model is bundled.
-openwakeword==0.6.0
+# Keep constraints aligned with the shared optional voice dependency manifest.
+openwakeword>=0.6,<1.0
 onnxruntime>=1.17,<2.0
-numpy>=1.26,<2.0
+numpy>=1.26,<3.0
