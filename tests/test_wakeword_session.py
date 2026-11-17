@@ -84,6 +84,38 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertTrue(session.stop())
         self.assertEqual(session.state, "disabled")
 
+    def test_close_waits_for_startup_to_release_microphone(self):
+        class SlowStartSource(FakeAudioSource):
+            def __init__(inner_self):
+                super().__init__()
+                inner_self.start_entered = threading.Event()
+                inner_self.allow_start_to_finish = threading.Event()
+
+            def start(inner_self):
+                inner_self.start_entered.set()
+                inner_self.allow_start_to_finish.wait(2)
+                inner_self.started = True
+
+        source = SlowStartSource()
+        detector = FakeDetector()
+        session = self.make_session(source, detector)
+        starter = threading.Thread(target=session.start)
+        starter.start()
+        self.assertTrue(source.start_entered.wait(2))
+
+        close_result = []
+        closer = threading.Thread(target=lambda: close_result.append(session.close()))
+        closer.start()
+        source.allow_start_to_finish.set()
+        closer.join(3)
+        starter.join(3)
+        self.assertFalse(closer.is_alive())
+        self.assertFalse(starter.is_alive())
+        self.assertEqual(close_result, [True])
+        self.assertEqual(session.state, "closed")
+        self.assertTrue(source.closed)
+        self.assertTrue(detector.closed)
+
     def test_worker_remains_registered_until_wake_callback_finishes(self):
         source = FakeAudioSource([b"wake"])
         detector = FakeDetector()
