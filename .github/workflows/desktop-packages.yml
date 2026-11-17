@@ -67,8 +67,8 @@ jobs:
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:YUKI_SMOKE_TEST_LOG = Join-Path $env:RUNNER_TEMP "yuki-smoke-test.log"
-          & "dist/Yuki/Yuki.exe" --smoke-test
-          $smokeExitCode = $LASTEXITCODE
+          $smokeProcess = Start-Process -FilePath (Resolve-Path "dist/Yuki/Yuki.exe") -ArgumentList "--smoke-test" -Wait -PassThru
+          $smokeExitCode = $smokeProcess.ExitCode
           Write-Host "Packaged smoke exit code: $smokeExitCode"
           if (Test-Path $env:YUKI_SMOKE_TEST_LOG) { Get-Content $env:YUKI_SMOKE_TEST_LOG }
           if ($smokeExitCode -ne 0) {
