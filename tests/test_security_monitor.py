@@ -2,6 +2,7 @@ import unittest
 from threading import Event, Thread
 
 from defense.security_monitor import DesktopSecurityMonitor, SecurityMonitorError
+from defense.ids import PortScanDetector
 
 
 class FakeProcessMonitor:
@@ -45,6 +46,22 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
         self.assertFalse(result["persisted"])
         self.assertFalse(result["automated_response"])
         self.assertNotIn("source_ip", result["alerts"][-1])
+
+
+    def test_real_detector_integration_emits_only_sanitized_alert(self):
+        detector = PortScanDetector(threshold=3, window_seconds=10)
+        monitor = DesktopSecurityMonitor(port_scan_detector=detector, enabled=True)
+        self.assertIsNone(monitor.observe_connection("192.0.2.44", 80, timestamp=1))
+        self.assertIsNone(monitor.observe_connection("192.0.2.44", 443, timestamp=2))
+        alert = monitor.observe_connection("192.0.2.44", 8080, timestamp=3)
+        self.assertEqual(alert["source"], "network")
+        self.assertEqual(alert["type"], "possible_port_scan")
+        self.assertNotIn("source_ip", alert)
+        self.assertNotIn("unique_ports", alert)
+        snapshot = monitor.snapshot()
+        self.assertEqual(snapshot["alerts"][-1], alert)
+        self.assertTrue(snapshot["read_only"])
+        self.assertFalse(snapshot["automated_response"])
 
     def test_alert_history_is_bounded(self):
         class Detector:
