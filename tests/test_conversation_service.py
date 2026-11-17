@@ -124,6 +124,73 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result[0]["status"], "completed")
         self.assertEqual(result[0]["answer"], "long-running answer")
 
+    def test_lost_lease_prevents_active_generation_from_committing_answer(self):
+        import threading
+        from unittest.mock import patch
+
+        entered = threading.Event()
+        release = threading.Event()
+        renewal_attempted = threading.Event()
+        errors = []
+
+        def blocking_model(**kwargs):
+            entered.set()
+            if not release.wait(timeout=3):
+                raise TimeoutError("test provider was not released")
+            return {"text": "stale answer must not persist", "tool_calls": {"tool_calls": []}}
+
+        def lose_lease(**kwargs):
+            renewal_attempted.set()
+            return False
+
+        active = ConversationService(
+            self.store,
+            AgentExecutionLoop(
+                blocking_model,
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            ),
+        )
+
+        def send_active():
+            try:
+                active.reply(
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="A request whose lease will be lost",
+                    request_id="lost-lease-request",
+                    expected_version=0,
+                    tools=[],
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch("core.conversation_service.GENERATION_LEASE_RENEW_INTERVAL_SECONDS", 0.02), patch.object(
+            self.store, "renew_generation_lease", side_effect=lose_lease
+        ):
+            worker = threading.Thread(target=send_active)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(timeout=2), "provider was not entered")
+                self.assertTrue(renewal_attempted.wait(timeout=2), "lease heartbeat did not run")
+            finally:
+                release.set()
+                worker.join(timeout=3)
+                active.close()
+
+        self.assertFalse(worker.is_alive(), "lost-lease generation did not finish")
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], ConversationConflict)
+        messages = self.store.list_messages(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual([message["role"] for message in messages], ["user"])
+        pending = self.store.list_interrupted_generations(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+        )
+        self.assertEqual([item["request_id"] for item in pending], ["lost-lease-request"])
+
     def test_checkpoint_and_terminal_state_require_current_lease_token(self):
         conversation_id = self.conversation["conversation_id"]
         self.store.append_message(
