@@ -1631,6 +1631,16 @@ Version: {version}",
             self.wakeword_status.setText("Hey Yuki listening is off. Microphone released.")
 
         def _set_voice_enabled(self, enabled: bool):
+            if enabled and self.wakeword_session is not None:
+                QMessageBox.warning(
+                    self, "Microphone still releasing",
+                    "Yuki has not confirmed that the previous wake-word microphone session is fully closed. "
+                    "Use Stop listening to retry cleanup before enabling microphone capture."
+                )
+                self.voice_checkbox.blockSignals(True)
+                self.voice_checkbox.setChecked(False)
+                self.voice_checkbox.blockSignals(False)
+                return
             if not enabled:
                 self._close_wakeword_session()
                 session = self.voice_session
