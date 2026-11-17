@@ -84,6 +84,37 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
             _shutdown_desktop_services(lifecycle, Controller(), None)
         self.assertTrue(lifecycle.closed)
 
+    def test_failed_logout_locks_every_session_action_except_retry(self):
+        from ui.desktop.launch import _restrict_session_to_logout_retry
+
+        class Tabs:
+            def __init__(self):
+                self.enabled = [True, True, True]
+            def count(self):
+                return len(self.enabled)
+            def setTabEnabled(self, index, enabled):
+                self.enabled[index] = enabled
+
+        class Control:
+            def __init__(self):
+                self.enabled = True
+                self.text = ""
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+            def setText(self, text):
+                self.text = text
+
+        tabs = Tabs()
+        controls = [Control() for _ in range(4)]
+        logout = Control()
+        status = Control()
+        _restrict_session_to_logout_retry(tabs, tuple(controls), logout, status)
+        self.assertEqual(tabs.enabled, [True, False, False])
+        self.assertTrue(all(not control.enabled for control in controls))
+        self.assertEqual(logout.text, "Retry sign out")
+        self.assertTrue(logout.enabled)
+        self.assertTrue(status.enabled)
+
     def test_no_controller_is_a_noop(self):
         self.assertIsNone(_close_expired_controller(None))
 
