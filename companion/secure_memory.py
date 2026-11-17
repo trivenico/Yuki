@@ -47,6 +47,8 @@ class EncryptedMemoryStore(MemoryStore):
     def _load_or_create_key(self) -> bytes:
         try:
             encoded = self._keyring.get_password(_SERVICE, _ACCOUNT)
+            if encoded is None and self.path.exists():
+                raise RuntimeError("An existing encrypted memory file has no keyring key.")
             if encoded is None:
                 key = os.urandom(32)
                 self._keyring.set_password(_SERVICE, _ACCOUNT, base64.b64encode(key).decode("ascii"))
