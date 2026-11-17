@@ -42,12 +42,19 @@ The output is under `dist/Yuki/` on Windows/Linux and `dist/Yuki.app/` on macOS.
 
 ## CI coverage and release blockers
 
-The current `Yuki quality gates` workflow runs the Python test suite on
-Windows, macOS, and Linux, verifies installed CLI behavior, and launches the
-native Qt runtime in an Ubuntu offscreen smoke test. It does not yet build or
-launch packaged Qt desktop bundles. Add native packaging, artifact provenance,
-SBOM generation, and checksum publication as separate release gates before
-distributing a desktop build.
+The `Native desktop packages` workflow builds unsigned PyInstaller
+bundles on native Windows, macOS, and Linux runners. Each packaged executable
+is launched with `--smoke-test`, which verifies Qt widget initialization and
+loads the bundled first-run configuration template into an isolated temporary
+profile. The workflow also emits a CycloneDX SBOM for the Python build
+environment, SHA-256 checksums for bundle files, and short-lived CI artifacts.
+Build provenance is attested for platform artifacts on pushes to `main`.
+
+These are CI/developer bundles, not signed production installers. The current
+SBOM describes the Python environment and is not a complete inventory of all
+OS-level libraries and binaries embedded by PyInstaller. A hosted-runner smoke
+test does not replace installation and acceptance on independent clean
+physical machines.
 
 ## Release blockers
 
