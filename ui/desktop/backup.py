@@ -250,6 +250,9 @@ def create_encrypted_backup(
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise BackupError("Additional backup source must be a private regular file.")
         archive_items.append((safe_relative.as_posix(), item))
+    salt = os.urandom(SALT_BYTES)
+    nonce = os.urandom(NONCE_BYTES)
+    key = _derive(passphrase, salt, Scrypt)
     if memory_key_export is not None:
         if not isinstance(memory_key_export, bytes) or not 1 <= len(memory_key_export) <= 2048:
             raise BackupError("Portable memory key export is invalid.")
@@ -265,10 +268,20 @@ def create_encrypted_backup(
             ):
                 raise ValueError("invalid key metadata")
             from core.profile_identity import profile_memory_keyring_account
-            profile_memory_keyring_account(key_metadata["profile_id"])
+            profile_id = key_metadata["profile_id"]
+            profile_memory_keyring_account(profile_id)
             identity = json.loads((root / "profile_identity.json").read_text(encoding="utf-8"))
-            if identity.get("schema_version") != 1 or identity.get("profile_id") != key_metadata["profile_id"]:
+            if identity.get("schema_version") != 1 or identity.get("profile_id") != profile_id:
                 raise ValueError("profile identity mismatch")
+            memory_nonce = os.urandom(NONCE_BYTES)
+            memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+            wrapped_key = AESGCM(key).encrypt(memory_nonce, memory_key_export, memory_aad)
+            memory_key_export = json.dumps({
+                "schema_version": 1,
+                "profile_id": profile_id,
+                "nonce": base64.b64encode(memory_nonce).decode("ascii"),
+                "ciphertext": base64.b64encode(wrapped_key).decode("ascii"),
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")
         except Exception as exc:
             raise BackupError("Portable memory key export does not match the source profile.") from exc
         secret_path = ".yuki/memory_key_export.json"
@@ -336,9 +349,6 @@ def create_encrypted_backup(
         plaintext = archive_file.read(MAX_BACKUP_BYTES + 1)
     if len(plaintext) > MAX_BACKUP_BYTES:
         raise BackupError("Backup archive exceeds the 512 MiB limit.")
-    salt = os.urandom(SALT_BYTES)
-    nonce = os.urandom(NONCE_BYTES)
-    key = _derive(passphrase, salt, Scrypt)
     encrypted = AESGCM(key).encrypt(nonce, plaintext, MAGIC)
     fd, temporary = tempfile.mkstemp(prefix=".yuki-backup-", dir=str(output.parent))
     try:
