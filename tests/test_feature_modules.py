@@ -65,9 +65,8 @@ class FeatureModuleTests(unittest.TestCase):
         self.assertIn("technical decision", result.data["prompt"])
 
     def test_live_firewall_mutation_fails_closed(self):
-        manager = FirewallManager(enabled=True, dry_run=False, approver=lambda _: True)
         with self.assertRaises(FirewallError):
-            manager.block_temporary("203.0.113.5", seconds=60)
+            FirewallManager(enabled=True, dry_run=False, approver=lambda _: True)
 
     def test_wakeword_disabled_by_default(self):
         with self.assertRaises(WakeWordError):
