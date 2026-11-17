@@ -8,7 +8,7 @@ from unittest.mock import patch
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.auth import BuiltInAuthService, task_permission_authorizer
-from yuki_cli import run_cli
+from yuki_cli import build_parser, run_cli
 
 
 class FakeProvider:
@@ -35,6 +35,11 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_parser_accepts_hyphen_leading_workflow_token_ids(self):
+        task_id = "-Abcdefghijklmnopqrstuvwx"
+        parsed = build_parser().parse_args(["tasks", "inspect", task_id])
+        self.assertEqual(parsed.task_id, task_id)
+
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
         output = []
