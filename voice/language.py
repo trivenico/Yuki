@@ -9,7 +9,28 @@ import re
 
 
 SUPPORTED_BEHAVIOR = {"auto_detect"}
-SUPPORTED_VOICE_STYLES = {"natural_realistic_female"}
+SUPPORTED_VOICE_STYLES = {
+    "natural_realistic_female",
+    "japanese_anime_female_english",
+}
+
+
+def voice_style_instruction(style):
+    """Return bounded voice-direction text; never request a real-person imitation."""
+    if style not in SUPPORTED_VOICE_STYLES:
+        raise ValueError("Unsupported voice style.")
+    if style == "japanese_anime_female_english":
+        return (
+            "Speak in English with a feminine, Japanese-anime-inspired voice-acting style. "
+            "Use warm, sweet, expressive, intelligent delivery with gentle playful energy. "
+            "Keep pronunciation clear and natural; avoid exaggerated, shrill, childish, "
+            "or robotic delivery. Do not imitate a specific real person, voice actor, "
+            "or copyrighted character."
+        )
+    return (
+        "Speak in clear, natural English with a feminine, realistic voice. "
+        "Do not imitate a specific real person, voice actor, or copyrighted character."
+    )
 SUPPORTED_SPOKEN_POLICIES = {"every_reply_when_voice_mode_active"}
 
 
