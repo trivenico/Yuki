@@ -88,5 +88,5 @@ The adapter must pass the existing output-session lifecycle and TTS resource-lim
 - sherpa-onnx Kokoro English model documentation: https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html
 - sherpa-onnx TTS API and Kokoro model configuration: https://github.com/k2-fsa/sherpa-onnx/blob/master/sherpa-onnx/c-api/docs/tts.dox
 - sherpa-onnx repository and runtime license: https://github.com/k2-fsa/sherpa-onnx
-- Kokoro model card and weight license: https://huggingface.co/MaziyarPanahi/Kokoro-82M
+- Kokoro model card and weight license: https://huggingface.co/hexgrad/Kokoro-82M
 - eSpeak-NG provenance/licensing question for the model package: https://github.com/k2-fsa/sherpa-onnx/issues/4002
