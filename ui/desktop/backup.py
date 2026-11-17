@@ -429,6 +429,11 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
             actual = {p.relative_to(stage).as_posix(): p for p in stage.rglob("*") if p.is_file()}
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
+            if os.name == "posix":
+                # Restore personal data with private permissions regardless of
+                # the caller's umask or archive-supplied mode bits.
+                for path in sorted(stage.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+                    os.chmod(path, 0o700 if path.is_dir() else 0o600)
             for rel, path in actual.items():
                 entry = expected[rel]
                 if path.stat().st_size != entry["size"] or not hmac.compare_digest(_sha256_file(path), entry["sha256"]):
