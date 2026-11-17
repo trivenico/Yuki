@@ -286,7 +286,7 @@ def run() -> int:
 
 
     class SpeechWorkerSignals(QObject):
-        finished = Signal(object, object, object)
+        finished = Signal(object, object, object, object)
 
     class SpeechWorker(QRunnable):
         def __init__(self, session, reply: str):
@@ -301,9 +301,9 @@ def run() -> int:
                 result = self.session.speak_reply(
                     self.reply, voice_mode_active=True,
                 )
-                self.signals.finished.emit(result, None, self.session)
+                self.signals.finished.emit(result, None, self.session, self)
             except Exception as exc:
-                self.signals.finished.emit(None, exc, self.session)
+                self.signals.finished.emit(None, exc, self.session, self)
 
     class PlanWorkerSignals(QObject):
         finished = Signal(object, object)
@@ -1410,8 +1410,18 @@ Version: {version}",
                 session = self.speech_session
                 self.speech_session = None
                 if session is not None:
-                    session.close()
+                    try:
+                        session.close()
+                    except Exception as exc:
+                        self.voice_status.setText(
+                            "Spoken-reply shutdown failed (" + type(exc).__name__ + ")."
+                        )
                 self.speech_stop_button.setEnabled(False)
+                if self.speech_worker is None and self.controller is not None:
+                    self.send_button.setEnabled(not self.busy)
+                    self.message.setEnabled(not self.busy)
+                if self.voice_status.text().startswith("Spoken-reply shutdown failed"):
+                    return
                 self.voice_status.setText("Spoken replies off. Microphone permission is independent.")
                 return
             if self.controller is None:
@@ -1477,11 +1487,21 @@ Version: {version}",
             self.voice_status.setText("Yuki is speaking. Press Stop speaking to interrupt.")
             self.pool.start(worker)
 
-        @Slot(object, object, object)
-        def _spoken_reply_finished(self, result: Any, error: Any, captured_session: Any):
-            self.speech_worker = None
+        @Slot(object, object, object, object)
+        def _spoken_reply_finished(
+            self, result: Any, error: Any, captured_session: Any, completed_worker: Any,
+        ):
+            if self.speech_worker is completed_worker:
+                self.speech_worker = None
             if captured_session is not self.speech_session:
-                if self.controller is not None and not self._logout_started and not self._shutdown_started:
+                # A revoked worker may finish after a later login/session has
+                # started. Never let its callback overwrite a newer worker/UI.
+                if (
+                    self.speech_worker is None
+                    and self.controller is not None
+                    and not self._logout_started
+                    and not self._shutdown_started
+                ):
                     self.speech_stop_button.setEnabled(False)
                     self.send_button.setEnabled(not self.busy)
                     self.message.setEnabled(not self.busy)
