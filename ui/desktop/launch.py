@@ -789,7 +789,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
             answer = QMessageBox.warning(
                 self, "Restore backup",
                 "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
-                "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. The running profile is unchanged. Continue?",
+                "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
+                + ("The portable memory key will be imported into this computer's OS keyring. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
+                + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
@@ -821,6 +823,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.backup_status.setText(
                     f"Encrypted backup verified: {result['file_count']} files, "
                     f"{result['size_bytes']} bytes. Output: {result['path']}"
+                    + (" Portable memory key included." if result.get("memory_key_included") else " Memory remains tied to the source OS keyring.")
                 )
             else:
                 self.backup_status.setText(
