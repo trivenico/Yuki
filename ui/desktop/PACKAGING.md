@@ -43,10 +43,11 @@ The output is under `dist/Yuki/` on Windows/Linux and `dist/Yuki.app/` on macOS.
 ## CI coverage and release blockers
 
 The current `Yuki quality gates` workflow runs the Python test suite on
-Windows, macOS, and Linux and verifies installed CLI behavior. It does not yet
-build or launch packaged Qt desktop bundles. Add native packaging, Qt
-offscreen smoke tests, artifact provenance, SBOM generation, and checksum
-publication as separate release gates before distributing a desktop build.
+Windows, macOS, and Linux, verifies installed CLI behavior, and launches the
+native Qt runtime in an Ubuntu offscreen smoke test. It does not yet build or
+launch packaged Qt desktop bundles. Add native packaging, artifact provenance,
+SBOM generation, and checksum publication as separate release gates before
+distributing a desktop build.
 
 ## Release blockers
 
