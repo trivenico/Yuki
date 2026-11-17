@@ -1285,15 +1285,25 @@ def run() -> int:
 
         @Slot(object)
         def _shutdown_finished(self, error: Any):
-            self._shutdown_complete = True
-            self.controller = None
             if error is not None:
+                # Keep the controller and lifecycle attached. Their failed
+                # cleanup hooks are retryable; do not exit with revocation
+                # incomplete or silently discard the only retry handle.
+                self._shutdown_started = False
+                self.setEnabled(True)
+                self.login_status.setText(
+                    "Shutdown cleanup incomplete. Session actions remain blocked. "
+                    "Close Yuki again to retry cleanup."
+                )
                 QMessageBox.warning(
                     self, "Yuki shutdown",
                     "Yuki could not complete every cleanup operation ("
                     + type(error).__name__
-                    + "). Remaining cleanup was attempted; check the application logs."
+                    + "). Successful steps were retained; close Yuki again to retry failed cleanup."
                 )
+                return
+            self._shutdown_complete = True
+            self.controller = None
             self.close()
 
         def closeEvent(self, event):
