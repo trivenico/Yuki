@@ -402,7 +402,12 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     or rel in expected
                 ):
                     raise BackupError("Backup manifest entry is invalid or duplicated.")
-                expected[rel] = entry
+                expected_path = rel
+                if schema_version == 1 and not rel.startswith(("workspace/", ".yuki/")):
+                    expected_path = ".yuki/" + rel
+                if expected_path in expected:
+                    raise BackupError("Backup manifest paths collide after profile normalization.")
+                expected[expected_path] = entry
             # Version 1 archives stored desktop files at archive root and the
             # workspace as a sibling. Normalize them to the current YUKI_HOME
             # package layout without changing their authenticated file payloads.
