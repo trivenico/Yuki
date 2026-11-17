@@ -1029,7 +1029,15 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.voice_button.setEnabled(False)
             self.voice_stop_button.setEnabled(False)
             if self.speech_session is not None:
-                self.speech_session.close()
+                try:
+                    self.speech_session.close()
+                except Exception as exc:
+                    # A stale audio backend must not block a new authenticated
+                    # session from being initialized.
+                    self.chat_status.setText(
+                        "Warning: previous speech session cleanup failed ("
+                        + type(exc).__name__ + ")."
+                    )
             self.speech_session = None
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
