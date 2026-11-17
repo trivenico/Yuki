@@ -64,7 +64,7 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_explicit_start_processes_frames_locally_then_triggers_once(self):
-        source = FakeAudioSource([b"noise", b"wake"])
+        source = FakeAudioSource([b"noise!", b"wake"])
         detector = FakeDetector()
         woke = threading.Event()
         states = []
@@ -169,7 +169,7 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertTrue(detector.closed)
 
     def test_detector_must_return_a_boolean(self):
-        source = FakeAudioSource([b"frame"])
+        source = FakeAudioSource([b"frame!"])
         detector = FakeDetector()
         detector.process = lambda frame: 1
         errors = []
