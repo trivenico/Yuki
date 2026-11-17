@@ -112,6 +112,8 @@ class VoiceSession:
                     raise VoiceSessionError("Voice capture was cancelled.")
                 if on_capture_complete is not None:
                     on_capture_complete()
+                if self._cancel.is_set():
+                    raise VoiceSessionError("Voice session was stopped.")
                 result = self._stt.transcribe_file(audio_path, language=language)
                 if self._cancel.is_set():
                     raise VoiceSessionError("Voice session was stopped.")
