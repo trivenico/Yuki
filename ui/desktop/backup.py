@@ -220,6 +220,8 @@ def create_encrypted_backup(
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise BackupError("Additional backup source must be a private regular file.")
         archive_items.append((safe_relative.as_posix(), item))
+    if len(archive_items) > MAX_FILES:
+        raise BackupError("Backup contains too many files.")
     total = sum(p.stat().st_size for _, p in archive_items)
     if total > MAX_BACKUP_BYTES:
         raise BackupError("Backup exceeds the 512 MiB uncompressed size limit.")
@@ -288,7 +290,10 @@ def create_encrypted_backup(
         try:
             # Hard-link publication is atomic and fails if another process created the target.
             os.link(temporary, output)
-            _fsync_directory(output.parent)
+            try:
+                _fsync_directory(output.parent)
+            except OSError as exc:
+                raise BackupError("Backup was published, but filesystem durability could not be confirmed; verify the file before retrying.") from exc
         except FileExistsError as exc:
             raise BackupError("Backup output appeared during creation; refusing to overwrite it.") from exc
     except Exception:
@@ -416,7 +421,10 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                 target.rmdir()
             target.parent.mkdir(parents=True, exist_ok=True)
             stage.rename(target)
-            _fsync_directory(target.parent)
+            try:
+                _fsync_directory(target.parent)
+            except OSError as exc:
+                raise BackupError("Restore was published, but filesystem durability could not be confirmed; verify the destination before retrying.") from exc
             return {"destination": str(target), "file_count": len(actual), "size_bytes": total}
         except (tarfile.TarError, OSError, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, BackupError):
