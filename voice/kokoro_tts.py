@@ -77,7 +77,7 @@ class KokoroTTS:
         self.playback_watchdog_seconds = float(playback_watchdog_seconds)
         self._tts = None
         self._load_lock = threading.Lock()
-        self._operation_lock = threading.Lock()
+        self._operation_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._generation = 0
 
@@ -256,12 +256,19 @@ class KokoroTTS:
         self._stop_event.clear()
         generation = self._generation
         spoken = 0
-        for chunk in validated:
-            if self._stop_event.is_set() or generation != self._generation:
-                break
-            self._speak(chunk, generation)
-            spoken += 1
-        return {
-            "chunks_spoken": spoken,
-            "interrupted": self._stop_event.is_set() or generation != self._generation,
-        }
+        # Hold the re-entrant operation lock for the entire stream so another
+        # caller cannot interleave unrelated speech between consecutive chunks.
+        if not self._operation_lock.acquire(blocking=False):
+            raise KokoroTTSError("Kokoro is already processing a speech request.")
+        try:
+            for chunk in validated:
+                if self._stop_event.is_set() or generation != self._generation:
+                    break
+                self._speak(chunk, generation)
+                spoken += 1
+            return {
+                "chunks_spoken": spoken,
+                "interrupted": self._stop_event.is_set() or generation != self._generation,
+            }
+        finally:
+            self._operation_lock.release()
