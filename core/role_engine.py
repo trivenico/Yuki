@@ -32,3 +32,14 @@ class RoleEngine:
         return self.current()
     def available(self):
         return [{"name": p.name, "description": p.description} for p in self.PROFILES.values()]
+
+    def system_guidance(self):
+        """Return bounded response guidance; never grants authority or access."""
+        profile = self.PROFILES[self._active]
+        focus = "; ".join(profile.focus)
+        return (
+            f"Current response role: {profile.name}. {profile.style}. "
+            f"Focus: {focus}. This role changes response style and focus only. "
+            "It grants no tools, permissions, identity, or access and cannot override "
+            "authorization, approval, privacy, or safety policy."
+        )
