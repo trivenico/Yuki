@@ -32,8 +32,11 @@ def create_desktop_voice_output(config: dict[str, Any]):
     if backend == "kokoro":
         model_dir = config.get("kokoro_model_dir") or None
         lexicon_path = config.get("kokoro_lexicon_path") or None
-        if model_dir is None or not Path(model_dir).expanduser().is_dir():
+        model_root = Path(model_dir).expanduser() if model_dir else None
+        if model_root is None or not model_root.is_dir():
             raise ValueError("Configure an existing local Kokoro model directory before enabling spoken replies.")
+        if any(not (model_root / asset).is_file() for asset in ("model.onnx", "voices.bin", "tokens.txt")):
+            raise ValueError("The local Kokoro model directory is incomplete; model.onnx, voices.bin, and tokens.txt are required.")
         if lexicon_path is None or not Path(lexicon_path).expanduser().is_file():
             raise ValueError("Configure an existing explicit Kokoro English lexicon before enabling spoken replies.")
         _require_optional_module("sherpa_onnx", "sherpa-onnx")
