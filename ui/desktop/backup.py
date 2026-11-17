@@ -520,12 +520,41 @@ def restore_encrypted_backup(
                     raise BackupError("Restore destination changed; refusing to overwrite data.")
                 target.rmdir()
             target.parent.mkdir(parents=True, exist_ok=True)
-            stage.rename(target)
+            imported_key = False
+            imported_account = None
+            if memory_key_export is not None:
+                try:
+                    identity_payload = json.loads(
+                        (stage / ".yuki" / "profile_identity.json").read_text(encoding="utf-8")
+                    )
+                    profile_id = identity_payload["profile_id"]
+                    from core.profile_identity import profile_memory_keyring_account
+                    imported_account = profile_memory_keyring_account(profile_id)
+                    from companion.secure_memory import EncryptedMemoryStore
+                    imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
+                        memory_key_export, profile_id, keyring_module=keyring_module,
+                    )
+                except Exception as exc:
+                    raise BackupError("Portable memory key could not be safely installed in the destination OS keyring.") from exc
+            try:
+                stage.rename(target)
+            except Exception as exc:
+                if imported_key and imported_account is not None:
+                    try:
+                        keyring_module.delete_password("yuki-companion-memory", imported_account)
+                    except Exception as rollback_error:
+                        raise BackupError("Restore publication failed and the newly imported key could not be removed from the OS keyring; preserve the keyring entry and retry recovery.") from rollback_error
+                raise
             try:
                 _fsync_directory(target.parent)
             except OSError as exc:
                 raise BackupError("Restore was published, but filesystem durability could not be confirmed; verify the destination before retrying.") from exc
-            return {"destination": str(target), "file_count": len(actual), "size_bytes": total}
+            return {
+                "destination": str(target),
+                "file_count": len(actual) + (1 if memory_key_export is not None else 0),
+                "size_bytes": total,
+                "memory_key_imported": memory_key_export is not None,
+            }
         except (tarfile.TarError, OSError, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, BackupError):
                 raise
