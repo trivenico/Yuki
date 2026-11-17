@@ -105,6 +105,8 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
                     ],
                     "process_count": 2,
                     "truncated": False,
+                    "read_only": True,
+                    "persisted": False,
                     "alerts": [{"type": "watch\nmatch", "message": "safe\nmessage"}],
                 }
         monitor = DesktopSecurityMonitor(process_monitor=Untrusted(), enabled=True)
@@ -122,6 +124,8 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
                     "processes": [{"pid": 9, "name": "<img src=x onerror=alert(1)>", "status": "running"}],
                     "process_count": 1,
                     "truncated": False,
+                    "read_only": True,
+                    "persisted": False,
                     "alerts": [{"type": "configured_process_name_match",
                                 "message": "<script>attacker-controlled</script>"}],
                 }
