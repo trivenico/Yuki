@@ -337,6 +337,7 @@ class SecuritySessionControllerTests(unittest.TestCase):
         enable_entered = threading.Event()
         release_enable = threading.Event()
         disable_entered = threading.Event()
+        second_disable_entered = threading.Event()
         release_first_disable = threading.Event()
         disable_count = 0
         disable_lock = threading.Lock()
@@ -354,6 +355,8 @@ class SecuritySessionControllerTests(unittest.TestCase):
             if current == 1:
                 disable_entered.set()
                 release_first_disable.wait(2)
+            elif current == 2:
+                second_disable_entered.set()
 
         self.monitor.enable = delayed_enable
         self.monitor.disable_hook = delayed_first_disable
@@ -379,9 +382,10 @@ class SecuritySessionControllerTests(unittest.TestCase):
         stopper.start()
         self.assertTrue(disable_entered.wait(1))
         release_enable.set()
-        # The startup thread must wait for Stop's disable, then perform its
-        # own compensating disable before releasing the startup reservation.
+        # Startup cleanup must wait behind Stop's still-running disable.
+        self.assertFalse(second_disable_entered.wait(0.1))
         release_first_disable.set()
+        self.assertTrue(second_disable_entered.wait(1))
         stopper.join(2)
         starter.join(2)
         self.assertFalse(stopper.is_alive())
