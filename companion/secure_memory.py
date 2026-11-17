@@ -9,6 +9,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import stat
+import hmac
 import tempfile
 from pathlib import Path
 
@@ -90,7 +92,7 @@ class EncryptedMemoryStore(MemoryStore):
 
     @staticmethod
     def import_key_from_encrypted_backup(
-        payload: bytes, profile_id: str, *, keyring_module,
+        payload: bytes, profile_id: str, *, keyring_module, memory_path: str | Path,
     ) -> bool:
         """Install a verified backup DEK in the OS keyring; return whether a key was created."""
         from core.profile_identity import profile_memory_keyring_account
