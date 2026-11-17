@@ -100,6 +100,27 @@ class ProfiledTTSTests(unittest.TestCase):
             output.speak_stream(["x" * 2000] * 11)
         self.assertEqual(synth.spoken, [])
 
+
+    def test_stop_before_backend_consumes_stream_invalidates_pending_chunks(self):
+        class StreamSynthesizer(FakeSynthesizer):
+            def __init__(self):
+                super().__init__("test")
+                self.before_consume = None
+
+            def speak_stream(self, chunks):
+                if self.before_consume is not None:
+                    self.before_consume()
+                for chunk in chunks:
+                    self.speak(chunk)
+
+        synth = StreamSynthesizer()
+        output = ProfiledLocalSpeechOutput(synth, DEFAULT_VOICE_PROFILE)
+        synth.before_consume = output.stop
+        with self.assertRaisesRegex(RuntimeError, "stopped"):
+            output.speak_stream(["This must not be spoken."])
+        self.assertEqual(synth.spoken, [])
+        self.assertEqual(synth.stop_calls, 1)
+
     def test_invalid_backend_object_is_rejected(self):
         with self.assertRaises(TypeError):
             ProfiledLocalSpeechOutput(object(), DEFAULT_VOICE_PROFILE)
