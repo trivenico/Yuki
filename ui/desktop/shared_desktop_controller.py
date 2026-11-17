@@ -7,7 +7,7 @@ operations remain delegated to the existing authenticated desktop controller.
 from __future__ import annotations
 
 from pathlib import Path
-from threading import RLock
+from threading import Condition, RLock
 from typing import Any
 
 
@@ -43,7 +43,9 @@ class SharedDesktopControllerBridge:
         self._chat = chat
         self._specialists = specialist_controller
         self._closed = False
-        self._lock = RLock()
+        self._logout_complete = False
+        self._logout_in_progress = False
+        self._logout_condition = Condition(RLock())
 
     def respond(self, message: str, **kwargs: Any) -> str:
         self._ensure_open()
@@ -140,27 +142,38 @@ class SharedDesktopControllerBridge:
 
     def logout(self) -> bool:
         """Revoke the old authenticated controller, then close shared chat state."""
-        with self._lock:
-            if self._closed:
-                return False
-            # Close the authorization gate before invoking potentially blocking
-            # cleanup. Concurrent logout callers must not revoke/close twice.
+        with self._logout_condition:
+            # Close the authorization gate immediately. Concurrent callers wait
+            # for the active cleanup; after a failed attempt, a later caller may
+            # retry instead of being blocked by a permanently closed bridge.
             self._closed = True
+            while self._logout_in_progress:
+                self._logout_condition.wait()
+            if self._logout_complete:
+                return False
+            self._logout_in_progress = True
         errors: list[Exception] = []
         revoked = False
         try:
-            revoked = bool(self._specialists.logout())
-        except Exception as exc:
-            errors.append(exc)
-        try:
-            self._chat.logout()
-        except Exception as exc:
-            errors.append(exc)
-        if errors:
-            raise RuntimeError(
-                "Desktop logout could not complete every controller cleanup step."
-            ) from errors[0]
-        return revoked
+            try:
+                revoked = bool(self._specialists.logout())
+            except Exception as exc:
+                errors.append(exc)
+            try:
+                self._chat.logout()
+            except Exception as exc:
+                errors.append(exc)
+            if errors:
+                raise RuntimeError(
+                    "Desktop logout could not complete every controller cleanup step."
+                ) from errors[0]
+            with self._logout_condition:
+                self._logout_complete = True
+            return revoked
+        finally:
+            with self._logout_condition:
+                self._logout_in_progress = False
+                self._logout_condition.notify_all()
 
     close = logout
 
