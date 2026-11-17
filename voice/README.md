@@ -13,3 +13,5 @@ Voice remains **off by default**. The desktop app now provides an explicit, boun
 - No wake-word detector, always-listening service, ambient audio archive, or hands-free duplex conversation is implemented yet. The `openwakeword` dependency is not currently used by a runtime listener.
 
 Microphone permission is independent from camera and screen observation. Sign-out and session cleanup disable voice. If audio capture or the speech model is unavailable, text chat remains available.
+
+- `voice/profiled_tts.py`: reports which requested voice-profile controls the active local synthesizer actually supports; unsupported style, pitch and expressiveness are never claimed as implemented.
