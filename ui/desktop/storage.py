@@ -22,8 +22,8 @@ def _is_separate_volume(path: Path) -> bool:
             system_drive = os.environ.get("SystemDrive", "C:")
             if not configured_drive:
                 return False
-            configured_root = Path(configured_drive + "\\\\")
-            system_root = Path(system_drive + "\\\\")
+            configured_root = Path(configured_drive + "\\")
+            system_root = Path(system_drive + "\\")
             return configured_root.stat().st_dev != system_root.stat().st_dev
     except OSError:
         return False
