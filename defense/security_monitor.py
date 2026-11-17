@@ -6,6 +6,7 @@ background collection, captures packets, persists telemetry, or responds.
 from __future__ import annotations
 
 from collections import deque
+from html import escape
 import re
 from threading import RLock
 
@@ -15,7 +16,8 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 def _safe_label(value, limit=300):
     if not isinstance(value, str):
         return "unknown"
-    return _CONTROL_CHARS.sub("", value[:limit]).strip() or "unknown"
+    cleaned = _CONTROL_CHARS.sub("", value[:limit]).strip()
+    return escape(cleaned, quote=True) if cleaned else "unknown"
 
 
 class SecurityMonitorError(RuntimeError):
