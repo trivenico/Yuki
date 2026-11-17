@@ -91,3 +91,23 @@ def build_sqlite_recovery_report(stores: Mapping[str, str | Path]) -> dict:
             else "All existing data stores passed read-only checks."
         ),
     }
+
+class SQLiteRecoveryRequired(RuntimeError):
+    """Startup must stop because an existing store needs owner attention."""
+
+    def __init__(self, report: dict):
+        self.report = report
+        actions = "; ".join(
+            f"{item['component']}: {item['action']}"
+            for item in report["stores"]
+            if item["status"] not in {"healthy", "missing"}
+        )
+        super().__init__(actions or report["summary"])
+
+
+def require_healthy_sqlite_stores(stores: Mapping[str, str | Path]) -> dict:
+    """Return a health report or stop startup before any store is initialized."""
+    report = build_sqlite_recovery_report(stores)
+    if not report["startup_safe"]:
+        raise SQLiteRecoveryRequired(report)
+    return report
