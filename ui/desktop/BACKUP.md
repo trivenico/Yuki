@@ -31,3 +31,13 @@ canonical conversation database from the configured workspace at
 using SQLite's backup API and checked during restore. Restore always writes to
 a separate empty folder; retain its `workspace/` directory when configuring a
 restored profile. It does not activate or overwrite the running profile.
+
+## Restored profile package layout
+
+New backups use manifest schema version 2 and restore as a `YUKI_HOME` package:
+- `.yuki/` contains the desktop authentication database, task database, encrypted memory, and other files from the private desktop data root.
+- `workspace/` contains the canonical conversation database and any other explicitly included workspace files.
+
+Choose an empty parent folder as the restore destination. To use the restored profile, configure `YUKI_HOME` to that parent folder and configure the workspace to its `workspace/` child. Yuki will then resolve its desktop profile as `YUKI_HOME/.yuki`. Restore does not change the running configuration or activate the profile automatically.
+
+Schema version 1 backups remain readable. Their root-level desktop files are normalized into `.yuki/` during restore, while existing `workspace/` entries retain their location.
