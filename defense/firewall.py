@@ -1,97 +1,96 @@
-"""Human-approved temporary host firewall blocks for a single validated IP.
+"""Dry-run-only firewall planning with explicit human approval.
 
-Firewall modification is disabled by default. This module never adds rules without
-an explicit approver callback. Prefer an OS-native least-privilege service account.
+This release deliberately has no host firewall mutation implementation.
 """
 from __future__ import annotations
 
 import ipaddress
 import platform
-import shutil
-import subprocess
 import uuid
 from typing import Callable
 
 
 class FirewallError(RuntimeError):
-    pass
+    """A firewall plan was invalid, unauthorized, or unavailable."""
 
 
 def _validated_ip(value: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > 64:
+        raise FirewallError("Provide one literal IP address.")
     try:
         ip = ipaddress.ip_address(value.strip())
-    except (ValueError, AttributeError) as exc:
+    except ValueError as exc:
         raise FirewallError("Provide one literal IP address.") from exc
-    if ip.is_loopback or ip.is_multicast or ip.is_unspecified:
-        raise FirewallError("Loopback, multicast, and unspecified addresses cannot be blocked.")
+    if (ip.is_loopback or ip.is_multicast or ip.is_unspecified
+            or ip.is_link_local or ip.is_reserved):
+        raise FirewallError("This special-purpose IP address cannot be used.")
     return str(ip)
 
 
 class FirewallManager:
-    def __init__(self, *, enabled: bool = False, approver: Callable[[str], bool] | None = None,
-                 dry_run: bool = True, platform_name: str | None = None):
-        self.enabled, self.approver, self.dry_run = enabled, approver, dry_run
-        self.platform_name = platform_name or platform.system()
+    """Create bounded dry-run plans; never execute operating-system commands."""
+
+    def __init__(self, *, enabled: bool = False,
+                 approver: Callable[[str], bool] | None = None,
+                 dry_run: bool = True, platform_name: str | None = None,
+                 max_rules: int = 100):
+        if enabled is not True and enabled is not False:
+            raise ValueError("enabled must be a boolean")
+        if dry_run is not True:
+            raise FirewallError("Only dry-run firewall planning is available.")
+        if approver is not None and not callable(approver):
+            raise ValueError("approver must be callable")
+        if (isinstance(max_rules, bool) or not isinstance(max_rules, int)
+                or not 1 <= max_rules <= 1000):
+            raise ValueError("max_rules must be an integer from 1 to 1000")
+        selected_platform = platform_name or platform.system()
+        if not isinstance(selected_platform, str) or not selected_platform:
+            raise ValueError("platform_name must be a non-empty string")
+        self.enabled = enabled
+        self.approver = approver
+        self.dry_run = True
+        self.platform_name = selected_platform
+        self.max_rules = max_rules
         self._rules: dict[str, tuple[str, str]] = {}
+
+    def _approved(self, prompt: str) -> bool:
+        if self.approver is None:
+            return False
+        try:
+            return self.approver(prompt) is True
+        except Exception as exc:
+            raise FirewallError("Approval could not be verified.") from exc
 
     def block_temporary(self, address: str, *, seconds: int = 300) -> dict:
         ip = _validated_ip(address)
         if not self.enabled:
-            raise FirewallError("Firewall changes are disabled.")
-        if not self.dry_run:
-            raise FirewallError("Live firewall mutation is not enabled in this release; dry-run only until durable expiry and recovery are implemented.")
+            raise FirewallError("Firewall planning is disabled.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 30 <= seconds <= 3600:
             raise FirewallError("Temporary block must be 30-3600 seconds.")
-        if self.approver is None or self.approver(f"Temporarily block source IP {ip} for {seconds} seconds.") is not True:
+        if len(self._rules) >= self.max_rules:
+            raise FirewallError("The in-memory firewall plan limit has been reached.")
+        prompt = f"Create a dry-run plan to temporarily block source IP {ip} for {seconds} seconds."
+        if not self._approved(prompt):
             raise FirewallError("Explicit approval was not granted.")
         rule_id = "Yuki-" + uuid.uuid4().hex[:12]
-        if self.dry_run:
-            self._rules[rule_id] = (ip, "dry-run")
-            return {"rule_id": rule_id, "ip": ip, "dry_run": True, "expires_in_seconds": seconds}
-        if self.platform_name == "Linux":
-            binary = shutil.which("iptables")
-            if not binary:
-                raise FirewallError("iptables is not installed.")
-            command = [binary, "-I", "INPUT", "1", "-s", ip, "-m", "comment", "--comment", rule_id, "-j", "DROP"]
-        elif self.platform_name == "Windows":
-            binary = shutil.which("netsh")
-            if not binary:
-                raise FirewallError("netsh is unavailable.")
-            command = [binary, "advfirewall", "firewall", "add", "rule", f"name={rule_id}",
-                       "dir=in", "action=block", f"remoteip={ip}"]
-        else:
-            raise FirewallError("This OS is not supported.")
-        try:
-            result = subprocess.run(command, shell=False, capture_output=True, text=True, timeout=10, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise FirewallError("Firewall command failed or timed out.") from exc
-        if result.returncode:
-            raise FirewallError("Firewall rejected the rule; no success was reported.")
-        self._rules[rule_id] = (ip, self.platform_name)
-        return {"rule_id": rule_id, "ip": ip, "dry_run": False, "expires_in_seconds": seconds}
+        self._rules[rule_id] = (ip, "dry-run")
+        return {
+            "rule_id": rule_id,
+            "ip": ip,
+            "dry_run": True,
+            "applied": False,
+            "expires_in_seconds": seconds,
+        }
 
     def remove(self, rule_id: str) -> bool:
+        """Remove only a local dry-run plan; never changes the host firewall."""
+        if not isinstance(rule_id, str) or len(rule_id) > 64:
+            return False
         entry = self._rules.get(rule_id)
-        if not entry:
+        if entry is None:
             return False
-        ip, mode = entry
-        if mode == "dry-run":
-            del self._rules[rule_id]
-            return True
-        if self.approver is None or self.approver(f"Remove Yuki firewall rule {rule_id} for {ip}.") is not True:
-            raise FirewallError("Explicit approval to remove rule was not granted.")
-        if mode == "Linux":
-            binary = shutil.which("iptables")
-            command = [binary, "-D", "INPUT", "-s", ip, "-m", "comment", "--comment", rule_id, "-j", "DROP"] if binary else []
-        elif mode == "Windows":
-            binary = shutil.which("netsh")
-            command = [binary, "advfirewall", "firewall", "delete", "rule", f"name={rule_id}"] if binary else []
-        else:
-            return False
-        if not command:
-            raise FirewallError("Firewall utility is unavailable.")
-        result = subprocess.run(command, shell=False, capture_output=True, text=True, timeout=10, check=False)
-        if result.returncode:
-            raise FirewallError("Firewall rule removal failed.")
+        ip, _mode = entry
+        if not self._approved(f"Remove Yuki dry-run firewall plan {rule_id} for {ip}."):
+            raise FirewallError("Explicit approval to remove the plan was not granted.")
         del self._rules[rule_id]
         return True
