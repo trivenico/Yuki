@@ -22,8 +22,14 @@ _AAD = b"yuki-companion-memory:v1"
 class EncryptedMemoryStore(MemoryStore):
     VERSION = 1
 
-    def __init__(self, path: str | Path = "yuki_memory.enc.json", *, keyring_module=None, aesgcm_class=None):
+    def __init__(
+        self, path: str | Path = "yuki_memory.enc.json", *,
+        keyring_module=None, aesgcm_class=None, keyring_account: str = _ACCOUNT,
+    ):
         super().__init__(path)
+        if not isinstance(keyring_account, str) or not keyring_account.strip() or len(keyring_account) > 128:
+            raise ValueError("keyring_account must be non-empty bounded text.")
+        self._keyring_account = keyring_account
         try:
             if keyring_module is None:
                 import keyring as keyring_module
@@ -46,13 +52,23 @@ class EncryptedMemoryStore(MemoryStore):
 
     def _load_or_create_key(self) -> bytes:
         try:
-            encoded = self._keyring.get_password(_SERVICE, _ACCOUNT)
+            encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
+            if encoded is None and self._keyring_account != _ACCOUNT and self.path.exists():
+                # One-time, lossless migration from the original shared keyring
+                # account. Never generate a replacement key for existing ciphertext.
+                legacy = self._keyring.get_password(_SERVICE, _ACCOUNT)
+                if legacy is None:
+                    raise RuntimeError("An existing encrypted memory file has no keyring key.")
+                self._keyring.set_password(_SERVICE, self._keyring_account, legacy)
+                encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
+                if encoded != legacy:
+                    raise RuntimeError("Could not verify migrated memory key.")
             if encoded is None and self.path.exists():
                 raise RuntimeError("An existing encrypted memory file has no keyring key.")
             if encoded is None:
                 key = os.urandom(32)
-                self._keyring.set_password(_SERVICE, _ACCOUNT, base64.b64encode(key).decode("ascii"))
-                encoded = self._keyring.get_password(_SERVICE, _ACCOUNT)
+                self._keyring.set_password(_SERVICE, self._keyring_account, base64.b64encode(key).decode("ascii"))
+                encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
             key = base64.b64decode(encoded, validate=True)
             if len(key) != 32:
                 raise ValueError("invalid key length")
