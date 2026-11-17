@@ -12,8 +12,9 @@ from typing import Any, Mapping
 
 
 def inspect_sqlite_store(component: str, database_path: str | Path) -> dict[str, str]:
-    if not isinstance(component, str) or not component.strip():
-        raise ValueError("component_name_required")
+    if (not isinstance(component, str) or not component.strip() or len(component) > 80
+            or any(ord(char) < 32 for char in component)):
+        raise ValueError("component_name_invalid")
     path = Path(database_path).expanduser()
     try:
         info = path.lstat()
