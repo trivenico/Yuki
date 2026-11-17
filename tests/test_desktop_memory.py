@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ui.desktop.memory import create_desktop_memory
+from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
 
 
 class FakeBackend:
@@ -50,6 +51,26 @@ class DesktopMemoryTests(unittest.TestCase):
             if os.name == "posix":
                 self.assertEqual(encrypted_file.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+
+    def test_each_desktop_profile_uses_its_own_keyring_account(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            keyring = FakeKeyring()
+            with patch("ui.desktop.memory.desktop_data_root", return_value=root / "one"):
+                create_desktop_memory(keyring)
+            with patch("ui.desktop.memory.desktop_data_root", return_value=root / "two"):
+                create_desktop_memory(keyring)
+            first_id = load_or_create_profile_id(root / "one")
+            second_id = load_or_create_profile_id(root / "two")
+            first_account = profile_memory_keyring_account(first_id)
+            second_account = profile_memory_keyring_account(second_id)
+            self.assertNotEqual(first_account, second_account)
+            self.assertIn(("yuki-companion-memory", first_account), keyring.values)
+            self.assertIn(("yuki-companion-memory", second_account), keyring.values)
+            self.assertNotEqual(
+                keyring.values[("yuki-companion-memory", first_account)],
+                keyring.values[("yuki-companion-memory", second_account)],
+            )
 
     def test_desktop_memory_requires_a_keyring_module(self):
         with self.assertRaises(TypeError):
