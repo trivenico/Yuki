@@ -151,6 +151,11 @@ class ConversationServiceTests(unittest.TestCase):
             }
 
         def lose_lease(**kwargs):
+            # Do not revoke ownership until inference has definitely started.
+            # Otherwise the heartbeat can win the scheduling race on Windows
+            # and the test never exercises cancellation during model execution.
+            if not entered.wait(timeout=2):
+                raise TimeoutError("provider was not entered before lease renewal")
             renewal_attempted.set()
             return False
 
