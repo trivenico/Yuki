@@ -85,6 +85,7 @@ class KokoroAdapterTests(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def make(self, **kwargs):
+        kwargs.setdefault("lexicon_path", self.model_dir / "lexicon.txt")
         return KokoroTTS(model_dir=self.model_dir, **kwargs)
 
     def test_construction_is_lazy_and_disabled(self):
@@ -92,6 +93,10 @@ class KokoroAdapterTests(unittest.TestCase):
         self.assertFalse(adapter.enabled)
         self.assertIsNone(adapter._tts)
         self.assertEqual(self.sd.play_calls, [])
+
+    def test_explicit_lexicon_is_required(self):
+        with self.assertRaisesRegex(ValueError, "lexicon_path is required"):
+            KokoroTTS(model_dir=self.model_dir)
 
     def test_invalid_voice_and_ranges_rejected(self):
         with self.assertRaises(ValueError):
