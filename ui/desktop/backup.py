@@ -456,7 +456,7 @@ def restore_encrypted_backup(
                         stream = archive.extractfile(member)
                         manifest = json.loads(stream.read(2 * 1024 * 1024).decode("utf-8"))
                         continue
-                    if _portable_archive_key(name) == ".yuki/memory_key_export.json":
+                    if _portable_archive_key(name) == (".yuki", "memory_key_export.json"):
                         if member.name != ".yuki/memory_key_export.json":
                             raise BackupError("Portable memory key export path is not canonical.")
                         if not member.isfile() or member.size > 2048:
