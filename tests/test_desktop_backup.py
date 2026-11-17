@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import hashlib
 import json
 import tarfile
@@ -236,6 +237,53 @@ class DesktopBackupTests(unittest.TestCase):
                         keyring_module=destination_keyring, import_memory_key=True,
                     )
             self.assertEqual(destination_keyring.values, {})
+            self.assertFalse(destination.exists())
+
+    def test_restore_refuses_to_overwrite_an_existing_profile_key(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / "memory.enc.json", keyring_module=source_keyring,
+                keyring_account=profile_memory_keyring_account(profile_id),
+            )
+            store.add("profile collision")
+            backup = root / "portable.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=store.export_key_for_encrypted_backup(profile_id),
+            )
+            destination_keyring = Keyring()
+            account = profile_memory_keyring_account(profile_id)
+            existing = base64.b64encode(b"z" * 32).decode("ascii")
+            destination_keyring.set_password("yuki-companion-memory", account, existing)
+            destination = root / "restored"
+            with self.assertRaisesRegex(BackupError, "could not be safely installed"):
+                restore_encrypted_backup(
+                    backup, destination, "a sufficiently long passphrase",
+                    keyring_module=destination_keyring, import_memory_key=True,
+                )
+            self.assertEqual(
+                destination_keyring.get_password("yuki-companion-memory", account),
+                existing,
+            )
             self.assertFalse(destination.exists())
 
     def test_invalid_memory_ciphertext_never_installs_portable_key(self):
