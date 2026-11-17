@@ -118,6 +118,9 @@ class EncryptedMemoryTests(unittest.TestCase):
 
     def test_existing_memory_without_legacy_or_profile_key_still_fails_closed(self):
         self.path.write_text('{"version":1,"nonce":"AAAAAAAAAAAAAAAA","ciphertext":"AAAAAAAAAAAAAAAAAAAAAA=="}')
+        # setUp creates the default account for the fixture initial empty store.
+        # Clear it to model a genuinely missing legacy and profile key.
+        self.keyring.values.clear()
         with self.assertRaisesRegex(RuntimeError, "Could not safely access"):
             EncryptedMemoryStore(
                 self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
