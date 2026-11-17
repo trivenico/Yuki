@@ -79,7 +79,14 @@ class VoiceOutputSession:
             self._generation += 1
             if hasattr(self._synthesizer, "enabled"):
                 self._synthesizer.enabled = False
-        self.stop()
+        close = getattr(self._synthesizer, "close", None)
+        try:
+            if callable(close):
+                close()
+            else:
+                self._synthesizer.stop()
+        except Exception as exc:
+            raise VoiceOutputError("Speech backend could not be closed safely.") from exc
 
     @staticmethod
     def _chunks(text: str) -> list[str]:
