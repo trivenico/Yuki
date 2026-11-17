@@ -34,7 +34,10 @@ class ReadOnlyProcessMonitor:
             raise ValueError("suspicious_names must be an iterable of process names")
         names = set()
         try:
-            for name in suspicious_names:
+            iterator = iter(suspicious_names)
+            for index, name in enumerate(islice(iterator, 1001)):
+                if index >= 1000:
+                    raise ValueError("suspicious_names cannot contain more than 1000 entries")
                 if not isinstance(name, str) or not name.strip() or len(name) > 160:
                     raise ValueError("Each suspicious process name must be 1-160 characters")
                 names.add(_clean_name(name).casefold())
