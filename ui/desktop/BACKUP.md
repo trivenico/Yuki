@@ -48,3 +48,8 @@ Schema version 1 backups remain readable. Their root-level desktop files are nor
 ## Cross-device encrypted-memory limitation
 
 The encrypted memory file is protected by a key stored only in the source operating system's credential store. That key is not currently exported into the passphrase-encrypted backup package. A restore on the same OS account can continue using its existing key; a restore on another computer or OS account cannot decrypt that memory file and startup will correctly stop rather than replace it. Treat cross-device encrypted-memory transfer as unsupported until a separately reviewed key-wrapping and import flow is implemented. Do not copy the raw OS keyring secret into the profile directory.
+
+
+## Profile-scoped memory keys
+
+Each desktop profile now has a stable, non-secret UUID in `.yuki/profile_identity.json`. Its encrypted-memory key is stored in the OS credential store under a profile-specific account derived from that UUID. Existing installations migrate the original `default` key into the profile-specific account without rewriting ciphertext; the legacy key is retained so other older profiles are not broken. The profile identity is included in the encrypted backup. This isolates newly created profiles, but does not yet make the key portable to another OS credential store; passphrase-wrapped key export/import remains outstanding.
