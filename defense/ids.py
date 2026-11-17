@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import OrderedDict, deque
 from math import isfinite
 from time import monotonic
+from threading import RLock
 import ipaddress
 
 
@@ -36,12 +37,20 @@ class PortScanDetector:
         self.max_events_per_source = max_events_per_source
         self._events = OrderedDict()
         self._alerted_until = {}
+        self._lock = RLock()
 
     @property
     def tracked_source_count(self):
-        return len(self._events)
+        with self._lock:
+            return len(self._events)
 
     def observe(self, source_ip, destination_port, *, timestamp=None):
+        # Protect LRU ordering, event windows, and suppression state when
+        # desktop/network callbacks arrive concurrently.
+        with self._lock:
+            return self._observe_locked(source_ip, destination_port, timestamp=timestamp)
+
+    def _observe_locked(self, source_ip, destination_port, *, timestamp=None):
         try:
             source_ip = str(ipaddress.ip_address(source_ip))
         except (ValueError, TypeError) as exc:
