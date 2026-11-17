@@ -13,7 +13,8 @@ not a promise about audible timbre. The final voice requires model/backend
 selection, licensed voice assets, and listening evaluation on supported
 hardware.
 
-Constructing the adapter never starts playback. Speech occurs only when an
-authorized voice-session controller explicitly calls `speak` or
-`speak_stream`. This module does not capture microphone audio, start a
+The adapter exposes the wrapped backend's `enabled` state and delegates
+`stop()` so it can be wrapped by `VoiceOutputSession`. Construction never starts
+playback. Speech occurs only when an authorized voice-session controller
+explicitly enables the session and calls `speak_reply()` from a background worker. This module does not capture microphone audio, start a
 wake-word listener, or enable always-on voice.
