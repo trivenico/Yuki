@@ -27,17 +27,18 @@ Remaining UI work: add passphrase strength guidance, cancellable progress report
 
 
 The desktop profile backup includes the private desktop data root and the
-canonical conversation database from the configured workspace at
-`workspace/conversations.sqlite3`. The conversation database is snapshotted
-using SQLite's backup API and checked during restore. Restore always writes to
-a separate empty folder; retain its `workspace/` directory when configuring a
-restored profile. It does not activate or overwrite the running profile.
+entire configured workspace tree under `workspace/`. SQLite databases in
+both roots are snapshotted using SQLite's backup API and checked during
+restore. Symlinks, special files, orphan SQLite sidecars, path collisions, and
+files exceeding the global archive limits are rejected. Restore writes a
+separate YUKI_HOME-compatible package and does not activate or overwrite the
+running profile.
 
 ## Restored profile package layout
 
 New backups use manifest schema version 2 and restore as a `YUKI_HOME` package:
 - `.yuki/` contains the desktop authentication database, task database, encrypted memory, and other files from the private desktop data root.
-- `workspace/` contains the canonical conversation database and any other explicitly included workspace files.
+- `workspace/` contains the configured workspace files, including the canonical conversation database.
 
 Choose an empty parent folder as the restore destination. To use the restored profile, configure `YUKI_HOME` to that parent folder and configure the workspace to its `workspace/` child. Yuki will then resolve its desktop profile as `YUKI_HOME/.yuki`. Restore does not change the running configuration or activate the profile automatically.
 
