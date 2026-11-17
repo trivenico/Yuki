@@ -1017,6 +1017,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             for widget in (
                 self.memory_toggle, self.transcript, self.message, self.send_button,
                 self.voice_checkbox, self.voice_status,
+                self.spoken_replies_checkbox, self.speech_stop_button,
             ):
                 widget.setEnabled(True)
             if self.voice_session is not None:
