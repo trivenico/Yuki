@@ -18,6 +18,7 @@ import tarfile
 import tempfile
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from typing import Mapping
 
 MAGIC = b"YUKIBK1\0"
 SALT_BYTES = 16
@@ -189,7 +190,10 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def create_encrypted_backup(source: Path, destination: Path, passphrase: str) -> dict:
+def create_encrypted_backup(
+    source: Path, destination: Path, passphrase: str, *,
+    additional_files: Mapping[str, Path] | None = None,
+) -> dict:
     AESGCM, Scrypt = _crypto()
     src = source.expanduser()
     dst = destination.expanduser()
@@ -200,7 +204,23 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
     if root == output or root in output.parents:
         raise BackupError("Backup output must be outside the source data directory.")
     files = _inventory(root)
-    total = sum(p.stat().st_size for p in files)
+    archive_items = [(p.relative_to(root).as_posix(), p) for p in files]
+    used_paths = {_portable_archive_key(_safe_archive_path(rel)) for rel, _ in archive_items}
+    for relative, external_path in (additional_files or {}).items():
+        safe_relative = _safe_archive_path(relative)
+        portable_key = _portable_archive_key(safe_relative)
+        if portable_key in used_paths:
+            raise BackupError("Additional backup file collides with an existing archive path.")
+        used_paths.add(portable_key)
+        item = Path(external_path).expanduser()
+        try:
+            info = item.lstat()
+        except OSError as exc:
+            raise BackupError("An additional backup file is unavailable.") from exc
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BackupError("Additional backup source must be a private regular file.")
+        archive_items.append((safe_relative.as_posix(), item))
+    total = sum(p.stat().st_size for _, p in archive_items)
     if total > MAX_BACKUP_BYTES:
         raise BackupError("Backup exceeds the 512 MiB uncompressed size limit.")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -210,8 +230,7 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
     manifest_files = []
     with tempfile.TemporaryFile() as archive_file:
         with tarfile.open(fileobj=archive_file, mode="w:") as archive:
-            for item in files:
-                rel = item.relative_to(root).as_posix()
+            for rel, item in archive_items:
                 if item.suffix.lower() in SQLITE_SUFFIXES:
                     src_db = sqlite3.connect(item.resolve().as_uri() + "?mode=ro", uri=True)
                     try:
