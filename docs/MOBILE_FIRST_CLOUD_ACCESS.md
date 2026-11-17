@@ -1,80 +1,69 @@
-# Mobile-first access to Yuki when no PC is available
+# Optional Android and mobile access
 
-## Decision
+## Product decision
 
-Yuki must remain usable by its owner without requiring a personally owned laptop or desktop. Keep the native desktop client as a later/parallel interface, but make a secure mobile browser client the first practical access surface for a cloud-hosted Yuki runtime.
+Yuki's primary daily-use experience is the native desktop application on Windows, macOS, and Linux. The owner expects to use Yuki from a desktop PC or laptop, so Android and mobile-browser access are **secondary enhancements**, not a prerequisite for completing or launching Yuki.
 
-This document is an architecture decision and delivery plan, not a claim that a mobile app, public API, or cloud deployment already exists.
+Do not divert core engineering effort into a mobile application, public API, PWA, or cloud control plane while the desktop runtime and first usable model path remain unfinished.
 
-## Target architecture
+This document preserves a future architecture direction only. It does not claim that a mobile app, public API, or cloud deployment exists.
+
+## Future target architecture
 
 ```text
-Phone browser / installable PWA
+Android browser / optional PWA
           |
       HTTPS only
           |
   Owner-authenticated API
           |
-  Application service boundary
+  Shared application-service boundary
           |
-  Yuki runtime on Oracle Cloud
-    |          |          |
- providers   encrypted   approved
-             memory      task worker
+  Yuki runtime (local desktop or private cloud)
 ```
 
-The mobile UI and desktop UI must call the same application-service contracts. Do not put provider routing, memory policy, approval rules, or task execution inside the browser.
+The mobile UI must reuse the same application-service contracts as desktop. Do not put provider routing, memory policy, approval rules, or task execution inside the browser.
 
-## First usable mobile slice
+## When mobile work should begin
 
-1. Owner-only sign-in and session revocation.
-2. Persistent chat: create conversation, send message, stream or poll response, list history.
-3. Explicit provider status and safe error messages.
-4. Read-only memory inspection and user-controlled memory deletion/retention controls.
-5. Task and specialist status; no destructive actions or tool approvals until the exact action, scope, and consequences can be reviewed on a small screen.
-6. Responsive layout and installable PWA shell; offline mode may show cached UI but must never imply a queued action succeeded.
+Start mobile access only after these desktop milestones are met:
+
+1. The canonical conversation runtime is integrated into the desktop application and passes the supported cross-platform CI matrix.
+2. The owner can sign in, chat with a configured real model, reopen durable conversation history, and sign out safely.
+3. Memory inspection, consent, backup, restore, and recovery behavior are documented and tested.
+4. Desktop packaging has been smoke-tested on clean Windows, macOS, and Linux environments.
+5. The API boundary has a security design review before any network listener is exposed.
+
+The first mobile slice should be owner-only sign-in, chat/history, provider status, and read-only task status. Sensitive approvals and destructive actions should wait until their exact scope and consequences can be reviewed safely on a small screen.
 
 ## Security requirements
 
-- Bind the service to a private interface during development. Production ingress is HTTPS behind a maintained reverse proxy or managed edge.
-- Never expose SQLite files, the desktop profile directory, OS keyring, shell, Docker socket, or raw provider credentials to the browser or public network.
+- Never expose SQLite files, the desktop profile directory, OS keyring, shell, Docker socket, or raw provider credentials to a browser or public network.
 - Use owner-only authentication, short-lived server-side sessions, secure HttpOnly/SameSite cookies, CSRF protection for cookie-authenticated mutations, rate limits, login throttling, and explicit logout/revocation.
 - Require TLS, strict origin/CORS allowlisting, request-size limits, schema validation, security headers, and redacted audit events.
-- Keep API keys and model credentials in server-side secret storage. The browser must never receive them.
+- Keep model credentials server-side. The browser must never receive provider API keys.
 - Enforce authorization and approval in the application service on every request; hiding a button is not authorization.
-- Separate chat/read-only access from tool execution. Require a fresh, scoped approval for sensitive actions and re-check it at execution time.
-- Use a private network or authenticated tunnel for owner administration. Do not expose an unauthenticated admin panel.
-- Back up encrypted data, test restore, and document recovery before relying on the cloud instance for personal data.
+- Keep chat/read-only access separate from tool execution. Require fresh, scoped approval for sensitive actions and re-check it at execution time.
+- Keep the first hosted version single-owner and single-tenant. Avoid SaaS complexity for a personal assistant.
+- Do not make Google OAuth mandatory. Google, GitHub, LinkedIn (where supported), and other account integrations remain optional, individually authorized connectors.
 
 ## Cloud deployment constraints
 
-- Oracle Cloud is the intended always-on host, but deployment is not complete until a hardened instance, firewall/egress policy, service supervision, encrypted backups, monitoring, patching, and restore drills are verified.
-- Do not treat Docker alone as a security boundary.
-- Keep the first hosted version single-owner and single-tenant. Avoid building multi-user SaaS complexity for a personal assistant.
-- Keep local desktop/portable storage distinct from cloud storage. Cross-device synchronization must use an explicit authenticated protocol, not shared filesystem paths.
-- Do not make Google OAuth mandatory. Provider/account integrations (Google, GitHub, LinkedIn where supported) remain optional, individually authorized connectors.
+Oracle Cloud may later provide an always-on private runtime, but deployment is not complete until firewall/egress policy, service supervision, secret storage, encrypted backups, monitoring, patching, and restore drills are verified. Do not treat Docker alone as a security boundary.
 
-## Training without a personal computer
+Keep local desktop/portable storage distinct from cloud storage. Cross-device synchronization must use an explicit authenticated protocol, not shared filesystem paths.
 
-A phone is sufficient to manage a cloud notebook session and inspect experiment reports, but it is not a good environment for running model training locally. Use Kaggle GPU notebooks or another managed GPU environment for experiments; keep datasets, checkpoints, and secrets under controlled storage. Do not put cloud API keys or private datasets in public notebooks or repository commits.
+## Training
 
-The first training milestone should be a reproducible small fine-tuning experiment on a suitable open model, not training a foundation model from scratch. Require a dataset license review, held-out evaluation, checkpoint provenance, and a rollback path before any model is offered to the live assistant.
+Training is a parallel engineering track after the core desktop conversation and provider path is stable. Use Kaggle GPU notebooks or another managed GPU environment for experiments; a phone is not a suitable local training environment. Keep datasets, checkpoints, and secrets under controlled storage. Do not put cloud API keys or private datasets in public notebooks or repository commits.
 
-## Delivery order
+The first training milestone should be a reproducible small fine-tuning experiment on a suitable open model, not training a foundation model from scratch. Require dataset license review, held-out evaluation, checkpoint provenance, and rollback before any model is offered to the live assistant.
 
-1. Complete the shared core conversation/authentication/runtime and current cross-platform CI.
-2. Add a minimal authenticated API over the existing application-service boundary.
-3. Add a responsive PWA for owner chat and status only.
-4. Deploy privately to Oracle Cloud; validate firewall, TLS, secrets, backup/restore, and recovery.
-5. Enable carefully scoped read-only connectors, then approved actions.
-6. Build the reproducible Kaggle training/evaluation pipeline in parallel after the core is stable.
+## Acceptance criteria for future mobile access
 
-## Acceptance criteria for first mobile use
-
-- Owner can sign in from a phone browser without owning a PC.
-- Chat history survives server restart and is isolated to the owner.
-- Revoked sessions cannot read history or submit new requests.
+- Owner can sign in from an Android browser without weakening desktop authentication.
+- Chat history remains owner-isolated and survives server restart.
+- Revoked sessions cannot read history or submit requests.
 - Browser traffic contains no provider API keys or desktop credentials.
 - Unapproved tools cannot execute through direct API requests.
-- A backup can be restored and the service restarted without losing the owner's conversations.
-- The service can be stopped safely and restarted after a failed provider request.
+- Encrypted backup can be restored and service restarted without losing conversations.
