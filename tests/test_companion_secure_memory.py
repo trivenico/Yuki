@@ -57,6 +57,17 @@ class EncryptedMemoryTests(unittest.TestCase):
             self.store.list()
         self.assertEqual(self.path.read_text(encoding="utf-8"), tampered)
 
+    def test_existing_ciphertext_without_key_does_not_create_replacement_key(self):
+        self.store.add("preserve encrypted history")
+        original = self.path.read_bytes()
+        self.keyring.values.clear()
+        with self.assertRaisesRegex(RuntimeError, "Could not safely access"):
+            EncryptedMemoryStore(
+                self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+            )
+        self.assertEqual(self.keyring.values, {})
+        self.assertEqual(self.path.read_bytes(), original)
+
     def test_invalid_keyring_backend_fails_closed(self):
         keyring = FakeKeyring()
         keyring.backend.priority = 0
