@@ -150,7 +150,7 @@ class ConversationService:
                 return result
             finally:
                 stop_heartbeat.set()
-                heartbeat.join(timeout=5)
+                heartbeat.join()
                 self.store.release_generation_lease(
                     owner_id=owner_id, conversation_id=conversation_id,
                     lease_token=token,
