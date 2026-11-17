@@ -89,7 +89,7 @@ def _build_services():
 
     portable_storage = bool(__import__("os").environ.get("YUKI_HOME", "").strip())
     root = prepare_private_desktop_root(
-        desktop_data_root(), require_existing_parent=portable_storage,
+        desktop_data_root(), require_existing_parent=portable_storage,\n        require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
 
