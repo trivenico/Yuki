@@ -42,6 +42,70 @@ class ConversationServiceTests(unittest.TestCase):
             tools=[],
         )
 
+    def test_active_generation_renews_lease_for_other_service_instances(self):
+        import threading
+        import time
+        from unittest.mock import patch
+
+        entered = threading.Event()
+        release = threading.Event()
+        result = []
+        errors = []
+
+        def blocking_model(**kwargs):
+            entered.set()
+            if not release.wait(timeout=3):
+                raise TimeoutError("test provider was not released")
+            return {"text": "long-running answer", "tool_calls": {"tool_calls": []}}
+
+        blocking_loop = AgentExecutionLoop(
+            blocking_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        active = ConversationService(self.store, blocking_loop)
+        competing = ConversationService(self.store, self.loop)
+
+        def send_active():
+            try:
+                result.append(active.reply(
+                    owner_id="owner-a",
+                    conversation_id=self.conversation["conversation_id"],
+                    user_text="Keep this generation exclusive",
+                    request_id="lease-heartbeat-request",
+                    expected_version=0,
+                    tools=[],
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch("core.conversation_service.GENERATION_LEASE_TTL_SECONDS", 5), patch(
+            "core.conversation_service.GENERATION_LEASE_RENEW_INTERVAL_SECONDS", 0.02
+        ):
+            worker = threading.Thread(target=send_active)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(timeout=2), "blocking provider was not entered")
+                time.sleep(0.12)
+                with self.assertRaises(ConversationConflict):
+                    competing.reply(
+                        owner_id="owner-a",
+                        conversation_id=self.conversation["conversation_id"],
+                        user_text="Competing generation",
+                        request_id="competing-lease-request",
+                        expected_version=0,
+                        tools=[],
+                    )
+            finally:
+                release.set()
+                worker.join(timeout=3)
+                active.close()
+                competing.close()
+
+        self.assertFalse(worker.is_alive(), "active generation did not finish")
+        self.assertEqual(errors, [])
+        self.assertEqual(result[0]["status"], "completed")
+        self.assertEqual(result[0]["answer"], "long-running answer")
+
     def test_closed_service_rejects_new_operations(self):
         self.service.close()
         self.service.close()
