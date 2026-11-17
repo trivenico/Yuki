@@ -402,6 +402,12 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     or rel in expected
                 ):
                     raise BackupError("Backup manifest entry is invalid or duplicated.")
+                try:
+                    rel = _safe_archive_path(rel).as_posix()
+                except BackupError as exc:
+                    raise BackupError("Backup manifest contains an unsafe path.") from exc
+                if schema_version == 2 and not rel.startswith((".yuki/", "workspace/")):
+                    raise BackupError("Backup manifest contains a path outside the Yuki profile package.")
                 expected_path = rel
                 if schema_version == 1 and not rel.startswith(("workspace/", ".yuki/")):
                     expected_path = ".yuki/" + rel
@@ -418,6 +424,8 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     if child.name in {"workspace", ".yuki"}:
                         continue
                     child.rename(desktop_root / child.name)
+            if schema_version == 2:
+                (stage / ".yuki").mkdir(mode=0o700, exist_ok=True)
             actual = {p.relative_to(stage).as_posix(): p for p in stage.rglob("*") if p.is_file()}
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
