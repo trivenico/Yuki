@@ -295,6 +295,8 @@ def create_encrypted_backup(
                     payload = item.read_bytes()
                 if rel.casefold() == "yuki_backup_manifest.json":
                     raise BackupError("Source contains a reserved backup manifest filename.")
+                if rel.casefold() == ".yuki/memory_key_export.json" and memory_key_export is None:
+                    raise BackupError("Source contains a reserved portable memory key export filename.")
                 digest = hashlib.sha256(payload).hexdigest()
                 manifest_files.append({"path": rel, "size": len(payload), "sha256": digest})
                 info = tarfile.TarInfo(name=rel)
@@ -406,7 +408,9 @@ def restore_encrypted_backup(
                         stream = archive.extractfile(member)
                         manifest = json.loads(stream.read(2 * 1024 * 1024).decode("utf-8"))
                         continue
-                    if member.name == ".yuki/memory_key_export.json":
+                    if _portable_archive_key(name) == ".yuki/memory_key_export.json":
+                        if member.name != ".yuki/memory_key_export.json":
+                            raise BackupError("Portable memory key export path is not canonical.")
                         if not member.isfile() or member.size > 2048:
                             raise BackupError("Portable memory key export is invalid.")
                         memory_key_export = archive.extractfile(member).read(2049)
@@ -529,6 +533,12 @@ def restore_encrypted_backup(
                     identity_payload = json.loads(
                         (stage / ".yuki" / "profile_identity.json").read_text(encoding="utf-8")
                     )
+                    if (
+                        not isinstance(identity_payload, dict)
+                        or identity_payload.get("schema_version") != 1
+                        or not isinstance(identity_payload.get("profile_id"), str)
+                    ):
+                        raise ValueError("invalid restored profile identity")
                     profile_id = identity_payload["profile_id"]
                     from core.profile_identity import profile_memory_keyring_account
                     imported_account = profile_memory_keyring_account(profile_id)
