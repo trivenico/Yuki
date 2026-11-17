@@ -6,7 +6,8 @@ from pathlib import Path
 from core.sqlite_recovery import (
     SQLiteRecoveryRequired,
     build_sqlite_recovery_report,
-    inspect_sqlite_store,\n    format_sqlite_recovery_report,
+    inspect_sqlite_store,
+    format_sqlite_recovery_report,
     require_healthy_sqlite_stores,
 )
 
