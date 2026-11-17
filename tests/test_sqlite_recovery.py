@@ -73,8 +73,11 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
         workflow = self.root / "tasks.sqlite3"
         conversation = self.root / "workspace" / "conversations.sqlite3"
         conversation.parent.mkdir(parents=True)
-        sqlite3.connect(authentication).close()
-        sqlite3.connect(workflow).close()
+        for database in (authentication, workflow):
+            connection = sqlite3.connect(database)
+            connection.execute("CREATE TABLE health_probe (id INTEGER PRIMARY KEY)")
+            connection.commit()
+            connection.close()
         conversation.write_bytes(b"not a sqlite database")
         with self.assertRaises(SQLiteRecoveryRequired) as raised:
             require_healthy_sqlite_stores({
