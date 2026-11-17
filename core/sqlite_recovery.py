@@ -10,7 +10,7 @@ import os
 import sqlite3
 import stat
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Any
 
 
 def inspect_sqlite_store(component: str, database_path: str | Path) -> dict[str, str]:
@@ -73,13 +73,14 @@ def inspect_sqlite_store(component: str, database_path: str | Path) -> dict[str,
     }
 
 
-def build_sqlite_recovery_report(stores: Mapping[str, str | Path]) -> dict:
+def build_sqlite_recovery_report(stores: Mapping[str, str | Path], *, additional_checks: tuple[dict[str, str], ...] = ()) -> dict:
     """Inspect named stores without modifying them and summarize startup safety."""
     results = [
         inspect_sqlite_store(component, path)
         for component, path in stores.items()
     ]
-    blocking = {"unsafe", "empty", "corrupt", "corrupt_or_unreadable", "unavailable"}
+    results.extend(dict(item) for item in additional_checks)
+    blocking = {"unsafe", "empty", "invalid", "corrupt", "corrupt_or_unreadable", "unavailable"}
     blocked = any(item["status"] in blocking for item in results)
     return {
         "schema_version": 1,
@@ -105,9 +106,9 @@ class SQLiteRecoveryRequired(RuntimeError):
         super().__init__(actions or report["summary"])
 
 
-def require_healthy_sqlite_stores(stores: Mapping[str, str | Path]) -> dict:
+def require_healthy_sqlite_stores(stores: Mapping[str, str | Path], *, additional_checks: tuple[dict[str, str], ...] = ()) -> dict:
     """Return a health report or stop startup before any store is initialized."""
-    report = build_sqlite_recovery_report(stores)
+    report = build_sqlite_recovery_report(stores, additional_checks=additional_checks)
     if not report["startup_safe"]:
         raise SQLiteRecoveryRequired(report)
     return report
@@ -128,3 +129,24 @@ def format_sqlite_recovery_report(report: dict) -> str:
     if len(lines) == 1:
         lines.append(report.get("summary", "Review the local data store before retrying."))
     return "\n".join(lines)
+
+
+def inspect_encrypted_memory_store(memory_path: str | Path, keyring_module: Any) -> dict[str, str]:
+    """Authenticate existing encrypted memory without changing its ciphertext."""
+    path = Path(memory_path).expanduser()
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return {"component": "encrypted_memory", "status": "missing", "action": "No encrypted memory file exists yet; first-use initialization is permitted."}
+    except OSError:
+        return {"component": "encrypted_memory", "status": "unavailable", "action": "Check the memory storage device and permissions. Preserve existing files and retry."}
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        return {"component": "encrypted_memory", "status": "unsafe", "action": "The encrypted memory path is not a private regular file. Preserve it and inspect storage configuration."}
+    if info.st_size == 0 or info.st_size > 10_000_000:
+        return {"component": "encrypted_memory", "status": "invalid", "action": "The existing encrypted memory file has an invalid size. Preserve it for recovery."}
+    try:
+        from companion.secure_memory import EncryptedMemoryStore
+        EncryptedMemoryStore(path, keyring_module=keyring_module).list()
+    except Exception:
+        return {"component": "encrypted_memory", "status": "corrupt_or_unreadable", "action": "Yuki could not authenticate encrypted memory. Preserve the ciphertext and recover the original OS keyring key."}
+    return {"component": "encrypted_memory", "status": "healthy", "action": "Encrypted memory authentication succeeded."}
