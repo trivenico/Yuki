@@ -10,6 +10,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock, RLock
 
+from voice.stt import FasterWhisperSTT, STTError
+
 
 class VoiceSessionError(RuntimeError):
     """A voice session could not safely complete."""
@@ -29,8 +31,6 @@ class VoiceSession:
     ) -> None:
         if type(enabled) is not bool:
             raise ValueError("enabled must be a boolean.")
-        from voice.stt import FasterWhisperSTT
-
         self._stt = stt or FasterWhisperSTT(
             enabled=enabled,
             model_size=model_size,
@@ -121,6 +121,8 @@ class VoiceSession:
                 return transcript
         except VoiceSessionError:
             raise
+        except STTError as exc:
+            raise VoiceSessionError(str(exc)) from exc
         except Exception as exc:
             raise VoiceSessionError("Voice capture or transcription failed safely.") from exc
         finally:
