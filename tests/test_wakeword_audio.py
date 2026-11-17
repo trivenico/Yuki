@@ -54,7 +54,7 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         self.assertEqual(stream.kwargs["channels"], 1)
         self.assertEqual(stream.kwargs["dtype"], "int16")
         self.assertEqual(stream.kwargs["blocksize"], 1280)
-        frame = b"\\x01\\x00" * 1280
+        frame = bytes([1, 0]) * 1280
         stream.emit(frame)
         self.assertEqual(source.read(), frame)
         source.close()
@@ -66,8 +66,8 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         source = SoundDeviceWakeWordAudioSource(sounddevice_module=sd)
         source.start()
         stream = sd.streams[0]
-        first = b"\\x01\\x00" * 1280
-        latest = b"\\x02\\x00" * 1280
+        first = bytes([1, 0]) * 1280
+        latest = bytes([2, 0]) * 1280
         stream.emit(first)
         stream.emit(latest)
         self.assertEqual(source.read(), latest)
@@ -78,7 +78,7 @@ class WakeWordAudioSourceTests(unittest.TestCase):
         source = SoundDeviceWakeWordAudioSource(sounddevice_module=sd)
         source.start()
         stream = sd.streams[0]
-        stream.emit(b"\\x01\\x00" * 1280)
+        stream.emit(bytes([1, 0]) * 1280)
         source.stop()
         self.assertIsNone(source.read())
         self.assertTrue(stream.stopped)
