@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
+from core.portable_paths import desktop_data_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
