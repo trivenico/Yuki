@@ -204,7 +204,8 @@ def create_encrypted_backup(
     if root == output or root in output.parents:
         raise BackupError("Backup output must be outside the source data directory.")
     files = _inventory(root)
-    archive_items = [(p.relative_to(root).as_posix(), p) for p in files]
+    # The backup is a restorable Yuki_HOME package: desktop state lives in .yuki/ and the configured workspace is a sibling directory.
+    archive_items = [('.yuki/' + p.relative_to(root).as_posix(), p) for p in files]
     used_paths = {_portable_archive_key(_safe_archive_path(rel)) for rel, _ in archive_items}
     for relative, external_path in (additional_files or {}).items():
         safe_relative = _safe_archive_path(relative)
@@ -264,7 +265,7 @@ def create_encrypted_backup(
                 if archive_file.tell() > MAX_BACKUP_BYTES:
                     raise BackupError("Backup archive exceeds the 512 MiB limit.")
             metadata = json.dumps(
-                {"schema_version": 1, "product": "Yuki Desktop", "files": manifest_files},
+                {"schema_version": 2, "product": "Yuki Desktop", "layout": "yuki-home", "files": manifest_files},
                 sort_keys=True, separators=(",", ":"),
             ).encode("utf-8")
             info = tarfile.TarInfo(name="YUKI_BACKUP_MANIFEST.json")
@@ -374,8 +375,11 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     source_stream = archive.extractfile(member)
                     with out.open("xb") as destination_stream:
                         shutil.copyfileobj(source_stream, destination_stream, length=1024 * 1024)
-            if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+            if not isinstance(manifest, dict) or manifest.get("schema_version") not in {1, 2}:
                 raise BackupError("Backup manifest is missing or unsupported.")
+            schema_version = manifest["schema_version"]
+            if schema_version == 2 and manifest.get("layout") != "yuki-home":
+                raise BackupError("Backup profile layout is unsupported.")
             entries = manifest.get("files")
             if not isinstance(entries, list) or len(entries) > MAX_FILES:
                 raise BackupError("Backup manifest file inventory is invalid.")
@@ -399,6 +403,16 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                 ):
                     raise BackupError("Backup manifest entry is invalid or duplicated.")
                 expected[rel] = entry
+            # Version 1 archives stored desktop files at archive root and the
+            # workspace as a sibling. Normalize them to the current YUKI_HOME
+            # package layout without changing their authenticated file payloads.
+            if schema_version == 1:
+                desktop_root = stage / ".yuki"
+                desktop_root.mkdir(mode=0o700, exist_ok=True)
+                for child in tuple(stage.iterdir()):
+                    if child.name in {"workspace", ".yuki"}:
+                        continue
+                    child.rename(desktop_root / child.name)
             actual = {p.relative_to(stage).as_posix(): p for p in stage.rglob("*") if p.is_file()}
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
