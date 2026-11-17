@@ -24,14 +24,34 @@ from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 from core.auth import AuthenticationError, BuiltInAuthService, task_permission_authorizer
 from core.config import load_config
-from core.portable_paths import data_root
+from core.portable_paths import desktop_data_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
 
+class YukiArgumentParser(argparse.ArgumentParser):
+    """Accept opaque 24-character task IDs even when they begin with '-'.
+
+    Workflow IDs are URL-safe random tokens. argparse otherwise interprets a
+    leading hyphen as an option and rejects a valid identifier as missing.
+    Exact registered options retain their normal meaning.
+    """
+
+    def _parse_optional(self, arg_string):
+        token_alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        if (
+            len(arg_string) == 24
+            and arg_string.startswith("-")
+            and arg_string not in self._option_string_actions
+            and all(character in token_alphabet for character in arg_string)
+        ):
+            return None
+        return super()._parse_optional(arg_string)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="yuki", description="Yuki AI assistant")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = YukiArgumentParser(prog="yuki", description="Yuki AI assistant")
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=YukiArgumentParser)
 
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
@@ -43,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat.add_argument("--conversation-id", help="Resume and persist a saved conversation")
 
     conversations = sub.add_parser("conversations", help="Manage private persistent companion conversations")
-    conversation_sub = conversations.add_subparsers(dest="conversation_command", required=True)
+    conversation_sub = conversations.add_subparsers(dest="conversation_command", required=True, parser_class=YukiArgumentParser)
     conversation_sub.add_parser("list", help="List your saved conversations")
     conversation_create = conversation_sub.add_parser("create", help="Create a saved conversation")
     conversation_create.add_argument("--title", default="New conversation")
@@ -53,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     conversation_delete.add_argument("conversation_id")
 
     tasks = sub.add_parser("tasks", help="Inspect and supervise durable Yuki tasks")
-    task_sub = tasks.add_subparsers(dest="task_command", required=True)
+    task_sub = tasks.add_subparsers(dest="task_command", required=True, parser_class=YukiArgumentParser)
     task_list = task_sub.add_parser("list", help="List authorized task summaries")
     task_list.add_argument("--state", choices=["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled", "interrupted"])
     task_list.add_argument("--limit", type=int, default=50)
@@ -70,13 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Current task version shown by yuki tasks inspect")
 
     workers = sub.add_parser("workers", help="Run explicitly supervised specialist worker cycles")
-    worker_sub = workers.add_subparsers(dest="worker_command", required=True)
+    worker_sub = workers.add_subparsers(dest="worker_command", required=True, parser_class=YukiArgumentParser)
     worker_cycle = worker_sub.add_parser("run-cycle", help="Process a finite batch of approved tasks")
     worker_cycle.add_argument("--max-tasks", type=int, default=3)
     worker_cycle.add_argument("--max-workers", type=int, default=1)
 
     agents = sub.add_parser("agents", help="Discover and supervise specialist agents")
-    agent_sub = agents.add_subparsers(dest="agent_command", required=True)
+    agent_sub = agents.add_subparsers(dest="agent_command", required=True, parser_class=YukiArgumentParser)
     agent_sub.add_parser("list", help="List configured specialist agents")
     agent_plan = agent_sub.add_parser("plan", help="Generate a bounded agent plan for review")
     agent_plan.add_argument("goal", help="Goal to decompose into specialist subtasks")
@@ -87,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_dispatch.add_argument("plan_id")
 
     auth = sub.add_parser("auth", help="Manage your local Yuki sign-in session")
-    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True, parser_class=YukiArgumentParser)
     auth_sub.add_parser("bootstrap-admin", help="Create the first local Yuki administrator")
     auth_sub.add_parser("login", help="Sign in and store a protected local session")
     auth_sub.add_parser("status", help="Show the current authenticated identity")
@@ -128,7 +148,7 @@ def run_cli(
     args = build_parser().parse_args(argv)
 
     if args.command == "auth":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         try:
             root.mkdir(parents=True, exist_ok=True)
             try:
@@ -156,7 +176,7 @@ def run_cli(
             except Exception as exc:
                 output_fn("Yuki authentication failed (" + type(exc).__name__ + ").")
                 return 5
-            output_fn("Yuki: Initial administrator created for " + user.username + ". Run yuki auth login to sign in.")
+            output_fn("Yuki: Initial administrator created for " + user.username + ". Launch Yuki Desktop and sign in with this account.")
             return 0
 
         if args.auth_command == "login":
@@ -213,7 +233,7 @@ def run_cli(
             return 0
 
     if args.command == "conversations":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         try:
             token = session_path.read_text(encoding="utf-8").strip()
@@ -277,7 +297,7 @@ def run_cli(
             return 5
 
     if args.command == "tasks":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         try:
             token = session_path.read_text(encoding="utf-8").strip()
@@ -372,7 +392,7 @@ def run_cli(
             return 5
 
     if args.command == "workers":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         service_actor_id = "yuki-worker-service"
         try:
@@ -430,7 +450,7 @@ def run_cli(
             return 5
 
     if args.command == "agents":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         try:
             token = session_path.read_text(encoding="utf-8").strip()
@@ -548,7 +568,7 @@ def run_cli(
         conversation_version = None
         conversation_owner = None
         if args.conversation_id:
-            root = data_root() / ".yuki"
+            root = desktop_data_root()
             session_path = root / "session.token"
             try:
                 token = session_path.read_text(encoding="utf-8").strip()

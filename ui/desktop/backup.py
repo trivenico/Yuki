@@ -1,22 +1,25 @@
 """Portable authenticated encrypted backups for Yuki desktop data.
 
-Backups use a user-supplied passphrase (scrypt + AES-256-GCM), so they can be
-restored on another device without exporting an OS keyring secret. The source
-is never modified. The first implementation is deliberately bounded to 512 MiB
+Backups use a user-supplied passphrase (scrypt + AES-256-GCM). An opt-in
+portable-memory option embeds the profile key only inside the encrypted archive;
+it is never staged as a plaintext file. The source is never modified. The first implementation is deliberately bounded to 512 MiB
 of uncompressed backup data to keep memory use predictable.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
 import os
 import shutil
+import stat
 import sqlite3
 import tarfile
 import tempfile
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from typing import Mapping
 
 MAGIC = b"YUKIBK1\0"
 SALT_BYTES = 16
@@ -30,6 +33,47 @@ class BackupError(RuntimeError):
     """Raised when a backup cannot be safely created or restored."""
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes where directory descriptors are supported."""
+    if os.name != "posix":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_staged_tree(root: Path) -> None:
+    """Flush staged regular files and directories before atomic publication.
+
+    POSIX filesystems that honor fsync can then persist both file contents and
+    the directory entries that make up the staged tree. Other platforms retain
+    their native durability behavior.
+    """
+    if os.name != "posix":
+        return
+    for current, _dirs, files in os.walk(root, topdown=False, followlinks=False):
+        directory = Path(current)
+        for name in files:
+            path = directory / name
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise OSError("staged entry is not a regular file")
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        descriptor = os.open(directory, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def _crypto():
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -39,6 +83,18 @@ def _crypto():
             "Encrypted backups require cryptography; install requirements-memory-security.txt."
         ) from exc
     return AESGCM, Scrypt
+
+
+def _derive_memory_wrap_key(backup_key: bytes, salt: bytes) -> bytes:
+    """Derive a domain-separated AES key for the portable memory DEK envelope."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        info=b"yuki-memory-key-wrap:v1",
+    ).derive(backup_key)
 
 
 def _derive(passphrase: str, salt: bytes, Scrypt):
@@ -82,11 +138,21 @@ def _inventory(root: Path) -> list[Path]:
     database_paths = {
         item for item in files if item.suffix.lower() in SQLITE_SUFFIXES
     }
+    database_names = {item.as_posix() for item in database_paths}
     sqlite_sidecars = {
         Path(str(database) + suffix)
         for database in database_paths
         for suffix in ("-wal", "-shm", "-journal")
     }
+    # Sidecars only have meaning alongside their database. An orphan WAL or
+    # rollback journal may be evidence of interrupted storage activity; never
+    # archive it as an ordinary file and later restore it without its database.
+    for item in files:
+        if item.name.endswith(("-wal", "-shm", "-journal")):
+            base = item.as_posix()
+            suffix = next(s for s in ("-wal", "-shm", "-journal") if base.endswith(s))
+            if base[:-len(suffix)] not in database_names:
+                raise BackupError("Backup source contains an orphan SQLite sidecar.")
     files = [item for item in files if item not in sqlite_sidecars]
     if len(files) > MAX_FILES:
         raise BackupError("Backup contains too many files.")
@@ -137,7 +203,12 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def create_encrypted_backup(source: Path, destination: Path, passphrase: str) -> dict:
+def create_encrypted_backup(
+    source: Path, destination: Path, passphrase: str, *,
+    additional_files: Mapping[str, Path] | None = None,
+    additional_roots: Mapping[str, Path] | None = None,
+    memory_key_export: bytes | None = None,
+) -> dict:
     AESGCM, Scrypt = _crypto()
     src = source.expanduser()
     dst = destination.expanduser()
@@ -148,7 +219,94 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
     if root == output or root in output.parents:
         raise BackupError("Backup output must be outside the source data directory.")
     files = _inventory(root)
-    total = sum(p.stat().st_size for p in files)
+    # The backup is a restorable Yuki_HOME package: desktop state lives in .yuki/ and the configured workspace is a sibling directory.
+    archive_items = [('.yuki/' + p.relative_to(root).as_posix(), p) for p in files]
+    used_paths = {_portable_archive_key(_safe_archive_path(rel)) for rel, _ in archive_items}
+    for prefix, additional_root in (additional_roots or {}).items():
+        safe_prefix = _safe_archive_path(prefix)
+        if safe_prefix.as_posix() != "workspace":
+            raise BackupError("Additional backup directories must be placed under workspace/.")
+        extra_root = Path(additional_root).expanduser()
+        if extra_root.is_symlink():
+            raise BackupError("Additional backup directory must not be a symbolic link.")
+        try:
+            extra_root = extra_root.resolve(strict=True)
+        except OSError as exc:
+            raise BackupError("An additional backup directory is unavailable.") from exc
+        if extra_root == root or extra_root in root.parents or root in extra_root.parents:
+            raise BackupError("Additional backup directories must be separate from the desktop profile.")
+        if extra_root == output or extra_root in output.parents:
+            raise BackupError("Backup output must be outside every source data directory.")
+        for extra_file in _inventory(extra_root):
+            relative = (safe_prefix / extra_file.relative_to(extra_root)).as_posix()
+            portable_key = _portable_archive_key(_safe_archive_path(relative))
+            if portable_key in used_paths:
+                raise BackupError("Additional backup directory collides with an existing archive path.")
+            used_paths.add(portable_key)
+            archive_items.append((relative, extra_file))
+    for relative, external_path in (additional_files or {}).items():
+        safe_relative = _safe_archive_path(relative)
+        if safe_relative.as_posix().casefold() == "yuki_backup_manifest.json":
+            raise BackupError("Additional backup file cannot shadow the reserved backup manifest.")
+        if not safe_relative.as_posix().startswith((".yuki/", "workspace/")):
+            raise BackupError("Additional backup files must be placed under .yuki/ or workspace/.")
+        portable_key = _portable_archive_key(safe_relative)
+        if portable_key in used_paths:
+            raise BackupError("Additional backup file collides with an existing archive path.")
+        used_paths.add(portable_key)
+        item = Path(external_path).expanduser()
+        try:
+            info = item.lstat()
+        except OSError as exc:
+            raise BackupError("An additional backup file is unavailable.") from exc
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BackupError("Additional backup source must be a private regular file.")
+        archive_items.append((safe_relative.as_posix(), item))
+    salt = os.urandom(SALT_BYTES)
+    nonce = os.urandom(NONCE_BYTES)
+    key = _derive(passphrase, salt, Scrypt)
+    if memory_key_export is not None:
+        if not isinstance(memory_key_export, bytes) or not 1 <= len(memory_key_export) <= 2048:
+            raise BackupError("Portable memory key export is invalid.")
+        try:
+            key_metadata = json.loads(memory_key_export.decode("utf-8"))
+            if (
+                not isinstance(key_metadata, dict)
+                or set(key_metadata) != {"schema_version", "profile_id", "key"}
+                or key_metadata.get("schema_version") != 1
+                or not isinstance(key_metadata.get("profile_id"), str)
+                or not isinstance(key_metadata.get("key"), str)
+                or len(base64.b64decode(key_metadata["key"], validate=True)) != 32
+            ):
+                raise ValueError("invalid key metadata")
+            from core.profile_identity import profile_memory_keyring_account
+            profile_id = key_metadata["profile_id"]
+            profile_memory_keyring_account(profile_id)
+            identity = json.loads((root / "profile_identity.json").read_text(encoding="utf-8"))
+            if identity.get("schema_version") != 1 or identity.get("profile_id") != profile_id:
+                raise ValueError("profile identity mismatch")
+            memory_nonce = os.urandom(NONCE_BYTES)
+            memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+            wrapped_key = AESGCM(_derive_memory_wrap_key(key, salt)).encrypt(
+                memory_nonce, memory_key_export, memory_aad,
+            )
+            memory_key_export = json.dumps({
+                "schema_version": 1,
+                "profile_id": profile_id,
+                "nonce": base64.b64encode(memory_nonce).decode("ascii"),
+                "ciphertext": base64.b64encode(wrapped_key).decode("ascii"),
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        except Exception as exc:
+            raise BackupError("Portable memory key export does not match the source profile.") from exc
+        secret_path = ".yuki/memory_key_export.json"
+        secret_key = _portable_archive_key(_safe_archive_path(secret_path))
+        if secret_key in used_paths:
+            raise BackupError("Portable memory key export collides with profile data.")
+        used_paths.add(secret_key)
+        archive_items.append((secret_path, memory_key_export))
+    if len(archive_items) > MAX_FILES:
+        raise BackupError("Backup contains too many files.")
+    total = sum(len(item) if isinstance(item, bytes) else item.stat().st_size for _, item in archive_items)
     if total > MAX_BACKUP_BYTES:
         raise BackupError("Backup exceeds the 512 MiB uncompressed size limit.")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -158,9 +316,10 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
     manifest_files = []
     with tempfile.TemporaryFile() as archive_file:
         with tarfile.open(fileobj=archive_file, mode="w:") as archive:
-            for item in files:
-                rel = item.relative_to(root).as_posix()
-                if item.suffix.lower() in SQLITE_SUFFIXES:
+            for rel, item in archive_items:
+                if isinstance(item, bytes):
+                    payload = item
+                elif item.suffix.lower() in SQLITE_SUFFIXES:
                     src_db = sqlite3.connect(item.resolve().as_uri() + "?mode=ro", uri=True)
                     try:
                         # Close the temporary file handle before SQLite opens it (required on Windows).
@@ -178,10 +337,12 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
                             payload = snapshot_path.read_bytes()
                     finally:
                         src_db.close()
-                else:
+                elif not isinstance(item, bytes):
                     payload = item.read_bytes()
-                if rel == "YUKI_BACKUP_MANIFEST.json":
+                if rel.casefold() == "yuki_backup_manifest.json":
                     raise BackupError("Source contains a reserved backup manifest filename.")
+                if rel.casefold() == ".yuki/memory_key_export.json" and memory_key_export is None:
+                    raise BackupError("Source contains a reserved portable memory key export filename.")
                 digest = hashlib.sha256(payload).hexdigest()
                 manifest_files.append({"path": rel, "size": len(payload), "sha256": digest})
                 info = tarfile.TarInfo(name=rel)
@@ -191,7 +352,7 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
                 if archive_file.tell() > MAX_BACKUP_BYTES:
                     raise BackupError("Backup archive exceeds the 512 MiB limit.")
             metadata = json.dumps(
-                {"schema_version": 1, "product": "Yuki Desktop", "files": manifest_files},
+                {"schema_version": 2, "product": "Yuki Desktop", "layout": "yuki-home", "files": manifest_files},
                 sort_keys=True, separators=(",", ":"),
             ).encode("utf-8")
             info = tarfile.TarInfo(name="YUKI_BACKUP_MANIFEST.json")
@@ -202,9 +363,6 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
         plaintext = archive_file.read(MAX_BACKUP_BYTES + 1)
     if len(plaintext) > MAX_BACKUP_BYTES:
         raise BackupError("Backup archive exceeds the 512 MiB limit.")
-    salt = os.urandom(SALT_BYTES)
-    nonce = os.urandom(NONCE_BYTES)
-    key = _derive(passphrase, salt, Scrypt)
     encrypted = AESGCM(key).encrypt(nonce, plaintext, MAGIC)
     fd, temporary = tempfile.mkstemp(prefix=".yuki-backup-", dir=str(output.parent))
     try:
@@ -217,6 +375,10 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
         try:
             # Hard-link publication is atomic and fails if another process created the target.
             os.link(temporary, output)
+            try:
+                _fsync_directory(output.parent)
+            except OSError as exc:
+                raise BackupError("Backup was published, but filesystem durability could not be confirmed; verify the file before retrying.") from exc
         except FileExistsError as exc:
             raise BackupError("Backup output appeared during creation; refusing to overwrite it.") from exc
     except Exception:
@@ -230,10 +392,18 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
             os.unlink(temporary)
         except FileNotFoundError:
             pass
-    return {"path": str(output), "file_count": len(manifest_files), "size_bytes": output.stat().st_size}
+    return {
+        "path": str(output),
+        "file_count": len(manifest_files),
+        "size_bytes": output.stat().st_size,
+        "memory_key_included": memory_key_export is not None,
+    }
 
 
-def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -> dict:
+def restore_encrypted_backup(
+    backup: Path, destination: Path, passphrase: str, *,
+    keyring_module=None, import_memory_key: bool = False,
+) -> dict:
     AESGCM, Scrypt = _crypto()
     backup_path = backup.expanduser()
     target_path = destination.expanduser()
@@ -264,6 +434,7 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
         stage = Path(tmp) / "data"
         stage.mkdir(mode=0o700)
         manifest = None
+        memory_key_export = None
         seen = set()
         seen_portable = set()
         total = 0
@@ -285,6 +456,18 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                         stream = archive.extractfile(member)
                         manifest = json.loads(stream.read(2 * 1024 * 1024).decode("utf-8"))
                         continue
+                    if _portable_archive_key(name) == (".yuki", "memory_key_export.json"):
+                        if member.name != ".yuki/memory_key_export.json":
+                            raise BackupError("Portable memory key export path is not canonical.")
+                        if not member.isfile() or member.size > 2048:
+                            raise BackupError("Portable memory key export is invalid.")
+                        memory_key_export = archive.extractfile(member).read(2049)
+                        if len(memory_key_export) != member.size or len(memory_key_export) > 2048:
+                            raise BackupError("Portable memory key export is invalid.")
+                        total += member.size
+                        if total > MAX_BACKUP_BYTES:
+                            raise BackupError("Restored data exceeds the supported size limit.")
+                        continue
                     if not member.isfile():
                         raise BackupError("Backup contains a non-regular file.")
                     total += member.size
@@ -297,8 +480,11 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     source_stream = archive.extractfile(member)
                     with out.open("xb") as destination_stream:
                         shutil.copyfileobj(source_stream, destination_stream, length=1024 * 1024)
-            if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+            if not isinstance(manifest, dict) or manifest.get("schema_version") not in {1, 2}:
                 raise BackupError("Backup manifest is missing or unsupported.")
+            schema_version = manifest["schema_version"]
+            if schema_version == 2 and manifest.get("layout") != "yuki-home":
+                raise BackupError("Backup profile layout is unsupported.")
             entries = manifest.get("files")
             if not isinstance(entries, list) or len(entries) > MAX_FILES:
                 raise BackupError("Backup manifest file inventory is invalid.")
@@ -321,10 +507,88 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                     or rel in expected
                 ):
                     raise BackupError("Backup manifest entry is invalid or duplicated.")
-                expected[rel] = entry
+                try:
+                    rel = _safe_archive_path(rel).as_posix()
+                except BackupError as exc:
+                    raise BackupError("Backup manifest contains an unsafe path.") from exc
+                if schema_version == 2 and not rel.startswith((".yuki/", "workspace/")):
+                    raise BackupError("Backup manifest contains a path outside the Yuki profile package.")
+                expected_path = rel
+                if schema_version == 1 and not rel.startswith(("workspace/", ".yuki/")):
+                    expected_path = ".yuki/" + rel
+                if expected_path in expected:
+                    raise BackupError("Backup manifest paths collide after profile normalization.")
+                expected[expected_path] = entry
+            # Version 1 archives stored desktop files at archive root and the
+            # workspace as a sibling. Normalize them to the current YUKI_HOME
+            # package layout without changing their authenticated file payloads.
+            if schema_version == 1:
+                desktop_root = stage / ".yuki"
+                desktop_root.mkdir(mode=0o700, exist_ok=True)
+                for child in tuple(stage.iterdir()):
+                    if child.name in {"workspace", ".yuki"}:
+                        continue
+                    child.rename(desktop_root / child.name)
+            if schema_version == 2:
+                (stage / ".yuki").mkdir(mode=0o700, exist_ok=True)
             actual = {p.relative_to(stage).as_posix(): p for p in stage.rglob("*") if p.is_file()}
+            secret_entry = expected.pop(".yuki/memory_key_export.json", None)
+            if secret_entry is not None and memory_key_export is None:
+                raise BackupError("Portable memory key export is missing from the authenticated archive.")
+            if memory_key_export is not None:
+                if secret_entry is None:
+                    raise BackupError("Portable memory key export is missing from the authenticated manifest.")
+                if (
+                    len(memory_key_export) != secret_entry["size"]
+                    or not hmac.compare_digest(
+                        hashlib.sha256(memory_key_export).hexdigest(), secret_entry["sha256"],
+                    )
+                ):
+                    raise BackupError("Portable memory key export failed integrity validation.")
+                if not import_memory_key:
+                    raise BackupError("This backup contains a portable memory key. Explicitly enable memory-key import to restore it safely.")
+                if keyring_module is None:
+                    raise BackupError("A secure OS keyring is required to import portable encrypted memory.")
+                try:
+                    identity_payload = json.loads(
+                        (stage / ".yuki" / "profile_identity.json").read_text(encoding="utf-8")
+                    )
+                    if (
+                        not isinstance(identity_payload, dict)
+                        or identity_payload.get("schema_version") != 1
+                        or not isinstance(identity_payload.get("profile_id"), str)
+                    ):
+                        raise ValueError("invalid restored profile identity")
+                    profile_id = identity_payload["profile_id"]
+                    from core.profile_identity import profile_memory_keyring_account
+                    profile_memory_keyring_account(profile_id)
+                    wrapped = json.loads(memory_key_export.decode("utf-8"))
+                    if (
+                        not isinstance(wrapped, dict)
+                        or set(wrapped) != {"schema_version", "profile_id", "nonce", "ciphertext"}
+                        or wrapped.get("schema_version") != 1
+                        or wrapped.get("profile_id") != profile_id
+                        or not isinstance(wrapped.get("nonce"), str)
+                        or not isinstance(wrapped.get("ciphertext"), str)
+                    ):
+                        raise ValueError("invalid wrapped memory key envelope")
+                    memory_nonce = base64.b64decode(wrapped["nonce"], validate=True)
+                    wrapped_ciphertext = base64.b64decode(wrapped["ciphertext"], validate=True)
+                    if len(memory_nonce) != NONCE_BYTES or len(wrapped_ciphertext) < 16:
+                        raise ValueError("invalid wrapped memory key payload")
+                    memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+                    memory_key_export = AESGCM(_derive_memory_wrap_key(key, salt)).decrypt(
+                        memory_nonce, wrapped_ciphertext, memory_aad,
+                    )
+                except Exception as exc:
+                    raise BackupError("Portable memory key envelope authentication failed.") from exc
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
+            if os.name == "posix":
+                # Restore personal data with private permissions regardless of
+                # the caller's umask or archive-supplied mode bits.
+                for path in sorted(stage.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+                    os.chmod(path, 0o700 if path.is_dir() else 0o600)
             for rel, path in actual.items():
                 entry = expected[rel]
                 if path.stat().st_size != entry["size"] or not hmac.compare_digest(_sha256_file(path), entry["sha256"]):
@@ -337,13 +601,54 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                             raise BackupError(f"Restored SQLite database is invalid: {rel}")
                     finally:
                         db.close()
+            _fsync_staged_tree(stage)
             if target.exists():
                 if any(target.iterdir()):
                     raise BackupError("Restore destination changed; refusing to overwrite data.")
                 target.rmdir()
             target.parent.mkdir(parents=True, exist_ok=True)
-            stage.rename(target)
-            return {"destination": str(target), "file_count": len(actual), "size_bytes": total}
+            imported_key = False
+            imported_account = None
+            if memory_key_export is not None:
+                try:
+                    identity_payload = json.loads(
+                        (stage / ".yuki" / "profile_identity.json").read_text(encoding="utf-8")
+                    )
+                    if (
+                        not isinstance(identity_payload, dict)
+                        or identity_payload.get("schema_version") != 1
+                        or not isinstance(identity_payload.get("profile_id"), str)
+                    ):
+                        raise ValueError("invalid restored profile identity")
+                    profile_id = identity_payload["profile_id"]
+                    from core.profile_identity import profile_memory_keyring_account
+                    imported_account = profile_memory_keyring_account(profile_id)
+                    from companion.secure_memory import EncryptedMemoryStore
+                    imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
+                        memory_key_export, profile_id, keyring_module=keyring_module,
+                        memory_path=stage / ".yuki" / "memory.enc.json",
+                    )
+                except Exception as exc:
+                    raise BackupError("Portable memory key could not be safely installed in the destination OS keyring.") from exc
+            try:
+                stage.rename(target)
+            except Exception as exc:
+                if imported_key and imported_account is not None:
+                    try:
+                        keyring_module.delete_password("yuki-companion-memory", imported_account)
+                    except Exception as rollback_error:
+                        raise BackupError("Restore publication failed and the newly imported key could not be removed from the OS keyring; preserve the keyring entry and retry recovery.") from rollback_error
+                raise
+            try:
+                _fsync_directory(target.parent)
+            except OSError as exc:
+                raise BackupError("Restore was published, but filesystem durability could not be confirmed; verify the destination before retrying.") from exc
+            return {
+                "destination": str(target),
+                "file_count": len(actual) + (1 if memory_key_export is not None else 0),
+                "size_bytes": total,
+                "memory_key_imported": memory_key_export is not None,
+            }
         except (tarfile.TarError, OSError, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, BackupError):
                 raise

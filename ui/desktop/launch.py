@@ -13,9 +13,9 @@ def _close_expired_controller(controller: Any) -> Exception | None:
     """Best-effort revoke and close a controller before returning to login.
 
     Authorization failures can arrive from background workers after the
-    authenticated session has already expired. Detach the controller from the
-    window first, then run its complete logout path so memory and conversation
-    state are not left alive behind the login screen.
+    authenticated session has already expired. Attempt complete cleanup before
+    returning to login; callers retain the closed controller if cleanup fails so
+    the owner can retry revocation without reopening session actions.
     """
     if controller is None:
         return None
@@ -24,6 +24,53 @@ def _close_expired_controller(controller: Any) -> Exception | None:
     except Exception as exc:
         return exc
     return None
+
+
+def _close_startup_resources(resources) -> None:
+    """Best-effort reverse-order cleanup for partially composed desktop startup."""
+    seen: set[int] = set()
+    for resource in reversed(tuple(resources)):
+        if resource is None or id(resource) in seen:
+            continue
+        seen.add(id(resource))
+        close = getattr(resource, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # Preserve the startup exception; later resources still get a
+                # cleanup attempt, and normal shutdown reports aggregated errors.
+                continue
+
+
+def _restrict_session_to_logout_retry(
+    tabs: Any,
+    chat_controls: tuple[Any, ...],
+    logout_button: Any,
+    chat_status: Any,
+) -> None:
+    """Leave only the retry-sign-out control usable after failed revocation."""
+    for index in range(tabs.count()):
+        tabs.setTabEnabled(index, index == 0)
+    for control in chat_controls:
+        control.setEnabled(False)
+    logout_button.setText("Retry sign out")
+    logout_button.setEnabled(True)
+    chat_status.setEnabled(True)
+
+
+def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -> None:
+    """Revoke the active owner session, then close process resources."""
+    def revoke_active_session():
+        if controller is not None:
+            controller.logout()
+        elif sessions is not None:
+            sessions.logout()
+
+    if lifecycle is not None:
+        lifecycle.close(before_close=revoke_active_session)
+    else:
+        revoke_active_session()
 
 
 def _build_services():
@@ -40,30 +87,62 @@ def _build_services():
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
     from ui.desktop.lifecycle import DesktopServiceLifecycle
 
-    root = prepare_private_desktop_root(desktop_data_root())
+    config = load_config()
+    from pathlib import Path
+    portable_storage = bool(__import__("os").environ.get("YUKI_HOME", "").strip())
+    root = prepare_private_desktop_root(
+        desktop_data_root(), require_existing_parent=portable_storage,
+        require_separate_volume=portable_storage,
+    )
+    from core.sqlite_recovery import require_healthy_sqlite_stores
+    from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+    keyring = load_os_keyring()
+    profile_id = load_or_create_profile_id(root)
+    memory_keyring_account = profile_memory_keyring_account(profile_id)
+    from core.sqlite_recovery import inspect_encrypted_memory_store
+    require_healthy_sqlite_stores(
+        {
+            "authentication": root / "auth.sqlite3",
+            "task_workflow": root / "tasks.sqlite3",
+            "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
+        },
+        additional_checks=(inspect_encrypted_memory_store(
+            root / "memory.enc.json", keyring,
+            keyring_account=memory_keyring_account,
+        ),),
+    )
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
-    sessions = DesktopSessionManager(auth, load_os_keyring())
-    provider = create_provider(load_config())
-    permission_check = task_permission_authorizer(
-        auth,
-        session_token_provider=lambda: (
-            sessions.current_identity().session_id
-            if sessions.current_identity() is not None else ""
-        ),
-    )
-    task_db = str(root / "tasks.sqlite3")
-    runtime = TaskRuntime(WorkflowRunStore(task_db), authorize=permission_check)
-    built_in_agents = (
-        SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
-        SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
-        SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
-        SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
-    )
-    coordinator = SpecialistAgentCoordinator(
-        runtime, task_db, built_in_agents, authorize=permission_check,
-    )
-    lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
-    return auth, sessions, provider, coordinator, runtime, lifecycle
+    sessions = DesktopSessionManager(auth, keyring)
+    provider = None
+    try:
+        provider = create_provider(config)
+        permission_check = task_permission_authorizer(
+            auth,
+            session_token_provider=lambda: (
+                sessions.current_identity().session_id
+                if sessions.current_identity() is not None else ""
+            ),
+        )
+        task_db = str(root / "tasks.sqlite3")
+        runtime = TaskRuntime(WorkflowRunStore(task_db), authorize=permission_check)
+        built_in_agents = (
+            SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
+            SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
+            SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
+            SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
+        )
+        coordinator = SpecialistAgentCoordinator(
+            runtime, task_db, built_in_agents, authorize=permission_check,
+        )
+        lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
+        return auth, sessions, provider, coordinator, runtime, lifecycle
+    except Exception:
+        # Provider construction is the first potentially long-lived external
+        # resource. If any later service fails, release it before propagating
+        # the original startup error. Auth/session adapters currently expose no
+        # persistent close handle; close any future closeable resource too.
+        _close_startup_resources((auth, sessions, provider))
+        raise
 
 
 def run() -> int:
@@ -100,8 +179,9 @@ def run() -> int:
             "Install them with: python -m pip install -r requirements-desktop.txt"
         ) from exc
 
+    from core.config import load_config
     from companion.conversation import ConversationSession
-    from companion.memory_consent import CompanionMemory
+    from ui.desktop.memory import create_desktop_memory
     from ui.desktop.bootstrap import DesktopStartupError, build_desktop_context
     from ui.desktop.controller import DesktopCompanionController
 
@@ -157,6 +237,54 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit(None, exc)
 
+    class LogoutWorkerSignals(QObject):
+        finished = Signal(object)
+
+    class LogoutWorker(QRunnable):
+        """Revoke the current session after preceding desktop work drains."""
+
+        def __init__(self, controller, sessions):
+            super().__init__()
+            self.controller = controller
+            self.sessions = sessions
+            self.signals = LogoutWorkerSignals()
+
+        @Slot()
+        def run(self):
+            error = None
+            try:
+                if self.controller is not None:
+                    self.controller.logout()
+                elif self.sessions is not None:
+                    self.sessions.logout()
+            except Exception as exc:
+                error = exc
+            self.signals.finished.emit(error)
+
+    class ShutdownWorkerSignals(QObject):
+        finished = Signal(object)
+
+    class ShutdownWorker(QRunnable):
+        """Run ordered service shutdown away from the Qt event thread."""
+
+        def __init__(self, lifecycle, controller, sessions):
+            super().__init__()
+            self.lifecycle = lifecycle
+            self.controller = controller
+            self.sessions = sessions
+            self.signals = ShutdownWorkerSignals()
+
+        @Slot()
+        def run(self):
+            error = None
+            try:
+                _shutdown_desktop_services(
+                    self.lifecycle, self.controller, self.sessions,
+                )
+            except Exception as exc:
+                error = exc
+            self.signals.finished.emit(error)
+
     class YukiWindow(QMainWindow):
         def __init__(self):
             super().__init__()
@@ -170,6 +298,11 @@ def run() -> int:
             self.lifecycle = None
             self.controller = None
             self.busy = False
+            self._logout_started = False
+            self._logout_worker = None
+            self._shutdown_started = False
+            self._shutdown_complete = False
+            self._shutdown_worker = None
             self.current_plan = None
             self.migration_preview = None
             self._build_ui()
@@ -306,10 +439,14 @@ def run() -> int:
 
             backup_page = QWidget()
             backup_layout = QVBoxLayout(backup_page)
-            backup_layout.addWidget(QLabel("Create a portable encrypted backup of your Yuki profile."))
+            backup_layout.addWidget(QLabel("Create a portable encrypted backup of your Yuki profile, including the configured workspace files."))
             backup_layout.addWidget(QLabel(
                 "Choose a new backup file and a passphrase of at least 12 characters. "
                 "Yuki cannot recover a lost passphrase."
+            ))
+            backup_layout.addWidget(QLabel(
+                "Portable memory is optional. When enabled, its profile key is included only "
+                "inside the passphrase-encrypted archive and imported into the destination OS keyring."
             ))
             self.backup_path = QLineEdit()
             self.backup_path.setReadOnly(True)
@@ -327,6 +464,11 @@ def run() -> int:
             self.backup_confirmation.setPlaceholderText("Confirm backup passphrase")
             backup_layout.addWidget(self.backup_passphrase)
             backup_layout.addWidget(self.backup_confirmation)
+            self.include_memory_key = QCheckBox(
+                "Include portable encrypted-memory key (recommended for cross-device restore)"
+            )
+            self.include_memory_key.setChecked(False)
+            backup_layout.addWidget(self.include_memory_key)
             self.backup_create_button = QPushButton("Create encrypted backup")
             self.backup_create_button.clicked.connect(self._create_backup)
             backup_layout.addWidget(self.backup_create_button)
@@ -351,7 +493,12 @@ def run() -> int:
             self.restore_passphrase.setEchoMode(QLineEdit.Password)
             self.restore_passphrase.setPlaceholderText("Backup passphrase")
             backup_layout.addWidget(self.restore_passphrase)
-            self.backup_restore_button = QPushButton("Restore into selected folder")
+            self.import_memory_key = QCheckBox(
+                "Import portable encrypted-memory key into this computer's OS keyring"
+            )
+            self.import_memory_key.setChecked(True)
+            backup_layout.addWidget(self.import_memory_key)
+            self.backup_restore_button = QPushButton("Restore profile package into selected folder")
             self.backup_restore_button.clicked.connect(self._restore_backup)
             backup_layout.addWidget(self.backup_restore_button)
             self.backup_status = QLabel("Backup and restore are available after signing in.")
@@ -405,6 +552,7 @@ def run() -> int:
             self.migration_status.setWordWrap(True)
             migration_layout.addWidget(self.migration_status)
             tabs.addTab(migration_page, "Migration")
+            self.authenticated_tabs = tabs
 
             self.pages.addWidget(tabs)
 
@@ -487,7 +635,8 @@ def run() -> int:
                 "Initial safety limits: 20,000 files and 2 GiB total.",
                 "For more than 200 files, only the first 200 paths are displayed.",
             ])
-            self.migration_preview_view.setPlainText("\\n".join(lines))
+            self.migration_preview_view.setPlainText("\
+".join(lines))
             self.migration_status.setText(
                 "Preview complete. Review the source, destination, size, file count and displayed paths."
             )
@@ -507,7 +656,9 @@ def run() -> int:
             answer = QMessageBox.warning(
                 self, "Confirm Yuki data migration",
                 f"Copy {len(preview.files)} files ({preview.total_bytes:,} bytes) "
-                f"from the selected source into a separate destination?\\n\\n"
+                f"from the selected source into a separate destination?\
+\
+"
                 "The original data will be retained. Existing destination data will not be overwritten. "
                 "This will not replace the currently running Yuki profile.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
@@ -552,7 +703,9 @@ def run() -> int:
                 "Original source retained."
             )
             self.migration_preview_view.appendPlainText(
-                "\\n\\nMIGRATION COMPLETE — verified manifest written to destination."
+                "\
+\
+MIGRATION COMPLETE — verified manifest written to destination."
             )
 
         def _choose_backup_path(self):
@@ -607,14 +760,19 @@ def run() -> int:
             answer = QMessageBox.question(
                 self, "Create encrypted backup",
                 "Yuki will create an encrypted copy of its local profile. "
-                "Keep the passphrase safe; it cannot be recovered. Continue?",
+                + ("The portable memory key will be included inside the encrypted archive if saved encrypted memory exists. " if self.include_memory_key.isChecked() else "Memory will remain tied to the source OS keyring. ")
+                + "Keep the passphrase safe; it cannot be recovered. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
                 return
             controller = self.controller
+            include_memory_key = self.include_memory_key.isChecked()
             self._run_backup_operation(
-                lambda: controller.create_backup(destination, passphrase),
+                lambda: controller.create_backup(
+                    destination, passphrase,
+                    include_memory_key=include_memory_key,
+                ),
                 "Creating and verifying encrypted backup…",
             )
 
@@ -630,15 +788,21 @@ def run() -> int:
                 return
             answer = QMessageBox.warning(
                 self, "Restore backup",
-                "Restore will create a separate data directory. Existing files are never overwritten. "
-                "This will not replace the currently running Yuki profile. Continue?",
+                "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
+                "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
+                + ("If this backup contains a portable memory key, Yuki will import it into this computer's OS keyring. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
+                + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
                 return
             controller = self.controller
+            import_memory_key = self.import_memory_key.isChecked()
             self._run_backup_operation(
-                lambda: controller.restore_backup(backup, destination, passphrase),
+                lambda: controller.restore_backup(
+                    backup, destination, passphrase,
+                    import_memory_key=import_memory_key,
+                ),
                 "Authenticating and restoring backup into the selected folder…",
             )
 
@@ -659,11 +823,13 @@ def run() -> int:
                 self.backup_status.setText(
                     f"Encrypted backup verified: {result['file_count']} files, "
                     f"{result['size_bytes']} bytes. Output: {result['path']}"
+                    + (" Portable memory key included." if result.get("memory_key_included") else " Memory remains tied to the source OS keyring.")
                 )
             else:
                 self.backup_status.setText(
                     f"Restore verified: {result['file_count']} files, "
                     f"{result['size_bytes']} bytes. Destination: {result['destination']}"
+                    + (" Portable memory key imported." if result.get("memory_key_imported") else "")
                 )
 
         def _initialize(self):
@@ -677,10 +843,16 @@ def run() -> int:
                     self._open_session(identity)
             except Exception as exc:
                 self.login_button.setEnabled(False)
-                self.login_status.setText(
-                    "Desktop setup is unavailable (" + type(exc).__name__ + "). "
-                    "Check the OS credential store and local configuration."
+                from core.sqlite_recovery import (
+                    SQLiteRecoveryRequired, format_sqlite_recovery_report,
                 )
+                if isinstance(exc, SQLiteRecoveryRequired):
+                    self.login_status.setText(format_sqlite_recovery_report(exc.report))
+                else:
+                    self.login_status.setText(
+                        "Desktop setup is unavailable (" + type(exc).__name__ + "). "
+                        "Check the OS credential store and local configuration."
+                    )
 
         def _login(self):
             if self.sessions is None:
@@ -707,18 +879,42 @@ def run() -> int:
                 self.login_button.setEnabled(True)
 
         def _open_session(self, identity):
+            # A fresh authenticated session restores the chat controls and tabs
+            # after any prior fail-closed cleanup-retry state.
+            for index in range(self.authenticated_tabs.count()):
+                self.authenticated_tabs.setTabEnabled(index, True)
+            for widget in (
+                self.memory_toggle, self.transcript, self.message, self.send_button,
+            ):
+                widget.setEnabled(True)
+            self.logout_button.setText("Sign out")
+            config = load_config()
+            memory = create_desktop_memory(self.sessions.keyring)
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
-                memory=create_desktop_memory(self.sessions.keyring),
+                memory=memory,
                 session=ConversationSession(self.provider),
                 agent_coordinator=self.coordinator,
                 task_runtime=self.runtime,
             )
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
-            self.controller = DesktopCompanionController(
-                context.application, context.identity, self.sessions
+            specialist_controller = DesktopCompanionController(
+                context.application, context.identity, self.sessions,
+                workspace_path=Path(config["workspace"]),
+            )
+            # Durable chat uses the canonical owner-scoped conversation runtime.
+            # The existing specialist controller remains the authority for task
+            # approvals, backups, restore and migration during this cutover.
+            from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
+            self.controller = build_shared_desktop_controller(
+                config,
+                provider=self.provider,
+                identity=context.identity,
+                sessions=self.sessions,
+                specialist_controller=specialist_controller,
+                memory=context.application.memory,
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
@@ -755,7 +951,8 @@ def run() -> int:
                     status = "enabled" if specialist.get("enabled") else "disabled"
                     item = QListWidgetItem(
                         f'{specialist.get("name", "Specialist")} '
-                        f'[{specialist.get("agent_id", "")}] — {status}\\n'
+                        f'[{specialist.get("agent_id", "")}] — {status}\
+'
                         f'Capabilities: {capabilities}'
                     )
                     self.specialist_list.addItem(item)
@@ -803,7 +1000,8 @@ def run() -> int:
                     f"  Status: {task.status}",
                     "",
                 ])
-            self.plan_details.setPlainText("\\n".join(lines))
+            self.plan_details.setPlainText("\
+".join(lines))
             self.plan_dispatch_button.setEnabled(
                 bool(plan.subtasks) and all(task.status == "pending" for task in plan.subtasks)
             )
@@ -855,7 +1053,8 @@ def run() -> int:
                 for task in self.controller.list_tasks(limit=50):
                     item = QListWidgetItem(
                         f"{task.name} — {task.state} — v{task.version} — "
-                        f"{task.task_id}\\nUpdated: {task.updated_at}"
+                        f"{task.task_id}\
+Updated: {task.updated_at}"
                     )
                     item.setData(256, (task.task_id, task.name, task.state, task.version))
                     self.task_list.addItem(item)
@@ -892,7 +1091,8 @@ def run() -> int:
                     + (f" ({update.percent}%)" if update.percent is not None else "")
                     for update in updates
                 ]
-                self.task_progress_view.setPlainText("\\n".join(lines))
+                self.task_progress_view.setPlainText("\
+".join(lines))
             except Exception as exc:
                 self.task_progress_view.setPlainText(
                     "Task progress unavailable (" + type(exc).__name__ + ")."
@@ -962,7 +1162,8 @@ def run() -> int:
             layout = QVBoxLayout(dialog)
             review = QPlainTextEdit()
             review.setReadOnly(True)
-            review.setPlainText("\\n".join(lines))
+            review.setPlainText("\
+".join(lines))
             layout.addWidget(review, 1)
             buttons = QDialogButtonBox(
                 QDialogButtonBox.Ok | QDialogButtonBox.Cancel
@@ -999,7 +1200,10 @@ def run() -> int:
             task_id, name, state, version = item.data(256)
             answer = QMessageBox.question(
                 self, "Cancel task",
-                f"Cancel task '{name}'?\\nID: {task_id}\\nState: {state}\\nVersion: {version}",
+                f"Cancel task '{name}'?\
+ID: {task_id}\
+State: {state}\
+Version: {version}",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
@@ -1046,10 +1250,7 @@ def run() -> int:
                 self.transcript.appendPlainText("Yuki: " + reply)
                 self.chat_status.setText("Ready")
 
-        def _return_to_login(self):
-            controller = self.controller
-            self.controller = None
-            cleanup_error = _close_expired_controller(controller)
+        def _clear_authenticated_session_ui(self):
             self.memory_toggle.blockSignals(True)
             self.memory_toggle.setChecked(False)
             self.memory_toggle.blockSignals(False)
@@ -1057,8 +1258,11 @@ def run() -> int:
             self.specialist_list.clear()
             self.task_list.clear()
             self.task_progress_view.clear()
+            self.backup_path.clear()
             self.backup_passphrase.clear()
             self.backup_confirmation.clear()
+            self.restore_path.clear()
+            self.restore_destination.clear()
             self.restore_passphrase.clear()
             self.migration_source.clear()
             self.migration_destination.clear()
@@ -1070,78 +1274,127 @@ def run() -> int:
             self.task_approve_button.setEnabled(False)
             self.task_cancel_button.setEnabled(False)
             self.current_plan = None
+            self.plan_goal.clear()
             self.plan_details.clear()
             self.plan_dispatch_button.setEnabled(False)
             self.plan_cancel_button.setEnabled(False)
-            self.pages.setCurrentIndex(0)
-            if cleanup_error is not None:
-                self.login_status.setText(
-                    "The session expired, but local cleanup was incomplete. "
-                    "Verify session status before signing in again ("
-                    + type(cleanup_error).__name__ + ")."
-                )
 
-        def _logout(self):
-            if self.busy:
-                QMessageBox.information(
-                    self, "Request in progress",
-                    "Wait for the current response before signing out."
+
+        def _return_to_login(self):
+            controller = self.controller
+            cleanup_error = _close_expired_controller(controller)
+            self._clear_authenticated_session_ui()
+            if cleanup_error is not None:
+                # Keep the closed controller reachable so cleanup can be retried.
+                # Only the sign-out action remains enabled; the bridge rejects all
+                # chat and specialist operations while its authorization gate is shut.
+                self.pages.setCurrentIndex(1)
+                self._restrict_to_logout_retry()
+                self.chat_status.setText(
+                    "Session expired; cleanup is incomplete. Retry sign out before signing in again."
+                )
+                self.login_status.setText(
+                    "Local session cleanup is incomplete ("
+                    + type(cleanup_error).__name__ + "). Retry sign out."
                 )
                 return
-            try:
-                if self.controller is not None:
-                    self.controller.logout()
-                elif self.sessions is not None:
-                    self.sessions.logout()
-            except Exception as exc:
-                # Cleanup may fail after the session has already been revoked.
-                # Never leave a sensitive transcript or stale controller visible
-                # while the authentication state is uncertain.
-                self.controller = None
-                self._return_to_login()
-                self.login_status.setText(
-                    "Sign-out cleanup was incomplete. Verify session status before continuing."
+            self.controller = None
+            self.pages.setCurrentIndex(0)
+
+        def _restrict_to_logout_retry(self):
+            self.setEnabled(True)
+            _restrict_session_to_logout_retry(
+                self.authenticated_tabs,
+                (self.memory_toggle, self.transcript, self.message, self.send_button),
+                self.logout_button,
+                self.chat_status,
+            )
+
+        @Slot(object)
+        def _logout_finished(self, error: Any):
+            self._logout_started = False
+            self._logout_worker = None
+            if error is not None:
+                # Keep the closed bridge attached so a second sign-out attempt
+                # can retry any cleanup step that failed. Returning to login and
+                # discarding it here would make the retry path unreachable.
+                self._clear_authenticated_session_ui()
+                self.logout_button.setText("Retry sign out")
+                self.chat_status.setText(
+                    "Sign-out cleanup incomplete. Other session actions are blocked; retry sign out."
                 )
+                if not self._shutdown_started:
+                    self._restrict_to_logout_retry()
                 QMessageBox.warning(
                     self, "Sign out",
-                    "Local conversation data was cleared and the login screen restored. "
-                    "Session revocation may not have completed; verify session status "
-                    "before continuing (" + type(exc).__name__ + ")."
+                    "Session cleanup did not fully complete (" + type(error).__name__ + "). "
+                    "Yuki has closed the session action gate. Retry sign out to finish cleanup."
                 )
                 return
             self.controller = None
             self._return_to_login()
+            if not self._shutdown_started:
+                self.setEnabled(True)
+            self.logout_button.setText("Sign out")
             self.login_status.setText("You are signed out.")
 
-        def closeEvent(self, event):
-            if self.busy:
-                QMessageBox.information(
-                    self, "Request in progress",
-                    "Wait for the current response before closing Yuki."
-                )
-                event.ignore()
+        def _logout(self):
+            if self._logout_started or self._shutdown_started:
                 return
-            def revoke_active_session():
-                if self.controller is not None:
-                    self.controller.logout()
-                elif self.sessions is not None:
-                    self.sessions.logout()
+            self._logout_started = True
+            self.setEnabled(False)
+            self.login_status.setText(
+                "Yuki is finishing active work before signing out…"
+            )
+            worker = LogoutWorker(self.controller, self.sessions)
+            worker.signals.finished.connect(self._logout_finished)
+            self._logout_worker = worker
+            # The single-thread pool guarantees this runs after the active
+            # request, so logout cannot close its runtime underneath inference.
+            self.pool.start(worker)
 
-            try:
-                if self.lifecycle is not None:
-                    self.lifecycle.close(before_close=revoke_active_session)
-                else:
-                    revoke_active_session()
-            except Exception as exc:
+        @Slot(object)
+        def _shutdown_finished(self, error: Any):
+            if error is not None:
+                # Keep the controller and lifecycle attached. Their failed
+                # cleanup hooks are retryable; do not exit with revocation
+                # incomplete or silently discard the only retry handle.
+                self._shutdown_started = False
+                self.setEnabled(True)
+                self.login_status.setText(
+                    "Shutdown cleanup incomplete. Session actions remain blocked. "
+                    "Close Yuki again to retry cleanup."
+                )
                 QMessageBox.warning(
                     self, "Yuki shutdown",
                     "Yuki could not complete every cleanup operation ("
-                    + type(exc).__name__
-                    + "). Remaining cleanup was attempted; check the application logs."
+                    + type(error).__name__
+                    + "). Successful steps were retained; close Yuki again to retry failed cleanup."
                 )
-            finally:
-                self.controller = None
-            event.accept()
+                return
+            self._shutdown_complete = True
+            self.controller = None
+            self.close()
+
+        def closeEvent(self, event):
+            if self._shutdown_complete:
+                event.accept()
+                return
+            event.ignore()
+            if self._shutdown_started:
+                return
+            self._shutdown_started = True
+            self.setEnabled(False)
+            self.login_status.setText(
+                "Yuki is safely signing out and shutting down…"
+            )
+            # The pool is single-threaded: this shutdown task runs only after
+            # any active provider/backup/plan operation has returned. Resource
+            # closure therefore cannot race an in-flight desktop operation.
+            worker = ShutdownWorker(self.lifecycle, self.controller, self.sessions)
+            worker.signals.finished.connect(self._shutdown_finished)
+            self._shutdown_worker = worker
+            self.pool.start(worker)
 
     app = QApplication.instance() or QApplication(sys.argv)
     window = YukiWindow()

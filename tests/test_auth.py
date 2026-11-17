@@ -19,6 +19,25 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             lockout_seconds=30,
         )
 
+    def test_schema_initialization_rolls_back_on_incompatible_existing_table(self):
+        import sqlite3
+
+        path = Path(self.tmp.name) / "incompatible-auth.sqlite3"
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE auth_sessions (token_hash TEXT PRIMARY KEY)")
+        db.commit()
+        db.close()
+
+        with self.assertRaises(sqlite3.OperationalError):
+            BuiltInAuthService(
+                str(path), password_iterations=100_000,
+                session_ttl_seconds=3600, max_failed_logins=3, lockout_seconds=30,
+            )
+        db = sqlite3.connect(path)
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        db.close()
+        self.assertNotIn("auth_users", tables)
+
     def test_first_admin_bootstrap_is_one_time_and_signup_is_least_privilege(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         self.assertIn("users:manage", admin.permissions)

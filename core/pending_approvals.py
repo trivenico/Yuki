@@ -15,6 +15,8 @@ import secrets
 import sqlite3
 from typing import Any
 
+from core.sqlite_file_security import prepare_private_sqlite_path, verify_sqlite_integrity
+
 
 @dataclass(frozen=True)
 class StoredPendingAction:
@@ -37,26 +39,33 @@ class SQLitePendingApprovalStore:
             raise ValueError("ttl_seconds must be between 1 and 3600.")
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
-        self.database_path = str(Path(database_path).expanduser())
+        database_preexisted = Path(database_path).expanduser().exists()
+        self.database_path = prepare_private_sqlite_path(database_path)
+        verify_sqlite_integrity(self.database_path, allow_empty=not database_preexisted)
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS pending_approvals (
-                pending_id TEXT PRIMARY KEY,
-                skill_id TEXT NOT NULL,
-                arguments_json TEXT NOT NULL,
-                action_json TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                actor_hash TEXT,
-                session_hash TEXT
-            )""")
-            columns = {row[1] for row in db.execute("PRAGMA table_info(pending_approvals)")}
-            if "actor_hash" not in columns:
-                db.execute("ALTER TABLE pending_approvals ADD COLUMN actor_hash TEXT")
-            if "session_hash" not in columns:
-                db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("""CREATE TABLE IF NOT EXISTS pending_approvals (
+                    pending_id TEXT PRIMARY KEY,
+                    skill_id TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    action_json TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    actor_hash TEXT,
+                    session_hash TEXT
+                )""")
+                columns = {row[1] for row in db.execute("PRAGMA table_info(pending_approvals)")}
+                if "actor_hash" not in columns:
+                    db.execute("ALTER TABLE pending_approvals ADD COLUMN actor_hash TEXT")
+                if "session_hash" not in columns:
+                    db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
+                db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
 
     @contextmanager
     def _connect(self):

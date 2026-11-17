@@ -218,6 +218,12 @@ class CompanionApplicationService:
     def current_role(self) -> dict:
         return self.session.current_role()
 
+    def revoke_session_tasks(self, *, session_id: str) -> list[TaskRecord]:
+        """Cancel durable work whose human approval belongs to this session."""
+        if self.task_runtime is None:
+            return []
+        return self.task_runtime.revoke_session_approvals(session_id)
+
     def reset_conversation(self) -> None:
         self.session.reset()
 

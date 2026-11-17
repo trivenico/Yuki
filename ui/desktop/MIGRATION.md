@@ -13,7 +13,7 @@ startup and never run automatically. The authenticated user must:
 3. Explain that the source is retained and destination must be empty.
 4. Obtain explicit confirmation from the authenticated local user.
 5. Call `migrate_data` only after confirmation.
-6. Report success only after the verified staging directory is atomically published.
+6. Report success only after the verified staging directory is atomically published and the destination parent has been synced where supported. If the rename succeeds but the parent sync fails, report that publication occurred with durability uncertain; do not retry into or remove the published destination.
 
 Migration is limited to 20,000 files and 2 GiB per operation. The desktop
 shows the full count and source byte size and lists the first 200 paths in the

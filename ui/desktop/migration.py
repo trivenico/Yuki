@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sqlite3
 import tempfile
 from dataclasses import dataclass
@@ -29,6 +30,46 @@ class MigrationPreview:
     destination: Path
     files: tuple[str, ...]
     total_bytes: int
+
+
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes where directory descriptors are supported."""
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_staged_tree(root: Path) -> None:
+    """Flush staged regular files and directories before atomic publication.
+
+    POSIX filesystems that honor fsync can then persist both file contents and
+    the directory entries that make up the staged tree. Other platforms retain
+    their native durability behavior.
+    """
+    if os.name != "posix":
+        return
+    for current, _dirs, files in os.walk(root, topdown=False, followlinks=False):
+        directory = Path(current)
+        for name in files:
+            path = directory / name
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise OSError("staged entry is not a regular file")
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        descriptor = os.open(directory, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def _inventory(source: Path) -> list[Path]:
@@ -69,11 +110,21 @@ def _inventory(source: Path) -> list[Path]:
     databases = {
         item for item in found if item.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
     }
+    database_names = {item.as_posix() for item in databases}
     sidecars = {
         Path(str(database) + suffix)
         for database in databases
         for suffix in ("-wal", "-shm", "-journal")
     }
+    # Never migrate an orphan sidecar as an independent file. It may be the
+    # only remnant of an interrupted database write and cannot be safely
+    # interpreted without its matching database.
+    for item in found:
+        if item.name.endswith(("-wal", "-shm", "-journal")):
+            raw = item.as_posix()
+            suffix = next(s for s in ("-wal", "-shm", "-journal") if raw.endswith(s))
+            if raw[:-len(suffix)] not in database_names:
+                raise MigrationError("Migration source contains an orphan SQLite sidecar.")
     found = [item for item in found if item not in sidecars]
     return sorted(found, key=lambda item: item.relative_to(root).as_posix())
 
@@ -133,6 +184,7 @@ def migrate_data(source: Path, destination: Path) -> dict:
     target = preview.destination
     target.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".yuki-migrate-", dir=target.parent))
+    published = False
     try:
         for relative in preview.files:
             src = preview.source / relative
@@ -155,13 +207,27 @@ def migrate_data(source: Path, destination: Path) -> dict:
         (stage / "migration-manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        # Persist staged contents before the atomic directory publication.
+        _fsync_staged_tree(stage)
         # Re-check target immediately before publication; never merge/overwrite.
         if target.exists():
             if any(target.iterdir()):
                 raise MigrationError("Destination changed during migration; no data was replaced.")
             target.rmdir()
         stage.rename(target)
+        published = True
+        try:
+            _fsync_directory(target.parent)
+        except OSError as exc:
+            raise MigrationError(
+                "Migration was published, but the destination directory could not be "
+                "confirmed durable. Do not retry or remove the destination; verify it "
+                "and keep the original source until recovery is complete."
+            ) from exc
         return manifest
     except Exception:
-        shutil.rmtree(stage, ignore_errors=True)
+        # Once rename succeeds, the destination is the published copy. Never
+        # describe it as rolled back or attempt to remove it after a later error.
+        if not published:
+            shutil.rmtree(stage, ignore_errors=True)
         raise

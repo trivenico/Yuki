@@ -15,6 +15,8 @@ import secrets
 import sqlite3
 from typing import Any
 
+from core.sqlite_file_security import prepare_private_sqlite_path, verify_sqlite_integrity
+
 
 class WorkflowStoreError(RuntimeError):
     """Base error for workflow persistence operations."""
@@ -91,11 +93,15 @@ class WorkflowRunStore:
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        database_preexisted = Path(database_path).expanduser().exists()
+        self.database_path = prepare_private_sqlite_path(database_path)
+        verify_sqlite_integrity(self.database_path, allow_empty=not database_preexisted)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
+            # SQLite DDL is not automatically grouped into a transaction by
+            # Python's legacy transaction mode. Keep every schema change atomic.
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_runs (
                     run_id TEXT PRIMARY KEY,
@@ -283,6 +289,51 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def cancel_session_approved_runs(self, session_id: str) -> list[WorkflowRun]:
+        """Cancel queued/running tasks approved by a session that is being revoked.
+
+        This is an atomic revocation barrier: a concurrent worker claim either
+        commits first and is then cancelled here, or observes the cancelled
+        state and cannot claim the task. In-flight text generation may finish,
+        but its worker cannot persist a result after this transition.
+        """
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or "\x00" in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        now = _now()
+        cancelled = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM workflow_runs WHERE approved_session_hash=? "
+                "AND state IN ('queued', 'running') ORDER BY created_at, run_id",
+                (session_hash,),
+            ).fetchall()
+            for row in rows:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET state='cancelled', error_code='session_revoked',
+                        lease_owner=NULL, lease_expires_at=NULL, updated_at=?, version=version+1
+                    WHERE run_id=? AND version=? AND state IN ('queued', 'running')
+                """, (now, row["run_id"], row["version"]))
+                if updated.rowcount != 1:
+                    raise WorkflowConflict("task changed during session revocation.")
+                sequence = db.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                    (row["run_id"],),
+                ).fetchone()[0]
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, ?, 'task.cancelled', 'system:session-revocation', ?, ?)",
+                    (row["run_id"], sequence,
+                     json.dumps({"reason": "session_revoked", "execution_stopped": "cooperative"}, separators=(",", ":")),
+                     now),
+                )
+                cancelled_row = db.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
+                ).fetchone()
+                cancelled.append(self._row(cancelled_row))
+        return cancelled
+
     def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
         """Atomically claim the oldest queued run; never steals or replays running work."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
@@ -461,6 +512,9 @@ class WorkflowRunStore:
         cutoff = current_time.astimezone(timezone.utc).isoformat()
         changed: list[WorkflowRun] = []
         with self._connect() as db:
+            # Serialize recovery with worker completion/lease renewal. The version
+            # predicate remains a second guard against stale writers.
+            db.execute("BEGIN IMMEDIATE")
             rows = db.execute("""
                 SELECT * FROM workflow_runs
                 WHERE state='running' AND lease_expires_at IS NOT NULL
@@ -474,6 +528,17 @@ class WorkflowRunStore:
                     WHERE run_id=? AND version=? AND state='running'
                 """, (cutoff, row["run_id"], row["version"]))
                 if updated.rowcount == 1:
+                    sequence = db.execute(
+                        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                        (row["run_id"],),
+                    ).fetchone()[0]
+                    db.execute(
+                        "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                        "VALUES (?, ?, 'task.interrupted', 'system:lease-recovery', ?, ?)",
+                        (row["run_id"], sequence,
+                         json.dumps({"reason": "lease_expired", "execution_stopped": "not_assumed", "automatic_replay": False}, separators=(",", ":")),
+                         cutoff),
+                    )
                     changed_row = db.execute(
                         "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
                     ).fetchone()

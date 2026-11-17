@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from threading import Barrier, Event, Lock, Thread
 from pathlib import Path
 
@@ -78,6 +79,30 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertIsNone(self.worker({"code-review": lambda _: "should not run"}).run_once())
         self.assertEqual(self.store.get(task_id).state, "queued")
 
+    def test_worker_startup_recovers_expired_tasks_without_replaying_them(self):
+        task_id = self.create_task()
+        queued = self.store.get(task_id)
+        running = self.store.transition(
+            task_id, expected_version=queued.version, to_state="running",
+            lease_owner="abandoned-worker", lease_seconds=1,
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat(), task_id),
+            )
+
+        result = self.worker({"code-review": lambda _: "must not execute"}).run_once()
+
+        self.assertIsNone(result)
+        recovered = self.store.get(task_id)
+        self.assertEqual(recovered.state, "interrupted")
+        self.assertEqual(recovered.error_code, "lease_expired")
+        self.assertEqual(recovered.attempts, 1)
+        events = self.store.list_task_events(task_id)
+        self.assertEqual(events[-1].kind, "task.interrupted")
+        self.assertEqual(events[-1].payload["reason"], "lease_expired")
+
     def test_approved_task_can_execute(self):
         task_id = self.create_task(approval=True)
         queued = self.store.get(task_id)
@@ -115,6 +140,34 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.get(task_id).state, "cancelled")
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
         self.assertEqual(events[-1].kind, "task.cancelled")
+
+    def test_session_revocation_during_handler_prevents_late_completion(self):
+        task_id = self.create_task(approval=True)
+        queued = self.store.get(task_id)
+        self.store.approve(task_id, actor_id="alice", session_id="logout-session",
+                           expected_version=queued.version)
+        started = Event()
+        release = Event()
+        outcome = {}
+
+        def slow_handler(_argument):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test handler timed out")
+            return "late output must not be persisted"
+
+        worker = self.worker({"code-review": slow_handler})
+        thread = Thread(target=lambda: outcome.setdefault("result", worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(timeout=5), "worker did not start handler")
+        self.store.cancel_session_approved_runs("logout-session")
+        release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "worker did not exit after handler returned")
+        self.assertEqual(outcome["result"].state, "cancelled")
+        persisted = self.store.get(task_id)
+        self.assertEqual(persisted.state, "cancelled")
+        self.assertIsNone(persisted.result)
 
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()

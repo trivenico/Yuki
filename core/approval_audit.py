@@ -10,6 +10,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
+from core.sqlite_file_security import prepare_private_sqlite_path, verify_sqlite_integrity
+
 _ALLOWED_EVENTS = frozenset({"requested", "approved", "denied", "executed", "execution_failed"})
 _ZERO_HASH = "0" * 64
 
@@ -20,27 +22,28 @@ class SQLiteApprovalAuditLog:
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        database_preexisted = Path(database_path).expanduser().exists()
+        self.database_path = prepare_private_sqlite_path(database_path)
+        verify_sqlite_integrity(self.database_path, allow_empty=not database_preexisted)
         with self._connect() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS approval_audit_events (
-                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_type TEXT NOT NULL,
-                    pending_id TEXT NOT NULL DEFAULT '[redacted]',
-                    actor_hash TEXT NOT NULL,
-                    skill_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    previous_hash TEXT NOT NULL,
-                    event_hash TEXT NOT NULL,
-                    pending_id_hash TEXT
-                )
-            """)
-            columns = {row[1] for row in db.execute("PRAGMA table_info(approval_audit_events)")}
-            if "pending_id_hash" not in columns:
-                # Migrate legacy records before allowing new events to be appended.
-                db.execute("BEGIN IMMEDIATE")
-                try:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS approval_audit_events (
+                        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        event_type TEXT NOT NULL,
+                        pending_id TEXT NOT NULL DEFAULT '[redacted]',
+                        actor_hash TEXT NOT NULL,
+                        skill_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        previous_hash TEXT NOT NULL,
+                        event_hash TEXT NOT NULL,
+                        pending_id_hash TEXT
+                    )
+                """)
+                columns = {row[1] for row in db.execute("PRAGMA table_info(approval_audit_events)")}
+                if "pending_id_hash" not in columns:
+                    # Redaction and hash-chain rebuild must commit with the schema change.
                     db.execute("ALTER TABLE approval_audit_events ADD COLUMN pending_id_hash TEXT")
                     rows = db.execute(
                         "SELECT event_id, pending_id FROM approval_audit_events ORDER BY event_id ASC"
@@ -51,11 +54,11 @@ class SQLiteApprovalAuditLog:
                             (self._digest(old_id), event_id),
                         )
                     self._rebuild_chain(db)
-                    db.execute("COMMIT")
-                except Exception:
-                    db.execute("ROLLBACK")
-                    raise
-            db.execute("CREATE INDEX IF NOT EXISTS idx_approval_audit_created ON approval_audit_events(created_at, event_id)")
+                db.execute("CREATE INDEX IF NOT EXISTS idx_approval_audit_created ON approval_audit_events(created_at, event_id)")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
 
     @contextmanager
     def _connect(self):

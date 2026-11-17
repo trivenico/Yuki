@@ -21,6 +21,7 @@ class DesktopCompanionController:
         application: CompanionApplicationService,
         identity: AuthenticatedDesktopIdentity,
         sessions: DesktopSessionManager,
+        *, workspace_path: Path | None = None,
     ) -> None:
         if not isinstance(application, CompanionApplicationService):
             raise TypeError("application must be a CompanionApplicationService.")
@@ -34,6 +35,7 @@ class DesktopCompanionController:
         self.application = application
         self.identity = identity
         self.sessions = sessions
+        self.workspace_path = Path(workspace_path).expanduser().resolve() if workspace_path is not None else None
 
     def respond(self, message: str) -> str:
         if self.sessions.current_identity() != self.identity:
@@ -135,11 +137,32 @@ class DesktopCompanionController:
         target = self._validate_migration_destination(destination)
         return migrate_data(Path(source), target)
 
-    def create_backup(self, destination: Path, passphrase: str) -> dict:
+    def create_backup(
+        self, destination: Path, passphrase: str, *, include_memory_key: bool = False,
+    ) -> dict:
         self._require_live_session()
-        return create_encrypted_backup(desktop_data_root(), Path(destination), passphrase)
+        additional_roots = {}
+        if self.workspace_path is not None:
+            if self.workspace_path.exists() or self.workspace_path.is_symlink():
+                additional_roots["workspace"] = self.workspace_path
+        memory_key_export = None
+        if include_memory_key:
+            from core.profile_identity import load_or_create_profile_id
+            profile_root = desktop_data_root()
+            memory_file = profile_root / "memory.enc.json"
+            if memory_file.exists() or memory_file.is_symlink():
+                profile_id = load_or_create_profile_id(profile_root)
+                memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
+        return create_encrypted_backup(
+            desktop_data_root(), Path(destination), passphrase,
+            additional_roots=additional_roots,
+            memory_key_export=memory_key_export,
+        )
 
-    def restore_backup(self, backup: Path, destination: Path, passphrase: str) -> dict:
+    def restore_backup(
+        self, backup: Path, destination: Path, passphrase: str, *,
+        import_memory_key: bool = False,
+    ) -> dict:
         self._require_live_session()
         destination_path = Path(destination).expanduser()
         if destination_path.is_symlink():
@@ -148,15 +171,37 @@ class DesktopCompanionController:
         live_data = desktop_data_root().resolve()
         if target == live_data or live_data in target.parents or target in live_data.parents:
             raise ValueError("Restore destination must be separate from the active Yuki profile.")
-        return restore_encrypted_backup(Path(backup), target, passphrase)
+        if self.workspace_path is not None:
+            live_workspace = self.workspace_path.resolve()
+            if (
+                target == live_workspace
+                or live_workspace in target.parents
+                or target in live_workspace.parents
+            ):
+                raise ValueError("Restore destination must be separate from the active Yuki workspace.")
+        keyring_module = None
+        if import_memory_key:
+            from ui.desktop.auth import load_os_keyring
+            keyring_module = load_os_keyring()
+        return restore_encrypted_backup(
+            Path(backup), target, passphrase,
+            keyring_module=keyring_module,
+            import_memory_key=import_memory_key,
+        )
 
     def logout(self) -> bool:
         """Revoke the authenticated session before best-effort local cleanup."""
         errors: list[Exception] = []
         revoked = False
         try:
-            # Revoke first: a local cleanup failure must never leave credentials
-            # active merely because clearing UI/session state raised an error.
+            # Cancel work authorized by this exact session before revoking its
+            # credentials. The store serializes this against worker claims.
+            self.application.revoke_session_tasks(session_id=self.identity.session_id)
+        except Exception as exc:
+            errors.append(exc)
+
+        try:
+            # Revoke credentials even if durable task cleanup failed.
             revoked = self.sessions.logout()
         except Exception as exc:
             errors.append(exc)

@@ -23,6 +23,42 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key=key, workflow_name="release-check", definition=self.definition
         )
 
+    def test_legacy_schema_upgrade_adds_approval_columns_atomically(self):
+        import sqlite3
+
+        path = Path(self.tmp.name) / "legacy-workflows.sqlite3"
+        db = sqlite3.connect(path)
+        db.execute("""CREATE TABLE workflow_runs (
+            run_id TEXT PRIMARY KEY,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            request_digest TEXT NOT NULL,
+            workflow_name TEXT NOT NULL,
+            definition_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            result_json TEXT,
+            error_code TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            lease_owner TEXT,
+            lease_expires_at TEXT
+        )""")
+        db.commit()
+        db.close()
+
+        upgraded = WorkflowRunStore(str(path))
+        with upgraded._connect() as connection:
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(workflow_runs)")}
+        self.assertTrue({
+            "approved_by", "approved_at", "approval_digest", "approved_session_hash",
+        }.issubset(columns))
+        created = upgraded.create(
+            idempotency_key="legacy-upgrade", workflow_name="post-upgrade",
+            definition=self.definition,
+        )
+        self.assertEqual(created.state, "queued")
+
     def test_create_and_idempotent_retry(self):
         first = self.create()
         second = self.create()
@@ -77,6 +113,43 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(winners[0].run_id, queued.run_id)
         self.assertEqual(winners[0].state, "running")
         self.assertEqual(winners[0].attempts, 1)
+
+    def test_session_revocation_cancels_approved_queued_and_running_tasks(self):
+        queued = self.create(key="revoke-queued")
+        queued = self.store.approve(
+            queued.run_id, actor_id="reviewer", session_id="logout-session",
+            expected_version=queued.version,
+        )
+        running = self.create(key="revoke-running")
+        running = self.store.approve(
+            running.run_id, actor_id="reviewer", session_id="logout-session",
+            expected_version=running.version,
+        )
+        running = self.store.transition(
+            running.run_id, expected_version=running.version,
+            to_state="running", lease_owner="worker-a",
+        )
+        cancelled = self.store.cancel_session_approved_runs("logout-session")
+        self.assertEqual({run.run_id for run in cancelled}, {queued.run_id, running.run_id})
+        for run in cancelled:
+            self.assertEqual(run.state, "cancelled")
+            self.assertEqual(run.error_code, "session_revoked")
+            self.assertIsNone(run.lease_owner)
+            events = self.store.list_task_events(run.run_id)
+            self.assertEqual(events[-1].kind, "task.cancelled")
+            self.assertEqual(events[-1].payload["reason"], "session_revoked")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+
+    def test_session_revocation_does_not_cancel_another_session(self):
+        first = self.create(key="revoke-own")
+        first = self.store.approve(first.run_id, actor_id="reviewer", session_id="session-own",
+                                   expected_version=first.version)
+        second = self.create(key="revoke-other")
+        second = self.store.approve(second.run_id, actor_id="reviewer", session_id="session-other",
+                                    expected_version=second.version)
+        cancelled = self.store.cancel_session_approved_runs("session-own")
+        self.assertEqual([run.run_id for run in cancelled], [first.run_id])
+        self.assertEqual(self.store.get(second.run_id).state, "queued")
 
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
@@ -199,6 +272,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(expired[0].error_code, "lease_expired")
         self.assertIsNone(expired[0].lease_owner)
         self.assertEqual(self.store.get(run.run_id).state, "interrupted")
+        events = self.store.list_task_events(run.run_id)
+        self.assertEqual(events[-1].kind, "task.interrupted")
+        self.assertEqual(events[-1].actor_id, "system:lease-recovery")
+        self.assertEqual(events[-1].payload["reason"], "lease_expired")
 
     def test_lease_expiry_requires_timezone_aware_clock(self):
         with self.assertRaises(ValueError):

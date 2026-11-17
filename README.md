@@ -64,6 +64,10 @@ This is the target layout, not a claim that the migration is already complete.
 6. Reorganize tests without losing coverage; validate Windows and Linux clean installs, real Ollama inference, persistence, and rollback.
 7. Remove compatibility facades only when import search and CI prove no supported consumer relies on them.
 
+## Optional Android access
+
+The native desktop application is Yuki's primary daily-use interface. Android/mobile-browser access is a secondary enhancement and will not block desktop completion. The future architecture is documented, but no mobile client, public API, or cloud deployment is claimed. See [Optional Android and mobile access](docs/MOBILE_FIRST_CLOUD_ACCESS.md).
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).

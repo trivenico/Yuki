@@ -44,8 +44,9 @@ class ControllerTests(unittest.TestCase):
         self.identity = self.sessions.login("desktop.admin", "A strong desktop password 4!")
         self.memory = CompanionMemory()
         self.provider = FakeProvider()
+        self.store = WorkflowRunStore(str(Path(self.temp.name) / "tasks.sqlite3"))
         self.runtime = TaskRuntime(
-            WorkflowRunStore(str(Path(self.temp.name) / "tasks.sqlite3")),
+            self.store,
             authorize=lambda actor, action, resource: actor == self.identity.actor_id,
         )
         self.coordinator = SpecialistAgentCoordinator(
@@ -58,6 +59,20 @@ class ControllerTests(unittest.TestCase):
             agent_coordinator=self.coordinator, task_runtime=self.runtime,
         )
         self.controller = DesktopCompanionController(self.app, self.identity, self.sessions)
+
+    def test_restore_rejects_active_workspace_as_destination(self):
+        workspace = Path(self.temp.name) / "workspace"
+        workspace.mkdir()
+        self.controller.workspace_path = workspace
+        with patch("ui.desktop.controller.desktop_data_root", return_value=Path(self.temp.name) / ".yuki"):
+            with patch("ui.desktop.controller.restore_encrypted_backup") as restore:
+                with self.assertRaisesRegex(ValueError, "active Yuki workspace"):
+                    self.controller.restore_backup(
+                        Path(self.temp.name) / "backup.yukibak",
+                        workspace,
+                        "a sufficiently long passphrase",
+                    )
+                restore.assert_not_called()
 
     def test_chat_uses_shared_application_service(self):
         self.assertEqual(self.controller.respond("hello"), "Yuki reply")
@@ -212,7 +227,7 @@ class ControllerTests(unittest.TestCase):
                 backup, restored, "a secure backup passphrase"
             )
         self.assertEqual(result["file_count"], 1)
-        self.assertEqual((restored / "settings.json").read_text(), '{"theme":"dark"}')
+        self.assertEqual((restored / ".yuki" / "settings.json").read_text(), '{"theme":"dark"}')
         self.assertTrue((profile / "settings.json").exists())
 
     def test_restore_refuses_active_profile_and_parent_directory(self):
@@ -241,6 +256,17 @@ class ControllerTests(unittest.TestCase):
                     Path(self.temp.name) / "backup", destination,
                     "a secure backup passphrase",
                 )
+
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
+    def test_portable_key_is_not_exported_when_profile_has_no_memory_file(self):
+        profile = Path(self.temp.name) / "empty-profile"
+        profile.mkdir()
+        backup = Path(self.temp.name) / "empty-profile.yukibak"
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            result = self.controller.create_backup(
+                backup, "a secure backup passphrase", include_memory_key=True,
+            )
+        self.assertFalse(result["memory_key_included"])
 
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
@@ -288,6 +314,33 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.app.session.conversation_turns, 0)
         with self.assertRaises(PermissionError):
             self.controller.respond("after logout")
+
+
+    def test_logout_cancels_tasks_approved_by_the_revoked_session(self):
+        task = self.runtime.enqueue(
+            actor_id=self.identity.actor_id,
+            idempotency_key="desktop-logout-revokes-task",
+            name="approved background work",
+            steps=[{
+                "name": "research",
+                "action": "emit",
+                "argument": "prepare a research summary",
+                "requires_approval": True,
+            }],
+        )
+        approved = self.controller.approve_task(
+            task.task_id, expected_version=task.version,
+        )
+        self.assertEqual(approved.state, "queued")
+        self.assertTrue(self.controller.logout())
+        persisted = self.store.get(task.task_id)
+        self.assertEqual(persisted.state, "cancelled")
+        self.assertEqual(persisted.error_code, "session_revoked")
+        self.assertEqual(
+            self.store.list_task_events(task.task_id)[-1].payload["reason"],
+            "session_revoked",
+        )
+
 
 
 if __name__ == "__main__":

@@ -7,6 +7,42 @@ from core.approval_audit import SQLiteApprovalAuditLog
 
 
 class SQLiteApprovalAuditLogTests(unittest.TestCase):
+    def test_legacy_pending_ids_are_redacted_during_atomic_schema_upgrade(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy-audit.sqlite3"
+            db = sqlite3.connect(path)
+            db.execute("""CREATE TABLE approval_audit_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                pending_id TEXT NOT NULL DEFAULT '[redacted]',
+                actor_hash TEXT NOT NULL,
+                skill_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                previous_hash TEXT NOT NULL,
+                event_hash TEXT NOT NULL
+            )""")
+            db.execute(
+                "INSERT INTO approval_audit_events "
+                "(event_type,pending_id,actor_hash,skill_id,created_at,previous_hash,event_hash) "
+                "VALUES (?,?,?,?,?,?,?)",
+                ("requested", "legacy-secret-token", SQLiteApprovalAuditLog._digest("owner"),
+                 "notes.write", "2026-01-01T00:00:00+00:00", "0" * 64, "legacy"),
+            )
+            db.commit()
+            db.close()
+
+            audit = SQLiteApprovalAuditLog(str(path))
+            events = audit.list_events()
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["pending_id_hash"], SQLiteApprovalAuditLog._digest("legacy-secret-token"))
+            self.assertTrue(audit.verify_chain())
+            db = sqlite3.connect(path)
+            stored = db.execute("SELECT pending_id FROM approval_audit_events").fetchone()[0]
+            db.close()
+            self.assertEqual(stored, "[redacted]")
+
     def test_events_persist_across_instances_and_exclude_action_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "audit.sqlite3")

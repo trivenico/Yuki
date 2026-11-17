@@ -48,6 +48,42 @@ class DesktopMigrationTests(unittest.TestCase):
             self.assertTrue((source / "notes.json").exists())
             self.assertTrue((destination / "migration-manifest.json").exists())
 
+    def test_migration_flushes_staged_tree_before_publication(self):
+        from ui.desktop import migration as migration_module
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            (source / "nested").mkdir()
+            (source / "nested" / "notes.txt").write_text("durable")
+            destination = root / "new"
+            original = migration_module._fsync_staged_tree
+
+            def verify_then_sync(stage):
+                self.assertTrue((stage / "nested" / "notes.txt").is_file())
+                self.assertTrue((stage / "migration-manifest.json").is_file())
+                self.assertFalse(destination.exists())
+                original(stage)
+
+            with patch("ui.desktop.migration._fsync_staged_tree", side_effect=verify_then_sync) as sync:
+                migrate_data(source, destination)
+            sync.assert_called_once()
+            self.assertEqual((destination / "nested" / "notes.txt").read_text(), "durable")
+
+    def test_parent_fsync_failure_reports_published_destination_without_removing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            (source / "notes.txt").write_text("preserve source")
+            destination = root / "new"
+            with patch("ui.desktop.migration._fsync_directory", side_effect=OSError("device error")):
+                with self.assertRaisesRegex(MigrationError, "was published.*Do not retry"):
+                    migrate_data(source, destination)
+            self.assertEqual((destination / "notes.txt").read_text(), "preserve source")
+            self.assertTrue((destination / "migration-manifest.json").is_file())
+            self.assertEqual((source / "notes.txt").read_text(), "preserve source")
+
     def test_sqlite_database_uses_consistent_backup_and_integrity_check(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -85,6 +121,18 @@ class DesktopMigrationTests(unittest.TestCase):
             with patch("ui.desktop.migration.MAX_MIGRATION_BYTES", 4):
                 with self.assertRaises(MigrationError):
                     preview_migration(source, root / "new")
+
+    def test_preview_rejects_orphan_sqlite_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            orphan = source / "missing.sqlite3-wal"
+            orphan.write_bytes(b"unattached wal data")
+            with self.assertRaisesRegex(MigrationError, "orphan SQLite sidecar"):
+                preview_migration(source, root / "new")
+            self.assertEqual(orphan.read_bytes(), b"unattached wal data")
+            self.assertFalse((root / "new").exists())
 
     def test_migration_does_not_copy_stale_sqlite_sidecars(self):
         with tempfile.TemporaryDirectory() as directory:

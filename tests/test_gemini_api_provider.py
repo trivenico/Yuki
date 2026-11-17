@@ -48,6 +48,28 @@ class GeminiAPIProviderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             GeminiAPIProvider("gemini-2.5-flash", timeout=0)
 
+    def test_network_open_uses_configured_timeout(self):
+        provider = GeminiAPIProvider(
+            "gemini-2.5-flash", timeout=7, environ={"GEMINI_API_KEY": "secret"}
+        )
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}}]
+        }).encode()
+        with patch("providers.gemini_api.urllib.request.build_opener") as factory:
+            factory.return_value.open.return_value = response
+            self.assertEqual(provider.generate("hello"), "ok")
+        self.assertEqual(factory.return_value.open.call_args.kwargs["timeout"], 7)
+
+    def test_network_timeout_fails_with_sanitized_error(self):
+        provider = GeminiAPIProvider(
+            "gemini-2.5-flash", timeout=3, environ={"GEMINI_API_KEY": "secret"}
+        )
+        with patch("providers.gemini_api.urllib.request.build_opener") as factory:
+            factory.return_value.open.side_effect = TimeoutError("private network detail")
+            with self.assertRaisesRegex(RuntimeError, "request failed"):
+                provider.generate("hello")
+
     def test_response_size_is_bounded(self):
         provider = GeminiAPIProvider("gemini-2.5-flash", environ={"GEMINI_API_KEY": "secret"})
         response = MagicMock()

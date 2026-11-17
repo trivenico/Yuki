@@ -1,7 +1,10 @@
 """Tests for fail-closed desktop session-expiry cleanup."""
 import unittest
 
-from ui.desktop.launch import _close_expired_controller
+from ui.desktop.launch import (
+    _close_expired_controller, _close_startup_resources,
+    _shutdown_desktop_services,
+)
 
 
 class Controller:
@@ -16,6 +19,102 @@ class Controller:
 
 
 class DesktopLaunchCleanupTests(unittest.TestCase):
+    def test_partial_startup_cleanup_is_reverse_order_deduplicated_and_best_effort(self):
+        events = []
+
+        class Resource:
+            def __init__(self, name, fail=False):
+                self.name = name
+                self.fail = fail
+
+            def close(self):
+                events.append(self.name)
+                if self.fail:
+                    raise RuntimeError("cleanup failed")
+
+        first = Resource("first")
+        broken = Resource("broken", fail=True)
+        last = Resource("last")
+        _close_startup_resources((first, broken, last, first, None))
+        self.assertEqual(events, ["first", "last", "broken"])
+
+    def test_shutdown_revokes_session_before_closing_lifecycle(self):
+        events = []
+
+        class Controller:
+            def logout(self):
+                events.append("logout")
+
+        class Lifecycle:
+            def close(self, *, before_close):
+                events.append("lifecycle-start")
+                before_close()
+                events.append("resources-close")
+
+        _shutdown_desktop_services(Lifecycle(), Controller(), None)
+        self.assertEqual(events, ["lifecycle-start", "logout", "resources-close"])
+
+    def test_shutdown_uses_session_manager_when_no_controller_exists(self):
+        events = []
+
+        class Sessions:
+            def logout(self):
+                events.append("session-logout")
+
+        _shutdown_desktop_services(None, None, Sessions())
+        self.assertEqual(events, ["session-logout"])
+
+    def test_shutdown_propagates_revocation_failure_to_worker_boundary(self):
+        class Controller:
+            def logout(self):
+                raise PermissionError("revocation uncertain")
+
+        class Lifecycle:
+            def __init__(self):
+                self.closed = False
+
+            def close(self, *, before_close):
+                try:
+                    before_close()
+                finally:
+                    self.closed = True
+
+        lifecycle = Lifecycle()
+        with self.assertRaises(PermissionError):
+            _shutdown_desktop_services(lifecycle, Controller(), None)
+        self.assertTrue(lifecycle.closed)
+
+    def test_failed_logout_locks_every_session_action_except_retry(self):
+        from ui.desktop.launch import _restrict_session_to_logout_retry
+
+        class Tabs:
+            def __init__(self):
+                self.enabled = [True, True, True]
+            def count(self):
+                return len(self.enabled)
+            def setTabEnabled(self, index, enabled):
+                self.enabled[index] = enabled
+
+        class Control:
+            def __init__(self):
+                self.enabled = True
+                self.text = ""
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+            def setText(self, text):
+                self.text = text
+
+        tabs = Tabs()
+        controls = [Control() for _ in range(4)]
+        logout = Control()
+        status = Control()
+        _restrict_session_to_logout_retry(tabs, tuple(controls), logout, status)
+        self.assertEqual(tabs.enabled, [True, False, False])
+        self.assertTrue(all(not control.enabled for control in controls))
+        self.assertEqual(logout.text, "Retry sign out")
+        self.assertTrue(logout.enabled)
+        self.assertTrue(status.enabled)
+
     def test_no_controller_is_a_noop(self):
         self.assertIsNone(_close_expired_controller(None))
 

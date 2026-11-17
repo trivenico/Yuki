@@ -9,7 +9,7 @@ class HybridProvider:
     local provider never triggers an implicit cloud fallback.
     """
 
-    def __init__(self, local_provider, cloud_provider=None, *, cloud_tasks=()):
+    def __init__(self, local_provider, cloud_provider=None, *, cloud_tasks=(), owns_providers=False):
         if not callable(getattr(local_provider, "generate", None)) or not callable(
             getattr(local_provider, "is_available", None)
         ):
@@ -28,9 +28,15 @@ class HybridProvider:
             normalized.add(task.strip().lower())
         self.local_provider = local_provider
         self.cloud_provider = cloud_provider
+        if type(owns_providers) is not bool:
+            raise TypeError("owns_providers must be a boolean.")
         self.cloud_tasks = frozenset(normalized)
+        self._owns_providers = owns_providers
+        self._closed = False
 
     def is_available(self):
+        if self._closed:
+            return False
         try:
             return self.local_provider.is_available() is True
         except Exception:
@@ -38,6 +44,8 @@ class HybridProvider:
 
     def generate_chat(self, system: str, messages: list[dict]) -> str:
         """Use structured roles on the local provider; never flatten system prompts."""
+        if self._closed:
+            raise RuntimeError("Hybrid provider is closed.")
         chat = getattr(self.local_provider, "generate_chat", None)
         if not callable(chat):
             raise RuntimeError("Configured local provider does not support structured chat.")
@@ -53,6 +61,8 @@ class HybridProvider:
         return self.generate_for("general", prompt)
 
     def generate_for(self, task: str, prompt: str) -> str:
+        if self._closed:
+            raise RuntimeError("Hybrid provider is closed.")
         if not isinstance(task, str) or not task.strip():
             raise ValueError("A task name is required.")
         task_key = task.strip().lower()
@@ -71,3 +81,27 @@ class HybridProvider:
         except Exception as exc:
             raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
         return self.local_provider.generate(prompt)
+
+    def close(self):
+        """Close owned child providers once, without closing borrowed instances."""
+        if self._closed:
+            return
+        self._closed = True
+        if not self._owns_providers:
+            return
+        first_error = None
+        seen = set()
+        # Close in reverse construction order and continue after individual failures.
+        for provider in (self.cloud_provider, self.local_provider):
+            if provider is None or id(provider) in seen:
+                continue
+            seen.add(id(provider))
+            close = getattr(provider, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
+        if first_error is not None:
+            raise RuntimeError("One or more owned providers failed to close.") from first_error
