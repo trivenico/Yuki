@@ -1627,7 +1627,14 @@ Version: {version}",
                 self.voice_session.close()
             self.voice_session = None
             if self.speech_session is not None:
-                self.speech_session.close()
+                try:
+                    self.speech_session.close()
+                except Exception as exc:
+                    # Continue clearing authenticated UI even if the audio
+                    # backend reports an interruption failure.
+                    self.chat_status.setText(
+                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
+                    )
             self.speech_session = None
             self.speech_worker = None
             self.spoken_replies_checkbox.blockSignals(True)
@@ -1739,7 +1746,14 @@ Version: {version}",
             if self.voice_session is not None:
                 self.voice_session.close()
             if self.speech_session is not None:
-                self.speech_session.close()
+                try:
+                    self.speech_session.close()
+                except Exception as exc:
+                    # Do not strand the application in a half-started shutdown
+                    # because an audio driver refused to stop.
+                    self.chat_status.setText(
+                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
+                    )
             self.speech_session = None
             self.setEnabled(False)
             self.login_status.setText(
