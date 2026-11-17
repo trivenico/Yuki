@@ -66,15 +66,27 @@ class SQLiteIntegrityError(RuntimeError):
 
 
 def verify_sqlite_integrity(database_path: str | Path, *, allow_empty: bool = False) -> None:
-    """Run a read-only quick_check before schema migrations or application writes.
+    """Run a read-only integrity check before schema migrations or application writes.
 
-    Missing files are new stores. Pre-existing empty or populated databases must pass;
-    corruption is never treated as permission to recreate user data.
+    Missing files are new stores. Existing paths must be private regular files;
+    pre-existing empty or populated databases must pass. Filesystem inspection
+    and SQLite read failures are surfaced as a sanitized integrity error.
     """
     path = Path(database_path)
-    if not path.exists():
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
         return
-    if path.stat().st_size == 0:
+    except OSError as exc:
+        raise SQLiteIntegrityError(
+            "Existing Yuki database cannot be inspected safely; preserve it for recovery."
+        ) from exc
+
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise SQLiteIntegrityError(
+            "Existing Yuki database path is not a private regular file; preserve it for recovery."
+        )
+    if info.st_size == 0:
         if allow_empty:
             return
         raise SQLiteIntegrityError(
@@ -82,17 +94,17 @@ def verify_sqlite_integrity(database_path: str | Path, *, allow_empty: bool = Fa
         )
     try:
         connection = sqlite3.connect(
-            f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5,
+            f"{path.resolve(strict=True).as_uri()}?mode=ro", uri=True, timeout=5,
         )
         try:
             results = connection.execute("PRAGMA quick_check").fetchall()
         finally:
             connection.close()
-    except sqlite3.DatabaseError as exc:
+    except (OSError, sqlite3.DatabaseError, ValueError) as exc:
         raise SQLiteIntegrityError(
             "Existing Yuki database cannot be read safely; preserve it for recovery."
         ) from exc
-    if not results or any(row[0] != "ok" for row in results):
+    if not results or any(not row or row[0] != "ok" for row in results):
         raise SQLiteIntegrityError(
             "Existing Yuki database failed integrity validation; preserve it for recovery."
         )
