@@ -12,8 +12,9 @@ class FakeLocalTTS:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.enabled = kwargs["enabled"]
-        self.rate = kwargs["rate"]
-        self.backend = kwargs["backend"]
+        self.rate = kwargs.get("rate", 170)
+        self.backend = kwargs.get("backend", "kokoro")
+        self.speed = kwargs.get("speed", 1.0)
         self.speed = kwargs.get("speed", 1.0)
         self.calls = []
 
