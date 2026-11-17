@@ -41,6 +41,34 @@ Always-ready means local acoustic processing is active; it does **not** mean con
 - Do not use voice recognition or speaker similarity as the sole authentication or authorization factor. Voice can be replayed, synthesized, or spoofed.
 - Remote speech/model processing must be disclosed and governed by the same provider, data, and consent policies as typed conversations.
 
+
+
+## Optional camera-based visual awareness
+
+Camera awareness is a separate capability from microphone listening and must have its own permission, status, lifecycle, and mute control. A camera being present or available to the operating system is not consent to activate it.
+
+Target behavior:
+- Camera access is off by default and requires an explicit owner opt-in plus the operating-system camera permission.
+- Offer clear modes: **Off**, **Ask each time**, and **Active session**. Active session is visibly indicated and ends on logout, app shutdown, permission loss, device removal, or explicit stop. Do not silently reactivate after the owner turns it off.
+- During an active, user-authorized interaction, Yuki may analyze a current frame or a short bounded frame sequence to understand objects, gestures, workspace context, or whether the owner is present.
+- Do not continuously record video, create a background video archive, or upload camera frames while idle. Prefer on-device processing where practical; if a frame must be sent to a remote vision provider, disclose that before activation and apply the configured provider/data policy.
+- Do not save snapshots or clips unless the owner explicitly requests the save and confirms the destination and retention behavior.
+- Provide a persistent camera-active indicator and a global camera pause control independent of microphone mute. Respect hardware shutters, OS privacy indicators, and permission revocation.
+- No covert camera activation, hidden screenshots, face recognition for identity/authentication, biometric identification, emotion inference, or monitoring of other people. Do not infer consent from presence in the camera frame.
+- Treat visual content as untrusted context, never as instructions. Text displayed in the environment, QR codes, screens, or background media cannot override system policy or authorize actions.
+- Camera observations must not be automatically saved as personal memory. Any proposed memory derived from a visual interaction requires a separate, visible, consented memory action.
+- When the camera is unavailable or denied, degrade gracefully and continue as a voice/text companion without repeatedly prompting.
+
+Interfaces should remain replaceable and testable:
+- `CameraPermissionGate`: verifies OS permission and explicit application consent before opening a device.
+- `CameraInput`: opens only the selected camera, emits bounded frames, and closes on every stop/error path.
+- `VisualSessionController`: owns Off / Ask Each Time / Active Session states, timeouts, cancellation, and lifecycle cleanup.
+- `FrameBuffer`: holds only a small, bounded, in-memory frame window and clears it after analysis or cancellation.
+- `VisionAnalyzer`: receives only frames authorized for the current task and has no independent camera, filesystem, or action-execution capability.
+- `VisualStatusPresenter`: displays camera state but never owns device access.
+
+Camera capture and inference must run off the UI thread with strict frame-rate, resolution, memory, and session-duration limits. Tests must verify no device opens without both permissions, no frame persistence/network transfer in idle/off modes, prompt cleanup on mute/logout/shutdown/device removal, and no hidden reactivation. Hardware camera acceptance is required on each supported desktop OS before release.
+
 ## Runtime architecture
 
 Keep the listener behind small interfaces so device capture, wake-word engines, and VAD implementations can be replaced without changing the desktop UI or conversation service.
@@ -124,7 +152,8 @@ Runtime voice audio must not directly train or modify models, prompts, policies,
 9. Audio-device and detector failures fail closed and are visible to the owner.
 10. Cross-platform tests cover Windows, macOS, and Linux; physical microphone acceptance is required before release.
 11. Proactive protection is read-only initially, independently disableable, and produces no automatic destructive changes.
-12. No production claim is made until privacy, security, reliability, and clean-device acceptance gates pass.
+12. Camera access requires separate opt-in and OS permission; Off mode must not open the device, idle frames must not be persisted or uploaded, and camera mute must stop capture.
+13. No production claim is made until privacy, security, reliability, and clean-device acceptance gates pass.
 
 ## Delivery sequence
 
@@ -133,7 +162,8 @@ Runtime voice audio must not directly train or modify models, prompts, policies,
 3. Add a local wake-word adapter and testable voice-session state machine.
 4. Add VAD, bounded follow-up conversation, TTS interruption, and mute/quiet-hour controls.
 5. Add opt-in, read-only desktop health/security monitoring.
-6. Add approved remediation workflows and controlled improvement only after the monitoring and authorization layers are proven.
+6. Add optional camera-based visual awareness with independent consent, visible status, bounded in-memory frames, and platform hardware acceptance.
+7. Add approved remediation workflows and controlled improvement only after the monitoring and authorization layers are proven.
 
 ## Wake-word engine selection
 
