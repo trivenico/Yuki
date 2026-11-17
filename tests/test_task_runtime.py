@@ -12,7 +12,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -90,6 +90,43 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.events(actor_id="alice", task_id=task.task_id, limit=501)
         with self.assertRaises(PermissionError):
             self.runtime.events(actor_id="supervisor", task_id=task.task_id)
+
+    def test_session_revocation_pages_beyond_first_hundred_queued_tasks(self):
+        session = "revoked-session"
+        protected = "different-session"
+        definition = [{
+            "name": "review", "action": "emit", "argument": "bounded",
+            "requires_approval": True,
+        }]
+        approved_ids = []
+        for index in range(105):
+            task = self.runtime.enqueue(
+                actor_id="alice", idempotency_key=f"session-page-{index}",
+                name="approved-task", steps=definition,
+            )
+            approved = self.runtime.approve(
+                actor_id="alice", task_id=task.task_id, session_id=session,
+                expected_version=task.version,
+            )
+            approved_ids.append(approved.task_id)
+        other = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="other-session-task",
+            name="other-session-task", steps=definition,
+        )
+        self.runtime.approve(
+            actor_id="alice", task_id=other.task_id, session_id=protected,
+            expected_version=other.version,
+        )
+        unapproved = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="unapproved-task",
+            name="unapproved-task", steps=definition,
+        )
+
+        cancelled = self.runtime.revoke_session_approvals(session)
+        self.assertEqual({task.task_id for task in cancelled}, set(approved_ids))
+        self.assertTrue(all(task.state == "cancelled" for task in cancelled))
+        self.assertEqual(self.store.get(other.task_id).state, "queued")
+        self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
 
     def test_authorization_fails_closed(self):
         with self.assertRaises(PermissionError):
