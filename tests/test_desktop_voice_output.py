@@ -28,9 +28,11 @@ class DesktopVoiceOutputFactoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "voice.onnx"
             model.write_bytes(b"model")
-            with patch("voice.tts.LocalTTS", FakeLocalTTS), \\
-                 patch("voice.desktop_output.shutil.which", return_value="/usr/bin/piper"), \\
-                 patch("voice.desktop_output.importlib.util.find_spec", return_value=object()):
+            with (
+                patch("voice.tts.LocalTTS", FakeLocalTTS),
+                patch("voice.desktop_output.shutil.which", return_value="/usr/bin/piper"),
+                patch("voice.desktop_output.importlib.util.find_spec", return_value=object()),
+            ):
                 session = create_desktop_voice_output({
                     "tts_backend": "piper",
                     "tts_rate": 180,
