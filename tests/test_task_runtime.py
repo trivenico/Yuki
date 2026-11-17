@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -127,6 +128,47 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertTrue(all(task.state == "cancelled" for task in cancelled))
         self.assertEqual(self.store.get(other.task_id).state, "queued")
         self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
+
+    def test_approval_and_audit_event_roll_back_together(self):
+        definition = [{"name": "protected", "action": "emit", "argument": "work",
+                       "requires_approval": True}]
+        task = self.runtime.enqueue(actor_id="alice", idempotency_key="atomic-approval",
+                                    name="protected-task", steps=definition)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_approval_audit BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.approved'
+                BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.approve(actor_id="alice", task_id=task.task_id,
+                                 session_id="test-session", expected_version=task.version)
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "queued")
+        self.assertEqual(unchanged.version, task.version)
+        self.assertIsNone(unchanged.approved_by)
+        self.assertEqual([event.kind for event in self.store.list_task_events(task.task_id)],
+                         ["task.created"])
+
+    def test_terminal_transition_and_audit_event_roll_back_together(self):
+        task = self.create("atomic-completion")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_completion_audit BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.completed'
+                BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.complete(actor_id="alice", task_id=task.task_id,
+                                  expected_version=claimed.version, worker_id="worker-a",
+                                  result={"ok": True})
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertIsNone(unchanged.result)
+        self.assertEqual([event.kind for event in self.store.list_task_events(task.task_id)],
+                         ["task.created"])
 
     def test_authorization_fails_closed(self):
         with self.assertRaises(PermissionError):
