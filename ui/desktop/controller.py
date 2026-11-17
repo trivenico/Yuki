@@ -148,8 +148,11 @@ class DesktopCompanionController:
         memory_key_export = None
         if include_memory_key:
             from core.profile_identity import load_or_create_profile_id
-            profile_id = load_or_create_profile_id(desktop_data_root())
-            memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
+            profile_root = desktop_data_root()
+            memory_file = profile_root / "memory.enc.json"
+            if memory_file.exists() or memory_file.is_symlink():
+                profile_id = load_or_create_profile_id(profile_root)
+                memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
         return create_encrypted_backup(
             desktop_data_root(), Path(destination), passphrase,
             additional_roots=additional_roots,
