@@ -6,6 +6,7 @@ synthesizer support a voice, accent, pitch, or expressive acting style.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 from typing import FrozenSet
 
 from voice.profile import VoiceProfile
@@ -38,6 +39,8 @@ class ProfiledLocalSpeechOutput:
             raise TypeError("profile must be a VoiceProfile")
         self.synthesizer = synthesizer
         self.profile = profile
+        self._stream_lock = Lock()
+        self._stream_generation = 0
         backend = getattr(synthesizer, "backend", "unknown")
         supported = set()
         # The current pyttsx3 adapter exposes rate. The current Piper adapter
@@ -63,7 +66,9 @@ class ProfiledLocalSpeechOutput:
             self.synthesizer.enabled = value is True
 
     def stop(self) -> None:
-        """Delegate interruption so this adapter can be safely session-wrapped."""
+        """Invalidate pending chunks before asking the backend to stop playback."""
+        with self._stream_lock:
+            self._stream_generation += 1
         self.synthesizer.stop()
 
     def speak(self, text: str):
@@ -93,12 +98,25 @@ class ProfiledLocalSpeechOutput:
         # Materialization is safe because _bounded_chunks caps the collection at
         # 100 chunks / 20,000 characters. It also prevents a malformed late
         # chunk from causing partial speech before the input is rejected.
+        with self._stream_lock:
+            generation = self._stream_generation
         validated_chunks = list(self._bounded_chunks(chunks))
+
+        def guarded_chunks():
+            for chunk in validated_chunks:
+                with self._stream_lock:
+                    if generation != self._stream_generation:
+                        raise RuntimeError("Speech stream was stopped before all chunks completed.")
+                yield chunk
+
         stream = getattr(self.synthesizer, "speak_stream", None)
         if callable(stream):
-            return stream(validated_chunks)
+            # Keep the generation guard lazy: a stop between validation and
+            # backend startup must not be erased by a backend resetting its
+            # own interruption flag at the beginning of speak_stream().
+            return stream(guarded_chunks())
         count = 0
-        for chunk in validated_chunks:
+        for chunk in guarded_chunks():
             self.synthesizer.speak(chunk)
             count += 1
         return {"chunks_spoken": count, "interrupted": False}
