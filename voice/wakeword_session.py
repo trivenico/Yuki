@@ -66,6 +66,7 @@ class WakeWordSession:
         self._source = None
         self._detector = None
         self._thread = None
+        self._startup_thread = None
         self._state = "disabled"
         self._closed = False
         self._generation = 0
@@ -126,6 +127,7 @@ class WakeWordSession:
             self._generation += 1
             generation = self._generation
             self._state = "starting"
+            self._startup_thread = current_thread()
         self._notify_state("starting")
 
         detector = None
@@ -181,6 +183,10 @@ class WakeWordSession:
             if not cancelled:
                 self._report_error(exc)
             raise WakeWordError("Local wake-word listener could not start safely.") from exc
+        finally:
+            with self._lock:
+                if self._startup_thread is current_thread():
+                    self._startup_thread = None
 
     def _report_error(self, error: Exception) -> None:
         if self._on_error is not None:
@@ -283,6 +289,7 @@ class WakeWordSession:
                 return True
             self._stop_event.set()
             source = self._source
+            startup = self._startup_thread
             worker = self._thread
             if self._state not in {"disabled", "failed", "triggered"}:
                 self._state = "stopping"
@@ -296,9 +303,16 @@ class WakeWordSession:
                 source.stop()
             except Exception as exc:
                 self._report_error(exc)
+        if startup is not None and startup is not current_thread():
+            startup.join(timeout)
+        with self._lock:
+            worker = self._thread
         if worker is not None and worker is not current_thread():
             worker.join(timeout)
-        stopped = worker is None or worker is current_thread() or not worker.is_alive()
+        stopped = (
+            (startup is None or startup is current_thread() or not startup.is_alive())
+            and (worker is None or worker is current_thread() or not worker.is_alive())
+        )
         if stopped:
             with self._lock:
                 if not self._closed and self._state != "failed":
