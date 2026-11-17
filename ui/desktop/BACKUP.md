@@ -45,11 +45,14 @@ Choose an empty parent folder as the restore destination. To use the restored pr
 Schema version 1 backups remain readable. Their root-level desktop files are normalized into `.yuki/` during restore, while existing `workspace/` entries retain their location.
 
 
-## Cross-device encrypted-memory limitation
+## Portable encrypted-memory option
 
-The encrypted memory file is protected by a key stored only in the source operating system's credential store. That key is not currently exported into the passphrase-encrypted backup package. A restore on the same OS account can continue using its existing key; a restore on another computer or OS account cannot decrypt that memory file and startup will correctly stop rather than replace it. Treat cross-device encrypted-memory transfer as unsupported until a separately reviewed key-wrapping and import flow is implemented. Do not copy the raw OS keyring secret into the profile directory.
+The backup UI offers an opt-in checkbox to include the profile's memory key. When selected, key metadata is placed inside the archive that is encrypted as a whole with the backup passphrase and memory-hard KDF. The key is never written as a separate plaintext file or extracted to the restore staging directory.
 
+On restore, the owner must enable the memory-key import checkbox. Yuki validates the backup manifest, profile identity, key metadata, and AES-GCM authentication of the restored memory ciphertext before installing the key into the destination OS keyring. Keyring collisions with a different existing key fail closed. If filesystem publication fails after a new key is installed, Yuki attempts to remove that newly created keyring entry.
+
+Backups created without the portable-memory option remain restorable. Their memory remains dependent on the original OS keyring key; on a different computer or OS account, startup will correctly stop rather than replace or discard inaccessible memory. Keep the backup passphrase safe: it protects both profile data and the optional portable memory key.
 
 ## Profile-scoped memory keys
 
-Each desktop profile now has a stable, non-secret UUID in `.yuki/profile_identity.json`. Its encrypted-memory key is stored in the OS credential store under a profile-specific account derived from that UUID. Existing installations migrate the original `default` key into the profile-specific account without rewriting ciphertext; the legacy key is retained so other older profiles are not broken. The profile identity is included in the encrypted backup. This isolates newly created profiles, but does not yet make the key portable to another OS credential store; passphrase-wrapped key export/import remains outstanding.
+Each desktop profile now has a stable, non-secret UUID in `.yuki/profile_identity.json`. Its encrypted-memory key is stored in the OS credential store under a profile-specific account derived from that UUID. Existing installations migrate the original `default` key into the profile-specific account without rewriting ciphertext; the legacy key is retained so other older profiles are not broken. The profile identity is included in the encrypted backup. New profiles receive independent keys. Existing installations migrate the original shared key without re-encrypting memory, so their original key material is preserved. The optional encrypted-backup export/import path described above enables cross-device restore when selected.
