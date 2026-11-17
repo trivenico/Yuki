@@ -86,6 +86,18 @@ class DesktopMigrationTests(unittest.TestCase):
                 with self.assertRaises(MigrationError):
                     preview_migration(source, root / "new")
 
+    def test_preview_rejects_orphan_sqlite_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            orphan = source / "missing.sqlite3-wal"
+            orphan.write_bytes(b"unattached wal data")
+            with self.assertRaisesRegex(MigrationError, "orphan SQLite sidecar"):
+                preview_migration(source, root / "new")
+            self.assertEqual(orphan.read_bytes(), b"unattached wal data")
+            self.assertFalse((root / "new").exists())
+
     def test_migration_does_not_copy_stale_sqlite_sidecars(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
