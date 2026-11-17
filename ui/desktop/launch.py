@@ -429,6 +429,8 @@ def run() -> int:
             self.wakeword_signals = WakeWordUiSignals()
             self.wakeword_model_path = None
             self._wake_capture_after_stop = False
+            self._wake_stop_requested = False
+            self._wakeword_operation = None
             self.speech_session = None
             self.speech_worker = None
             self.busy = False
@@ -440,6 +442,9 @@ def run() -> int:
             self.current_plan = None
             self.migration_preview = None
             self._build_ui()
+            self.wakeword_signals.state.connect(self._wakeword_state_changed)
+            self.wakeword_signals.wake.connect(self._wakeword_detected)
+            self.wakeword_signals.error.connect(self._wakeword_error)
             self._initialize()
 
         def _build_ui(self):
@@ -1467,9 +1472,6 @@ Version: {version}",
                     on_error=self.wakeword_signals.error.emit,
                 )
                 self.wakeword_session = session
-                self.wakeword_signals.state.connect(self._wakeword_state_changed)
-                self.wakeword_signals.wake.connect(self._wakeword_detected)
-                self.wakeword_signals.error.connect(self._wakeword_error)
                 self.wakeword_start_button.setEnabled(False)
                 self.wakeword_model_button.setEnabled(False)
                 self.wakeword_stop_button.setEnabled(True)
@@ -1491,12 +1493,14 @@ Version: {version}",
                     self._wakeword_operation_finished(result, error, captured, action)
             )
             self.wakeword_worker = worker
+            self._wakeword_operation = operation
             self.pool.start(worker)
 
         def _wakeword_operation_finished(self, result, error, captured_session, operation):
             if captured_session is not self.wakeword_session:
                 return
             self.wakeword_worker = None
+            self._wakeword_operation = None
             if error is not None:
                 self.wakeword_status.setText(
                     "Wake-word " + operation + " failed (" + type(error).__name__ + ")."
@@ -1517,6 +1521,9 @@ Version: {version}",
                 self.wakeword_status.setText(
                     "Listening locally for Hey Yuki. Say the wake phrase to begin a five-second capture."
                 )
+                if self._wake_stop_requested:
+                    self._wake_stop_requested = False
+                    self._stop_wakeword_listener()
             else:
                 self.wakeword_session = None
                 self.wakeword_model_button.setEnabled(True)
@@ -1565,6 +1572,11 @@ Version: {version}",
             if session is None:
                 self.wakeword_stop_button.setEnabled(False)
                 return
+            if self._wakeword_operation == "stop":
+                return
+            if self._wakeword_operation == "start":
+                self._wake_stop_requested = True
+                return
             self.wakeword_stop_button.setEnabled(False)
             self.wakeword_start_button.setEnabled(False)
             self.wakeword_status.setText("Stopping wake-word listener…")
@@ -1574,6 +1586,8 @@ Version: {version}",
             session = self.wakeword_session
             self.wakeword_session = None
             self._wake_capture_after_stop = False
+            self._wake_stop_requested = False
+            self._wakeword_operation = None
             if session is not None:
                 try:
                     session.close()
