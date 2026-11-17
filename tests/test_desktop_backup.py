@@ -1,4 +1,8 @@
 import importlib.util
+import hashlib
+import json
+import tarfile
+from io import BytesIO
 import os
 import stat
 import sqlite3
@@ -97,6 +101,43 @@ class DesktopBackupTests(unittest.TestCase):
             with self.assertRaises(BackupError):
                 restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
             self.assertEqual((destination / "keep.txt").read_text(), "keep")
+
+    def test_legacy_schema_one_backup_restores_into_yuki_home_layout(self):
+        from ui.desktop import backup as backup_module
+        AESGCM, Scrypt = backup_module._crypto()
+        passphrase = "a sufficiently long passphrase"
+        payload = b"legacy private profile data"
+        manifest = json.dumps({
+            "schema_version": 1,
+            "product": "Yuki Desktop",
+            "files": [{
+                "path": "memory.json",
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }],
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        archive_file = BytesIO()
+        with tarfile.open(fileobj=archive_file, mode="w:") as archive:
+            item = tarfile.TarInfo("memory.json")
+            item.size = len(payload)
+            archive.addfile(item, BytesIO(payload))
+            item = tarfile.TarInfo("YUKI_BACKUP_MANIFEST.json")
+            item.size = len(manifest)
+            archive.addfile(item, BytesIO(manifest))
+        salt = os.urandom(backup_module.SALT_BYTES)
+        nonce = os.urandom(backup_module.NONCE_BYTES)
+        key = backup_module._derive(passphrase, salt, Scrypt)
+        encrypted = AESGCM(key).encrypt(nonce, archive_file.getvalue(), backup_module.MAGIC)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backup = root / "legacy.yukibak"
+            backup.write_bytes(backup_module.MAGIC + salt + nonce + encrypted)
+            destination = root / "restored"
+            restore_encrypted_backup(backup, destination, passphrase)
+            self.assertEqual(
+                (destination / ".yuki" / "memory.json").read_bytes(),
+                payload,
+            )
 
     def test_restore_reconstructs_yuki_home_profile_and_workspace_layout(self):
         with tempfile.TemporaryDirectory() as directory:
