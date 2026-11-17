@@ -1,9 +1,10 @@
+import importlib.util
 import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from voice.kokoro_tts import KOKORO_ENGLISH_VOICES, KokoroTTS, KokoroTTSError
 
@@ -50,6 +51,7 @@ class FakeSD:
         self.stopped += 1
 
 
+@unittest.skipUnless(importlib.util.find_spec("numpy"), "optional NumPy dependency is not installed")
 class KokoroAdapterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -151,8 +153,6 @@ class KokoroAdapterTests(unittest.TestCase):
 
     def test_stop_during_generation_prevents_current_and_queued_audio(self):
         adapter = self.make(enabled=True)
-        original_generate = None
-
         def stop_during_generation(text, config):
             adapter.stop()
             return FakeAudio([0.0] * 240)
