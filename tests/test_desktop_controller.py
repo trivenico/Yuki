@@ -146,7 +146,7 @@ class ControllerTests(unittest.TestCase):
             task.task_id, expected_version=reviewed.version
         )
         self.assertEqual(approved.state, "queued")
-        self.assertEqual(approved.version, reviewed.version + 1)
+        self.assertEqual(approved.version, reviewed.version + 2)  # state transition + durable approval event
 
     def test_task_definition_read_is_denied_after_session_expiry(self):
         task = self.runtime.enqueue(
