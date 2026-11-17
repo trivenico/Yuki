@@ -48,6 +48,28 @@ class DesktopMigrationTests(unittest.TestCase):
             self.assertTrue((source / "notes.json").exists())
             self.assertTrue((destination / "migration-manifest.json").exists())
 
+    def test_migration_flushes_staged_tree_before_publication(self):
+        from ui.desktop import migration as migration_module
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            (source / "nested").mkdir()
+            (source / "nested" / "notes.txt").write_text("durable")
+            destination = root / "new"
+            original = migration_module._fsync_staged_tree
+
+            def verify_then_sync(stage):
+                self.assertTrue((stage / "nested" / "notes.txt").is_file())
+                self.assertTrue((stage / "migration-manifest.json").is_file())
+                self.assertFalse(destination.exists())
+                original(stage)
+
+            with patch("ui.desktop.migration._fsync_staged_tree", side_effect=verify_then_sync) as sync:
+                migrate_data(source, destination)
+            sync.assert_called_once()
+            self.assertEqual((destination / "nested" / "notes.txt").read_text(), "durable")
+
     def test_sqlite_database_uses_consistent_backup_and_integrity_check(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
