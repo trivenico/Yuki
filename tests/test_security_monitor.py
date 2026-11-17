@@ -11,6 +11,8 @@ class FakeProcessMonitor:
             "processes": [{"pid": 42, "name": "editor", "status": "running"}],
             "process_count": 1,
             "truncated": False,
+            "read_only": True,
+            "persisted": False,
             "alerts": [{"type": "configured_process_name_match",
                         "message": "Check process origin."}],
         }
@@ -143,7 +145,8 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
                 entered.set()
                 release.wait(2)
                 return {"processes": [], "process_count": 0,
-                        "truncated": False, "alerts": []}
+                        "truncated": False, "read_only": True,
+                        "persisted": False, "alerts": []}
 
         monitor = DesktopSecurityMonitor(
             process_monitor=SlowProcessMonitor(), enabled=True,
@@ -165,6 +168,21 @@ class DesktopSecurityMonitorTests(unittest.TestCase):
             outcomes.append("returned")
         except SecurityMonitorError:
             outcomes.append("disabled")
+
+    def test_rejects_process_sensor_without_read_only_contract(self):
+        class UnsafeSensor:
+            def snapshot(self):
+                return {
+                    "processes": [],
+                    "process_count": 0,
+                    "truncated": False,
+                    "alerts": [],
+                    "read_only": True,
+                    "persisted": True,
+                }
+        monitor = DesktopSecurityMonitor(process_monitor=UnsafeSensor(), enabled=True)
+        with self.assertRaisesRegex(SecurityMonitorError, "read-only, non-persistent"):
+            monitor.snapshot()
 
     def test_rejects_malformed_detector_alert(self):
         class BadDetector:
