@@ -20,7 +20,7 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 def _clean_name(value):
     if not isinstance(value, str):
         return "unknown"
-    value = _CONTROL_CHARS.sub("", value).strip()
+    value = _CONTROL_CHARS.sub("", value[:512]).strip()
     return value[:160] or "unknown"
 
 
@@ -37,7 +37,7 @@ class ReadOnlyProcessMonitor:
             for name in suspicious_names:
                 if not isinstance(name, str) or not name.strip() or len(name) > 160:
                     raise ValueError("Each suspicious process name must be 1-160 characters")
-                names.add(name.strip().casefold())
+                names.add(_clean_name(name).casefold())
         except TypeError as exc:
             raise ValueError("suspicious_names must be iterable") from exc
         self.max_processes = max_processes
@@ -69,7 +69,12 @@ class ReadOnlyProcessMonitor:
         records = []
         seen = set()
         for raw in raw_records[:self.max_processes]:
-            info = getattr(raw, "info", raw)
+            try:
+                info = getattr(raw, "info", raw)
+            except Exception:
+                # A process may exit or become inaccessible between enumeration
+                # and metadata access. Skip that record without leaking details.
+                continue
             if not isinstance(info, dict):
                 continue
             pid = info.get("pid")
