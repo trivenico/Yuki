@@ -535,6 +535,7 @@ def restore_encrypted_backup(
                     from companion.secure_memory import EncryptedMemoryStore
                     imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
                         memory_key_export, profile_id, keyring_module=keyring_module,
+                        memory_path=stage / ".yuki" / "memory.enc.json",
                     )
                 except Exception as exc:
                     raise BackupError("Portable memory key could not be safely installed in the destination OS keyring.") from exc
