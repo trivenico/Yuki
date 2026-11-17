@@ -1,6 +1,7 @@
 """Explicit recording and transcription helpers; microphone capture is opt-in and bounded."""
 from __future__ import annotations
 from pathlib import Path
+import os
 import wave
 
 
@@ -22,25 +23,49 @@ class FasterWhisperSTT:
             raise STTError("Speech recognition is disabled.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 20:
             raise ValueError("Recording duration must be 1-20 seconds.")
-        if sample_rate not in {16000, 22050, 44100}:
+        if isinstance(sample_rate, bool) or not isinstance(sample_rate, int) or sample_rate not in {16000, 22050, 44100}:
             raise ValueError("Unsupported sample rate.")
-        path = Path(output_path).expanduser().resolve()
-        if path.exists():
-            raise STTError("Refusing to overwrite an existing recording.")
+        requested_path = Path(output_path).expanduser()
+        if not requested_path.name or requested_path.name in {".", ".."}:
+            raise ValueError("A recording file path is required.")
         try:
             import sounddevice as sd
             import numpy as np
         except ImportError as exc:
             raise STTError("Install optional sounddevice and numpy to record audio.") from exc
+
+        # Resolve only the parent, not the final component: exclusive creation
+        # rejects existing files, symlinks and races without following them.
+        try:
+            requested_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            path = requested_path.parent.resolve() / requested_path.name
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(path, flags, 0o600)
+        except FileExistsError as exc:
+            raise STTError("Refusing to overwrite an existing recording.") from exc
+        except OSError as exc:
+            raise STTError("Could not securely create the recording file.") from exc
+
         try:
             audio = sd.rec(int(seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
             sd.wait()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with wave.open(str(path), "wb") as handle:
-                handle.setnchannels(1); handle.setsampwidth(2); handle.setframerate(sample_rate)
-                handle.writeframes(np.asarray(audio, dtype=np.int16).tobytes())
+            with os.fdopen(descriptor, "wb") as output:
+                descriptor = -1
+                with wave.open(output, "wb") as handle:
+                    handle.setnchannels(1)
+                    handle.setsampwidth(2)
+                    handle.setframerate(sample_rate)
+                    handle.writeframes(np.asarray(audio, dtype=np.int16).tobytes())
             return path
         except Exception as exc:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise STTError("Recording failed; check microphone permission and device.") from exc
 
     def transcribe_file(self, audio_path, *, language=None):
