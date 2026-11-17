@@ -114,6 +114,32 @@ class VoiceRecordingSecurityTests(unittest.TestCase):
                 timer.join()
             self.assertFalse(output.exists())
 
+    def test_transcription_cancellation_stops_segment_iteration(self):
+        from threading import Event
+
+        cancelled = Event()
+        faster_whisper = types.ModuleType("faster_whisper")
+
+        class FakeModel:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def transcribe(self, *args, **kwargs):
+                def segments():
+                    yield types.SimpleNamespace(text="first")
+                    cancelled.set()
+                    yield types.SimpleNamespace(text="second")
+                info = types.SimpleNamespace(language="en", language_probability=1.0)
+                return segments(), info
+
+        faster_whisper.WhisperModel = FakeModel
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "recording.wav"
+            audio.write_bytes(b"mock wav")
+            with patch.dict(sys.modules, {"faster_whisper": faster_whisper}):
+                with self.assertRaises(STTError):
+                    self.stt.transcribe_file(audio, cancellation_event=cancelled)
+
     def test_invalid_sample_rate_is_rejected(self):
         for sample_rate in (True, 0, 48000, "16000"):
             with self.subTest(sample_rate=sample_rate):
