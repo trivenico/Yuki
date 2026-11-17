@@ -187,17 +187,19 @@ def run() -> int:
                     "Install requirements-desktop.txt and the platform's Qt system dependencies."
                 ) from exc
             smoke_log("stage: qt-imported")
-            # Verify optional local speech packages are bundled without
-            # opening a microphone or downloading a speech model.
-            try:
-                import faster_whisper  # noqa: F401
-                import numpy  # noqa: F401
-                import sounddevice  # noqa: F401
-            except ImportError as exc:
-                raise RuntimeError(
-                    "Packaged local voice dependencies could not be imported."
-                ) from exc
-            smoke_log("stage: voice-dependencies-imported")
+            # Verify optional local speech packages only in frozen bundles.
+            # Source-only Qt smoke jobs intentionally omit the voice extra.
+            # Importing these modules does not open a microphone or download a model.
+            if getattr(sys, "frozen", False):
+                try:
+                    import faster_whisper  # noqa: F401
+                    import numpy  # noqa: F401
+                    import sounddevice  # noqa: F401
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "Packaged local voice dependencies could not be imported."
+                    ) from exc
+                smoke_log("stage: voice-dependencies-imported")
             app = QApplication.instance() or QApplication([sys.argv[0]])
             probe = QLabel("Yuki Desktop runtime OK")
             smoke_log("stage: app-created")
