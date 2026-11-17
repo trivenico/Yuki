@@ -433,7 +433,7 @@ def run() -> int:
 
             backup_page = QWidget()
             backup_layout = QVBoxLayout(backup_page)
-            backup_layout.addWidget(QLabel("Create a portable encrypted backup of your Yuki profile, including its workspace conversation history."))
+            backup_layout.addWidget(QLabel("Create a portable encrypted backup of your Yuki profile, including the configured workspace files."))
             backup_layout.addWidget(QLabel(
                 "Choose a new backup file and a passphrase of at least 12 characters. "
                 "Yuki cannot recover a lost passphrase."
