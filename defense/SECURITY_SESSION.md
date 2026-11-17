@@ -14,7 +14,7 @@
 
 Stop invalidates the active generation before calling the monitor's disable method. A snapshot that finishes after Stop is discarded. A snapshot failure from an older generation cannot stop a newer session.
 
-If Stop or close races a monitor startup, the controller keeps restart blocked until the late startup returns and a compensating disable completes. This avoids a late enable disabling or reviving a newer session. The controller does not hold its state lock while invoking monitor or authorization callbacks.
+If Stop or close races a monitor startup, the controller keeps restart blocked until the late startup returns and a compensating disable completes. Stop/disable is also serialized against new starts, so a slow disable cannot turn off a newly started session. If disable fails, restart remains blocked until a later Stop successfully retries cleanup. This avoids late enable/disable operations reviving or disrupting a newer session. The controller does not hold its state lock while invoking monitor or authorization callbacks.
 
 Call `snapshot()` only from a background worker. The caller should marshal accepted results to the UI thread and independently discard callbacks from obsolete UI/session generations.
 
