@@ -36,7 +36,7 @@ class FakeReport:
 
 class YukiCliTests(unittest.TestCase):
     def test_parser_accepts_hyphen_leading_workflow_token_ids(self):
-        task_id = "-Abcdefghijklmnopqrstuvwx"
+        task_id = "-abcdefghijklmnopqrstuvw"
         parsed = build_parser().parse_args(["tasks", "inspect", task_id])
         self.assertEqual(parsed.task_id, task_id)
 
