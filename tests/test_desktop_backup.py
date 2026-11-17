@@ -1,4 +1,6 @@
 import importlib.util
+import os
+import stat
 import sqlite3
 import tempfile
 import unittest
@@ -25,6 +27,25 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertEqual(restored["file_count"], 1)
             self.assertEqual((destination / ".yuki" / "memory.json").read_text(), '{"private": true}')
             self.assertTrue((source / "memory.json").exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
+    def test_restore_applies_private_permissions_to_profile_files_and_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            (source / "nested").mkdir(parents=True)
+            (source / "nested" / "memory.enc.json").write_text("ciphertext")
+            backup = root / "profile.yukibak"
+            create_encrypted_backup(source, backup, "a sufficiently long passphrase")
+            destination = root / "restored"
+            restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
+            profile = destination / ".yuki"
+            self.assertEqual(stat.S_IMODE(profile.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE((profile / "nested").stat().st_mode), 0o700)
+            self.assertEqual(
+                stat.S_IMODE((profile / "nested" / "memory.enc.json").stat().st_mode),
+                0o600,
+            )
 
     def test_restore_flushes_staged_tree_before_publication(self):
         from ui.desktop import backup as backup_module
