@@ -64,6 +64,7 @@ class FasterWhisperSTT:
                         sd.stop()
                         raise STTError("Recording was cancelled.")
                     time.sleep(0.05)
+                sd.wait()
                 if cancellation_event.is_set():
                     raise STTError("Recording was cancelled.")
             with os.fdopen(descriptor, "wb") as output:
