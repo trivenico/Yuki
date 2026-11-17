@@ -26,3 +26,5 @@ The pyttsx3 engine is stopped and released in a `finally` block.
 These are resource and lifecycle safeguards, not proof that a selected voice sounds
 natural or matches the requested expressive style. Voice selection still requires
 auditioning on supported desktop operating systems.
+
+- `voice/profiled_tts.py`: reports which requested voice-profile controls the active local synthesizer actually supports; unsupported style, pitch and expressiveness are never claimed as implemented.
