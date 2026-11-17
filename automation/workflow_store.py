@@ -520,7 +520,7 @@ class WorkflowRunStore:
         from automation.task_runtime import TaskEvent, _EVENT_KINDS
         if kind not in _EVENT_KINDS:
             raise ValueError("Unknown task event kind.")
-        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if not isinstance(payload, dict):
             raise ValueError("task event payload must be an object.")
