@@ -24,7 +24,7 @@ from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 from core.auth import AuthenticationError, BuiltInAuthService, task_permission_authorizer
 from core.config import load_config
-from core.portable_paths import data_root
+from core.portable_paths import desktop_data_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
@@ -128,7 +128,7 @@ def run_cli(
     args = build_parser().parse_args(argv)
 
     if args.command == "auth":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         try:
             root.mkdir(parents=True, exist_ok=True)
             try:
@@ -213,7 +213,7 @@ def run_cli(
             return 0
 
     if args.command == "conversations":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         try:
             token = session_path.read_text(encoding="utf-8").strip()
@@ -277,7 +277,7 @@ def run_cli(
             return 5
 
     if args.command == "tasks":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         try:
             token = session_path.read_text(encoding="utf-8").strip()
@@ -372,7 +372,7 @@ def run_cli(
             return 5
 
     if args.command == "workers":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         service_actor_id = "yuki-worker-service"
         try:
@@ -430,7 +430,7 @@ def run_cli(
             return 5
 
     if args.command == "agents":
-        root = data_root() / ".yuki"
+        root = desktop_data_root()
         session_path = root / "session.token"
         try:
             token = session_path.read_text(encoding="utf-8").strip()
@@ -548,7 +548,7 @@ def run_cli(
         conversation_version = None
         conversation_owner = None
         if args.conversation_id:
-            root = data_root() / ".yuki"
+            root = desktop_data_root()
             session_path = root / "session.token"
             try:
                 token = session_path.read_text(encoding="utf-8").strip()
