@@ -13,9 +13,9 @@ def _close_expired_controller(controller: Any) -> Exception | None:
     """Best-effort revoke and close a controller before returning to login.
 
     Authorization failures can arrive from background workers after the
-    authenticated session has already expired. Detach the controller from the
-    window first, then run its complete logout path so memory and conversation
-    state are not left alive behind the login screen.
+    authenticated session has already expired. Attempt complete cleanup before
+    returning to login; callers retain the closed controller if cleanup fails so
+    the owner can retry revocation without reopening session actions.
     """
     if controller is None:
         return None
@@ -43,7 +43,12 @@ def _close_startup_resources(resources) -> None:
                 continue
 
 
-def _restrict_session_to_logout_retry(tabs: Any, chat_controls: tuple[Any, ...], logout_button: Any, chat_status: Any) -> None:
+def _restrict_session_to_logout_retry(
+    tabs: Any,
+    chat_controls: tuple[Any, ...],
+    logout_button: Any,
+    chat_status: Any,
+) -> None:
     """Leave only the retry-sign-out control usable after failed revocation."""
     for index in range(tabs.count()):
         tabs.setTabEnabled(index, index == 0)
