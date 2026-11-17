@@ -604,7 +604,7 @@ class WorkflowRunStore:
         self, *, actor_id: str, limit: int = 50,
     ) -> list[WorkflowRun]:
         """Atomically interrupt expired leases and append their audit events."""
-        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
