@@ -23,6 +23,7 @@ _AAD = b"yuki-companion-memory:v1"
 
 class EncryptedMemoryStore(MemoryStore):
     VERSION = 1
+    MAX_FILE_BYTES = 10 * 1024 * 1024
 
     def __init__(
         self, path: str | Path = "yuki_memory.enc.json", *,
@@ -115,7 +116,7 @@ class EncryptedMemoryStore(MemoryStore):
             info = memory_file.lstat()
             if (
                 not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size <= 0 or info.st_size > MemoryStore.MAX_FILE_BYTES
+                or info.st_size <= 0 or info.st_size > EncryptedMemoryStore.MAX_FILE_BYTES
             ):
                 raise ValueError("invalid encrypted memory file")
             envelope = json.loads(memory_file.read_text(encoding="utf-8"))
