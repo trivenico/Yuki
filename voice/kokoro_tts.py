@@ -58,6 +58,8 @@ class KokoroTTS:
     ):
         if voice not in KOKORO_ENGLISH_VOICES:
             raise ValueError("voice must be a supported Kokoro English preset.")
+        if lexicon_path is None:
+            raise ValueError("lexicon_path is required; implicit phonemizer fallback is disabled.")
         if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.5 <= speed <= 2.0:
             raise ValueError("speed must be between 0.5 and 2.0.")
         if isinstance(num_threads, bool) or not isinstance(num_threads, int) or not 1 <= num_threads <= 8:
