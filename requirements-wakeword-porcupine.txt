@@ -1,0 +1,3 @@
+# Optional local wake-word engine; install only when configuring a Picovoice keyword model.
+# The user must provide a Picovoice AccessKey and a platform-compatible .ppn asset.
+pvporcupine==4.0.3
