@@ -131,7 +131,9 @@ def format_sqlite_recovery_report(report: dict) -> str:
     return "\n".join(lines)
 
 
-def inspect_encrypted_memory_store(memory_path: str | Path, keyring_module: Any) -> dict[str, str]:
+def inspect_encrypted_memory_store(
+    memory_path: str | Path, keyring_module: Any, *, keyring_account: str = "default",
+) -> dict[str, str]:
     """Authenticate existing encrypted memory without changing its ciphertext."""
     path = Path(memory_path).expanduser()
     try:
@@ -146,7 +148,9 @@ def inspect_encrypted_memory_store(memory_path: str | Path, keyring_module: Any)
         return {"component": "encrypted_memory", "status": "invalid", "action": "The existing encrypted memory file has an invalid size. Preserve it for recovery."}
     try:
         from companion.secure_memory import EncryptedMemoryStore
-        EncryptedMemoryStore(path, keyring_module=keyring_module).list()
+        EncryptedMemoryStore(
+            path, keyring_module=keyring_module, keyring_account=keyring_account,
+        ).list()
     except Exception:
         return {"component": "encrypted_memory", "status": "corrupt_or_unreadable", "action": "Yuki could not authenticate encrypted memory. Preserve the ciphertext and recover the original OS keyring key."}
     return {"component": "encrypted_memory", "status": "healthy", "action": "Encrypted memory authentication succeeded."}
