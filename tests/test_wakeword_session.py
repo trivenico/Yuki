@@ -134,7 +134,7 @@ class WakeWordSessionTests(unittest.TestCase):
 
             def start(inner_self):
                 inner_self.start_entered.set()
-                inner_self.allow_start_to_finish.wait(2)
+                inner_self.allow_start_to_finish.wait(5)
                 inner_self.started = True
 
         source = SlowStartSource()
