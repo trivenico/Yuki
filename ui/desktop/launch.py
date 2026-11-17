@@ -6,6 +6,7 @@ single background worker; widgets never access provider clients or stores.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -538,7 +539,7 @@ def run() -> int:
             self.wakeword_start_button.clicked.connect(self._start_wakeword_listener)
             self.wakeword_stop_button = QPushButton("Stop listening")
             self.wakeword_stop_button.setEnabled(False)
-            self.wakeword_stop_button.clicked.connect(self._stop_wakeword_listener)
+            self.wakeword_stop_button.clicked.connect(lambda: self._stop_wakeword_listener(capture=False))
             wake_controls.addWidget(self.wakeword_model_button)
             wake_controls.addWidget(self.wakeword_start_button)
             wake_controls.addWidget(self.wakeword_stop_button)
@@ -1550,16 +1551,14 @@ Version: {version}",
             }
             self.wakeword_status.setText(labels.get(state, "Wake-word state: " + state))
             if state == "triggered":
-                self._wake_capture_after_stop = True
-                self._stop_wakeword_listener()
+                self._stop_wakeword_listener(capture=True)
 
         @Slot()
         def _wakeword_detected(self):
             # The audio worker only emits this queued UI event; capture begins
             # after the wake-word device has been stopped and released.
             if self.wakeword_session is not None:
-                self._wake_capture_after_stop = True
-                self._stop_wakeword_listener()
+                self._stop_wakeword_listener(capture=True)
 
         @Slot(object)
         def _wakeword_error(self, error):
@@ -1567,7 +1566,11 @@ Version: {version}",
                 "Wake-word detection failed (" + type(error).__name__ + ")."
             )
 
-        def _stop_wakeword_listener(self):
+        def _stop_wakeword_listener(self, *, capture: bool = False):
+            if capture:
+                self._wake_capture_after_stop = True
+            else:
+                self._wake_capture_after_stop = False
             session = self.wakeword_session
             if session is None:
                 self.wakeword_stop_button.setEnabled(False)
@@ -1755,6 +1758,11 @@ Version: {version}",
 
         def _start_voice_capture(self):
             if self.controller is None or self.busy or self.voice_session is None:
+                return
+            if self.wakeword_session is not None:
+                # Avoid opening a second microphone stream. Stop the local
+                # detector first, then continue the bounded capture.
+                self._stop_wakeword_listener(capture=True)
                 return
             if not self.voice_session.enabled:
                 self.voice_status.setText("Enable microphone permission before starting a capture.")
