@@ -37,6 +37,11 @@ class VoiceSession:
             device=device,
             compute_type=compute_type,
         )
+        if not callable(getattr(self._stt, "record_wav", None)) or not callable(
+            getattr(self._stt, "transcribe_file", None)
+        ):
+            raise TypeError("stt must provide record_wav() and transcribe_file().")
+        self._stt.enabled = enabled
         self._enabled = enabled
         self._closed = False
         self._cancel = Event()
