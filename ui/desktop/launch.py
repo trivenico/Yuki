@@ -148,40 +148,49 @@ def _build_services():
 def run() -> int:
     """Start Yuki Desktop, or run a display-independent packaged-runtime smoke test."""
     if "--smoke-test" in sys.argv[1:]:
-        # Exercise the packaged default configuration as well as Qt. Keep the
-        # generated user config in a temporary directory so CI never writes to
-        # a runner's real profile and the smoke test proves first-run resources
-        # were included by the frozen application.
+        # Exercise bundled first-run resources and Qt without touching the
+        # runner's normal profile. Frozen windowed executables have no console,
+        # so persist diagnostics when CI supplies a log path.
         import os
+        import traceback
         from pathlib import Path
         from tempfile import TemporaryDirectory
 
-        with TemporaryDirectory(prefix="yuki-desktop-smoke-") as temporary_root:
-            os.environ["YUKI_CONFIG"] = str(Path(temporary_root) / "config.yaml")
-            from core.config import load_config
-
-            smoke_config = load_config()
-            if smoke_config.get("name") != "Yuki":
-                raise RuntimeError("Packaged first-run configuration did not load.")
-            if not (Path(temporary_root) / "config.yaml").is_file():
-                raise RuntimeError("Packaged first-run configuration was not created.")
-
         try:
-            from PySide6.QtWidgets import QApplication, QLabel
-        except ImportError as exc:
-            raise RuntimeError(
-                "Yuki Desktop could not load PySide6 or its native Qt runtime libraries. "
-                "Install requirements-desktop.txt and the platform's Qt system dependencies."
-            ) from exc
-        app = QApplication.instance() or QApplication([sys.argv[0]])
-        probe = QLabel("Yuki Desktop runtime OK")
-        probe.show()
-        app.processEvents()
-        if not probe.isVisible():
-            raise RuntimeError("Qt could not initialize a visible desktop widget.")
-        probe.close()
-        app.processEvents()
-        return 0
+            with TemporaryDirectory(prefix="yuki-desktop-smoke-") as temporary_root:
+                os.environ["YUKI_CONFIG"] = str(Path(temporary_root) / "config.yaml")
+                from core.config import load_config
+
+                smoke_config = load_config()
+                if smoke_config.get("name") != "Yuki":
+                    raise RuntimeError("Packaged first-run configuration did not load.")
+                if not (Path(temporary_root) / "config.yaml").is_file():
+                    raise RuntimeError("Packaged first-run configuration was not created.")
+
+            try:
+                from PySide6.QtWidgets import QApplication, QLabel
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Yuki Desktop could not load PySide6 or its native Qt runtime libraries. "
+                    "Install requirements-desktop.txt and the platform's Qt system dependencies."
+                ) from exc
+            app = QApplication.instance() or QApplication([sys.argv[0]])
+            probe = QLabel("Yuki Desktop runtime OK")
+            probe.show()
+            app.processEvents()
+            if not probe.isVisible():
+                raise RuntimeError("Qt could not initialize a visible desktop widget.")
+            probe.close()
+            app.processEvents()
+            return 0
+        except BaseException:
+            log_path = os.environ.get("YUKI_SMOKE_TEST_LOG")
+            if log_path:
+                try:
+                    Path(log_path).write_text(traceback.format_exc(), encoding="utf-8")
+                except OSError:
+                    pass
+            raise
 
     try:
         from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
