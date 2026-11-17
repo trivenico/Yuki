@@ -136,6 +136,33 @@ class WakeWordSessionTests(unittest.TestCase):
         with self.assertRaises(WakeWordError):
             session.start()
 
+    def test_odd_byte_pcm_frames_are_rejected(self):
+        source = FakeAudioSource([b"abc"])
+        detector = FakeDetector()
+        errors = []
+        session = self.make_session(source, detector, on_error=errors.append)
+        session.start()
+        worker = session._thread
+        worker.join(2)
+        self.assertEqual(session.state, "failed")
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(source.closed)
+        self.assertTrue(detector.closed)
+
+    def test_detector_must_return_a_boolean(self):
+        source = FakeAudioSource([b"frame"])
+        detector = FakeDetector()
+        detector.process = lambda frame: 1
+        errors = []
+        session = self.make_session(source, detector, on_error=errors.append)
+        session.start()
+        worker = session._thread
+        worker.join(2)
+        self.assertEqual(session.state, "failed")
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(source.closed)
+        self.assertTrue(detector.closed)
+
     def test_oversized_frames_are_rejected(self):
         source = FakeAudioSource([b"x" * (WakeWordSession.MAX_FRAME_BYTES + 1)])
         detector = FakeDetector()
