@@ -9,7 +9,10 @@ import re
 
 
 SUPPORTED_BEHAVIOR = {"auto_detect"}
-SUPPORTED_VOICE_STYLES = {"natural_realistic_female"}
+SUPPORTED_VOICE_STYLES = {
+    "natural_realistic_female",
+    "japanese_anime_female_english",
+}
 SUPPORTED_SPOKEN_POLICIES = {"every_reply_when_voice_mode_active"}
 
 
@@ -36,6 +39,25 @@ def same_language_reply_instruction(detected_language):
         "Reply in that language unless the user explicitly requests another language. "
         "Do not claim perfect language detection; ask a concise clarification if needed."
     )
+
+
+def voice_style_instruction(style):
+    """Return bounded conversational direction for a supported voice style."""
+    if style == "japanese_anime_female_english":
+        return (
+            "Speak in English using a feminine, Japanese-anime-inspired voice-acting style. "
+            "Use clear, natural English pronunciation, warm and friendly delivery, gentle "
+            "expressiveness, and subtle playful energy when appropriate. Keep the voice "
+            "pleasant and conversational rather than exaggerated, childish, breathy, or robotic. "
+            "Maintain a consistent adult character presentation. Do not imitate a specific "
+            "real person, voice actor, or copyrighted character."
+        )
+    if style == "natural_realistic_female":
+        return (
+            "Use a natural, clear, warm feminine speaking style with conversational pacing "
+            "and restrained expressiveness."
+        )
+    raise ValueError("Unsupported voice style.")
 
 
 def should_speak_reply(*, voice_enabled, voice_mode_active, reply_text):
