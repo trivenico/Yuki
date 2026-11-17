@@ -290,6 +290,46 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.controller.start(consent=True)
         self.assertTrue(self.controller.active)
 
+
+    def test_failed_start_keeps_restart_blocked_until_cleanup_finishes(self):
+        enable_entered = threading.Event()
+        disable_entered = threading.Event()
+        release_disable = threading.Event()
+
+        def fail_enable():
+            enable_entered.set()
+            raise RuntimeError("startup failed")
+
+        def delayed_disable():
+            disable_entered.set()
+            release_disable.wait(2)
+
+        self.monitor.enable = fail_enable
+        self.monitor.disable_hook = delayed_disable
+        errors = []
+
+        def start():
+            try:
+                self.controller.start(consent=True)
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=start)
+        worker.start()
+        self.assertTrue(enable_entered.wait(1))
+        self.assertTrue(disable_entered.wait(1))
+        with self.assertRaisesRegex(SecuritySessionError, "starting or stopping"):
+            self.controller.start(consent=True)
+        release_disable.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(errors)
+        self.monitor.disable_hook = None
+        self.monitor.enable = lambda: setattr(self.monitor, "enabled", True)
+        self.controller.start(consent=True)
+        self.assertTrue(self.controller.active)
+        self.assertTrue(self.monitor.enabled)
+
     def test_close_is_terminal(self):
         self.controller.start(consent=True)
         self.controller.close()
