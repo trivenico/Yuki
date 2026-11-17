@@ -400,6 +400,35 @@ def create_encrypted_backup(
     }
 
 
+def _read_backup_bounded(path: Path) -> bytes:
+    """Read a regular, single-link backup without following a symlink or trusting its size."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise BackupError("Backup file could not be opened safely.") from exc
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BackupError("Backup must be a regular file with no hard links.")
+        if info.st_size <= 0 or info.st_size > MAX_BACKUP_BYTES + len(MAGIC) + SALT_BYTES + NONCE_BYTES + 16:
+            raise BackupError("Encrypted backup exceeds the supported size limit.")
+        chunks = []
+        remaining = MAX_BACKUP_BYTES + len(MAGIC) + SALT_BYTES + NONCE_BYTES + 17
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > MAX_BACKUP_BYTES + len(MAGIC) + SALT_BYTES + NONCE_BYTES + 16:
+            raise BackupError("Encrypted backup exceeds the supported size limit.")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
 def restore_encrypted_backup(
     backup: Path, destination: Path, passphrase: str, *,
     keyring_module=None, import_memory_key: bool = False,
@@ -411,7 +440,7 @@ def restore_encrypted_backup(
         raise BackupError("Backup and restore destination must not be symbolic links.")
     if not backup_path.is_file():
         raise BackupError("Backup file does not exist.")
-    raw = backup_path.read_bytes()
+    raw = _read_backup_bounded(backup_path)
     header_size = len(MAGIC) + SALT_BYTES + NONCE_BYTES
     if len(raw) <= header_size + 16 or not raw.startswith(MAGIC):
         raise BackupError("Backup format is invalid.")
