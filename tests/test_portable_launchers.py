@@ -13,10 +13,16 @@ class PortableLauncherTests(unittest.TestCase):
             'if not defined YUKI_HOME set "YUKI_HOME=%YUKI_ROOT%\\YukiData"',
             launcher,
         )
-        self.assertNotIn('set "YUKI_HOME=%YUKI_ROOT%\\YukiData"\\ncd', launcher)
-        self.assertIn('"%%YUKI_PYTHON%%" --version', launcher.replace("%YUKI_PYTHON%", "%%YUKI_PYTHON%%"))
-        self.assertIn('"%%YUKI_PYTHON%%" -c "import yaml"', launcher.replace("%YUKI_PYTHON%", "%%YUKI_PYTHON%%"))
-        self.assertIn('"%%YUKI_PYTHON%%" main.py', launcher.replace("%YUKI_PYTHON%", "%%YUKI_PYTHON%%"))
+        self.assertNotIn(
+            'set "YUKI_HOME=%YUKI_ROOT%\\YukiData"\n',
+            launcher.replace(
+                'if not defined YUKI_HOME set "YUKI_HOME=%YUKI_ROOT%\\YukiData"\n',
+                "",
+            ),
+        )
+        self.assertIn('"%YUKI_PYTHON%" --version', launcher)
+        self.assertIn('"%YUKI_PYTHON%" -c "import yaml"', launcher)
+        self.assertIn('"%YUKI_PYTHON%" main.py', launcher)
 
 
 if __name__ == "__main__":
