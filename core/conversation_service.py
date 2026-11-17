@@ -143,6 +143,7 @@ class ConversationService:
                     system_text=system_text, on_text_delta=on_text_delta,
                     cancellation_requested=guarded_cancellation,
                     lease_lost=lease_lost,
+                    lease_token=token,
                 )
                 if lease_lost.is_set():
                     raise ConversationConflict("conversation generation lease was lost.")
@@ -160,6 +161,7 @@ class ConversationService:
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
         on_text_delta=None, cancellation_requested=None, lease_lost=None,
+        lease_token=None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
@@ -251,6 +253,7 @@ class ConversationService:
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="user", content=user_text, idempotency_key=request_id,
                 expected_version=expected_version, generation_request_id=request_id,
+                lease_token=lease_token,
             )
             if not user_result["created"]:
                 return self._replay_or_conflict(
@@ -299,6 +302,7 @@ class ConversationService:
                 role="assistant", content=answer,
                 idempotency_key=f"assistant:{request_id}",
                 expected_version=user_result["version"],
+                lease_token=lease_token,
             )
             self.store.finish_generation(
                 owner_id=owner_id, conversation_id=conversation_id,
