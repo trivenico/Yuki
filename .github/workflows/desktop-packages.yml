@@ -46,6 +46,11 @@ jobs:
           python -m pip install --requirement requirements-desktop.txt
           python -m pip install --requirement requirements-desktop-build.txt
           python -m pip install cyclonedx-bom
+      - name: Install Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1 libgl1
       - name: Validate dependency consistency
         run: python -m pip check
       - name: Build native unsigned desktop bundle
@@ -61,14 +66,22 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
+          $env:YUKI_SMOKE_TEST_LOG = Join-Path $env:RUNNER_TEMP "yuki-smoke-test.log"
           & "dist/Yuki/Yuki.exe" --smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Packaged desktop smoke test failed" }
+          if ($LASTEXITCODE -ne 0) {
+            if (Test-Path $env:YUKI_SMOKE_TEST_LOG) { Get-Content $env:YUKI_SMOKE_TEST_LOG }
+            throw "Packaged desktop smoke test failed"
+          }
       - name: Smoke-test packaged desktop runtime (Linux)
         if: runner.os == 'Linux'
-        run: ./dist/Yuki/Yuki --smoke-test
+        run: |
+          export YUKI_SMOKE_TEST_LOG="$RUNNER_TEMP/yuki-smoke-test.log"
+          ./dist/Yuki/Yuki --smoke-test || { cat "$YUKI_SMOKE_TEST_LOG" 2>/dev/null || true; exit 1; }
       - name: Smoke-test packaged desktop runtime (macOS)
         if: runner.os == 'macOS'
-        run: ./dist/Yuki.app/Contents/MacOS/Yuki --smoke-test
+        run: |
+          export YUKI_SMOKE_TEST_LOG="$RUNNER_TEMP/yuki-smoke-test.log"
+          ./dist/Yuki.app/Contents/MacOS/Yuki --smoke-test || { cat "$YUKI_SMOKE_TEST_LOG" 2>/dev/null || true; exit 1; }
       - name: Generate Python environment SBOM
         run: cyclonedx-py environment --output-format JSON --output-file dist/yuki-python-environment.cdx.json
       - name: Generate SHA-256 checksums
