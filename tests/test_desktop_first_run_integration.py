@@ -91,7 +91,10 @@ class DesktopFirstRunIntegrationTests(unittest.TestCase):
                 store_factory=store_factory,
             )
             try:
-                history = reopened.conversation.history(conversation_id=conversation_id)
+                conversations = reopened.conversation.list_conversations()
+                self.assertEqual([item["conversation_id"] for item in conversations], [conversation_id])
+                reopened.conversation.select_conversation(conversation_id)
+                history = reopened.conversation.history()
                 self.assertEqual(
                     [item["content"] for item in history],
                     ["Hello from first run", "First-run conversation persisted"],
