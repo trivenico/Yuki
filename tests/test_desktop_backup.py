@@ -2,6 +2,7 @@ import importlib.util
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from ui.desktop.backup import BackupError, create_encrypted_backup, restore_encrypted_backup
