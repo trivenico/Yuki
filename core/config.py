@@ -143,7 +143,7 @@ def load_config(path=None):
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
-    voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
+    voice_style = str(raw.get("voice_style", "japanese_anime_female_english")).strip().lower()
     if voice_style not in {"natural_realistic_female", "japanese_anime_female_english"}:
         raise RuntimeError("voice_style is unsupported.")
     tts_backend = os.environ.get("YUKI_TTS_BACKEND", str(raw.get("tts_backend", "piper"))).strip().lower()
