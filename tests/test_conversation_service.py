@@ -42,6 +42,44 @@ class ConversationServiceTests(unittest.TestCase):
             tools=[],
         )
 
+
+    def test_persistent_conversation_uses_yuki_identity_and_default_role(self):
+        self.send()
+        system = self.observed[0][0]
+        self.assertEqual(system["role"], "system")
+        self.assertIn("You are Yuki", system["content"])
+        self.assertIn("Current response role: companion", system["content"])
+        self.assertIn("grants no tools, permissions", system["content"])
+
+    def test_role_selection_changes_guidance_without_changing_tool_policy(self):
+        selected = self.service.set_role("developer")
+        self.assertEqual(selected["name"], "developer")
+        self.assertEqual(self.service.current_role()["name"], "developer")
+        self.send()
+        system = self.observed[0][0]["content"]
+        self.assertIn("Current response role: developer", system)
+        self.assertIn("grants no tools, permissions", system)
+        self.assertEqual(self.service.available_roles()[0]["name"], "companion")
+
+    def test_unknown_role_is_rejected_before_provider_call(self):
+        with self.assertRaises(ValueError):
+            self.service.set_role("administrator")
+        self.assertEqual(self.observed, [])
+
+    def test_additional_trusted_system_guidance_is_preserved(self):
+        self.service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Hello",
+            request_id="system-guidance-request",
+            expected_version=0,
+            tools=[],
+            system_text="Use concise answers for this workspace.",
+        )
+        system = self.observed[0][0]["content"]
+        self.assertIn("You are Yuki", system)
+        self.assertIn("Use concise answers for this workspace.", system)
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
