@@ -14,7 +14,7 @@ class WakeWordAudioError(RuntimeError):
 
 
 class SoundDeviceWakeWordAudioSource:
-    """Capture 80 ms mono PCM16 frames into a one-frame volatile queue.
+    """Capture engine-sized mono PCM16 frames into a one-frame volatile queue.
 
     The default format is 16 kHz, mono, signed PCM16. Device support varies;
     a device that cannot open this exact format fails closed rather than
