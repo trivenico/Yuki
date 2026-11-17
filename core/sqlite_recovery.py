@@ -62,10 +62,10 @@ def build_sqlite_recovery_report(
         if (not isinstance(component, str) or not component.strip() or len(component) > 80
                 or any(ord(char) < 32 for char in component)):
             raise ValueError("additional_check_component_invalid")
-        if status not in allowed_statuses:
+        if not isinstance(status, str) or status not in allowed_statuses:
             raise ValueError("additional_check_status_invalid")
         if (not isinstance(action, str) or not action.strip() or len(action) > 500
-                or any(ord(char) < 32 and char not in "\\n\\t" for char in action)):
+                or any(ord(char) < 32 for char in action)):
             raise ValueError("additional_check_action_invalid")
         results.append({"component": component, "status": status, "action": action})
     blocking = {"unsafe", "empty", "invalid", "corrupt", "corrupt_or_unreadable", "unavailable"}
