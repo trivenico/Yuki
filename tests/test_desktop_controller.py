@@ -137,9 +137,9 @@ class ControllerTests(unittest.TestCase):
                 "requires_approval": True,
             }],
         )
-        self.assertEqual(task.state, "waiting_approval")
+        self.assertEqual(task.state, "queued")
         reviewed = self.controller.get_task(task.task_id)
-        self.assertEqual(reviewed.state, "waiting_approval")
+        self.assertEqual(reviewed.state, "queued")
         self.assertEqual(reviewed.steps[0]["action"], "emit")
         self.assertEqual(reviewed.steps[0]["argument"], "target=staging; operation=read-only")
         approved = self.controller.approve_task(
