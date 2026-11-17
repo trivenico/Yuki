@@ -148,6 +148,24 @@ def _build_services():
 def run() -> int:
     """Start Yuki Desktop, or run a display-independent packaged-runtime smoke test."""
     if "--smoke-test" in sys.argv[1:]:
+        # Exercise the packaged default configuration as well as Qt. Keep the
+        # generated user config in a temporary directory so CI never writes to
+        # a runner's real profile and the smoke test proves first-run resources
+        # were included by the frozen application.
+        import os
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory(prefix="yuki-desktop-smoke-") as temporary_root:
+            os.environ["YUKI_CONFIG"] = str(Path(temporary_root) / "config.yaml")
+            from core.config import load_config
+
+            smoke_config = load_config()
+            if smoke_config.get("name") != "Yuki":
+                raise RuntimeError("Packaged first-run configuration did not load.")
+            if not (Path(temporary_root) / "config.yaml").is_file():
+                raise RuntimeError("Packaged first-run configuration was not created.")
+
         try:
             from PySide6.QtWidgets import QApplication, QLabel
         except ImportError as exc:
