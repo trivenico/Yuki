@@ -87,7 +87,10 @@ def _build_services():
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
     from ui.desktop.lifecycle import DesktopServiceLifecycle
 
-    root = prepare_private_desktop_root(desktop_data_root())
+    portable_storage = bool(__import__("os").environ.get("YUKI_HOME", "").strip())
+    root = prepare_private_desktop_root(
+        desktop_data_root(), require_existing_parent=portable_storage,
+    )
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, load_os_keyring())
     provider = None
