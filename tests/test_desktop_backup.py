@@ -75,6 +75,18 @@ class DesktopBackupTests(unittest.TestCase):
             restored.close()
             self.assertFalse((destination / "tasks.sqlite3-wal").exists())
 
+    def test_orphan_sqlite_sidecar_is_rejected_instead_of_archived(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            (source / "orphan.sqlite3-wal").write_bytes(b"unattached wal data")
+            with self.assertRaisesRegex(BackupError, "orphan SQLite sidecar"):
+                create_encrypted_backup(
+                    source, root / "backup", "a sufficiently long passphrase",
+                )
+            self.assertFalse((root / "backup").exists())
+
     def test_sqlite_wal_committed_data_is_included_in_consistent_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
