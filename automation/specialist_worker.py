@@ -218,7 +218,10 @@ class SpecialistTaskWorker:
         return tuple(results)
 
     def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
+        """Recover expired leases, then claim and execute at most one approved task."""
+        # Recovery runs before each claim, including after process restart. Expired
+        # work is made visible as interrupted and is never silently replayed.
+        self.runtime.store.mark_expired_running_as_interrupted()
         claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
         if claimed is None:
             return None
