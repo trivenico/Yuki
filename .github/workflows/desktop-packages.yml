@@ -54,6 +54,7 @@ jobs:
           --name Yuki --paths .
           --collect-all PySide6 --collect-all shiboken6
           --collect-all keyring --collect-submodules keyring.backends
+          --collect-data core
           ui/desktop/launch.py
       - name: Smoke-test packaged desktop runtime (Windows)
         if: runner.os == 'Windows'
