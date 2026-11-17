@@ -39,11 +39,11 @@ class SecurityDashboardPanelTests(unittest.TestCase):
     def test_start_requires_explicit_confirmation(self):
         page, calls = self.make_panel()
         controls = page.security_controls
-        with patch("ui.desktop.security_dashboard.QMessageBox.question",
+        with patch("PySide6.QtWidgets.QMessageBox.question",
                    return_value=QMessageBox.No):
             controls["start"].click()
         self.assertEqual(calls, [])
-        with patch("ui.desktop.security_dashboard.QMessageBox.question",
+        with patch("PySide6.QtWidgets.QMessageBox.question",
                    return_value=QMessageBox.Yes):
             controls["start"].click()
         self.assertEqual(calls, ["start"])
