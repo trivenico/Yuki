@@ -7,6 +7,7 @@ from __future__ import annotations
 import ipaddress
 import platform
 import uuid
+from threading import RLock
 from typing import Callable
 
 
@@ -52,6 +53,7 @@ class FirewallManager:
         self.platform_name = selected_platform
         self.max_rules = max_rules
         self._rules: dict[str, tuple[str, str]] = {}
+        self._lock = RLock()
 
     def _approved(self, prompt: str) -> bool:
         if self.approver is None:
@@ -67,13 +69,19 @@ class FirewallManager:
             raise FirewallError("Firewall planning is disabled.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 30 <= seconds <= 3600:
             raise FirewallError("Temporary block must be 30-3600 seconds.")
-        if len(self._rules) >= self.max_rules:
-            raise FirewallError("The in-memory firewall plan limit has been reached.")
+        with self._lock:
+            if len(self._rules) >= self.max_rules:
+                raise FirewallError("The in-memory firewall plan limit has been reached.")
         prompt = f"Create a dry-run plan to temporarily block source IP {ip} for {seconds} seconds."
         if not self._approved(prompt):
             raise FirewallError("Explicit approval was not granted.")
         rule_id = "Yuki-" + uuid.uuid4().hex[:12]
-        self._rules[rule_id] = (ip, "dry-run")
+        with self._lock:
+            # Recheck after the callback: concurrent approvals must not exceed
+            # the configured in-memory plan limit.
+            if len(self._rules) >= self.max_rules:
+                raise FirewallError("The in-memory firewall plan limit has been reached.")
+            self._rules[rule_id] = (ip, "dry-run")
         return {
             "rule_id": rule_id,
             "ip": ip,
@@ -86,11 +94,16 @@ class FirewallManager:
         """Remove only a local dry-run plan; never changes the host firewall."""
         if not isinstance(rule_id, str) or len(rule_id) > 64:
             return False
-        entry = self._rules.get(rule_id)
+        with self._lock:
+            entry = self._rules.get(rule_id)
         if entry is None:
             return False
         ip, _mode = entry
         if not self._approved(f"Remove Yuki dry-run firewall plan {rule_id} for {ip}."):
             raise FirewallError("Explicit approval to remove the plan was not granted.")
-        del self._rules[rule_id]
+        with self._lock:
+            # The plan may have been removed while approval was pending.
+            if self._rules.get(rule_id) != entry:
+                return False
+            del self._rules[rule_id]
         return True
