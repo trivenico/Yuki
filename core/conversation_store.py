@@ -410,6 +410,10 @@ class ConversationStore:
         encoded = json.dumps(checkpoint, ensure_ascii=True, separators=(",", ":"))
         if len(encoded) > 4096:
             raise ValueError("checkpoint exceeds 4096 characters.")
+        if lease_token is not None and (
+            not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200
+        ):
+            raise ValueError("lease_token must be non-empty text of at most 200 characters.")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -440,6 +444,10 @@ class ConversationStore:
         owner = self._owner(owner_id)
         if status not in {"completed", "interrupted", "failed", "cancelled"}:
             raise ValueError("invalid generation terminal status.")
+        if lease_token is not None and (
+            not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200
+        ):
+            raise ValueError("lease_token must be non-empty text of at most 200 characters.")
         now = self._now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
