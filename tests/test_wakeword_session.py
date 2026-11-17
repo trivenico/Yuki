@@ -125,6 +125,44 @@ class WakeWordSessionTests(unittest.TestCase):
         self.assertTrue(source.closed)
         self.assertTrue(detector.closed)
 
+    def test_close_can_be_retried_after_startup_exceeds_first_join_timeout(self):
+        class SlowStartSource(FakeAudioSource):
+            def __init__(inner_self):
+                super().__init__()
+                inner_self.start_entered = threading.Event()
+                inner_self.allow_start_to_finish = threading.Event()
+
+            def start(inner_self):
+                inner_self.start_entered.set()
+                inner_self.allow_start_to_finish.wait(2)
+                inner_self.started = True
+
+        source = SlowStartSource()
+        detector = FakeDetector()
+        session = self.make_session(source, detector)
+        starter_errors = []
+
+        def start_session():
+            try:
+                session.start()
+            except WakeWordError as exc:
+                starter_errors.append(exc)
+
+        starter = threading.Thread(target=start_session)
+        starter.start()
+        self.assertTrue(source.start_entered.wait(2))
+        self.assertFalse(session.close() if False else session.stop(timeout=0))
+        # close() marks the session terminal even if the first bounded join
+        # times out; a subsequent close must still join the startup thread.
+        self.assertFalse(session.close())
+        source.allow_start_to_finish.set()
+        self.assertTrue(session.close())
+        starter.join(2)
+        self.assertFalse(starter.is_alive())
+        self.assertEqual(session.state, "closed")
+        self.assertTrue(source.closed)
+        self.assertTrue(detector.closed)
+
     def test_worker_remains_registered_until_wake_callback_finishes(self):
         source = FakeAudioSource([b"wake"])
         detector = FakeDetector()
