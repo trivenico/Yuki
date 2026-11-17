@@ -1621,7 +1621,9 @@ Version: {version}",
                 return
             if self._wakeword_operation == "start":
                 self._wake_stop_requested = True
+                session.request_stop()
                 return
+            session.request_stop()
             self.wakeword_stop_button.setEnabled(False)
             self.wakeword_start_button.setEnabled(False)
             self.wakeword_status.setText("Stopping wake-word listener…")
@@ -1640,9 +1642,13 @@ Version: {version}",
                 return
             if self._wakeword_operation == "close":
                 return
-            # QThreadPool is single-threaded: queue terminal close behind any
-            # in-flight start/stop operation. Never join audio workers on Qt's
-            # UI thread during microphone revocation, logout, or shutdown.
+            # Signal the capture to stop immediately, then queue the blocking
+            # join/release behind any in-flight operation on the single worker
+            # pool. The UI thread never waits for an audio worker.
+            try:
+                session.request_stop()
+            except Exception:
+                pass
             self.wakeword_model_button.setEnabled(False)
             self.wakeword_start_button.setEnabled(False)
             self.wakeword_stop_button.setEnabled(False)
