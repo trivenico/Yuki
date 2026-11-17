@@ -45,8 +45,11 @@ class ConversationStore:
         self.database_path = prepare_private_sqlite_path(database_path)
         verify_sqlite_integrity(self.database_path, allow_empty=not database_preexisted)
         with self._connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            # executescript otherwise runs DDL statement-by-statement without
+            # an atomic boundary. Explicit BEGIN/COMMIT makes setup all-or-nothing.
             db.executescript("""
-                PRAGMA journal_mode=WAL;
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS conversations (
                     conversation_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
@@ -94,6 +97,7 @@ class ConversationStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_generation_runs_owner_status
                     ON conversation_generation_runs(owner_id, status, updated_at);
+                COMMIT;
             """)
 
     def health_check(self) -> bool:
