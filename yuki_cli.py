@@ -51,7 +51,7 @@ class YukiArgumentParser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = YukiArgumentParser(prog="yuki", description="Yuki AI assistant")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=YukiArgumentParser)
 
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat.add_argument("--conversation-id", help="Resume and persist a saved conversation")
 
     conversations = sub.add_parser("conversations", help="Manage private persistent companion conversations")
-    conversation_sub = conversations.add_subparsers(dest="conversation_command", required=True)
+    conversation_sub = conversations.add_subparsers(dest="conversation_command", required=True, parser_class=YukiArgumentParser)
     conversation_sub.add_parser("list", help="List your saved conversations")
     conversation_create = conversation_sub.add_parser("create", help="Create a saved conversation")
     conversation_create.add_argument("--title", default="New conversation")
@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     conversation_delete.add_argument("conversation_id")
 
     tasks = sub.add_parser("tasks", help="Inspect and supervise durable Yuki tasks")
-    task_sub = tasks.add_subparsers(dest="task_command", required=True)
+    task_sub = tasks.add_subparsers(dest="task_command", required=True, parser_class=YukiArgumentParser)
     task_list = task_sub.add_parser("list", help="List authorized task summaries")
     task_list.add_argument("--state", choices=["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled", "interrupted"])
     task_list.add_argument("--limit", type=int, default=50)
@@ -90,13 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Current task version shown by yuki tasks inspect")
 
     workers = sub.add_parser("workers", help="Run explicitly supervised specialist worker cycles")
-    worker_sub = workers.add_subparsers(dest="worker_command", required=True)
+    worker_sub = workers.add_subparsers(dest="worker_command", required=True, parser_class=YukiArgumentParser)
     worker_cycle = worker_sub.add_parser("run-cycle", help="Process a finite batch of approved tasks")
     worker_cycle.add_argument("--max-tasks", type=int, default=3)
     worker_cycle.add_argument("--max-workers", type=int, default=1)
 
     agents = sub.add_parser("agents", help="Discover and supervise specialist agents")
-    agent_sub = agents.add_subparsers(dest="agent_command", required=True)
+    agent_sub = agents.add_subparsers(dest="agent_command", required=True, parser_class=YukiArgumentParser)
     agent_sub.add_parser("list", help="List configured specialist agents")
     agent_plan = agent_sub.add_parser("plan", help="Generate a bounded agent plan for review")
     agent_plan.add_argument("goal", help="Goal to decompose into specialist subtasks")
@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_dispatch.add_argument("plan_id")
 
     auth = sub.add_parser("auth", help="Manage your local Yuki sign-in session")
-    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True, parser_class=YukiArgumentParser)
     auth_sub.add_parser("bootstrap-admin", help="Create the first local Yuki administrator")
     auth_sub.add_parser("login", help="Sign in and store a protected local session")
     auth_sub.add_parser("status", help="Show the current authenticated identity")
