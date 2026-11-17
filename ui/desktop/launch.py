@@ -790,7 +790,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self, "Restore backup",
                 "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
                 "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
-                + ("The portable memory key will be imported into this computer's OS keyring. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
+                + ("If this backup contains a portable memory key, Yuki will import it into this computer's OS keyring. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
                 + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
