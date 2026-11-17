@@ -37,6 +37,12 @@ class SecuritySessionControllerTests(unittest.TestCase):
             self.monitor, authorize=lambda: self.authorized,
         )
 
+    def _capture_error(self, callback, errors):
+        try:
+            callback()
+        except Exception as exc:
+            errors.append(exc)
+
     def test_requires_explicit_consent_and_authenticated_session(self):
         with self.assertRaises(SecuritySessionError):
             self.controller.start(consent=False)
@@ -114,10 +120,18 @@ class SecuritySessionControllerTests(unittest.TestCase):
         worker = threading.Thread(target=start)
         worker.start()
         self.assertTrue(entered.wait(1))
-        self.controller.stop()
+        stop_errors = []
+        stopper = threading.Thread(
+            target=lambda: self._capture_error(self.controller.stop, stop_errors)
+        )
+        stopper.start()
+        self.assertTrue(stopper.is_alive())
         release.set()
         worker.join(2)
+        stopper.join(2)
         self.assertFalse(worker.is_alive())
+        self.assertFalse(stopper.is_alive())
+        self.assertFalse(stop_errors)
         self.assertTrue(errors)
         self.assertFalse(self.monitor.enabled)
         self.assertFalse(self.controller.active)
@@ -198,12 +212,15 @@ class SecuritySessionControllerTests(unittest.TestCase):
         worker = threading.Thread(target=start)
         worker.start()
         self.assertTrue(entered.wait(1))
-        self.controller.stop()
+        stopper = threading.Thread(target=self.controller.stop)
+        stopper.start()
         with self.assertRaisesRegex(SecuritySessionError, "starting or stopping"):
             self.controller.start(consent=True)
         release.set()
         worker.join(2)
+        stopper.join(2)
         self.assertFalse(worker.is_alive())
+        self.assertFalse(stopper.is_alive())
         self.assertFalse(self.monitor.enabled)
         self.assertTrue(errors)
         # A fresh start is allowed only after compensating cleanup completes.
@@ -437,10 +454,14 @@ class SecuritySessionControllerTests(unittest.TestCase):
         worker = threading.Thread(target=start)
         worker.start()
         self.assertTrue(entered.wait(1))
-        self.controller.close()
+        closer = threading.Thread(target=self.controller.close)
+        closer.start()
+        self.assertTrue(closer.is_alive())
         release.set()
         worker.join(2)
+        closer.join(2)
         self.assertFalse(worker.is_alive())
+        self.assertFalse(closer.is_alive())
         self.assertTrue(errors)
         self.assertFalse(self.monitor.enabled)
         self.assertFalse(self.controller.active)
