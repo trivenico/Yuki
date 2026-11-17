@@ -107,6 +107,36 @@ class SQLiteRecoveryReportTests(unittest.TestCase):
         self.assertEqual(result["status"], "corrupt_or_unreadable")
         self.assertTrue(path.exists())
 
+    def test_encrypted_memory_recovery_uses_profile_scoped_keyring_account(self):
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        except ImportError:
+            self.skipTest("cryptography optional extra is not installed")
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.sqlite_recovery import inspect_encrypted_memory_store
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+            def get_keyring(self):
+                return type("Backend", (), {"priority": 1})()
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+        keyring = Keyring()
+        path = self.root / "memory.enc.json"
+        store = EncryptedMemoryStore(
+            path, keyring_module=keyring, aesgcm_class=AESGCM,
+            keyring_account="profile:recovery-test",
+        )
+        store.add("profile scoped memory")
+        result = inspect_encrypted_memory_store(
+            path, keyring, keyring_account="profile:recovery-test",
+        )
+        self.assertEqual(result["status"], "healthy")
+
     def test_additional_memory_check_blocks_sqlite_startup_report(self):
         path = self.root / "auth.sqlite3"
         sqlite3.connect(path).close()
