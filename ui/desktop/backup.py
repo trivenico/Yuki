@@ -85,6 +85,18 @@ def _crypto():
     return AESGCM, Scrypt
 
 
+def _derive_memory_wrap_key(backup_key: bytes, salt: bytes) -> bytes:
+    """Derive a domain-separated AES key for the portable memory DEK envelope."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        info=b"yuki-memory-key-wrap:v1",
+    ).derive(backup_key)
+
+
 def _derive(passphrase: str, salt: bytes, Scrypt):
     if not isinstance(passphrase, str) or len(passphrase) < 12 or len(passphrase) > 1024:
         raise BackupError("Backup passphrase must contain 12-1024 characters.")
@@ -275,7 +287,9 @@ def create_encrypted_backup(
                 raise ValueError("profile identity mismatch")
             memory_nonce = os.urandom(NONCE_BYTES)
             memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
-            wrapped_key = AESGCM(key).encrypt(memory_nonce, memory_key_export, memory_aad)
+            wrapped_key = AESGCM(_derive_memory_wrap_key(key, salt)).encrypt(
+                memory_nonce, memory_key_export, memory_aad,
+            )
             memory_key_export = json.dumps({
                 "schema_version": 1,
                 "profile_id": profile_id,
@@ -563,7 +577,7 @@ def restore_encrypted_backup(
                     if len(memory_nonce) != NONCE_BYTES or len(wrapped_ciphertext) < 16:
                         raise ValueError("invalid wrapped memory key payload")
                     memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
-                    memory_key_export = AESGCM(key).decrypt(
+                    memory_key_export = AESGCM(_derive_memory_wrap_key(key, salt)).decrypt(
                         memory_nonce, wrapped_ciphertext, memory_aad,
                     )
                 except Exception as exc:
