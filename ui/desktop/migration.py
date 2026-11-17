@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sqlite3
 import tempfile
 from dataclasses import dataclass
@@ -58,7 +59,7 @@ def _fsync_staged_tree(root: Path) -> None:
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(path, flags)
             try:
-                if not __import__("stat").S_ISREG(os.fstat(descriptor).st_mode):
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                     raise OSError("staged entry is not a regular file")
                 os.fsync(descriptor)
             finally:
