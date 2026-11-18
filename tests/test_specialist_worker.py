@@ -410,5 +410,25 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertLessEqual(len(task.idempotency_key), 200)
 
 
+    def test_task_definition_tampering_fails_before_handler_execution(self):
+        task_id = self.create_task()
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT definition_json FROM workflow_runs WHERE run_id=?", (task_id,),
+            ).fetchone()
+            definition = json.loads(row["definition_json"])
+            definition[0]["argument"] = "tampered task input"
+            db.execute(
+                "UPDATE workflow_runs SET definition_json=? WHERE run_id=?",
+                (json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")), task_id),
+            )
+        called = []
+        result = self.worker({"code-review": lambda request: called.append(request) or "unsafe"}).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+        self.assertEqual(called, [])
+
+
 if __name__ == "__main__":
     unittest.main()
