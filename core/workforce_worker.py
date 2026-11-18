@@ -128,9 +128,23 @@ class WorkforceWorker:
             "required_permissions", "max_autonomy_tier", "execution_authorized",
             "review_required",
         }
+        expected_with_knowledge = expected | {"knowledge_context"}
+        knowledge_context = payload.get("knowledge_context", []) if isinstance(payload, dict) else None
+        knowledge_valid = (
+            isinstance(knowledge_context, list) and len(knowledge_context) <= 5
+            and all(
+                isinstance(item, dict)
+                and set(item) == {"knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"}
+                and all(isinstance(item.get(key), str) and item[key].strip()
+                        for key in ("knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"))
+                and len(item["title"]) <= 200 and len(item["lesson"]) <= 1000
+                for item in knowledge_context
+            )
+        )
         if (
             not isinstance(payload, dict)
-            or set(payload) != expected
+            or set(payload) not in (expected, expected_with_knowledge)
+            or not knowledge_valid
             or not isinstance(payload.get("description"), str)
             or not payload["description"].strip()
             or len(payload["description"]) > 20_000
@@ -173,6 +187,7 @@ class WorkforceWorker:
                 required_permissions=tuple(sorted(required_permissions)),
                 max_autonomy_tier=payload["max_autonomy_tier"],
                 task_id=task_id,
+                knowledge_context=knowledge_context,
             )
             ok = getattr(outcome, "ok", None)
             status = getattr(outcome, "status", None)
