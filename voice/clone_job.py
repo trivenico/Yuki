@@ -184,7 +184,12 @@ class VoiceCloneJobController:
             with self._lock:
                 self._state = VoiceCloneJobState.CANCELLED
             if artifact_ref is not None:
-                self._store.delete(artifact_ref, confirmed=True)
+                try:
+                    self._store.delete(artifact_ref, confirmed=True)
+                except Exception:
+                    # Preserve cancellation as the primary outcome. The encrypted
+                    # artifact remains inaccessible without the authenticated store.
+                    pass
             raise
         except Exception:
             with self._lock:
