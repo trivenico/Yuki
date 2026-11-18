@@ -7,6 +7,7 @@ import re
 from urllib.parse import parse_qs
 
 from core.auth import BuiltInAuthService
+from core.durable_task_engine import TaskNotFound
 from core.workforce_dashboard import WorkforceDashboard
 
 _QUERY_KEYS = {"max_goals"}
@@ -76,7 +77,7 @@ class AuthenticatedWorkforceDashboardAPI:
                 result = await asyncio.to_thread(self.dashboard.department_detail, query["name"])
             else:
                 return await self._respond(send, 404, {"error": "not_found"})
-        except KeyError:
+        except (KeyError, TaskNotFound):
             return await self._respond(send, 404, {"error": "resource_not_found"})
         except (TypeError, ValueError):
             return await self._respond(send, 400, {"error": "invalid_query"})
