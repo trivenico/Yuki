@@ -224,7 +224,7 @@ class LearningCenterPanel:
 
         presenter = Presenter()
 
-        def refresh_state():
+        def refresh_state(_checked=False):
             try:
                 presenter.render_state(on_refresh())
             except Exception:
@@ -264,7 +264,7 @@ class LearningCenterPanel:
                 checkbox.blockSignals(False)
                 presenter.set_status("The consent change could not be saved. The previous setting remains.")
 
-        def selection_changed(item):
+        def selection_changed(item, _previous=None):
             if item is None:
                 presenter.render_review("", None)
                 return
@@ -278,7 +278,7 @@ class LearningCenterPanel:
                 presenter.render_review("", None)
                 presenter.set_status("The correction preview could not be loaded safely.")
 
-        def approve_selected():
+        def approve_selected(_checked=False):
             proposal_id = selected_id["value"]
             if not proposal_id or not state_cache["training"]:
                 return
@@ -300,7 +300,7 @@ class LearningCenterPanel:
             except Exception:
                 presenter.set_status("Approval could not be committed. The sample remains unapproved.")
 
-        def reject_selected():
+        def reject_selected(_checked=False):
             proposal_id = selected_id["value"]
             if not proposal_id:
                 return
