@@ -10,6 +10,8 @@ import base64
 import copy
 import json
 import os
+import re
+import hashlib
 import stat
 import tempfile
 from contextlib import contextmanager
@@ -168,12 +170,11 @@ class EncryptedLearningStore:
             normalized = _canonical_messages(item["messages"])
             if not isinstance(item["source_reference"], str) or not item["source_reference"].strip() or len(item["source_reference"]) > 512:
                 raise SecureLearningStoreError("Pending correction source reference is invalid.")
-            if not isinstance(item["task_type"], str) or not __import__("re").fullmatch(r"[a-z][a-z0-9_.-]{0,63}", item["task_type"]):
+            if not isinstance(item["task_type"], str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", item["task_type"]):
                 raise SecureLearningStoreError("Pending correction task type is invalid.")
-            import hashlib
             expected = hashlib.sha256(
-                (item["source_reference"] + "\\0" + item["task_type"] + "\\0" +
-                 "\\0".join(message["role"] + "\\0" + message["content"] for message in normalized)).encode("utf-8")
+                (item["source_reference"] + "\0" + item["task_type"] + "\0" +
+                 "\0".join(message["role"] + "\0" + message["content"] for message in normalized)).encode("utf-8")
             ).hexdigest()[:24]
             if proposal_id != expected:
                 raise SecureLearningStoreError("Pending correction digest does not match its contents.")
@@ -195,9 +196,8 @@ class EncryptedLearningStore:
             normalized = _canonical_messages(item["messages"])
             if not isinstance(item["source_reference"], str) or not item["source_reference"].strip() or len(item["source_reference"]) > 512:
                 raise SecureLearningStoreError("Approved learning source reference is invalid.")
-            if not isinstance(item["task_type"], str) or not __import__("re").fullmatch(r"[a-z][a-z0-9_.-]{0,63}", item["task_type"]):
+            if not isinstance(item["task_type"], str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", item["task_type"]):
                 raise SecureLearningStoreError("Approved learning task type is invalid.")
-            import hashlib
             canonical = json.dumps(
                 {"task_type": item["task_type"], "messages": normalized},
                 ensure_ascii=False, sort_keys=True, separators=(",", ":"),
@@ -205,8 +205,8 @@ class EncryptedLearningStore:
             if example_id != hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]:
                 raise SecureLearningStoreError("Approved example digest does not match its contents.")
             expected_proposal = hashlib.sha256(
-                (item["source_reference"] + "\\0" + item["task_type"] + "\\0" +
-                 "\\0".join(message["role"] + "\\0" + message["content"] for message in normalized)).encode("utf-8")
+                (item["source_reference"] + "\0" + item["task_type"] + "\0" +
+                 "\0".join(message["role"] + "\0" + message["content"] for message in normalized)).encode("utf-8")
             ).hexdigest()[:24]
             if proposal_id != expected_proposal:
                 raise SecureLearningStoreError("Approved proposal digest does not match its source contents.")
