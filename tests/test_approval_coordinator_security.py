@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
 
@@ -23,7 +24,8 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         store = SQLitePendingApprovalStore(str(Path(self.tempdir.name) / "pending.sqlite3"))
-        self.coordinator = ApprovalCoordinator(pending_store=store)
+        audit = SQLiteApprovalAuditLog(str(Path(self.tempdir.name) / "audit.sqlite3"))
+        self.coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
         self.planner = DummyPlanner()
         self.action = {"skill_id": "notes.write", "arguments": {"text": "safe"}}
         result = SimpleNamespace(action=self.action)
