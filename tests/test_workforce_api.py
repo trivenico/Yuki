@@ -6,6 +6,8 @@ from pathlib import Path
 
 from api.workforce import AuthenticatedWorkforceDashboardAPI
 from core.auth import BuiltInAuthService
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.durable_task_engine import DurableTaskEngine
 from core.workforce import AgentRegistry, default_workforce
 from core.workforce_dashboard import WorkforceDashboard
@@ -30,7 +32,12 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.dashboard = WorkforceDashboard(
             registry=AgentRegistry(default_workforce()), task_engine=self.engine
         )
-        self.app = AuthenticatedWorkforceDashboardAPI(_Downstream(), self.auth, self.dashboard)
+        self.pending = SQLitePendingApprovalStore(str(root / "pending.sqlite"))
+        self.audit = SQLiteApprovalAuditLog(str(root / "approval-audit.sqlite"))
+        self.app = AuthenticatedWorkforceDashboardAPI(
+            _Downstream(), self.auth, self.dashboard,
+            pending_approvals=self.pending, approval_audit=self.audit,
+        )
 
     def tearDown(self):
         self.engine.close()
@@ -126,6 +133,52 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             query=b"event_limit=999",
         )
         self.assertEqual(status, 400)
+
+    def test_approval_inbox_and_audit_are_admin_operator_read_only(self):
+        item = self.pending.put(
+            "notes.write", {"text": "private"},
+            {"skill_id": "notes.write", "arguments": {"text": "private"}},
+            actor="owner", session_id="session",
+        )
+        self.audit.append(
+            event_type="requested", pending_id=item.pending_id,
+            actor="owner", skill_id="notes.write",
+        )
+        status, body = self.request(
+            "/v1/workforce/approvals", token=self.admin_session.token
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["pending"][0]["pending_id"], item.pending_id)
+        self.assertNotIn("arguments", body["pending"][0])
+        status, body = self.request(
+            "/v1/workforce/approvals/audit", token=self.admin_session.token
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["chain_valid"])
+        self.assertEqual(body["events"][0]["event_type"], "requested")
+        self.assertNotIn("pending_id", body["events"][0])
+        status, _ = self.request(
+            "/v1/workforce/approvals", token=self.user_session.token
+        )
+        self.assertEqual(status, 403)
+
+    def test_approval_inbox_requires_explicit_store_configuration(self):
+        app = AuthenticatedWorkforceDashboardAPI(_Downstream(), self.auth, self.dashboard)
+        async def run():
+            messages = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                messages.append(message)
+            await app({
+                "type": "http", "method": "GET", "path": "/v1/workforce/approvals",
+                "headers": [(b"authorization", f"Bearer {self.admin_session.token}".encode())],
+                "query_string": b"",
+            }, receive, send)
+            return messages
+        messages = asyncio.run(run())
+        self.assertEqual(messages[0]["status"], 503)
 
     def test_rejects_bad_methods_queries_and_pagination(self):
         status, _ = self.request(
