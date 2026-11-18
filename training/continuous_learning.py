@@ -236,6 +236,30 @@ class ContinuousLearningCoordinator:
                 for proposal_id, item in sorted(self._pending.items())
             ]
 
+    def correction_for_review(self, proposal_id: str) -> dict[str, Any] | None:
+        """Return one explicitly staged sample for owner review, excluding source metadata."""
+        if not isinstance(proposal_id, str):
+            return None
+        with self._lock:
+            if self.store is not None:
+                try:
+                    authorization = self._refresh_persisted_state()
+                except Exception as exc:
+                    raise ContinuousLearningError("Pending learning data could not be read safely.") from exc
+                if not authorization["learning"]:
+                    return None
+            elif not self._has_consent("learning"):
+                return None
+            item = self._pending.get(proposal_id)
+            if item is None:
+                return None
+            return {
+                "proposal_id": proposal_id,
+                "task_type": item["task_type"],
+                "messages": [dict(message) for message in item["messages"]],
+                "message_count": len(item["messages"]),
+            }
+
     def approve_correction(
         self,
         proposal_id: str,
