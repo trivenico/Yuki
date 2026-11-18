@@ -55,8 +55,10 @@ class LearningCenterPanel:
         explanation = QLabel(
             "Yuki never scans chat history for training. Submit a specific correction "
             "only when you choose. Personalization consent and model-training consent "
-            "are separate. Approved examples may guide responses, but they do not "
-            "change model weights automatically. Turning consent off stops future use; "
+            "are separate: learning consent controls few-shot personalization, while "
+            "training consent controls SFT dataset export. Approved examples never "
+            "change model weights automatically. Turning consent off stops its "
+            "corresponding use; "
             "it does not delete samples already saved in encrypted storage. Data-deletion "
             "controls are not included in this panel yet."
         )
@@ -178,7 +180,10 @@ class LearningCenterPanel:
                 elif not learning:
                     status.setText("Personalization is off. No correction samples are available for review.")
                 elif not training:
-                    status.setText("Personalization is enabled; training consent is off. Approve is disabled.")
+                    status.setText(
+                        "Few-shot personalization is enabled; SFT consent is off. "
+                        "Existing approved examples may guide responses, but new approvals and exports are disabled."
+                    )
                 else:
                     status.setText("Both consent controls are enabled. Review each example before approval.")
                 selected_id["value"] = None
