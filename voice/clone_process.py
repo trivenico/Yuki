@@ -321,7 +321,13 @@ class ProcessIsolatedVoiceCloneExecutor:
                     try:
                         payload = receive_conn.recv_bytes(maxlength=30 * 1024 * 1024 + 10)
                     except (EOFError, OSError) as exc:
-                        raise VoiceCloneWorkerError("voice clone worker exited without a result") from exc
+                        # EOF can mean the child was terminated by an OS resource
+                        # limit before it could send its sanitized startup error.
+                        # Join briefly so the exit status is available for diagnosis.
+                        process.join(self.terminate_grace_seconds)
+                        raise VoiceCloneWorkerError(
+                            f"voice clone worker exited ({process.exitcode}) without a result"
+                        ) from exc
                     process.join(self.terminate_grace_seconds)
                     if payload == b"CANCELLED":
                         raise VoiceCloneWorkerCancelled("voice clone worker cancelled")
