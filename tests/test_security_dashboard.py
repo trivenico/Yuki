@@ -89,7 +89,7 @@ class SecurityDashboardPanelTests(unittest.TestCase):
         self.assertIn("one bounded local process snapshot", prompt)
         self.assertIn("will not continuously monitor", prompt)
         self.assertIn("will not capture network traffic", prompt)
-        self.assertIn("will not terminate", prompt)
+        self.assertIn("terminate processes", prompt)
         page.close()
 
     def test_state_controls_refresh_and_stop(self):
