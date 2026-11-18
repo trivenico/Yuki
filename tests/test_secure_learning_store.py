@@ -75,6 +75,7 @@ class EncryptedLearningStoreTests(unittest.TestCase):
 
     def test_state_is_encrypted_and_survives_reopen(self):
         store = self.make_store()
+        store.replace({"schema_version": 1, "pending": [], "approved": []})
         record = {"marker": "not allowed"}  # Invalid records cannot be persisted.
         with self.assertRaises(SecureLearningStoreError):
             store.update(lambda state: state["pending"].append(record))
