@@ -56,6 +56,16 @@ class WorkforceTaskRouterTests(unittest.TestCase):
                 idempotency_key="mobile-1",
             )
 
+    def test_rejects_retryable_workforce_submissions(self):
+        with self.assertRaises(ValueError):
+            self.router.submit(
+                goal_id=self.goal_id,
+                description="Potentially side-effecting task",
+                required_capabilities={"python"},
+                idempotency_key="retry-unsafe",
+                max_attempts=2,
+            )
+
     def test_rejects_invalid_description_and_autonomy(self):
         for kwargs in (
             {"description": " "},
