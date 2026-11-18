@@ -96,6 +96,39 @@ class LearningAuthorizationLedger:
         except Exception:
             return False
 
+    def authorization_snapshot(self, proposal_ids: list[str]) -> dict:
+        """Verify consent and a bounded proposal set with one audit-chain scan."""
+        if not isinstance(proposal_ids, list) or len(proposal_ids) > 10_000:
+            raise ValueError("proposal_ids must be a bounded list.")
+        for proposal_id in proposal_ids:
+            self._validate_proposal_id(proposal_id)
+        consent_learning = "consent:learning"
+        consent_training = "consent:training"
+        events = self._audit.latest_events(
+            actor=self._actor_id,
+            pending_ids=[consent_learning, consent_training, *proposal_ids],
+            skill_ids=[
+                self.CONSENT_SKILL_PREFIX + "learning",
+                self.CONSENT_SKILL_PREFIX + "training",
+                self.EXAMPLE_SKILL,
+            ],
+        )
+        learning = events.get((
+            consent_learning, self.CONSENT_SKILL_PREFIX + "learning",
+        )) == "approved"
+        training = events.get((
+            consent_training, self.CONSENT_SKILL_PREFIX + "training",
+        )) == "approved"
+        approved = [
+            proposal_id for proposal_id in proposal_ids
+            if events.get((proposal_id, self.EXAMPLE_SKILL)) == "approved"
+        ]
+        return {
+            "learning": learning,
+            "training": training,
+            "approved_proposal_ids": approved,
+        }
+
     @property
     def actor_id(self) -> str:
         """Authenticated actor bound to this ledger instance."""
