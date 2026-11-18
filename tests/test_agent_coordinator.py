@@ -496,5 +496,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             )
 
 
+    def test_dispatch_fails_closed_if_approval_class_changes_without_revision_bump(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="stale-approval-class",
+            subtasks=[SubtaskSpec(
+                "collect", "Collect approved research", ("research",),
+                requires_approval=False,
+            )],
+        )
+        with self.coordinator._connect() as db:
+            db.execute(
+                "UPDATE specialist_agents SET approval_class='human_approval' WHERE agent_id='research'"
+            )
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(advanced.subtasks[0].status, "failed")
+        self.assertIsNone(advanced.subtasks[0].task_id)
+
+
 if __name__ == "__main__":
     unittest.main()
