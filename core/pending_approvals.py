@@ -111,6 +111,25 @@ class SQLitePendingApprovalStore:
                 raise
         return item
 
+
+    def list_pending(self, *, limit: int = 100) -> list[dict[str, str]]:
+        """List safe inbox metadata only; never return action arguments or snapshots."""
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now,))
+            rows = db.execute(
+                """SELECT pending_id, skill_id, expires_at
+                   FROM pending_approvals
+                   ORDER BY expires_at ASC, pending_id ASC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [
+            {"pending_id": row[0], "skill_id": row[1], "expires_at": row[2]}
+            for row in rows
+        ]
+
     def get(self, pending_id: str) -> StoredPendingAction | None:
         if not isinstance(pending_id, str) or not pending_id:
             return None
