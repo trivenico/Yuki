@@ -102,11 +102,13 @@ class DesktopSecurityService:
         return result
 
     def stop(self) -> None:
+        # Keep stop serialized with a concurrent start so monitoring cannot
+        # silently restart after the user presses Stop.
         with self._lock:
             self._generation += 1
             controller = self._controller
-        if controller is not None:
-            controller.stop()
+            if controller is not None:
+                controller.stop()
 
     def close(self) -> None:
         with self._lock:
