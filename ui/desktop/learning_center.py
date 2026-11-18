@@ -138,7 +138,7 @@ class LearningCenterPanel:
                         or proposal_id in seen
                         or not isinstance(task_type, str)
                         or not _SAFE_TASK.fullmatch(task_type)
-                        or not isinstance(message_count, (str, int))
+                        or not (isinstance(message_count, str) or type(message_count) is int)
                     ):
                         raise ValueError("Pending correction metadata is invalid.")
                     seen.add(proposal_id)
@@ -161,7 +161,10 @@ class LearningCenterPanel:
                 summary.setText(
                     f"{len(normalized)} pending corrections · {approved_count} approved examples"
                 )
-                if not learning:
+                saved_status = state.get("status")
+                if isinstance(saved_status, str) and saved_status.strip():
+                    status.setText(_plain(saved_status, 500))
+                elif not learning:
                     status.setText("Personalization is off. No correction samples are available for review.")
                 elif not training:
                     status.setText("Personalization is enabled; training consent is off. Approve is disabled.")
