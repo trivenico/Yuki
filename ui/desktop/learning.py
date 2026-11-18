@@ -88,11 +88,18 @@ def build_learning_center_callbacks(
         # Record the human decision first. The coordinator independently checks
         # the durable audit record and current consent again before commit.
         ledger.record_example_approval(proposal_id, True)
-        coordinator.approve_correction(
-            proposal_id,
-            training_consent=True,
-            approved_by=ledger.actor_id,
-        )
+        try:
+            coordinator.approve_correction(
+                proposal_id,
+                training_consent=True,
+                approved_by=ledger.actor_id,
+            )
+        except Exception:
+            # If the encrypted commit fails or consent is revoked during the
+            # operation, append a denial so a later re-consent cannot revive
+            # this uncommitted approval.
+            ledger.record_example_approval(proposal_id, False)
+            raise
 
     def on_reject(proposal_id: str) -> None:
         ledger.record_example_approval(proposal_id, False)
