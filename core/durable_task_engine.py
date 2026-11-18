@@ -368,6 +368,17 @@ class DurableTaskEngine:
         if r is None: raise TaskNotFound("goal not found")
         return dict(r)
 
+    def list_goals(self, *, limit=100):
+        """List the most recently updated goals for bounded dashboard reads."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT * FROM goals ORDER BY updated_at DESC,id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_tasks(self,goal_id):
         with closing(self._connect()) as c: rows=c.execute("SELECT * FROM tasks WHERE goal_id=? ORDER BY created_at,id",(goal_id,)).fetchall()
         return [self._decode(r) for r in rows]
