@@ -121,3 +121,69 @@ class WorkforceDashboard:
             "goals": goal_rows,
             "truncated_goals": len(goals) == max_goals,
         }
+
+
+    def employee_directory(
+        self,
+        *,
+        department: str | None = None,
+        status: str | None = None,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> dict[str, Any]:
+        """Return a validated, paginated employee directory for dashboard views."""
+        if type(page) is not int or page < 1:
+            raise ValueError("page must be a positive integer")
+        if type(page_size) is not int or not 1 <= page_size <= 100:
+            raise ValueError("page_size must be between 1 and 100")
+        if department is not None and (not isinstance(department, str) or not department.strip()):
+            raise ValueError("department must be non-empty text when provided")
+        allowed_statuses = {"available", "busy", "offline", "disabled"}
+        if status is not None and status not in allowed_statuses:
+            raise ValueError("unsupported employee status")
+        if search is not None and (not isinstance(search, str) or len(search) > 120):
+            raise ValueError("search must be text up to 120 characters")
+
+        employees = self.snapshot()["employees"]
+        needle = search.strip().casefold() if search else ""
+        filtered = [
+            employee for employee in employees
+            if (department is None or employee["department"].casefold() == department.casefold())
+            and (status is None or employee["status"] == status)
+            and (
+                not needle
+                or needle in employee["employee_id"].casefold()
+                or needle in employee["name"].casefold()
+                or needle in employee["role"].casefold()
+                or needle in employee["department"].casefold()
+                or any(needle in capability.casefold() for capability in employee["capabilities"])
+            )
+        ]
+        total = len(filtered)
+        start = (page - 1) * page_size
+        return {
+            "employees": filtered[start:start + page_size],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": (total + page_size - 1) // page_size,
+        }
+
+    def department_detail(self, department: str) -> dict[str, Any]:
+        """Return one department's live summary and employee roster."""
+        if not isinstance(department, str) or not department.strip():
+            raise ValueError("department must be non-empty text")
+        snapshot = self.snapshot()
+        summary = next(
+            (row for row in snapshot["departments"]
+             if row["name"].casefold() == department.casefold()),
+            None,
+        )
+        if summary is None:
+            raise KeyError(f"unknown department: {department}")
+        roster = [
+            employee for employee in snapshot["employees"]
+            if employee["department"] == summary["name"]
+        ]
+        return {"department": summary, "employees": roster}
