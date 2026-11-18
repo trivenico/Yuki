@@ -140,7 +140,9 @@ class WorkforceDashboard:
         if department is not None and (not isinstance(department, str) or not department.strip()):
             raise ValueError("department must be non-empty text when provided")
         allowed_statuses = {"available", "busy", "offline", "disabled"}
-        if status is not None and status not in allowed_statuses:
+        if status is not None and (
+            not isinstance(status, str) or status not in allowed_statuses
+        ):
             raise ValueError("unsupported employee status")
         if search is not None and (not isinstance(search, str) or len(search) > 120):
             raise ValueError("search must be text up to 120 characters")
