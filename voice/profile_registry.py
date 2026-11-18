@@ -40,6 +40,7 @@ class VoiceProfileRegistry:
         if not callable(authorize):
             raise TypeError("An authorization callback is required.")
         self._authorize = authorize
+        self._closed = False
         self._lock = threading.RLock()
         self._directory = Path(directory).expanduser()
         if self._directory.exists() and self._directory.is_symlink():
@@ -75,12 +76,24 @@ class VoiceProfileRegistry:
         self._state = self._load()
 
     def _require_authorized(self) -> None:
+        if self._closed:
+            raise VoiceProfileRegistryError("Voice profile registry is closed.")
         try:
             authorized = self._authorize()
         except Exception as exc:
             raise VoiceProfileAuthorizationError("Voice profile authorization could not be verified.") from exc
         if authorized is not True:
             raise VoiceProfileAuthorizationError("An authenticated session is required to manage voice profiles.")
+
+    def close(self) -> None:
+        """Close the retained directory handle; safe to call more than once."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._directory_fd is not None:
+                os.close(self._directory_fd)
+                self._directory_fd = None
 
     def _load(self) -> dict:
         try:
