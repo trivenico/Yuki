@@ -101,6 +101,16 @@ def build_learning_center_callbacks(
             ledger.record_example_approval(proposal_id, False)
             raise
 
+    def on_delete_all() -> dict[str, int]:
+        # Deletion is always available, including after consent is revoked.
+        # Each prior approval is revoked in the same serialized store
+        # transaction before its encrypted example is removed.
+        return coordinator.delete_all_learning_data(
+            revoke_approval=lambda proposal_id: ledger.record_example_approval(
+                proposal_id, False,
+            ),
+        )
+
     def on_reject(proposal_id: str) -> None:
         ledger.record_example_approval(proposal_id, False)
         if not coordinator.reject_correction(proposal_id):
@@ -112,6 +122,7 @@ def build_learning_center_callbacks(
         "on_review": on_review,
         "on_approve": on_approve,
         "on_reject": on_reject,
+        "on_delete_all": on_delete_all,
     }
 
 
