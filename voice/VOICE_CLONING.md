@@ -266,3 +266,10 @@ their retained directory descriptor. Callers must close them during logout,
 account switch, and application shutdown; operations after close fail closed.
 The lifecycle integration that guarantees those calls in the desktop app is
 still outstanding.
+
+On supported POSIX systems, artifact reads and profile-registry loads now
+validate that existing files are regular files owned by the current user and
+have no group/other permission bits. Regression tests cover deliberately
+world-readable artifacts and profile metadata. This is defense in depth inside
+a private directory; it is not a substitute for Windows ACL verification or
+an OS sandbox.
