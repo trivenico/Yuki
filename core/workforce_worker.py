@@ -24,6 +24,7 @@ class WorkforceWorker:
         *,
         worker_id: str,
         executor: Any,
+        reviewer: Any = None,
         lease_seconds: int = 60,
         heartbeat_interval_seconds: float = 20,
     ):
@@ -46,7 +47,10 @@ class WorkforceWorker:
         self.engine = engine
         self.registry = registry
         self.worker_id = worker_id
+        if reviewer is not None and not callable(getattr(reviewer, "review", None)):
+            raise TypeError("reviewer must implement review()")
         self.executor = executor
+        self.reviewer = reviewer
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
 
@@ -95,6 +99,7 @@ class WorkforceWorker:
         expected = {
             "description", "assigned_employee_id", "required_capabilities",
             "required_permissions", "max_autonomy_tier", "execution_authorized",
+            "review_required",
         }
         if (
             not isinstance(payload, dict)
@@ -111,6 +116,7 @@ class WorkforceWorker:
             or type(payload.get("max_autonomy_tier")) is not int
             or payload["max_autonomy_tier"] not in range(4)
             or payload.get("execution_authorized") is not False
+            or type(payload.get("review_required")) is not bool
         ):
             rejected = self.engine.reject(task_id, self.worker_id, "invalid_payload")
             return {"task_id": task_id, "state": rejected["state"], "status": "invalid_payload"}
@@ -145,9 +151,37 @@ class WorkforceWorker:
             status = getattr(outcome, "status", None)
             if type(ok) is not bool or not isinstance(status, str) or not status:
                 raise TypeError("executor returned an invalid outcome")
+            if ok and payload["review_required"]:
+                if self.reviewer is None:
+                    failed = self.engine.fail(task_id, self.worker_id, "independent review unavailable")
+                    return {"task_id": task_id, "state": failed["state"], "status": "reviewer_unavailable"}
+                review = self._execute_with_heartbeat(
+                    task_id=task_id,
+                    review_context={
+                        "description": payload["description"],
+                        "employee_id": employee.employee_id,
+                        "execution_status": status,
+                        "execution_message": str(getattr(outcome, "message", ""))[:2000],
+                    },
+                    reviewer_call=True,
+                ) if False else self.reviewer.review(
+                    description=payload["description"],
+                    employee_id=employee.employee_id,
+                    execution_status=status,
+                    execution_message=str(getattr(outcome, "message", ""))[:2000],
+                )
+                approved = getattr(review, "approved", None)
+                review_status = getattr(review, "status", None)
+                if type(approved) is not bool or not isinstance(review_status, str) or not review_status:
+                    raise TypeError("reviewer returned an invalid decision")
+                if not approved:
+                    failed = self.engine.fail(task_id, self.worker_id, "independent review rejected")
+                    return {"task_id": task_id, "state": failed["state"], "status": "review_rejected"}
+                status = f"{status}:reviewed"
             if ok:
                 completed = self.engine.complete(task_id, self.worker_id, {
                     "ok": True, "status": status, "employee_id": employee.employee_id,
+                    "review_required": payload["review_required"],
                 })
                 return {"task_id": task_id, "state": completed["state"], "status": status}
             failed = self.engine.fail(task_id, self.worker_id, status)
