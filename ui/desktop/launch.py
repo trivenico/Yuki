@@ -404,19 +404,28 @@ def run() -> int:
 
         @Slot()
         def run(self):
-            error = None
+            errors = []
             try:
                 if self.security_service is not None:
                     self.security_service.close()
+            except Exception as exc:
+                errors.append(exc)
+            try:
                 if self.controller is not None:
                     self.controller.logout()
                 elif self.sessions is not None:
                     self.sessions.logout()
             except Exception as exc:
-                error = exc
+                errors.append(exc)
             finally:
                 if self.security_pool is not None:
                     self.security_pool.waitForDone()
+            error = (
+                RuntimeError("Desktop sign-out cleanup was incomplete.")
+                if errors else None
+            )
+            if error is not None:
+                error.__cause__ = errors[0]
             self.signals.finished.emit(error)
 
     class ShutdownWorkerSignals(QObject):
