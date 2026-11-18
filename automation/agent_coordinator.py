@@ -851,7 +851,17 @@ class SpecialistAgentCoordinator:
         with self._connect() as db:
             if task_id is None:
                 db.execute(
-                    "UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
+                    """
+                    UPDATE agent_plan_subtasks
+                    SET status=CASE
+                        WHEN status IN (
+                            'running', 'succeeded', 'failed', 'cancelled',
+                            'interrupted', 'blocked'
+                        ) THEN status
+                        ELSE ?
+                    END
+                    WHERE plan_id=? AND subtask_id=?
+                    """,
                     (status, plan_id, subtask_id),
                 )
             else:
