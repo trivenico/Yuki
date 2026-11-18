@@ -201,6 +201,22 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(completed.status, "completed")
         self.assertEqual(len(self.planner.executed), 1)
 
+    def test_confirmation_callback_failure_preserves_pending_request(self):
+        def unavailable(_action):
+            raise TimeoutError("confirmation UI unavailable")
+
+        outcome = self.approve(confirm=unavailable)
+        self.assertEqual(outcome.status, "confirmation_unavailable")
+        self.assertEqual(self.planner.executed, [])
+        self.assertIsNotNone(self.coordinator._peek(
+            self.pending.pending_id, actor="owner", session_id="session-a"
+        ))
+
+        completed = self.approve()
+        self.assertTrue(completed.ok)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(len(self.planner.executed), 1)
+
     def test_missing_and_mismatched_digest_preserve_pending_request(self):
         missing = self.coordinator.approve(
             self.planner, self.pending.pending_id, actor="owner", session_id="session-a",
