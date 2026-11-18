@@ -277,7 +277,12 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
         # Report only a fixed stage/limit and exception class; never forward provider text or tracebacks.
         if isinstance(exc, VoiceCloneResourceLimitError):
             stage = f"resource-limits-{exc.limit_name}"
-            error_type = exc.args[0].split(":", 1)[-1]
+            diagnostics = (
+                f"{exc.error_type}:{exc.stage}:"
+                f"{exc.current_soft}:{exc.current_hard}:"
+                f"{exc.requested_soft}:{exc.requested_hard}"
+            )
+            error_type = diagnostics
         else:
             error_type = type(exc).__name__
         try:
