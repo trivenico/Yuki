@@ -131,6 +131,40 @@ class SQLiteApprovalAuditLog:
             previous_hash = stored_hash
         return True
 
+    def latest_event(self, *, pending_id: str, actor: str, skill_id: str) -> str | None:
+        """Return the latest matching event only when the complete audit chain verifies."""
+        for name, value, limit in (("pending_id", pending_id, 128), ("actor", actor, 256), ("skill_id", skill_id, 120)):
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise ValueError(f"{name} must be a non-empty bounded string.")
+        pending_hash, actor_hash = self._digest(pending_id), self._digest(actor)
+        latest = None
+        previous_hash = _ZERO_HASH
+        with self._connect() as db:
+            rows = db.execute("""SELECT event_type,pending_id_hash,actor_hash,skill_id,created_at,
+                previous_hash,event_hash FROM approval_audit_events ORDER BY event_id ASC""").fetchall()
+            for event_type, stored_pending, stored_actor, stored_skill, created_at, stored_previous, stored_hash in rows:
+                if not all(isinstance(value, str) for value in (
+                    event_type, stored_pending, stored_actor, stored_skill,
+                    created_at, stored_previous, stored_hash,
+                )):
+                    raise RuntimeError("Approval audit chain contains malformed data.")
+                if not hmac.compare_digest(stored_previous, previous_hash):
+                    raise RuntimeError("Approval audit chain verification failed.")
+                expected = self._event_hash(
+                    event_type, stored_pending, stored_actor, stored_skill,
+                    created_at, stored_previous,
+                )
+                if not hmac.compare_digest(expected, stored_hash):
+                    raise RuntimeError("Approval audit chain verification failed.")
+                if (
+                    hmac.compare_digest(stored_pending, pending_hash)
+                    and hmac.compare_digest(stored_actor, actor_hash)
+                    and stored_skill == skill_id
+                ):
+                    latest = event_type
+                previous_hash = stored_hash
+        return latest
+
 
 class MCPExecutionAudit:
     """Append-only lifecycle callback with exact per-tool identity."""
