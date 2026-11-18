@@ -38,6 +38,7 @@ class ContinuousLearningCoordinator:
         dataset_version: str = "1.0.0",
         consent_verifier: Callable[[str], bool] | None = None,
         approval_verifier: Callable[[str, str], bool] | None = None,
+        authorization_snapshot: Callable[[list[str]], dict] | None = None,
     ) -> None:
         if memory is not None and not callable(getattr(memory, "remember", None)):
             raise TypeError("memory must provide remember().")
@@ -49,11 +50,14 @@ class ContinuousLearningCoordinator:
             raise TypeError("consent_verifier must be callable.")
         if approval_verifier is not None and not callable(approval_verifier):
             raise TypeError("approval_verifier must be callable.")
+        if authorization_snapshot is not None and not callable(authorization_snapshot):
+            raise TypeError("authorization_snapshot must be callable.")
         self.memory = memory
         self.store = store
         self.generator = SFTDataGenerator(dataset_version=dataset_version)
         self._consent_verifier = consent_verifier
         self._approval_verifier = approval_verifier
+        self._authorization_snapshot = authorization_snapshot
         self._pending: dict[str, dict[str, Any]] = {}
         self._lock = RLock()
         if self.store is not None:
@@ -76,10 +80,43 @@ class ContinuousLearningCoordinator:
             return False
 
     def _refresh_persisted_state(self) -> dict:
-        """Reload from the encrypted store and re-verify consent/approval."""
+        """Reload encrypted state and verify all authorizations in one bounded audit scan."""
         state = self.store.read()
+        proposal_ids = [item["proposal_id"] for item in state["approved"]]
+        if self._authorization_snapshot is not None:
+            try:
+                authorization = self._authorization_snapshot(proposal_ids)
+                if (
+                    not isinstance(authorization, dict)
+                    or type(authorization.get("learning")) is not bool
+                    or type(authorization.get("training")) is not bool
+                    or not isinstance(authorization.get("approved_proposal_ids"), list)
+                ):
+                    raise ValueError("invalid authorization snapshot")
+                approved_ids = set(authorization["approved_proposal_ids"])
+                if not approved_ids.issubset(set(proposal_ids)):
+                    raise ValueError("authorization snapshot contains unknown proposals")
+            except Exception:
+                # A broken/tampered audit log must disable personalization, not
+                # silently fall back to stale in-memory approvals.
+                authorization = {
+                    "learning": False, "training": False,
+                    "approved_proposal_ids": [],
+                }
+                approved_ids = set()
+        else:
+            authorization = {
+                "learning": self._has_consent("learning"),
+                "training": self._has_consent("training"),
+                "approved_proposal_ids": [],
+            }
+            approved_ids = set()
+            if authorization["training"]:
+                for item in state["approved"]:
+                    if self._is_approved(item["proposal_id"], item["approved_by"]):
+                        approved_ids.add(item["proposal_id"])
         pending = {}
-        if self._has_consent("learning"):
+        if authorization["learning"]:
             for item in state["pending"]:
                 pending[item["proposal_id"]] = {
                     "messages": [dict(message) for message in item["messages"]],
@@ -88,9 +125,9 @@ class ContinuousLearningCoordinator:
                     "created_at": item["created_at"],
                 }
         generator = SFTDataGenerator(dataset_version=self.generator.dataset_version)
-        if self._has_consent("training"):
+        if authorization["training"]:
             for item in state["approved"]:
-                if not self._is_approved(item["proposal_id"], item["approved_by"]):
+                if item["proposal_id"] not in approved_ids:
                     continue
                 try:
                     generator.add_example(
@@ -107,7 +144,7 @@ class ContinuousLearningCoordinator:
                     ) from exc
         self._pending = pending
         self.generator = generator
-        return state
+        return authorization
 
     def remember(self, text: str, *, category: str = "note") -> dict:
         """Save only through the existing session-consented memory facade."""
