@@ -566,7 +566,6 @@ class SpecialistAgentCoordinator:
             plan = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
             if plan is None:
                 raise KeyError("agent plan not found.")
-            plan_key = plan["idempotency_key"]
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
             ).fetchall()]
@@ -800,7 +799,7 @@ class SpecialistAgentCoordinator:
                     s.plan_id, s.subtask_id, s.task_id, s.task_idempotency_key,
                     s.task_name, s.task_definition_digest,
                     s.agent_id, s.agent_role_version, s.handler_id,
-                    s.agent_action, s.agent_approval_class,
+                    s.agent_action, s.agent_approval_class, s.requires_approval,
                     a.role_version, a.handler_id AS current_handler_id,
                     a.action AS current_action, a.approval_class AS current_approval_class,
                     a.enabled, a.handler_ready
@@ -819,7 +818,7 @@ class SpecialistAgentCoordinator:
                 or run.idempotency_key != f"agent-plan:{row['plan_id']}:{row['subtask_id']}"
                 or run.definition[0].get("name") != row["subtask_id"]
                 or run.definition[0].get("action") != row["agent_action"]
-                or bool(run.definition[0].get("requires_approval")) not in (True, False)
+                or run.definition[0].get("requires_approval") is not bool(row["requires_approval"])
             ):
                 return False
             if row["task_id"] is None:
