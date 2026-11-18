@@ -134,6 +134,21 @@ class ContinuousLearningTests(unittest.TestCase):
         self.assertEqual(after_restart.approved_example_count, 1)
         self.assertIsNotNone(after_restart.build_few_shot_patch("Python unit test"))
 
+    def test_learning_store_failure_does_not_block_live_few_shot_call(self):
+        class FailingStore(FakeDurableLearningStore):
+            fail = False
+
+            def read(self):
+                if self.fail:
+                    raise OSError("encrypted file unavailable")
+                return super().read()
+
+        store = FailingStore()
+        learning = _learning(store=store)
+        store.fail = True
+        self.assertIsNone(learning.build_few_shot_patch("Python unit test"))
+        self.assertIn("personalization is paused", learning.last_learning_error)
+
     def test_revoked_training_consent_hides_persisted_examples(self):
         store = FakeDurableLearningStore()
         learning = _learning(store=store)
