@@ -135,6 +135,61 @@ class WorkforceCEOTests(unittest.TestCase):
             ceo.plan_and_dispatch("Build two components")
         self.assertIsNone(self.engine.claim("capacity-check", task_type="workforce.task"))
 
+    def test_partial_dag_submission_reuses_persisted_assignments_on_retry(self):
+        class TwoCodingSteps(Planner):
+            def decompose(self, goal):
+                return self.validate_tasks((
+                    PlanTask("build_a", "Build component A", ("coding",)),
+                    PlanTask("build_b", "Build component B", ("coding",)),
+                ))
+
+        employees = [
+            AgentProfile(
+                employee_id=f"ENG-{index:03d}",
+                name=f"Engineer {index}",
+                department="Engineering",
+                role="Engineer",
+                capabilities=frozenset({"coding"}),
+                reports_to="YUKI-CEO",
+                max_concurrent_tasks=1,
+            )
+            for index in (1, 2)
+        ]
+        ceo = WorkforceCEO(
+            planner=TwoCodingSteps(),
+            registry=AgentRegistry(employees),
+            task_engine=self.engine,
+        )
+        goal_id = self.engine.create_goal(owner_id="owner-1")
+        original_submit = ceo.router.submit
+        calls = {"count": 0}
+
+        def fail_after_first(**kwargs):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise RuntimeError("simulated process interruption")
+            return original_submit(**kwargs)
+
+        ceo.router.submit = fail_after_first
+        with self.assertRaisesRegex(RuntimeError, "simulated process interruption"):
+            ceo.plan_and_dispatch("Build two components", goal_id=goal_id)
+
+        first = self.engine.get_task_by_idempotency(goal_id, f"ceo:{goal_id}:build_a")
+        self.assertIsNotNone(first)
+        ceo.router.submit = original_submit
+        recovered = ceo.plan_and_dispatch("Build two components", goal_id=goal_id)
+
+        self.assertEqual(len(self.engine.list_tasks(goal_id)), 2)
+        self.assertEqual(recovered.assignments[0].task_id, first["id"])
+        self.assertEqual(
+            {item.employee_id for item in recovered.assignments},
+            {"ENG-001", "ENG-002"},
+        )
+        self.assertEqual(
+            [item["state"] for item in self.engine.list_tasks(goal_id)],
+            ["queued", "queued"],
+        )
+
     def test_invalid_autonomy_tier_rejected(self):
         with self.assertRaises(ValueError):
             WorkforceCEO(
