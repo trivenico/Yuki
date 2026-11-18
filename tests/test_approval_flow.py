@@ -150,7 +150,12 @@ class ApprovalCoordinatorTests(unittest.TestCase):
 
     def test_missing_execution_runtime_does_not_consume_pending_approval(self):
         class UnavailablePlanner:
-            pass
+            def __init__(self):
+                self.legacy_calls = []
+
+            def execute_approved_action(self, action):
+                self.legacy_calls.append(action)
+                raise AssertionError("legacy planner executor must never be called")
 
         planner = UnavailablePlanner()
         coordinator = ApprovalCoordinator()
@@ -163,6 +168,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(unavailable.status, "execution_unavailable")
         self.assertFalse(unavailable.ok)
+        self.assertEqual(planner.legacy_calls, [])
 
         executed = []
         class ExplicitExecutor:
