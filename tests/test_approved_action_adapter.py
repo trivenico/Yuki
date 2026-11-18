@@ -174,8 +174,9 @@ class ApprovedActionAdapterTests(unittest.TestCase):
         adapter = ApprovedActionAdapter(agent, {
             "notes.write": ApprovedActionBinding("notes.write", lambda args: args["text"])
         })
-        with self.assertRaisesRegex(RuntimeError, "permission|approval|not approved"):
-            adapter.execute({"skill_id": "notes.write", "arguments": {"text": "hello"}})
+        result = adapter.execute({"skill_id": "notes.write", "arguments": {"text": "hello"}})
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "permission_denied")
         self.assertEqual(len(requests), 1)
         self.assertEqual(requests[0].action, "skill:notes.write:sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
         self.assertEqual(skill.executions, [])
