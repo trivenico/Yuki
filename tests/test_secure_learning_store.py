@@ -194,6 +194,32 @@ class EncryptedLearningStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(SecureLearningStoreError, "digest"):
             store.replace({"schema_version": 1, "pending": [], "approved": [altered]})
 
+    def test_hard_linked_encrypted_file_is_rejected(self):
+        if os.name != "posix":
+            self.skipTest("POSIX hard-link contract")
+        store = self.make_store()
+        store.replace({"schema_version": 1, "pending": [], "approved": []})
+        alias = self.root / "learning-alias.enc.json"
+        os.link(self.path, alias)
+        with self.assertRaisesRegex(SecureLearningStoreError, "regular file"):
+            store.read()
+
+    def test_symbolic_link_data_path_is_rejected(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("symbolic links unavailable")
+        target = self.root / "target.enc.json"
+        target.write_text("{}", encoding="utf-8")
+        alias = self.root / "alias.enc.json"
+        try:
+            alias.symlink_to(target)
+        except OSError:
+            self.skipTest("symbolic link creation is not permitted")
+        with self.assertRaisesRegex(SecureLearningStoreError, "symbolic link"):
+            EncryptedLearningStore(
+                alias, keyring_module=self.keyring,
+                aesgcm_class=self.aesgcm, keyring_account="profile:alias",
+            )
+
     def test_world_readable_encrypted_file_is_rejected(self):
         if os.name != "posix":
             self.skipTest("POSIX permission contract")
