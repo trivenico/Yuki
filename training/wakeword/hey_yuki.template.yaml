@@ -1,9 +1,9 @@
-# Yuki "Hey Yuki" training template for dscripka/openWakeWord v0.6.0.
+# Yuki single-word wake phrase training template for dscripka/openWakeWord v0.6.0.
 # Copy to a private Kaggle working directory and replace data paths only after
 # validating the associated assets.manifest.json.
-model_name: "hey_yuki"
+model_name: "yuki"
 target_phrase:
-  - "hey yuki"
+  - "yuki"
 custom_negative_phrases: []
 n_samples: 20000
 n_samples_val: 4000
