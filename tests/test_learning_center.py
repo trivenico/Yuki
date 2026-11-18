@@ -47,6 +47,7 @@ class LearningCenterPanelTests(unittest.TestCase):
             on_review=on_review,
             on_approve=lambda proposal_id: None,
             on_reject=lambda proposal_id: None,
+            on_delete_all=lambda: {"pending": 0, "approved": 0},
         )
 
     def tearDown(self):
@@ -63,6 +64,7 @@ class LearningCenterPanelTests(unittest.TestCase):
         self.assertIn("Add a focused unit test.", controls["preview"].toPlainText())
         self.assertTrue(controls["approve"].isEnabled())
         self.assertTrue(controls["reject"].isEnabled())
+        self.assertTrue(controls["delete_all"].isEnabled())
 
     def test_training_consent_off_disables_approval(self):
         state = dict(self.state)
