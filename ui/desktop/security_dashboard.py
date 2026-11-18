@@ -48,9 +48,9 @@ class SecurityDashboardPanel:
         layout.addWidget(heading)
 
         explanation = QLabel(
-            "Read-only local process inventory. No packet capture, network "
-            "monitoring, process termination, firewall changes, or automatic remediation. "
-            "Monitoring stays off until you start it."
+            "Read-only local process inventory. Snapshots run only when you press "
+            "Start or Refresh; there is no continuous monitoring. No packet capture, "
+            "network monitoring, process termination, firewall changes, or automatic remediation."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -61,9 +61,9 @@ class SecurityDashboardPanel:
         layout.addWidget(status)
 
         actions = QHBoxLayout()
-        start = QPushButton("Start monitoring")
-        stop = QPushButton("Stop monitoring")
-        refresh = QPushButton("Refresh")
+        start = QPushButton("Enable security checks")
+        stop = QPushButton("Disable security checks")
+        refresh = QPushButton("Scan now")
         stop.setEnabled(False)
         refresh.setEnabled(False)
         actions.addWidget(start)
@@ -89,7 +89,7 @@ class SecurityDashboardPanel:
         class Presenter:
             def set_state(self, state: str, *, enabled: bool):
                 safe_state = _plain(state, 80)
-                status.setText("Monitoring: " + safe_state)
+                status.setText("Security: " + safe_state)
                 start.setEnabled(not enabled)
                 stop.setEnabled(enabled)
                 refresh.setEnabled(enabled)
@@ -155,9 +155,10 @@ class SecurityDashboardPanel:
             answer = QMessageBox.question(
                 page,
                 "Start read-only monitoring",
-                "Yuki will inspect a bounded local process inventory for this "
-                "session. It will not capture network packets, terminate processes, "
-                "change firewall rules, or upload monitoring data. Start monitoring?",
+                "Yuki will collect one bounded local process inventory snapshot. "
+                "Use Scan now to collect another snapshot. There is no continuous "
+                "monitoring, packet capture, network monitoring, process termination, "
+                "firewall change, or telemetry upload. Enable security checks?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
