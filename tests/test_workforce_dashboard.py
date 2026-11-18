@@ -134,6 +134,47 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(lesson["independently_verified_successes"], 1)
         self.assertIn("association", " ".join(snapshot["knowledge_effectiveness"]["limitations"]))
 
+    def test_repeated_knowledge_associated_failures_create_review_prompt_only(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        context = [{
+            "knowledge_id": "lesson-review-candidate",
+            "title": "Use caching for repeated reads",
+            "lesson": "Cache repeated read operations where safe.",
+            "source_task_id": "lesson-source",
+            "reviewed_by": "human-curator",
+        }]
+        for index in range(3):
+            task = self.engine.submit(
+                goal_id, "workforce.task",
+                {
+                    "assigned_employee_id": employee.employee_id,
+                    "description": f"Task {index}",
+                    "review_required": False,
+                    "knowledge_context": context,
+                },
+                idempotency_key=f"knowledge-review-{index}", max_attempts=1,
+            )
+            self.engine.claim("knowledge-review-worker", task_type="workforce.task")
+            if index < 2:
+                self.engine.fail(task["id"], "knowledge-review-worker", "bounded test failure")
+            else:
+                self.engine.complete(task["id"], "knowledge-review-worker", {
+                    "ok": True, "review_required": False,
+                    "employee_id": employee.employee_id,
+                })
+
+        snapshot = self.dashboard.snapshot()
+        recommendation = next(
+            item for item in snapshot["decision_intelligence"]["improvement_recommendations"]
+            if item["id"] == "knowledge-review:lesson-review-candidate"
+        )
+        self.assertEqual(recommendation["category"], "knowledge_applicability_review")
+        self.assertEqual(recommendation["evidence"]["exposures"], 3)
+        self.assertEqual(recommendation["evidence"]["failed_tasks"], 2)
+        self.assertTrue(recommendation["requires_human_approval"])
+        self.assertFalse(recommendation["automatic_action_taken"])
+
     def test_decision_intelligence_reports_capacity_gaps_and_department_failures(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
