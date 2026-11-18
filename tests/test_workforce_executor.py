@@ -32,6 +32,7 @@ class WorkforceExecutorTests(unittest.TestCase):
             name="repo_reader",
             capabilities=("repository_read", "code_review"),
             permissions=("repo:read",),
+            risk="low",
         )
         self.agent = FakeAgent([self.skill])
         self.executor = YukiAgentWorkforceExecutor(self.agent)
@@ -58,6 +59,34 @@ class WorkforceExecutorTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.status, "report")
         self.assertEqual(self.agent.calls, [("repo_reader", "Review this pull request")])
+
+    def test_ambiguous_skill_scope_fails_closed(self):
+        second = SimpleNamespace(
+            name="repo_reader_alt",
+            capabilities=("repository_read", "code_review"),
+            permissions=("repo:read",),
+            risk="low",
+        )
+        self.agent.registry = Registry([self.skill, second])
+        self.executor = YukiAgentWorkforceExecutor(self.agent)
+        result = self.execute()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "ambiguous_skill_scope")
+        self.assertEqual(self.agent.calls, [])
+
+    def test_registry_replacement_after_executor_configuration_fails_closed(self):
+        self.agent.registry = Registry([self.skill])
+        result = self.execute()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_registry_changed")
+        self.assertEqual(self.agent.calls, [])
+
+    def test_skill_policy_metadata_drift_fails_closed(self):
+        self.skill.permissions = ("repo:write",)
+        result = self.execute()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_registry_changed")
+        self.assertEqual(self.agent.calls, [])
 
     def test_missing_skill_scope_metadata_fails_closed(self):
         self.agent.registry = Registry([SimpleNamespace(name="unknown_scope")])
