@@ -48,14 +48,33 @@ class WorkforceDashboard:
                 continue
             employee_tasks[assigned][task["state"]] += 1
             if task["state"] == "succeeded":
+                payload = task.get("payload")
                 result = task.get("result")
-                if isinstance(result, dict) and result.get("ok") is True:
-                    if result.get("review_required") is False:
+                # Count only internally consistent task/result envelopes. This is
+                # evidence accounting, not cryptographic attestation of a reviewer.
+                if (
+                    isinstance(payload, dict)
+                    and isinstance(result, dict)
+                    and result.get("ok") is True
+                    and result.get("employee_id") == assigned
+                    and payload.get("assigned_employee_id") == assigned
+                ):
+                    if (
+                        payload.get("review_required") is False
+                        and result.get("review_required") is False
+                        and result.get("review_evidence") is None
+                    ):
                         employee_tasks[assigned]["successful_without_review"] += 1
-                    else:
+                    elif (
+                        payload.get("review_required") is True
+                        and result.get("review_required") is True
+                        and isinstance(result.get("status"), str)
+                        and result["status"].endswith(":reviewed")
+                    ):
                         evidence = result.get("review_evidence")
                         if (
                             isinstance(evidence, dict)
+                            and set(evidence) == {"reviewer_id", "status", "approved"}
                             and evidence.get("approved") is True
                             and isinstance(evidence.get("reviewer_id"), str)
                             and evidence["reviewer_id"].strip()
