@@ -89,15 +89,6 @@ class WorkforceDashboardTests(unittest.TestCase):
     def test_decision_intelligence_reports_capacity_gaps_and_department_failures(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
-        queued = self.engine.submit(
-            goal_id, "workforce.task",
-            {
-                "assigned_employee_id": employee.employee_id,
-                "description": "Unstaffed capability demand",
-                "required_capabilities": ["rare_capability_not_in_directory"],
-            },
-            idempotency_key="intelligence-capacity-gap", max_attempts=1,
-        )
         failed = self.engine.submit(
             goal_id, "workforce.task",
             {
@@ -109,6 +100,15 @@ class WorkforceDashboardTests(unittest.TestCase):
         )
         self.engine.claim("intelligence-worker", task_type="workforce.task")
         self.engine.fail(failed["id"], "intelligence-worker", "redacted failure")
+        queued = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Unstaffed capability demand",
+                "required_capabilities": ["rare_capability_not_in_directory"],
+            },
+            idempotency_key="intelligence-capacity-gap", max_attempts=1,
+        )
 
         snapshot = self.dashboard.snapshot()
         intelligence = snapshot["decision_intelligence"]
