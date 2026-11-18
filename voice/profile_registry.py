@@ -89,11 +89,17 @@ class VoiceProfileRegistry:
             if record.get("status") not in {"staged", "approved", "disabled"}:
                 raise VoiceProfileRegistryError("Voice profile registry contains an invalid status.")
         active = state.get("active_id")
-        if active is not None and active not in state["profiles"]:
-            raise VoiceProfileRegistryError("Active voice profile is missing.")
+        if active is not None:
+            if active not in state["profiles"]:
+                raise VoiceProfileRegistryError("Active voice profile is missing.")
+            if state["profiles"][active]["status"] != "approved":
+                raise VoiceProfileRegistryError("Active voice profile must be approved.")
         previous = state.get("previous_id")
-        if previous is not None and previous not in state["profiles"]:
-            raise VoiceProfileRegistryError("Previous voice profile is missing.")
+        if previous is not None:
+            if previous not in state["profiles"]:
+                raise VoiceProfileRegistryError("Previous voice profile is missing.")
+            if state["profiles"][previous]["status"] != "approved":
+                raise VoiceProfileRegistryError("Previous voice profile must remain approved for rollback.")
         return state
 
     def _save(self) -> None:
@@ -227,8 +233,8 @@ class VoiceProfileRegistry:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to disable a voice profile.")
         with self._lock:
             record = self._get(profile_id)
-            if self._state["active_id"] == profile_id:
-                raise VoiceProfileRegistryError("Restore another voice before disabling the active default.")
+            if profile_id in {self._state["active_id"], self._state["previous_id"]}:
+                raise VoiceProfileRegistryError("Restore another voice before disabling the active or rollback profile.")
             old_status = record["status"]
             record["status"] = "disabled"
             try:
