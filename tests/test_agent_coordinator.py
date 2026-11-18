@@ -416,5 +416,39 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(persisted.handler_id, "research-v2")
 
 
+    def test_dispatch_fails_closed_if_role_revision_changes_after_plan_creation(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="stale-role-revision",
+            subtasks=[SubtaskSpec("collect", "Collect approved research", ("research",))],
+        )
+        original = self.coordinator.agents["research"]
+        updated = SpecialistAgent(
+            original.agent_id, original.name, original.capabilities, original.action,
+            original.permissions, original.enabled,
+            department=original.department, role_version=original.role_version + 1,
+            owner=original.owner, handler_id="research-v2", handler_ready=True,
+            max_steps=original.max_steps, max_tokens=original.max_tokens,
+            approval_class=original.approval_class,
+        )
+        self.coordinator.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+        # Re-registering is intentionally not an update API; simulate an authorized
+        # manifest revision written by the registry's administrative migration.
+        with self.coordinator._connect() as db:
+            db.execute(
+                "UPDATE specialist_agents SET role_version=?, handler_id=? WHERE agent_id=?",
+                (updated.role_version, updated.handler_id, updated.agent_id),
+            )
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(advanced.subtasks[0].status, "failed")
+        self.assertIsNone(advanced.subtasks[0].task_id)
+
+    def test_plan_action_snapshot_is_persisted(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="role-action-snapshot",
+            subtasks=[SubtaskSpec("collect", "Collect approved research", ("research",))],
+        )
+        self.assertEqual(plan.subtasks[0].agent_action, "emit")
+
+
 if __name__ == "__main__":
     unittest.main()
