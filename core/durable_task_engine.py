@@ -5,6 +5,7 @@ This module persists state but never executes task code or authorizes side effec
 from __future__ import annotations
 import json
 import math
+import hashlib
 import sqlite3
 from contextlib import closing
 import time
@@ -43,7 +44,7 @@ class DurableTaskEngine:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS goals(
               id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('active','paused','cancelled','completed')),
-              created_at REAL NOT NULL, updated_at REAL NOT NULL);
+              created_at REAL NOT NULL, updated_at REAL NOT NULL, owner_id TEXT);
             CREATE TABLE IF NOT EXISTS tasks(
               id TEXT PRIMARY KEY, goal_id TEXT NOT NULL REFERENCES goals(id),
               task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
@@ -60,9 +61,17 @@ class DurableTaskEngine:
               id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id TEXT NOT NULL, task_id TEXT,
               event_type TEXT NOT NULL, detail_json TEXT NOT NULL, created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS events_goal_idx ON run_events(goal_id,id);
+            CREATE TABLE IF NOT EXISTS goal_requests(
+              owner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+              request_fingerprint TEXT NOT NULL, goal_id TEXT NOT NULL REFERENCES goals(id),
+              created_at REAL NOT NULL, PRIMARY KEY(owner_id,idempotency_key));
             """)
-            # Existing databases need an additive migration. Old rows have no
+            # Existing databases need additive migrations. Old rows have no
             # trustworthy fingerprint, so replaying them is rejected safely.
+            goal_columns = {row["name"] for row in c.execute("PRAGMA table_info(goals)")}
+            if "owner_id" not in goal_columns:
+                # Legacy goals have no trustworthy owner and intentionally remain NULL.
+                c.execute("ALTER TABLE goals ADD COLUMN owner_id TEXT")
             task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
@@ -116,14 +125,68 @@ class DurableTaskEngine:
         c.execute("INSERT INTO run_events(goal_id,task_id,event_type,detail_json,created_at) VALUES(?,?,?,?,?)",
                   (goal, task, kind, self._json(detail), self.clock()))
 
-    def create_goal(self, goal_id=None):
+    def create_goal(self, goal_id=None, *, owner_id=None):
+        """Create a goal; owner_id is optional for trusted internal/legacy callers."""
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256
+        ):
+            raise ValueError("owner_id must be non-empty text of at most 256 characters")
         goal_id, now = goal_id or str(uuid.uuid4()), self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            c.execute("INSERT INTO goals VALUES(?,?,?,?)", (goal_id,"active",now,now))
+            c.execute(
+                "INSERT INTO goals(id,state,created_at,updated_at,owner_id) VALUES(?,?,?,?,?)",
+                (goal_id, "active", now, now, owner_id),
+            )
             self._event(c,goal_id,None,"goal.created",{})
             c.commit()
         return goal_id
+
+    def create_owned_goal(self, owner_id, idempotency_key, request):
+        """Atomically create or replay an owner-scoped goal intake request.
+
+        The request is canonically serialized and fingerprinted in-process;
+        callers cannot supply a digest that accidentally omits request fields.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256:
+            raise ValueError("owner_id must be non-empty text of at most 256 characters")
+        if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 256:
+            raise ValueError("idempotency_key must contain 1..256 characters")
+        request_json = self._json(request)
+        if len(request_json.encode("utf-8")) > 16_384:
+            raise ValueError("goal request exceeds 16 KB limit")
+        fingerprint = hashlib.sha256(request_json.encode("utf-8")).hexdigest()
+        goal_id, now = str(uuid.uuid4()), self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            existing = c.execute(
+                "SELECT request_fingerprint,goal_id FROM goal_requests "
+                "WHERE owner_id=? AND idempotency_key=?",
+                (owner_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                if existing["request_fingerprint"] != fingerprint:
+                    raise TaskConflict("goal idempotency key reused with a different request")
+                goal = c.execute(
+                    "SELECT * FROM goals WHERE id=? AND owner_id=?",
+                    (existing["goal_id"], owner_id),
+                ).fetchone()
+                if goal is None:
+                    raise TaskConflict("idempotent goal record is unavailable")
+                c.commit()
+                return {"goal": dict(goal), "created": False}
+            c.execute(
+                "INSERT INTO goals(id,state,created_at,updated_at,owner_id) VALUES(?,?,?,?,?)",
+                (goal_id, "active", now, now, owner_id),
+            )
+            c.execute(
+                "INSERT INTO goal_requests(owner_id,idempotency_key,request_fingerprint,goal_id,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (owner_id, idempotency_key, fingerprint, goal_id, now),
+            )
+            self._event(c, goal_id, None, "goal.created", {})
+            c.commit()
+        return {"goal": self.get_goal(goal_id), "created": True}
 
     def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
