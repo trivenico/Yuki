@@ -178,9 +178,10 @@ class DurableTaskEngine:
             c.execute("BEGIN IMMEDIATE")
             row=c.execute("""SELECT t.* FROM tasks t JOIN goals g ON g.id=t.goal_id
               WHERE t.state='queued' AND t.available_at<=? AND g.state='active'
+              AND (? IS NULL OR t.task_type=?)
               AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on
                 WHERE d.task_id=t.id AND p.state<>'succeeded')
-              ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,)).fetchone()
+              ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,task_type,task_type)).fetchone()
             if row is None: c.commit(); return None
             until=now+lease_seconds
             changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
