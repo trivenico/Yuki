@@ -130,6 +130,10 @@ class EncryptedLearningStoreTests(unittest.TestCase):
     def test_profile_key_isolation(self):
         first = self.make_store(account="profile:first")
         first.replace({"schema_version": 1, "pending": [], "approved": []})
+        # Provision a different valid key for the second profile on its own file.
+        self.make_store(
+            path=self.root / "other.enc.json", account="profile:second",
+        ).replace({"schema_version": 1, "pending": [], "approved": []})
         with self.assertRaisesRegex(SecureLearningStoreError, "authentication"):
             self.make_store(account="profile:second").read()
 
