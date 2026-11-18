@@ -73,7 +73,11 @@ class VoiceProfileRegistry:
         self._path = self._directory / "profiles.json"
         if not self._dir_fd_supported and self._path.is_symlink():
             raise VoiceProfileRegistryError("Voice profile registry must not be a symlink.")
-        self._state = self._load()
+        try:
+            self._state = self._load()
+        except Exception:
+            self.close()
+            raise
 
     def _require_open(self) -> None:
         if self._closed:
@@ -113,6 +117,12 @@ class VoiceProfileRegistry:
                 if not stat.S_ISREG(info.st_mode):
                     os.close(fd)
                     raise VoiceProfileRegistryError("Voice profile registry is not a regular file.")
+                if hasattr(os, "getuid") and info.st_uid != os.getuid():
+                    os.close(fd)
+                    raise VoiceProfileRegistryError("Voice profile registry is not owned by this user.")
+                if info.st_mode & 0o077:
+                    os.close(fd)
+                    raise VoiceProfileRegistryError("Voice profile registry permissions are not private.")
                 if info.st_size > 256 * 1024:
                     os.close(fd)
                     raise VoiceProfileRegistryError("Voice profile registry exceeds its size limit.")
