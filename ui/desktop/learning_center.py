@@ -34,14 +34,18 @@ class LearningCenterPanel:
         on_approve: Callable[[str], None],
         on_reject: Callable[[str], None],
         on_delete_all: Callable[[], dict[str, int]],
+        on_submit: Callable[[list[dict[str, str]], str, str], str] | None = None,
     ):
         from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
         from PySide6.QtWidgets import (
-            QCheckBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-            QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+            QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
+            QLabel, QListWidget, QListWidgetItem, QLineEdit, QMessageBox,
+            QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
         )
 
         callbacks = (on_consent, on_refresh, on_review, on_approve, on_reject, on_delete_all)
+        if on_submit is not None and not callable(on_submit):
+            raise TypeError("on_submit must be callable when provided.")
         if not all(callable(callback) for callback in callbacks):
             raise TypeError("Learning Center callbacks must be callable.")
 
@@ -115,6 +119,10 @@ class LearningCenterPanel:
 
         refresh = QPushButton("Refresh learning status")
         layout.addWidget(refresh)
+        submit = QPushButton("Submit a correction manually")
+        submit.setToolTip("Submit only the exact prompt and corrected answer you enter. Yuki never scans chat history.")
+        submit.setEnabled(False)
+        layout.addWidget(submit)
 
         pending_heading = QLabel("Corrections awaiting your review")
         layout.addWidget(pending_heading)
@@ -167,6 +175,7 @@ class LearningCenterPanel:
                     raise ValueError("Retained pending count is invalid.")
                 if not learning and rows:
                     raise ValueError("Pending corrections cannot be shown without learning consent.")
+                submit.setEnabled(learning and on_submit is not None)
                 normalized = []
                 seen = set()
                 for row in rows:
@@ -478,6 +487,83 @@ class LearningCenterPanel:
                 ),
             )
 
+        def submit_correction(_checked=False):
+            if on_submit is None or not state_cache["learning"]:
+                return
+            dialog = QDialog(page)
+            dialog.setWindowTitle("Submit a correction")
+            dialog_layout = QVBoxLayout(dialog)
+            notice = QLabel(
+                "Enter only the exact example you want Yuki to learn from. "
+                "This is saved locally in encrypted storage after you submit. "
+                "Do not include passwords, private keys, payment details, or confidential information. "
+                "No chat history is scanned or copied automatically."
+            )
+            notice.setWordWrap(True)
+            dialog_layout.addWidget(notice)
+            fields = QFormLayout()
+            user_message = QPlainTextEdit()
+            user_message.setPlaceholderText("The exact instruction or question you gave Yuki")
+            user_message.setMaximumHeight(110)
+            assistant_message = QPlainTextEdit()
+            assistant_message.setPlaceholderText("The corrected answer you want Yuki to use as an example")
+            assistant_message.setMaximumHeight(140)
+            task_type = QLineEdit("general")
+            task_type.setMaxLength(64)
+            fields.addRow("Your message", user_message)
+            fields.addRow("Corrected answer", assistant_message)
+            fields.addRow("Task type", task_type)
+            dialog_layout.addLayout(fields)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+            )
+            buttons.button(QDialogButtonBox.Ok).setText("Submit encrypted sample")
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            dialog_layout.addWidget(buttons)
+            if dialog.exec() != QDialog.Accepted:
+                return
+            user_text = user_message.toPlainText().strip()
+            assistant_text = assistant_message.toPlainText().strip()
+            task = task_type.text().strip().lower()
+            if (
+                not user_text or len(user_text) > 20_000
+                or not assistant_text or len(assistant_text) > 20_000
+                or not _SAFE_TASK.fullmatch(task)
+            ):
+                presenter.set_status(
+                    "Enter a valid task type and non-empty messages (each up to 20,000 characters)."
+                )
+                return
+            answer = QMessageBox.question(
+                page,
+                "Confirm correction submission",
+                "Save these exact two messages as a pending learning sample? "
+                "The sample will not be used until you review and approve it. "
+                "It will not start model training.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+
+            messages = [
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": assistant_text},
+            ]
+
+            def submitted(_proposal_id):
+                refresh_with_status("Correction submitted for your review.")
+
+            run_async(
+                "submit", on_submit,
+                (messages, "desktop-learning-center", task),
+                on_success=submitted,
+                on_error=lambda _error: presenter.set_status(
+                    "The correction was not saved. Check consent and secure storage."
+                ),
+            )
+
         def delete_all_data(_checked=False):
             answer = QMessageBox.question(
                 page,
@@ -521,6 +607,7 @@ class LearningCenterPanel:
             lambda enabled: consent_changed("training", enabled, training_consent)
         )
         refresh.clicked.connect(refresh_state)
+        submit.clicked.connect(submit_correction)
         pending.currentItemChanged.connect(selection_changed)
         approve.clicked.connect(approve_selected)
         reject.clicked.connect(reject_selected)
@@ -533,6 +620,7 @@ class LearningCenterPanel:
             "status": status,
             "summary": summary,
             "refresh": refresh,
+            "submit": submit,
             "pending": pending,
             "preview": preview,
             "approve": approve,
