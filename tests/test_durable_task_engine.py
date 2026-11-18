@@ -407,5 +407,54 @@ class DurableTaskEngineTests(unittest.TestCase):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
 
 
+    def test_owned_goal_creation_is_idempotent_and_owner_scoped(self):
+        first = self.engine.create_owned_goal(
+            "user-a", "request-1", {"goal": "prepare a launch plan"}
+        )
+        replay = self.engine.create_owned_goal(
+            "user-a", "request-1", {"goal": "prepare a launch plan"}
+        )
+        self.assertTrue(first["created"])
+        self.assertFalse(replay["created"])
+        self.assertEqual(first["goal"]["id"], replay["goal"]["id"])
+        self.assertEqual(first["goal"]["owner_id"], "user-a")
+        other_owner = self.engine.create_owned_goal(
+            "user-b", "request-1", {"goal": "prepare a launch plan"}
+        )
+        self.assertNotEqual(first["goal"]["id"], other_owner["goal"]["id"])
+        self.assertEqual(other_owner["goal"]["owner_id"], "user-b")
+
+    def test_owned_goal_rejects_changed_request_for_same_owner_key(self):
+        self.engine.create_owned_goal("user-a", "request-2", {"goal": "first"})
+        with self.assertRaises(TaskConflict):
+            self.engine.create_owned_goal("user-a", "request-2", {"goal": "changed"})
+
+    def test_owned_goal_rejects_invalid_or_oversized_input(self):
+        for owner, key in ((None, "key"), ("", "key"), ("user", ""), ("user", "x" * 257)):
+            with self.subTest(owner=owner, key_length=len(key) if isinstance(key, str) else None):
+                with self.assertRaises(ValueError):
+                    self.engine.create_owned_goal(owner, key, {"goal": "x"})
+        with self.assertRaises(ValueError):
+            self.engine.create_owned_goal("user", "large", {"goal": "x" * 17_000})
+
+    def test_legacy_goals_migrate_with_unknown_owner(self):
+        legacy_db = Path(self.tmp.name) / "legacy-owner.sqlite"
+        conn = sqlite3.connect(legacy_db)
+        try:
+            conn.execute(
+                "CREATE TABLE goals(id TEXT PRIMARY KEY,state TEXT NOT NULL,created_at REAL NOT NULL,updated_at REAL NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO goals VALUES(?,?,?,?)",
+                ("legacy-goal", "active", 1.0, 1.0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        migrated = DurableTaskEngine(legacy_db)
+        self.assertIsNone(migrated.get_goal("legacy-goal")["owner_id"])
+        created = migrated.create_owned_goal("new-user", "new-request", {"goal": "new"})
+        self.assertEqual(created["goal"]["owner_id"], "new-user")
+
 if __name__ == "__main__":
     unittest.main()
