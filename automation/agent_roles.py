@@ -82,6 +82,32 @@ INITIAL_ROLE_SLOTS = (
 )
 
 
+
+# These four existing provider-backed prompt handlers have implementations in
+# automation.specialist_worker. They are available as adapters, but role slots
+# remain disabled until deployment wiring, permissions, and review are complete.
+INITIAL_PROVIDER_ROLE_MAP = {
+    "RES-12": "research",
+    "ENG-03": "coding",
+    "ENG-16": "testing",
+    "PROD-09": "reporting",
+}
+
+
+def build_initial_role_handlers(provider_manager, *, allow_cloud: bool = False):
+    """Build provider-backed handlers for the four implemented text-only roles.
+
+    Returns the exact mapping expected by SpecialistTaskWorker. This function
+    does not register, enable, or mark any role handler-ready.
+    """
+    from automation.specialist_worker import build_handlers_from_provider_manager
+
+    return build_handlers_from_provider_manager(
+        provider_manager,
+        INITIAL_PROVIDER_ROLE_MAP,
+        allow_cloud=allow_cloud,
+    )
+
 def build_initial_role_slots() -> tuple[SpecialistAgent, ...]:
     """Build validated role slots; none is executable or enabled by default."""
     return tuple(
