@@ -1,3 +1,4 @@
+import copy
 import json
 import unittest
 
@@ -24,9 +25,24 @@ class FakeMemory:
         return item
 
 
-def _learning(memory=None, *, consent=True, approval=True):
+class FakeDurableLearningStore:
+    def __init__(self):
+        self.state = {"schema_version": 1, "pending": [], "approved": []}
+
+    def read(self):
+        return copy.deepcopy(self.state)
+
+    def update(self, mutator):
+        state = copy.deepcopy(self.state)
+        result = mutator(state)
+        self.state = state
+        return result
+
+
+def _learning(memory=None, *, consent=True, approval=True, store=None):
     return ContinuousLearningCoordinator(
         memory=memory,
+        store=store,
         consent_verifier=lambda purpose: consent,
         approval_verifier=lambda proposal_id, actor: approval and actor == "owner",
     )
@@ -96,6 +112,53 @@ class ContinuousLearningTests(unittest.TestCase):
                 source_reference="task:overflow", task_type="coding", learning_consent=True,
             )
         self.assertEqual(len(learning.pending_corrections()), learning.MAX_PENDING)
+
+    def test_persisted_correction_survives_restart_and_approval(self):
+        store = FakeDurableLearningStore()
+        first = _learning(store=store)
+        proposal = first.propose_correction(
+            messages=_messages(), source_reference="task:persist", task_type="coding",
+            learning_consent=True,
+        )
+        self.assertEqual(len(store.read()["pending"]), 1)
+
+        restarted = _learning(store=store)
+        self.assertEqual(len(restarted.pending_corrections()), 1)
+        example_id = restarted.approve_correction(
+            proposal, training_consent=True, approved_by="owner",
+        )
+        self.assertEqual(len(store.read()["pending"]), 0)
+        self.assertEqual(store.read()["approved"][0]["example_id"], example_id)
+
+        after_restart = _learning(store=store)
+        self.assertEqual(after_restart.approved_example_count, 1)
+        self.assertIsNotNone(after_restart.build_few_shot_patch("Python unit test"))
+
+    def test_revoked_training_consent_hides_persisted_examples(self):
+        store = FakeDurableLearningStore()
+        learning = _learning(store=store)
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="task:revoked", task_type="coding",
+            learning_consent=True,
+        )
+        learning.approve_correction(proposal, training_consent=True, approved_by="owner")
+        revoked = _learning(store=store, consent=False)
+        self.assertIsNone(revoked.build_few_shot_patch("Python unit test"))
+        with self.assertRaises(ContinuousLearningError):
+            revoked.export_sft_jsonl()
+        self.assertEqual(len(store.read()["approved"]), 1)
+
+    def test_revoked_reviewer_approval_hides_persisted_examples(self):
+        store = FakeDurableLearningStore()
+        learning = _learning(store=store)
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="task:approval-revoked", task_type="coding",
+            learning_consent=True,
+        )
+        learning.approve_correction(proposal, training_consent=True, approved_by="owner")
+        revoked = _learning(store=store, approval=False)
+        self.assertIsNone(revoked.build_few_shot_patch("Python unit test"))
+        self.assertEqual(revoked.approved_example_count, 0)
 
     def test_rejected_correction_never_enters_dataset(self):
         learning = _learning()
