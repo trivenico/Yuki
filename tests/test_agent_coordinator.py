@@ -362,7 +362,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
     def test_initial_role_handlers_reuse_existing_provider_backed_worker(self):
         from automation.agent_roles import (
             INITIAL_PROVIDER_ROLE_MAP, build_initial_role_handlers,
-            register_initial_role_slots,
+            build_initial_role_worker, register_initial_role_slots,
         )
 
         class Provider:
@@ -382,6 +382,13 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
 
         manager = Manager()
         handlers = build_initial_role_handlers(manager)
+        worker = build_initial_role_worker(
+            self.runtime, self.coordinator, manager,
+            worker_id="initial-role-worker", service_actor_id="worker-service",
+        )
+        self.assertIs(worker.runtime, self.runtime)
+        self.assertIs(worker.manifest_validator, self.coordinator.validate_task_manifest)
+        self.assertEqual(set(worker.handlers), set(INITIAL_PROVIDER_ROLE_MAP))
         self.assertEqual(set(handlers), set(INITIAL_PROVIDER_ROLE_MAP))
         self.assertEqual(handlers["RES-12"]("Research supplied evidence"), "bounded specialist output")
         self.assertIn("Specialist role: research", manager.provider.prompt)
@@ -391,6 +398,15 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         records = {item["agent_id"]: item for item in self.coordinator.list_agents(actor_id="alice")}
         self.assertTrue(all(not records[agent_id]["handler_ready"] for agent_id in handlers))
         self.assertTrue(all(not records[agent_id]["enabled"] for agent_id in handlers))
+        with self.assertRaises(ValueError):
+            build_initial_role_worker(
+                self.runtime, SpecialistAgentCoordinator(
+                    TaskRuntime(self.store, authorize=lambda *_: True),
+                    str(Path(self.tmp.name) / "other-coordinator.sqlite3"),
+                    [], authorize=self.agent_auth,
+                ),
+                manager, worker_id="mismatch", service_actor_id="worker-service",
+            )
 
 
     def test_plan_persists_the_exact_specialist_manifest_version_and_handler(self):
