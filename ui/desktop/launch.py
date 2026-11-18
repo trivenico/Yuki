@@ -26,6 +26,19 @@ def _close_expired_controller(controller: Any) -> Exception | None:
     return None
 
 
+def _run_cleanup_steps(*steps) -> Exception | None:
+    """Attempt every cleanup step and return the first failure for retry handling."""
+    errors = []
+    for step in steps:
+        if step is None:
+            continue
+        try:
+            step()
+        except Exception as exc:
+            errors.append(exc)
+    return errors[0] if errors else None
+
+
 def _close_startup_resources(resources) -> None:
     """Best-effort reverse-order cleanup for partially composed desktop startup."""
     seen: set[int] = set()
@@ -390,16 +403,14 @@ def run() -> int:
 
         @Slot()
         def run(self):
-            error = None
-            try:
-                if self.security_service is not None:
-                    self.security_service.close()
-                if self.controller is not None:
-                    self.controller.logout()
-                elif self.sessions is not None:
-                    self.sessions.logout()
-            except Exception as exc:
-                error = exc
+            steps = []
+            if self.security_service is not None:
+                steps.append(self.security_service.close)
+            if self.controller is not None:
+                steps.append(self.controller.logout)
+            elif self.sessions is not None:
+                steps.append(self.sessions.logout)
+            error = _run_cleanup_steps(*steps)
             self.signals.finished.emit(error)
 
     class ShutdownWorkerSignals(QObject):
@@ -418,15 +429,13 @@ def run() -> int:
 
         @Slot()
         def run(self):
-            error = None
-            try:
-                if self.security_service is not None:
-                    self.security_service.close()
-                _shutdown_desktop_services(
-                    self.lifecycle, self.controller, self.sessions,
-                )
-            except Exception as exc:
-                error = exc
+            steps = []
+            if self.security_service is not None:
+                steps.append(self.security_service.close)
+            steps.append(lambda: _shutdown_desktop_services(
+                self.lifecycle, self.controller, self.sessions,
+            ))
+            error = _run_cleanup_steps(*steps)
             self.signals.finished.emit(error)
 
     class YukiWindow(QMainWindow):
