@@ -12,7 +12,7 @@ Keep the desktop assistant usable while a separate, opt-in pipeline prepares tra
 1. A user explicitly marks a specific interaction or curated correction as eligible for training.
 2. A human reviewer approves the example. Consent and approval are separate mandatory checks.
 3. The SFT data generator validates message structure, rejects likely credentials/private keys, deduplicates examples, hashes source references and approver identifiers, records the consent/approval state, and returns JSONL in memory.
-4. The few-shot patch layer loads only human-approved JSONL rows and retrieves a small, bounded set at inference time. Examples are marked as untrusted historical data, not instructions.
+4. The few-shot patch layer loads only human-approved JSONL rows, validates required consent/approval metadata and recomputes each example content digest before retrieving a small, bounded set at inference time. This detects accidental or unsophisticated tampering; SHA-256 metadata is not a cryptographic reviewer signature, so dataset provenance must still be trusted. Examples are marked as untrusted historical data, not instructions.
 5. The template consistency checker validates a versioned template manifest, exact placeholder sets, and matching bundle/template versions. It returns a stable SHA-256 digest.
 6. A separate training runner may consume a reviewed dataset snapshot on Kaggle or another isolated GPU environment. It produces a candidate adapter/checkpoint, never an automatically activated production model.
 7. The candidate is evaluated against a frozen benchmark and safety regression suite. Promotion and rollback remain explicit operations.
@@ -22,7 +22,7 @@ Keep the desktop assistant usable while a separate, opt-in pipeline prepares tra
 - No conversation history is scanned or exported automatically.
 - No data is sent to Kaggle, Hugging Face, Unsloth, Axolotl or any remote service by these modules.
 - The generator returns JSONL text in memory; persistence, encryption, export, and upload require separate explicit workflows.
-- Both explicit training consent and human approval are required for each example.
+- Both explicit training consent and human approval are required for each example. `ContinuousLearningCoordinator` fails closed unless the application injects verifiers backed by authenticated, durable consent and approval records; boolean arguments alone are not treated as authorization.
 - The generator rejects obvious credential/private-key patterns. This is not a complete PII detector; reviewers must remove personal, confidential, regulated, and third-party data before approval.
 - Source references and approver identifiers are hashed before export. Original references and approver names are not included in JSONL.
 - Few-shot examples cannot override system/developer policy and are not treated as trusted instructions.
@@ -32,4 +32,4 @@ Keep the desktop assistant usable while a separate, opt-in pipeline prepares tra
 
 ## Current scope
 
-This is a reusable foundation. It does not yet connect to the desktop conversation UI, provide a reviewer dashboard, upload data, launch Kaggle jobs, train weights, or hot-swap models. Those integrations are subsequent milestones.
+This is a reusable foundation. It does not yet connect to the desktop conversation UI, provide a reviewer dashboard, durably store pending correction proposals, upload data, launch Kaggle jobs, train weights, or hot-swap models. The coordinator's pending review queue and approved dataset are process-memory only and are lost on restart. Those integrations are subsequent milestones.
