@@ -61,8 +61,8 @@ class SecurityDashboardPanel:
         layout.addWidget(status)
 
         actions = QHBoxLayout()
-        start = QPushButton("Start monitoring")
-        stop = QPushButton("Stop monitoring")
+        start = QPushButton("Start security session")
+        stop = QPushButton("Stop security session")
         refresh = QPushButton("Refresh")
         stop.setEnabled(False)
         refresh.setEnabled(False)
