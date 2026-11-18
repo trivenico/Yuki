@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 from typing import Any
@@ -24,6 +25,17 @@ def confirmation_digest(action: dict[str, Any]) -> str:
         action, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def verify_confirmation_digest(action: dict[str, Any], supplied_digest: str) -> bool:
+    """Constant-time check that explicit consent names this exact action snapshot."""
+    if not isinstance(supplied_digest, str) or re.fullmatch(r"[0-9a-f]{64}", supplied_digest) is None:
+        return False
+    try:
+        expected = confirmation_digest(action)
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return False
+    return hmac.compare_digest(expected, supplied_digest)
 
 
 def redact_preview(value: Any, *, _depth: int = 0) -> Any:
