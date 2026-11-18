@@ -126,10 +126,10 @@ class YukiAgentWorkforceExecutor:
             )
 
         candidates = []
-        for name, (skill, capabilities, permissions, _risk) in self._skill_snapshot.items():
+        for name, (skill, capabilities, permissions, risk) in self._skill_snapshot.items():
             # Missing metadata is not interpreted as an empty requirement:
             # unknown skill scope fails closed for workforce execution.
-            if capabilities is None or permissions is None:
+            if capabilities is None or permissions is None or risk not in {"low", "medium", "high"}:
                 continue
             if set(required_capabilities).issubset(capabilities) and set(required_permissions).issubset(permissions):
                 candidates.append(skill)
