@@ -233,6 +233,21 @@ class EncryptedLearningStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(SecureLearningStoreError, "permissions"):
             store.read()
 
+    def test_known_plaintext_keyring_backend_is_rejected(self):
+        class PlaintextKeyring:
+            priority = 1
+
+        class PlaintextModule(_SharedKeyring):
+            def get_keyring(self):
+                return PlaintextKeyring()
+
+        with self.assertRaisesRegex(SecureLearningStoreError, "encryption key"):
+            EncryptedLearningStore(
+                self.path, keyring_module=PlaintextModule(self.values),
+                aesgcm_class=self.aesgcm, keyring_account="profile:plaintext",
+            )
+        self.assertEqual(self.values, {})
+
     def test_private_parent_directory_is_required(self):
         if os.name != "posix":
             self.skipTest("POSIX permission contract")
