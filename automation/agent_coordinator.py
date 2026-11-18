@@ -41,7 +41,7 @@ class SpecialistAgent:
     department: str = "Unassigned"
     role_version: int = 1
     owner: str = "Yuki"
-    handler_id: str | None = None
+    handler_id: str | None = "emit"
     handler_ready: bool = True
     max_steps: int = 5
     max_tokens: int = 4000
