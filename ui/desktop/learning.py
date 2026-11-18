@@ -127,8 +127,63 @@ def build_learning_center_callbacks(
     }
 
 
+class DesktopLearningSession:
+    """Own the coordinator, audit ledger, and callbacks for one authenticated session."""
+
+    def __init__(
+        self,
+        coordinator: ContinuousLearningCoordinator,
+        ledger: LearningAuthorizationLedger,
+    ) -> None:
+        if not isinstance(coordinator, ContinuousLearningCoordinator):
+            raise TypeError("coordinator must be a ContinuousLearningCoordinator.")
+        if not isinstance(ledger, LearningAuthorizationLedger):
+            raise TypeError("ledger must be a LearningAuthorizationLedger.")
+        self.coordinator = coordinator
+        self.ledger = ledger
+        self._closed = False
+        self._callbacks = build_learning_center_callbacks(coordinator, ledger)
+
+    @property
+    def callbacks(self) -> dict[str, Any]:
+        if self._closed:
+            raise RuntimeError("The authenticated learning session is closed.")
+        return dict(self._callbacks)
+
+    def build_few_shot_patch(self, query: str, *, max_examples: int, max_chars: int):
+        if self._closed:
+            return None
+        return self.coordinator.build_few_shot_patch(
+            query, max_examples=max_examples, max_chars=max_chars,
+        )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.coordinator.close()
+        self.ledger.close()
+        self._callbacks.clear()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+
+def create_desktop_learning_session(
+    keyring_module: Any, *, actor_id: str, memory: Any = None,
+) -> DesktopLearningSession:
+    """Create the lifecycle owner to share between authenticated chat and Learning Center."""
+    coordinator, ledger = create_desktop_learning_coordinator(
+        keyring_module, actor_id=actor_id, memory=memory,
+    )
+    return DesktopLearningSession(coordinator, ledger)
+
+
 __all__ = [
+    "DesktopLearningSession",
     "build_learning_center_callbacks",
+    "create_desktop_learning_session",
     "create_desktop_learning_coordinator",
     "create_desktop_learning_store",
 ]
