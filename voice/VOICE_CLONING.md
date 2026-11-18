@@ -167,3 +167,19 @@ disabled when the native store is unavailable; it must never downgrade to a
 plaintext key file. The key provider is not yet wired into the desktop UI or
 voice-cloning job lifecycle, and platform-specific clean-machine acceptance
 remains outstanding.
+
+## Reference-audio validation foundation
+
+`voice/audio_validation.py` now provides a dependency-light validation gate
+for reference audio before a provider receives it. The first supported input
+format is intentionally narrow: RIFF/WAVE, uncompressed 16-bit PCM, mono or
+stereo, 16–48 kHz, 1–30 seconds, and at most 10 MiB. The validator requires an
+explicit source-owner consent assertion, checks the declared frame payload
+against the actual bounded input before reading frames, rejects truncated
+audio, and returns metadata only. It does not save, transcribe, upload, or open
+a microphone.
+
+This is a safe initial interchange format, not a general audio decoder. Other
+formats must be converted through a separately reviewed, sandboxed decoder
+with CPU, memory, duration, and timeout limits; do not broaden accepted input
+by trusting file extensions or MIME types.
