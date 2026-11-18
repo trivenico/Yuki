@@ -138,7 +138,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         item = self.pending.put(
             "notes.write", {"text": "private"},
             {"skill_id": "notes.write", "arguments": {"text": "private"}},
-            actor="owner", session_id="session",
+            actor=self.admin_session.user.user_id, session_id="session",
         )
         self.audit.append(
             event_type="requested", pending_id=item.pending_id,
