@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 if importlib.util.find_spec("PySide6"):
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtTest import QTest
     from ui.desktop.learning_center import LearningCenterPanel
 else:
     QApplication = None
@@ -52,6 +53,14 @@ class LearningCenterPanelTests(unittest.TestCase):
             on_delete_all=lambda: self.deleted.append(True) or {"pending": 2, "approved": 3},
         )
 
+    def wait_for_learning_idle(self, timeout_ms=5000):
+        elapsed = 0
+        status = self.page.learning_controls["status"]
+        while status.text() == "Working securely…" and elapsed < timeout_ms:
+            QTest.qWait(10)
+            elapsed += 10
+        self.assertNotEqual(status.text(), "Working securely…")
+
     def tearDown(self):
         self.page.close()
         self.page.deleteLater()
@@ -60,7 +69,7 @@ class LearningCenterPanelTests(unittest.TestCase):
     def test_render_review_uses_plain_text_and_enables_approval_only_with_consent(self):
         controls = self.page.learning_controls
         controls["pending"].setCurrentRow(0)
-        self.app.processEvents()
+        self.wait_for_learning_idle()
         self.assertEqual(self.reviewed, ["a" * 24])
         self.assertIn("USER:", controls["preview"].toPlainText())
         self.assertIn("Add a focused unit test.", controls["preview"].toPlainText())
@@ -73,6 +82,7 @@ class LearningCenterPanelTests(unittest.TestCase):
         with patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.Yes):
             self.page.learning_controls["delete_all"].click()
             self.app.processEvents()
+        self.wait_for_learning_idle()
         self.assertEqual(self.deleted, [True])
         self.assertIn("Deleted 2 pending corrections and 3 approved examples", self.page.learning_controls["status"].text())
 
@@ -82,7 +92,7 @@ class LearningCenterPanelTests(unittest.TestCase):
         self.page.learning_presenter.render_state(state)
         controls = self.page.learning_controls
         controls["pending"].setCurrentRow(0)
-        self.app.processEvents()
+        self.wait_for_learning_idle()
         self.assertFalse(controls["approve"].isEnabled())
         self.assertTrue(controls["reject"].isEnabled())
 
