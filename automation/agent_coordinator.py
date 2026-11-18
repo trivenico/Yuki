@@ -141,6 +141,9 @@ class SpecialistAgentCoordinator:
                     handler_id TEXT,
                     agent_action TEXT,
                     agent_approval_class TEXT,
+                    task_idempotency_key TEXT,
+                    task_name TEXT,
+                    task_definition_digest TEXT,
                     PRIMARY KEY(plan_id, subtask_id),
                     FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
                 )
@@ -156,6 +159,12 @@ class SpecialistAgentCoordinator:
                 db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN agent_action TEXT")
             if "agent_approval_class" not in columns:
                 db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN agent_approval_class TEXT")
+            if "task_idempotency_key" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN task_idempotency_key TEXT")
+            if "task_name" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN task_name TEXT")
+            if "task_definition_digest" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN task_definition_digest TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS specialist_agents (
@@ -635,15 +644,29 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
+            # Persist a verifiable dispatch intent before enqueueing. A worker
+            # may claim immediately after TaskRuntime creates the run, before this
+            # coordinator records task_id; the claim-time validator can safely bind
+            # that run from this intent. The plan ID keeps runtime idempotency keys
+            # bounded even when the caller supplied a 200-character key.
+            task_key = f"agent-plan:{plan_id}:{row['subtask_id']}"
+            task_name = f"agent-{agent.agent_id}--manifest-v1"
+            task_steps = [{
+                "name": row["subtask_id"], "action": agent.action,
+                "argument": argument,
+                "requires_approval": bool(row["requires_approval"]),
+            }]
+            task_digest = hashlib.sha256(json.dumps(
+                task_steps, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
+            self._set_dispatch_intent(
+                plan_id, row["subtask_id"], task_key, task_name, task_digest,
+            )
             task = self.runtime.enqueue(
                 actor_id=actor_id,
-                idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                name=f"agent-{agent.agent_id}--manifest-v1--{row['subtask_id']}",
-                steps=[{
-                    "name": row["subtask_id"], "action": agent.action,
-                    "argument": argument,
-                    "requires_approval": bool(row["requires_approval"]),
-                }],
+                idempotency_key=task_key,
+                name=task_name,
+                steps=task_steps,
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
@@ -721,6 +744,37 @@ class SpecialistAgentCoordinator:
 
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
+    def _set_dispatch_intent(
+        self, plan_id: str, subtask_id: str, task_key: str,
+        task_name: str, task_digest: str,
+    ) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """
+                SELECT task_id, task_idempotency_key, task_name, task_definition_digest
+                FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?
+                """,
+                (plan_id, subtask_id),
+            ).fetchone()
+            if row is None or row["task_id"] is not None:
+                raise AgentPlanError("specialist dispatch intent is no longer writable.")
+            existing = (
+                row["task_idempotency_key"], row["task_name"],
+                row["task_definition_digest"],
+            )
+            proposed = (task_key, task_name, task_digest)
+            if any(value is not None for value in existing) and existing != proposed:
+                raise AgentPlanError("specialist dispatch intent changed; refusing to enqueue.")
+            db.execute(
+                """
+                UPDATE agent_plan_subtasks
+                SET task_idempotency_key=?, task_name=?, task_definition_digest=?
+                WHERE plan_id=? AND subtask_id=? AND task_id IS NULL
+                """,
+                (task_key, task_name, task_digest, plan_id, subtask_id),
+            )
+
     def validate_task_manifest(self, *, task_id: str, agent_id: str) -> bool:
         """Validate a queued specialist task against its persisted and live role snapshot.
 
@@ -732,10 +786,19 @@ class SpecialistAgentCoordinator:
             or not isinstance(agent_id, str) or not _ID.fullmatch(agent_id)
         ):
             return False
+        run = self.runtime.store.get(task_id)
+        if run is None or run.state != "running" or len(run.definition) != 1:
+            return False
+        run_digest = hashlib.sha256(json.dumps(
+            run.definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 """
                 SELECT
+                    s.plan_id, s.subtask_id, s.task_id, s.task_idempotency_key,
+                    s.task_name, s.task_definition_digest,
                     s.agent_id, s.agent_role_version, s.handler_id,
                     s.agent_action, s.agent_approval_class,
                     a.role_version, a.handler_id AS current_handler_id,
@@ -743,20 +806,47 @@ class SpecialistAgentCoordinator:
                     a.enabled, a.handler_ready
                 FROM agent_plan_subtasks AS s
                 JOIN specialist_agents AS a ON a.agent_id = s.agent_id
-                WHERE s.task_id=? AND s.agent_id=?
+                WHERE s.agent_id=? AND s.task_idempotency_key=?
                 """,
-                (task_id, agent_id),
+                (agent_id, run.idempotency_key),
             ).fetchone()
-        return bool(
-            row is not None
-            and row["enabled"] == 1
-            and row["handler_ready"] == 1
-            and row["agent_role_version"] == row["role_version"]
-            and row["handler_id"] is not None
-            and row["handler_id"] == row["current_handler_id"]
-            and row["agent_action"] == row["current_action"]
-            and row["agent_approval_class"] == row["current_approval_class"]
-        )
+            if (
+                row is None
+                or row["task_idempotency_key"] != run.idempotency_key
+                or row["task_name"] != run.workflow_name
+                or row["task_definition_digest"] != run_digest
+                or run.workflow_name != f"agent-{agent_id}--manifest-v1"
+                or run.idempotency_key != f"agent-plan:{row['plan_id']}:{row['subtask_id']}"
+                or run.definition[0].get("name") != row["subtask_id"]
+                or run.definition[0].get("action") != row["agent_action"]
+                or bool(run.definition[0].get("requires_approval")) not in (True, False)
+            ):
+                return False
+            if row["task_id"] is None:
+                db.execute(
+                    """
+                    UPDATE agent_plan_subtasks SET task_id=?, status='running'
+                    WHERE plan_id=? AND subtask_id=? AND task_id IS NULL
+                    """,
+                    (task_id, row["plan_id"], row["subtask_id"]),
+                )
+                bound = db.execute(
+                    "SELECT task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                    (row["plan_id"], row["subtask_id"]),
+                ).fetchone()
+                if bound is None or bound["task_id"] != task_id:
+                    return False
+            elif row["task_id"] != task_id:
+                return False
+            return bool(
+                row["enabled"] == 1
+                and row["handler_ready"] == 1
+                and row["agent_role_version"] == row["role_version"]
+                and row["handler_id"] is not None
+                and row["handler_id"] == row["current_handler_id"]
+                and row["agent_action"] == row["current_action"]
+                and row["agent_approval_class"] == row["current_approval_class"]
+            )
 
     def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
         with self._connect() as db:
