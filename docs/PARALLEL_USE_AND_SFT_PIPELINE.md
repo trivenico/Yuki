@@ -32,4 +32,4 @@ Keep the desktop assistant usable while a separate, opt-in pipeline prepares tra
 
 ## Current scope
 
-This is a reusable foundation. It does not yet connect to the desktop conversation UI, provide a reviewer dashboard, durably store pending correction proposals, upload data, launch Kaggle jobs, train weights, or hot-swap models. The coordinator's pending review queue and approved dataset are process-memory only and are lost on restart. Those integrations are subsequent milestones.
+This is a reusable foundation with an optional integration point in the shared desktop conversation adapter: when an application explicitly injects a configured learning coordinator, its approved few-shot patch is composed with the existing consent-gated memory context. The production desktop startup path does not yet construct or inject that coordinator, so few-shot learning is not active in the shipped desktop session. There is no reviewer dashboard, durable correction queue/dataset store, upload, Kaggle job, training, or model hot-swap. Pending proposals and approved examples remain process-memory only and are lost on restart. Those integrations are subsequent milestones.
