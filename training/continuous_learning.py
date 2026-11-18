@@ -310,8 +310,12 @@ class ContinuousLearningCoordinator:
         """Approve one staged example using independently verified consent and authority."""
         if not isinstance(proposal_id, str):
             raise ContinuousLearningError("Correction proposal was not found.")
-        if training_consent is not True or not self._has_consent("training"):
-            raise ContinuousLearningError("A verified, explicit training-consent record is required.")
+        if (
+            not self._has_consent("learning")
+            or training_consent is not True
+            or not self._has_consent("training")
+        ):
+            raise ContinuousLearningError("Verified learning and separate training consent are required.")
         if not self._is_approved(proposal_id, approved_by):
             raise ContinuousLearningError("The authenticated reviewer did not approve this proposal.")
         with self._lock:
