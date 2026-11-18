@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from urllib.parse import parse_qs
@@ -59,6 +60,8 @@ class AuthenticatedWorkforceDashboardAPI:
         path = scope.get("path", "")
         if method == "POST" and path == "/v1/workforce/goals":
             return await self._submit_goal(scope, receive, send)
+        if method == "POST" and path == "/v1/workforce/improvement-proposals":
+            return await self._create_improvement_proposal(scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/improvement-proposals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
             return await self._transition_improvement_proposal(path, scope, receive, send)
         if method != "GET":
@@ -169,6 +172,69 @@ class AuthenticatedWorkforceDashboardAPI:
         except Exception:
             return await self._respond(send, 503, {"error": "workforce_dashboard_unavailable"})
         return await self._respond(send, 200, result)
+
+    async def _create_improvement_proposal(self, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _session_token = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        headers = {key.lower(): value for key, value in scope.get("headers", []) if isinstance(key, bytes) and isinstance(value, bytes)}
+        content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+        if content_type != b"application/json":
+            return await self._respond(send, 415, {"error": "application_json_required"})
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message.get("type") != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if not isinstance(chunk, bytes):
+                return await self._respond(send, 400, {"error": "invalid_request_body"})
+            body.extend(chunk)
+            if len(body) > _MAX_IMPROVEMENT_BODY_BYTES:
+                return await self._respond(send, 413, {"error": "request_body_too_large"})
+            more_body = bool(message.get("more_body", False))
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return await self._respond(send, 400, {"error": "invalid_json"})
+        if not isinstance(payload, dict) or set(payload) != {"recommendation_id"}:
+            return await self._respond(send, 400, {"error": "invalid_proposal_request"})
+        recommendation_id = payload["recommendation_id"]
+        if not isinstance(recommendation_id, str) or not 1 <= len(recommendation_id) <= 256:
+            return await self._respond(send, 400, {"error": "invalid_proposal_request"})
+        try:
+            snapshot = await asyncio.to_thread(self.dashboard.snapshot)
+            recommendations = snapshot["decision_intelligence"]["improvement_recommendations"]
+            recommendation = next((item for item in recommendations if item["id"] == recommendation_id), None)
+            if recommendation is None:
+                return await self._respond(send, 404, {"error": "recommendation_not_found"})
+            if recommendation.get("requires_human_approval") is not True or recommendation.get("automatic_action_taken") is not False:
+                return await self._respond(send, 409, {"error": "recommendation_not_eligible"})
+            proposal = {
+                "source": "workforce_decision_intelligence",
+                "recommendation_id": recommendation["id"],
+                "category": recommendation["category"],
+                "priority": recommendation["priority"],
+                "evidence": recommendation["evidence"],
+                "recommendation": recommendation["recommendation"],
+                "requires_human_approval": True,
+                "automatic_action_taken": False,
+            }
+            canonical = json.dumps(proposal, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            proposal_id = "recommendation-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            result = await asyncio.to_thread(self.dashboard.task_engine.create_improvement_proposal, proposal_id, proposal)
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "proposal_identity_conflict"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "improvement_proposal_unavailable"})
+        return await self._respond(send, 201 if result["created"] else 200, {
+            "created": result["created"], "proposal": result["proposal"],
+            "proposal_id": result["proposal_id"], "state": result["state"],
+        })
 
     async def _transition_improvement_proposal(self, path, scope, receive, send):
         principal = await self._principal(scope)
