@@ -75,9 +75,12 @@ class VoiceProfileRegistry:
             raise VoiceProfileRegistryError("Voice profile registry must not be a symlink.")
         self._state = self._load()
 
-    def _require_authorized(self) -> None:
+    def _require_open(self) -> None:
         if self._closed:
             raise VoiceProfileRegistryError("Voice profile registry is closed.")
+
+    def _require_authorized(self) -> None:
+        self._require_open()
         try:
             authorized = self._authorize()
         except Exception as exc:
@@ -217,11 +220,13 @@ class VoiceProfileRegistry:
     def list_profiles(self) -> list[dict]:
         self._require_authorized()
         with self._lock:
+            self._require_open()
             return [dict(record, profile_id=key) for key, record in sorted(self._state["profiles"].items())]
 
     def active_profile(self) -> dict | None:
         self._require_authorized()
         with self._lock:
+            self._require_open()
             key = self._state["active_id"]
             return dict(self._state["profiles"][key], profile_id=key) if key else None
 
@@ -243,6 +248,7 @@ class VoiceProfileRegistry:
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         with self._lock:
+            self._require_open()
             if profile_id in self._state["profiles"]:
                 raise VoiceProfileRegistryError("A voice profile with this ID already exists.")
             self._state["profiles"][profile_id] = record
@@ -256,6 +262,7 @@ class VoiceProfileRegistry:
     def approve_profile(self, profile_id: str) -> dict:
         self._require_authorized()
         with self._lock:
+            self._require_open()
             record = self._get(profile_id)
             if record["status"] != "staged":
                 raise VoiceProfileRegistryError("Only a staged profile can be approved.")
@@ -292,6 +299,7 @@ class VoiceProfileRegistry:
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to restore the previous voice.")
         with self._lock:
+            self._require_open()
             previous = self._state["previous_id"]
             if previous is None:
                 raise VoiceProfileRegistryError("There is no previous voice profile to restore.")
