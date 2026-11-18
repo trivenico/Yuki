@@ -155,6 +155,24 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(self.registry.list_profiles(), [])
 
     @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    def test_isolated_worker_is_killed_at_wall_clock_deadline(self):
+        executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
+        with self.assertRaises(VoiceCloneWorkerTimeout):
+            executor.run(
+                BlockingProvider(), wav_sample(), cancel_event=threading.Event(),
+                deadline_monotonic=time.monotonic() + 1,
+            )
+
+    def test_worker_limits_reject_unsafe_values(self):
+        from voice.clone_process import VoiceCloneWorkerLimits
+        with self.assertRaises(ValueError):
+            VoiceCloneWorkerLimits(memory_bytes=1)
+        with self.assertRaises(ValueError):
+            VoiceCloneWorkerLimits(cpu_seconds=0)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_rejects_oversized_provider_output(self):
         controller = self.controller(LargeProvider())
         with self.assertRaises(RuntimeError):
