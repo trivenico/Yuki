@@ -1,16 +1,17 @@
 """Explicit, bounded model evaluation through Hugging Face's compatible inference router.
 
-This module sends only caller-supplied benchmark prompts to the configured remote
-model. It does not download weights, execute model code, or activate a model.
+This module sends only caller-supplied benchmark prompts and optional system
+instructions to the configured remote model. It does not download weights,
+execute model code, or activate a model.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote
 
 from providers.evaluation_stats import compute_stats
 
@@ -18,6 +19,7 @@ _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_
 _ALLOWED_HOST = "router.huggingface.co"
 _MAX_RESPONSE_BYTES = 1_000_000
 _MAX_PROMPT_CHARS = 8_000
+_MAX_SYSTEM_PROMPT_CHARS = 16_000
 _MAX_CASES = 20
 _MAX_TERMS = 20
 
@@ -62,6 +64,19 @@ def validate_cases(cases, *, max_cases=5):
     return validated
 
 
+def validate_system_prompt(system_prompt):
+    if system_prompt is None:
+        return None
+    if (
+        not isinstance(system_prompt, str)
+        or not system_prompt.strip()
+        or len(system_prompt) > _MAX_SYSTEM_PROMPT_CHARS
+        or "\x00" in system_prompt
+    ):
+        raise ValueError("system prompt must be non-empty text up to 16000 characters")
+    return system_prompt.strip()
+
+
 def score_response(response, expected_terms):
     """Case-insensitive expected-term coverage; a narrow proxy, not general quality."""
     if not isinstance(response, str):
@@ -86,14 +101,19 @@ class HuggingFaceChatClient:
         self.timeout = timeout
         self._opener = opener or urllib.request.build_opener(_RejectRedirects())
 
-    def generate(self, model_id, prompt):
+    def generate(self, model_id, prompt, *, system_prompt=None):
         if not isinstance(model_id, str) or not _MODEL_ID.fullmatch(model_id):
             raise ValueError("model_id must be an organization/model identifier")
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > _MAX_PROMPT_CHARS:
             raise ValueError("prompt must be non-empty and at most 8000 characters")
+        system_prompt = validate_system_prompt(system_prompt)
+        messages = []
+        if system_prompt is not None:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
         payload = json.dumps({
             "model": model_id,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
             "max_tokens": 512,
         }).encode("utf-8")
@@ -121,16 +141,26 @@ class HuggingFaceChatClient:
         return text[:20_000]
 
 
-def evaluate_model(model_id, cases, generate, *, max_cases=5):
-    """Run a caller-supplied bounded benchmark; generate(prompt) performs inference."""
+def evaluate_model(model_id, cases, generate, *, max_cases=5, system_prompt=None):
+    """Run a bounded benchmark with an optional shared system prompt.
+
+    The caller-supplied generate function receives (user_prompt, system_prompt).
+    For backward compatibility, omit system_prompt to retain the original
+    one-argument generate(prompt) contract.
+    """
     if not isinstance(model_id, str) or not _MODEL_ID.fullmatch(model_id):
         raise ValueError("model_id must be an organization/model identifier")
+    system_prompt = validate_system_prompt(system_prompt)
     validated = validate_cases(cases, max_cases=max_cases)
     results = []
     for case in validated:
         started = time.monotonic()
         try:
-            response = generate(case["prompt"])
+            response = (
+                generate(case["prompt"], system_prompt)
+                if system_prompt is not None
+                else generate(case["prompt"])
+            )
             error = None
         except Exception:
             # Do not serialize exception strings; providers may include sensitive details.
@@ -150,6 +180,8 @@ def evaluate_model(model_id, cases, generate, *, max_cases=5):
         "schema_version": 1,
         "model_id": model_id,
         "source": "huggingface_inference_router",
+        "system_prompt_sha256": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest() if system_prompt is not None else None,
+        "system_prompt_applied": system_prompt is not None,
         "case_count": len(results),
         "successful_cases": sum(item["status"] == "ok" for item in results),
         "failed_cases": sum(item["status"] == "error" for item in results),
@@ -159,7 +191,5 @@ def evaluate_model(model_id, cases, generate, *, max_cases=5):
         "activation_policy": "manual_review_required",
         "interpretation": "Expected-term coverage is a narrow task-specific proxy, not a general quality, safety, or factuality score. Review outputs manually and compare candidates on the same benchmark.",
     }
-    # OpenJarvis's per-sample statistics helper adds distribution metrics without
-    # changing Yuki's existing mean_latency_ms field or model activation policy.
     report.update(compute_stats("latency_ms", latencies))
     return report
