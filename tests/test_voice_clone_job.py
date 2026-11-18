@@ -1,6 +1,7 @@
 import io
 import multiprocessing
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -21,6 +22,7 @@ from voice.secure_artifact_store import EncryptedVoiceArtifactStore
 from voice.clone_process import (
     ProcessIsolatedVoiceCloneExecutor,
     VoiceCloneWorkerCancelled,
+    VoiceCloneWorkerError,
     VoiceCloneWorkerTimeout,
 )
 
@@ -92,7 +94,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
     def controller(self, provider=None):
         return VoiceCloneJobController(provider or FakeLocalProvider(), self.store, self.registry)
 
-    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
+    @unittest.skipUnless(os.name in {"posix", "nt"} and sys.platform != "darwin", "enforceable worker memory limits are unavailable on this platform")
     def test_success_stages_profile_but_never_activates_it(self):
         controller = self.controller()
         result = controller.run(
@@ -214,6 +216,20 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], VoiceCloneWorkerCancelled)
+
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS-specific fail-closed behavior")
+    def test_macos_voice_clone_worker_is_disabled_before_spawn(self):
+        class MustNotRunProvider(FakeLocalProvider):
+            def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+                raise AssertionError("provider must not run on macOS")
+
+        executor = ProcessIsolatedVoiceCloneExecutor()
+        with self.assertRaisesRegex(VoiceCloneWorkerError, "disabled on macOS"):
+            executor.run(
+                MustNotRunProvider(), wav_sample(), cancel_event=threading.Event(),
+                deadline_monotonic=time.monotonic() + 10,
+            )
 
     def test_posix_limit_lowering_preserves_current_soft_hard_invariant(self):
         from voice.clone_process import _set_bounded_limit
