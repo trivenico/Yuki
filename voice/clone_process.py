@@ -47,15 +47,39 @@ class VoiceCloneWorkerLimits:
                 raise ValueError(f"{name} must be between {minimum} and {maximum}")
 
 
+def _set_bounded_limit(resource_module: Any, limit_id: int, requested_soft: int,
+                       requested_hard: int) -> None:
+    _current_soft, current_hard = resource_module.getrlimit(limit_id)
+    hard = requested_hard
+    if current_hard != resource_module.RLIM_INFINITY:
+        hard = min(hard, current_hard)
+    soft = min(requested_soft, hard)
+    resource_module.setrlimit(limit_id, (soft, hard))
+
+
 def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
     if os.name != "posix":
         raise RuntimeError("Voice-clone resource limits are not implemented on this platform.")
     import resource
 
-    resource.setrlimit(resource.RLIMIT_AS, (limits.memory_bytes, limits.memory_bytes))
-    resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds + 1))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (limits.file_bytes, limits.file_bytes))
-    resource.setrlimit(resource.RLIMIT_NOFILE, (limits.open_files, limits.open_files))
+    _set_bounded_limit(resource, resource.RLIMIT_AS, limits.memory_bytes, limits.memory_bytes)
+    _set_bounded_limit(resource, resource.RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds + 1)
+    _set_bounded_limit(resource, resource.RLIMIT_FSIZE, limits.file_bytes, limits.file_bytes)
+    _set_bounded_limit(resource, resource.RLIMIT_NOFILE, limits.open_files, limits.open_files)
+    if hasattr(resource, "RLIMIT_CORE"):
+        _set_bounded_limit(resource, resource.RLIMIT_CORE, 0, 0)
+
+
+def _sanitize_worker_environment() -> None:
+    allowed = {
+        "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL",
+        "CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+    }
+    safe_environment = {key: value for key, value in os.environ.items() if key in allowed}
+    os.environ.clear()
+    os.environ.update(safe_environment)
+    os.umask(0o077)
 
 
 def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
@@ -63,6 +87,7 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
                       limits: VoiceCloneWorkerLimits) -> None:
     try:
         _apply_posix_limits(limits)
+        _sanitize_worker_environment()
         if cancel_event.is_set():
             send_conn.send_bytes(b"CANCELLED")
             return
