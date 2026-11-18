@@ -21,7 +21,7 @@ Keep the desktop assistant usable while a separate, opt-in pipeline prepares tra
 
 - No conversation history is scanned or exported automatically.
 - No data is sent to Kaggle, Hugging Face, Unsloth, Axolotl or any remote service by these modules.
-- The generator returns JSONL text in memory; persistence, encryption, export, and upload require separate explicit workflows.
+- The SFT generator returns deterministic JSONL text; the optional encrypted learning store separately persists curated pending/approved records using AES-256-GCM and a profile-scoped OS keyring key. This is local persistence only, not remote export or upload.
 - Both explicit training consent and human approval are required for each example. `ContinuousLearningCoordinator` fails closed unless the application injects verifiers backed by authenticated, durable consent and approval records; boolean arguments alone are not treated as authorization.
 - The generator rejects obvious credential/private-key patterns. This is not a complete PII detector; reviewers must remove personal, confidential, regulated, and third-party data before approval.
 - Source references and approver identifiers are hashed before export. Original references and approver names are not included in JSONL.
@@ -32,4 +32,4 @@ Keep the desktop assistant usable while a separate, opt-in pipeline prepares tra
 
 ## Current scope
 
-This is a reusable foundation with an optional integration point in the shared desktop conversation adapter: when an application explicitly injects a configured learning coordinator, its approved few-shot patch is composed with the existing consent-gated memory context. The production desktop startup path does not yet construct or inject that coordinator, so few-shot learning is not active in the shipped desktop session. There is no reviewer dashboard, durable correction queue/dataset store, upload, Kaggle job, training, or model hot-swap. Pending proposals and approved examples remain process-memory only and are lost on restart. Those integrations are subsequent milestones.
+This is a reusable foundation with an optional integration point in the shared desktop conversation adapter: when an application explicitly injects a configured learning coordinator, its approved few-shot patch is composed with the existing consent-gated memory context. The production desktop startup path does not yet construct or inject that coordinator, so few-shot learning is not active in the shipped desktop session. The encrypted store and desktop profile factory exist, and the coordinator can use the store when explicitly supplied. A durable external consent/approval audit provider, Learning Center/reviewer dashboard, desktop startup and lifecycle wiring, remote export/upload, Kaggle job, training, and model hot-swap remain subsequent milestones.
