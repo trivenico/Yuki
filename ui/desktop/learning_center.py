@@ -250,6 +250,8 @@ class LearningCenterPanel:
         pool = QThreadPool.globalInstance()
         active_workers = set()
         busy = {"value": False}
+        disposed = {"value": False}
+        page.destroyed.connect(lambda: disposed.__setitem__("value", True))
 
         def set_controls_enabled(enabled: bool):
             for control in (
@@ -278,6 +280,8 @@ class LearningCenterPanel:
             def completed(finished_worker, result, error):
                 active_workers.discard(finished_worker)
                 busy["value"] = False
+                if disposed["value"]:
+                    return
                 set_controls_enabled(True)
                 if error is not None:
                     if on_error is not None:
@@ -357,6 +361,11 @@ class LearningCenterPanel:
             if not isinstance(proposal_id, str) or not _SAFE_ID.fullmatch(proposal_id):
                 presenter.render_review("", None)
                 return
+
+            selected_id["value"] = proposal_id
+            preview.clear()
+            approve.setEnabled(False)
+            reject.setEnabled(False)
 
             def reviewed(result):
                 if selected_id["value"] != proposal_id:
