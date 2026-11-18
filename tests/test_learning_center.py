@@ -62,6 +62,7 @@ class LearningCenterPanelTests(unittest.TestCase):
             on_approve=lambda proposal_id: None,
             on_reject=lambda proposal_id: None,
             on_delete_all=lambda: self.deleted.append(True) or {"pending": 2, "approved": 3},
+            on_submit=lambda messages, source, task: "b" * 24,
         )
         self.wait_for_learning_idle()
 
