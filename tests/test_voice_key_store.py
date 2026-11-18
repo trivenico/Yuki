@@ -51,6 +51,40 @@ class _FakeKeyring:
             del self.values[(service, account)]
 
 
+class _FileKeyring:
+    """Shared-file fake backend for the cross-process regression test."""
+    def __init__(self, path):
+        self.path = str(path)
+    def get_keyring(self):
+        return _NativeBackend()
+    def get_password(self, service, account):
+        import json
+        path = Path(self.path)
+        if not path.exists():
+            time.sleep(0.15)
+            return None
+        return json.loads(path.read_text(encoding="utf-8")).get(service + ":" + account)
+    def set_password(self, service, account, value):
+        import json
+        path = Path(self.path)
+        state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        state[service + ":" + account] = value
+        time.sleep(0.05)
+        path.write_text(json.dumps(state), encoding="utf-8")
+    def delete_password(self, service, account):
+        import json
+        path = Path(self.path)
+        state = json.loads(path.read_text(encoding="utf-8"))
+        del state[service + ":" + account]
+        path.write_text(json.dumps(state), encoding="utf-8")
+
+def _create_key_in_process(lock_directory, backend_path, result_queue):
+    try:
+        provider = VoiceEncryptionKeyProvider("multi-process-user", lock_directory=lock_directory, keyring_module=_FileKeyring(backend_path))
+        result_queue.put(("ok", provider.get_or_create_key().hex()))
+    except Exception as exc:
+        result_queue.put(("error", type(exc).__name__))
+
 class VoiceEncryptionKeyProviderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -102,6 +136,24 @@ class VoiceEncryptionKeyProviderTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0], results[1])
         self.assertEqual(len(backend.values), 1)
+
+    def test_separate_processes_do_not_split_first_created_key(self):
+        import multiprocessing
+        context = multiprocessing.get_context("spawn")
+        backend_path = self.lock_directory / "shared-keyring.json"
+        result_queue = context.Queue()
+        processes = [
+            context.Process(target=_create_key_in_process, args=(str(self.lock_directory), str(backend_path), result_queue))
+            for _ in range(2)
+        ]
+        for process in processes:
+            process.start()
+        results = [result_queue.get(timeout=15) for _ in processes]
+        for process in processes:
+            process.join(timeout=15)
+        self.assertTrue(all(process.exitcode == 0 for process in processes))
+        self.assertTrue(all(status == "ok" for status, _ in results), results)
+        self.assertEqual(results[0][1], results[1][1])
 
     def test_scopes_keys_per_user_without_storing_raw_identity(self):
         backend = _FakeKeyring()
