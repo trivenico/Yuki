@@ -4,17 +4,18 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from PySide6.QtCore import QEventLoop, QTimer
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 if importlib.util.find_spec("PySide6"):
+    from PySide6.QtCore import QEventLoop, QTimer
     from PySide6.QtWidgets import QApplication
     from PySide6.QtTest import QTest
     from ui.desktop.learning_center import LearningCenterPanel
 else:
     QApplication = None
     LearningCenterPanel = None
+    QEventLoop = None
+    QTimer = None
 
 
 @unittest.skipUnless(LearningCenterPanel is not None, "PySide6 desktop extra is not installed")
