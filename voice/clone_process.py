@@ -52,10 +52,15 @@ class VoiceCloneWorkerLimits:
 def _set_bounded_limit(resource_module: Any, limit_id: int, requested_soft: int,
                        requested_hard: int, *, name: str) -> None:
     try:
-        _current_soft, current_hard = resource_module.getrlimit(limit_id)
+        current_soft, current_hard = resource_module.getrlimit(limit_id)
         hard = requested_hard
         if current_hard != resource_module.RLIM_INFINITY:
             hard = min(hard, current_hard)
+        # POSIX rejects lowering the hard limit below the current soft limit,
+        # even when the requested new soft limit is lower. Preserve that
+        # invariant, then lower soft to the requested bound. This matters on
+        # Darwin runners where RLIMIT_DATA may start above our target.
+        hard = max(current_soft, hard)
         soft = min(requested_soft, hard)
         resource_module.setrlimit(limit_id, (soft, hard))
     except (OSError, ValueError) as exc:
