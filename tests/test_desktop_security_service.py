@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from ui.desktop.security_service import (
     DesktopSecurityService,
+    DesktopSecurityServiceError,
     SecuritySessionError,
     create_authenticated_desktop_security_service,
 )
@@ -98,6 +99,17 @@ class DesktopSecurityServiceTests(unittest.TestCase):
         with self.assertRaises(SecuritySessionError):
             self.service.start(consent=True)
         self.assertEqual(self.factory_calls, 0)
+
+    def test_snapshot_sensor_errors_are_wrapped_at_service_boundary(self):
+        self.service.start(consent=True)
+
+        def fail_snapshot():
+            raise RuntimeError("private sensor detail")
+
+        self.controller.snapshot = fail_snapshot
+        with self.assertRaises(DesktopSecurityServiceError) as caught:
+            self.service.snapshot()
+        self.assertNotIn("private sensor detail", str(caught.exception))
 
     def test_close_is_idempotent_and_prevents_restart(self):
         self.service.start(consent=True)
