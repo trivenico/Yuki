@@ -65,15 +65,19 @@ def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
     import resource
 
     # macOS exposes RLIMIT_AS but does not reliably permit changing it.
-    # RLIMIT_DATA is the supported address-space-adjacent heap bound there;
+    # RLIMIT_DATA is only a heap/data-segment bound (not total RSS or mmap),
+    # and Darwin commonly caps it below our cross-platform default. Keep the
+    # requested cap conservative so setrlimit does not exceed Darwin's limit.
     # Linux uses RLIMIT_AS for a stricter total virtual-address-space cap.
+    memory_bytes = limits.memory_bytes
     if sys.platform == "darwin":
         memory_limit = getattr(resource, "RLIMIT_DATA", None)
         if memory_limit is None:
             raise RuntimeError("macOS does not expose a supported worker memory limit")
+        memory_bytes = min(memory_bytes, 3 * 1024 * 1024 * 1024)
     else:
         memory_limit = resource.RLIMIT_AS
-    _set_bounded_limit(resource, memory_limit, limits.memory_bytes, limits.memory_bytes)
+    _set_bounded_limit(resource, memory_limit, memory_bytes, memory_bytes)
     _set_bounded_limit(resource, resource.RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds + 1)
     _set_bounded_limit(resource, resource.RLIMIT_FSIZE, limits.file_bytes, limits.file_bytes)
     _set_bounded_limit(resource, resource.RLIMIT_NOFILE, limits.open_files, limits.open_files)
