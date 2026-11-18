@@ -34,6 +34,11 @@ class FakeLearning:
         self.patch = patch
         self.calls = []
         self.closed = False
+        self.submitted = None
+
+    def submit_correction(self, **kwargs):
+        self.submitted = kwargs
+        return "proposal-id"
 
     def close(self):
         self.closed = True
@@ -100,6 +105,37 @@ class DesktopLearningContextTests(unittest.TestCase):
         self.assertTrue(learning.closed)
         self.assertIsNone(adapter.conversation_id)
         self.assertIsNone(adapter._learning)
+
+    def test_authenticated_facade_submits_only_explicitly_selected_turn(self):
+        class Identity:
+            actor_id = "owner-1"
+
+        class Sessions:
+            def __init__(self, identity):
+                self.identity = identity
+
+            def current_identity(self):
+                return self.identity
+
+        identity = Identity()
+        learning = FakeLearning(None)
+        conversations = FakeConversations()
+        application = ConversationApplicationRuntime(
+            conversations=conversations, store=FakeStore(), owner_id="owner-1",
+        )
+        facade = AuthenticatedDesktopConversation(
+            application, identity=identity, sessions=Sessions(identity), learning=learning,
+        )
+        messages = [
+            {"role": "user", "content": "How should I test this?"},
+            {"role": "assistant", "content": "Use a focused unit test."},
+        ]
+        proposal = facade.submit_correction(
+            messages=messages, source_reference="conversation:turn-7", task_type="coding",
+        )
+        self.assertEqual(proposal, "proposal-id")
+        self.assertEqual(learning.submitted["messages"], messages)
+        facade.invalidate()
 
     def test_authenticated_session_invalidation_closes_learning_context(self):
         class Identity:
