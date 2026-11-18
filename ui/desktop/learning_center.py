@@ -415,6 +415,7 @@ class LearningCenterPanel:
                     return
                 try:
                     presenter.render_review(proposal_id, result)
+                    presenter.set_status("Correction loaded for review.")
                 except Exception:
                     presenter.render_review("", None)
                     presenter.set_status("The correction preview could not be loaded safely.")
