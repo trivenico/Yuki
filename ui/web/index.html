@@ -8,6 +8,7 @@
   <title>Yuki AI</title>
   <link rel="stylesheet" href="/assets/chat.css">
   <script src="/assets/chat.js" defer></script>
+  <script src="/assets/workforce-dashboard.js" defer></script>
 </head>
 <body>
   <main id="app" class="shell">
@@ -31,6 +32,7 @@
       <aside class="sidebar">
         <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
         <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+      <button id="workforce-nav" class="new-chat workforce-nav" type="button" hidden>▦ <span>Executive command center</span></button>
         <section class="integration-panel" aria-labelledby="integration-heading">
           <div class="integration-heading">
             <span id="integration-heading" class="section-label">INTEGRATIONS</span>
@@ -52,6 +54,17 @@
           <div><span class="status-dot"></span><span id="connection-label">Connected</span></div>
           <span id="provider-label" class="provider-label">Checking model…</span><label class="provider-control" for="provider-select">Model <select id="provider-select" aria-label="Active Yuki model provider" hidden></select></label><span class="topbar-brand">YUKI AI</span>
         </header>
+        <section id="workforce-dashboard" class="workforce-dashboard" aria-labelledby="workforce-title" hidden>
+          <header class="workforce-heading"><div><p class="eyebrow">YUKI WORKFORCE</p><h1 id="workforce-title">Executive command center</h1><p class="muted">Read-only overview of employee capacity and persisted task progress.</p></div><button id="workforce-refresh" class="quiet-button" type="button">Refresh data</button></header>
+          <p id="workforce-status" class="workforce-status" role="status">Loading workforce data…</p>
+          <div id="workforce-metrics" class="workforce-metrics"></div>
+          <h2 class="workforce-section-title">Departments</h2><div id="workforce-departments" class="workforce-departments"></div>
+          <h2 class="workforce-section-title">Employee directory</h2>
+          <div class="workforce-filters"><label>Search employees<input id="workforce-search" type="search" maxlength="120" placeholder="Name, role, ID or capability"></label><label>Status<select id="workforce-status-filter"><option value="">All statuses</option><option value="available">Available</option><option value="busy">Busy</option><option value="offline">Offline</option><option value="disabled">Disabled</option></select></label><button id="workforce-clear-filter" class="quiet-button" type="button">Clear filters</button></div>
+          <div class="workforce-table-wrap"><table class="workforce-table"><thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Tasks</th><th>Capacity</th><th>Autonomy</th></tr></thead><tbody id="workforce-employees"></tbody></table></div>
+          <div class="workforce-pagination"><span id="workforce-page-label">Page 1</span><div><button id="workforce-prev" class="quiet-button" type="button" disabled>Previous</button><button id="workforce-next" class="quiet-button" type="button" disabled>Next</button></div></div>
+          <h2 class="workforce-section-title">Recent goals</h2><div id="workforce-goals" class="workforce-goals"></div>
+        </section>
         <div id="messages" class="messages" aria-live="polite">
           <div class="welcome">
             <div class="brand-mark">雪</div>
@@ -60,7 +73,7 @@
             <p class="muted">Ask a question, explore an idea, or get something done.</p>
           </div>
         </div>
-        <div class="composer-wrap">
+        <div id="composer-wrap" class="composer-wrap">
           <form id="composer" class="composer">
             <textarea id="message-input" rows="1" maxlength="20000" placeholder="Message Yuki…" aria-label="Message Yuki" required></textarea>
             <div class="composer-footer">
