@@ -1,3 +1,5 @@
+import hashlib
+import json
 import tempfile
 import unittest
 from threading import Barrier, Event, Lock, Thread
@@ -320,6 +322,43 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertTrue(self.coordinator.validate_task_manifest(
             task_id=task_id, agent_id="code-review",
         ))
+
+
+    def test_claim_can_bind_task_created_before_coordinator_records_task_id(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="claim-before-plan-bind",
+            subtasks=[SubtaskSpec(
+                "implement", "Propose a safe patch", ("coding",),
+                requires_approval=False,
+            )],
+        )
+        steps = [{
+            "name": "implement", "action": "emit",
+            "argument": "Propose a safe patch", "requires_approval": False,
+        }]
+        task_key = f"agent-plan:{plan.plan_id}:implement"
+        task_name = "agent-code-review--manifest-v1"
+        digest = hashlib.sha256(json.dumps(
+            steps, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        self.coordinator._set_dispatch_intent(
+            plan.plan_id, "implement", task_key, task_name, digest,
+        )
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key=task_key, name=task_name, steps=steps,
+        )
+
+        # Simulate the worker winning the race before advance() persists task_id.
+        result = self.worker({"code-review": lambda text: "completed: " + text}).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "succeeded")
+        with self.coordinator._connect() as db:
+            row = db.execute(
+                "SELECT task_id, status FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan.plan_id, "implement"),
+            ).fetchone()
+        self.assertEqual(row["task_id"], task.task_id)
+        self.assertEqual(row["status"], "running")
 
 
 if __name__ == "__main__":
