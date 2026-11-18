@@ -493,7 +493,7 @@ class DurableTaskEngine:
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
             current = c.execute(
-                "SELECT state FROM workforce_knowledge WHERE knowledge_id=?", (knowledge_id,)
+                "SELECT * FROM workforce_knowledge WHERE knowledge_id=?", (knowledge_id,)
             ).fetchone()
             if current is None:
                 raise TaskNotFound("knowledge record not found")
@@ -507,6 +507,18 @@ class DurableTaskEngine:
                     raise TaskConflict("revision ID reused with different content")
                 c.commit()
                 return {"created": False, **self.get_knowledge_revision(revision_id)}
+            history = c.execute(
+                "SELECT 1 FROM workforce_knowledge_revisions WHERE knowledge_id=? LIMIT 1",
+                (knowledge_id,),
+            ).fetchone()
+            if history is None:
+                # Preserve the original verified content as immutable version 1.
+                c.execute(
+                    "INSERT INTO workforce_knowledge_revisions(revision_id,knowledge_id,version,knowledge_json,state,created_at,reviewed_at,reviewed_by,review_note) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (f"{knowledge_id}:v1", knowledge_id, 1, current["knowledge_json"],
+                     "approved", current["created_at"], current["updated_at"],
+                     current["reviewed_by"] or "system", "Original verified version"),
+                )
             version = c.execute(
                 "SELECT COALESCE(MAX(version),0)+1 AS next_version FROM workforce_knowledge_revisions WHERE knowledge_id=?",
                 (knowledge_id,),
