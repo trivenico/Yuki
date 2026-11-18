@@ -239,9 +239,23 @@ class WorkforceDashboard:
         for goal in goals:
             goal_tasks = [task for task in tasks if task["goal_id"] == goal["id"]]
             states = Counter(task["state"] for task in goal_tasks)
+            terminal_states = {"succeeded", "failed", "cancelled"}
+            if not goal_tasks:
+                task_outcome = "no_tasks"
+            elif any(task["state"] not in terminal_states for task in goal_tasks):
+                task_outcome = "in_progress"
+            elif states["succeeded"] == len(goal_tasks):
+                task_outcome = "succeeded"
+            elif states["succeeded"] > 0:
+                task_outcome = "partially_succeeded"
+            elif states["failed"] > 0:
+                task_outcome = "failed"
+            else:
+                task_outcome = "cancelled"
             goal_rows.append({
                 "goal_id": goal["id"],
                 "state": goal["state"],
+                "task_outcome": task_outcome,
                 "created_at": goal["created_at"],
                 "updated_at": goal["updated_at"],
                 "total_tasks": len(goal_tasks),
