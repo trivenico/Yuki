@@ -1,4 +1,4 @@
-"""Authenticated, read-only HTTP endpoints for Yuki's workforce dashboard."""
+"""Authenticated workforce dashboard, goal-intake, and proposal endpoints."""
 from __future__ import annotations
 
 import asyncio
