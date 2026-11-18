@@ -65,6 +65,22 @@ def _mcp_servers(raw):
     return result
 
 
+
+def _validated_sandbox_execution_images(raw):
+    images = _string_list(raw, "sandbox_execution_allowed_images")
+    if any(len(image) > 255 or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", image) is None
+           for image in images):
+        raise RuntimeError("sandbox_execution_allowed_images must contain digest-pinned image references.")
+    return images
+
+
+def _sandbox_execution_worker_id(raw):
+    value = raw.get("sandbox_execution_worker_id", "yuki-sandbox-worker")
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}", value):
+        raise RuntimeError("sandbox_execution_worker_id must be a bounded simple identifier.")
+    return value
+
+
 def load_config(path=None):
     selected_config_path = Path(path) if path else resolve_config_path()
     if path is None and not selected_config_path.exists():
@@ -147,6 +163,15 @@ def load_config(path=None):
     if voice_style != "natural_realistic_female": raise RuntimeError("voice_style must be natural_realistic_female.")
     spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
     if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
+    sandbox_workspace_value = raw.get(
+        "sandbox_execution_workspace",
+        str(workspace.resolve() / "sandbox-execution-workspace"),
+    )
+    if not isinstance(sandbox_workspace_value, str) or not sandbox_workspace_value.strip():
+        raise RuntimeError("sandbox_execution_workspace must be a non-empty path.")
+    sandbox_execution_workspace = Path(sandbox_workspace_value).expanduser()
+    if not sandbox_execution_workspace.is_absolute():
+        sandbox_execution_workspace = workspace / sandbox_execution_workspace
     return {
         "name": "Yuki", "workspace": str(workspace.resolve()),
         "storage_backend": storage_backend, "database_url": database_url,
@@ -159,6 +184,12 @@ def load_config(path=None):
         ),
         "security_lab_enabled": _bool_setting("YUKI_SECURITY_LAB_ENABLED", raw, "security_lab_enabled", False),
         "sandbox_enabled": _bool_setting("YUKI_SANDBOX_ENABLED", raw, "sandbox_enabled", False),
+        "sandbox_execution_enabled": _bool_setting(
+            "YUKI_SANDBOX_EXECUTION_ENABLED", raw, "sandbox_execution_enabled", False
+        ),
+        "sandbox_execution_allowed_images": _validated_sandbox_execution_images(raw),
+        "sandbox_execution_worker_id": _sandbox_execution_worker_id(raw),
+        "sandbox_execution_workspace": str(sandbox_execution_workspace.resolve()),
         "gmail_enabled": _bool_setting("YUKI_GMAIL_ENABLED", raw, "gmail_enabled", False),
         "firewall_enabled": _bool_setting("YUKI_FIREWALL_ENABLED", raw, "firewall_enabled", False),
         "firewall_dry_run": _bool_setting("YUKI_FIREWALL_DRY_RUN", raw, "firewall_dry_run", True),

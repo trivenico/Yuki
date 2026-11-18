@@ -25,6 +25,51 @@ class ConfigContractTests(unittest.TestCase):
             self.assertFalse(config["voice_enabled"])
             self.assertFalse(config["conversation_memory_enabled"])
             self.assertTrue(config["firewall_dry_run"])
+            self.assertFalse(config["sandbox_execution_enabled"])
+            self.assertEqual(config["sandbox_execution_allowed_images"], [])
+            self.assertEqual(config["sandbox_execution_worker_id"], "yuki-sandbox-worker")
+            self.assertEqual(
+                config["sandbox_execution_workspace"],
+                str((workspace / "sandbox-execution-workspace").resolve()),
+            )
+
+    def test_sandbox_execution_configuration_is_loaded_and_opt_in(self):
+        image = "registry.example/yuki@sha256:" + "a" * 64
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            config = self._load(directory, {
+                "workspace": directory,
+                "sandbox_execution_enabled": True,
+                "sandbox_execution_allowed_images": [image],
+                "sandbox_execution_worker_id": "worker-01",
+                "sandbox_execution_workspace": str(Path(directory) / "isolated"),
+            })
+            self.assertTrue(config["sandbox_execution_enabled"])
+            self.assertEqual(config["sandbox_execution_allowed_images"], [image])
+            self.assertEqual(config["sandbox_execution_worker_id"], "worker-01")
+            self.assertEqual(config["sandbox_execution_workspace"], str((Path(directory) / "isolated").resolve()))
+
+    def test_sandbox_execution_enable_environment_override_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"YUKI_SANDBOX_EXECUTION_ENABLED": "true"}, clear=True
+        ):
+            config = self._load(directory, {"workspace": directory})
+            self.assertTrue(config["sandbox_execution_enabled"])
+
+    def test_rejects_unpinned_sandbox_execution_image(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "digest-pinned"):
+                self._load(directory, {
+                    "workspace": directory,
+                    "sandbox_execution_allowed_images": ["registry.example/yuki:latest"],
+                })
+
+    def test_rejects_invalid_sandbox_execution_worker_id(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "simple identifier"):
+                self._load(directory, {
+                    "workspace": directory,
+                    "sandbox_execution_worker_id": "worker id with spaces",
+                })
 
     def test_rejects_non_loopback_plain_http_provider_endpoint(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
