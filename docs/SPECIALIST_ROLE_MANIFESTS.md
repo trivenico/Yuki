@@ -47,3 +47,5 @@ New delegated subtasks also snapshot the selected action. Before task creation, 
 At plan creation, `review_required` and `human_approval` roles cannot be dispatched as unapproved tasks, even if the caller sets `requires_approval=False`. A `read_only` role may use the caller's explicit approval choice. All approvals still flow through the existing task runtime's authenticated approval/session mechanism; the role class does not create a bypass or a new approval authority.
 
 The `max_steps` ceiling is enforced at plan creation as the maximum number of subtasks assigned to one specialist in a single plan. It is not a model reasoning-step or wall-clock budget. `max_tokens` remains declarative until the provider adapter exposes a verifiable token-limit contract; no token-budget enforcement is claimed yet.
+
+Approval class is also stored in the plan snapshot and compared at dispatch. This makes dispatch fail closed if an approval policy is changed in the registry without a corresponding role-version bump.
