@@ -75,18 +75,29 @@ def build_authenticated_desktop_conversation(
     if sessions.current_identity() != identity:
         raise PermissionError("The desktop session is no longer authenticated.")
 
-    runtime = build_desktop_conversation_runtime(
-        config,
-        provider=provider,
-        owner_id=actor_id,
-        store_factory=store_factory,
-    )
+    runtime = None
     try:
+        runtime = build_desktop_conversation_runtime(
+            config,
+            provider=provider,
+            owner_id=actor_id,
+            store_factory=store_factory,
+        )
         facade = AuthenticatedDesktopConversation(
             runtime, identity=identity, sessions=sessions, memory=memory,
             learning=learning,
         )
         return DesktopConversationSession(runtime, facade)
     except Exception:
-        runtime.close()
+        if runtime is not None:
+            try:
+                runtime.close()
+            except Exception:
+                pass
+        close_learning = getattr(learning, "close", None)
+        if callable(close_learning):
+            try:
+                close_learning()
+            except Exception:
+                pass
         raise
