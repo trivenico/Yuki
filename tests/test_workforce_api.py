@@ -423,6 +423,31 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(body["state"], "completed")
         self.assertEqual(body["outcome"], {"observed": True})
 
+    def test_improvement_proposal_comparison_is_authenticated_and_descriptive(self):
+        self.engine.create_improvement_proposal("baseline-compare", {
+            "recommendation": "Review workforce",
+            "baseline": {
+                "captured_at": 100.0,
+                "scope": "bounded_workforce_dashboard_snapshot",
+                "workforce": {"total_employees": 0},
+                "tasks": {"total": 0},
+                "performance": {"failed_tasks": 0},
+            },
+        })
+        path = "/v1/workforce/improvement-proposals/baseline-compare/comparison"
+        status, body = self.request(path)
+        self.assertEqual(status, 401)
+        status, body = self.request(path, token=self.user_session.token)
+        self.assertEqual(status, 403)
+        status, body = self.request(path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["proposal_id"], "baseline-compare")
+        self.assertEqual(body["baseline_captured_at"], 100.0)
+        self.assertEqual(body["baseline_scope"], "bounded_workforce_dashboard_snapshot")
+        metric = body["changes"]["workforce"]["total_employees"]
+        self.assertEqual(metric["delta"], metric["current"] - metric["baseline"])
+        self.assertIn("do not establish causation", body["interpretation"])
+
     def test_recommendation_can_become_idempotent_durable_proposal(self):
         employee = next(item for item in self.dashboard.registry.list_employees() if item.department == "Engineering")
         goal_id = self.engine.create_goal()
