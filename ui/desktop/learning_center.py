@@ -330,6 +330,25 @@ class LearningCenterPanel:
 
             run_async("refresh", on_refresh, on_success=refreshed, on_error=failed)
 
+        def refresh_with_status(message: str):
+            def refreshed(state):
+                try:
+                    presenter.render_state(state)
+                    set_controls_enabled(True)
+                    presenter.set_status(message)
+                except Exception:
+                    presenter.set_status(
+                        "Could not safely refresh learning status. Personalization is paused."
+                    )
+
+            run_async(
+                "refresh", on_refresh,
+                on_success=refreshed,
+                on_error=lambda _error: presenter.set_status(
+                    "The action completed, but learning status could not be refreshed."
+                ),
+            )
+
         def consent_changed(purpose: str, enabled: bool, checkbox):
             previous = state_cache[purpose]
             if enabled:
@@ -414,8 +433,7 @@ class LearningCenterPanel:
                 return
 
             def approved(_result):
-                presenter.set_status("Correction approved and recorded.")
-                refresh_state()
+                refresh_with_status("Correction approved and recorded.")
 
             run_async(
                 "approve", on_approve, (proposal_id,),
@@ -438,8 +456,7 @@ class LearningCenterPanel:
                 return
 
             def rejected(_result):
-                presenter.set_status("Pending correction rejected.")
-                refresh_state()
+                refresh_with_status("Pending correction rejected.")
 
             run_async(
                 "reject", on_reject, (proposal_id,),
@@ -472,11 +489,10 @@ class LearningCenterPanel:
                 ):
                     presenter.set_status("Deletion result was invalid; verify storage before retrying.")
                     return
-                presenter.set_status(
+                refresh_with_status(
                     f"Deleted {counts['pending']} pending corrections and "
                     f"{counts['approved']} approved examples."
                 )
-                refresh_state()
 
             run_async(
                 "delete", on_delete_all,
