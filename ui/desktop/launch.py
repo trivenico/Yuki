@@ -1179,14 +1179,14 @@ MIGRATION COMPLETE — verified manifest written to destination."
         def _security_finished(self, action, result, error, captured_service, worker):
             if self.security_worker is worker:
                 self.security_worker = None
-            try:
-                identity_current = (
-                    self.security_identity is not None
-                    and self.sessions is not None
-                    and self.sessions.current_identity() == self.security_identity
-                )
-            except Exception:
-                identity_current = False
+            # The service/controller revalidates the token around every
+            # start and snapshot. Here compare the captured identity object only;
+            # never perform keyring or database I/O in the GUI callback.
+            identity_current = (
+                self.security_identity is not None
+                and worker.identity is self.security_identity
+                and self.sessions is not None
+            )
             if (
                 captured_service is not self.security_service
                 or not identity_current
