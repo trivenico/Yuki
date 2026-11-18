@@ -307,8 +307,12 @@ class ContinuousLearningTests(unittest.TestCase):
             task_type="coding", learning_consent=True,
         )
         learning.approve_correction(proposal, training_consent=True, approved_by="owner")
-        with self.assertRaisesRegex(ContinuousLearningError, "not durably acknowledged"):
+        with self.assertRaisesRegex(
+            ContinuousLearningError, "existing data was retained"
+        ) as raised:
             learning.delete_all_learning_data(revoke_approval=lambda _proposal_id: None)
+        self.assertIsInstance(raised.exception.__cause__, ContinuousLearningError)
+        self.assertIn("not durably acknowledged", str(raised.exception.__cause__))
         self.assertEqual(len(store.read()["approved"]), 1)
 
     def test_rejected_correction_never_enters_dataset(self):
