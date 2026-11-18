@@ -85,14 +85,15 @@ def build_learning_center_callbacks(
             raise RuntimeError("Both learning and training consent must be active.")
         if coordinator.correction_for_review(proposal_id) is None:
             raise RuntimeError("The pending correction is no longer available for review.")
-        # Record the human decision first. The coordinator independently checks
-        # the durable audit record and current consent again before commit.
-        ledger.record_example_approval(proposal_id, True)
+        # Append the approval while holding the encrypted store's
+        # cross-process transaction lock, after confirming the pending sample
+        # still exists. This serializes approval against delete-all.
         try:
             coordinator.approve_correction(
                 proposal_id,
                 training_consent=True,
                 approved_by=ledger.actor_id,
+                approval_recorder=ledger.record_example_approval,
             )
         except Exception:
             # If the encrypted commit fails or consent is revoked during the
