@@ -161,6 +161,27 @@ class WorkforceWorkerTests(unittest.TestCase):
         self.assertEqual(result["status"], "review_rejected")
         self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
 
+
+    def test_invalid_reviewer_decision_fails_closed(self):
+        reviewer = Reviewer(ReviewDecision("yes", "ambiguous"))
+        worker = WorkforceWorker(
+            self.engine, self.registry, worker_id="review-worker",
+            executor=self.executor, reviewer=reviewer,
+        )
+        payload = {
+            "description": "Review API code",
+            "assigned_employee_id": self.employee.employee_id,
+            "required_capabilities": ["python", "api_design"],
+            "required_permissions": ["repo:read"],
+            "max_autonomy_tier": 1,
+            "execution_authorized": False,
+            "review_required": True,
+        }
+        task = self.submit(payload=payload)
+        result = worker.run_once()
+        self.assertEqual(result["status"], "worker_error")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
+
     def test_review_required_task_fails_closed_without_reviewer(self):
         payload = {
             "description": "Review API code",
