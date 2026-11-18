@@ -94,6 +94,30 @@ class WorkforceWorkerTests(unittest.TestCase):
         self.assertEqual(self.engine.get_task(task["id"])["result"]["employee_id"], "ENG-001")
 
     def test_worker_forwards_bounded_knowledge_context_to_executor(self):
+        source_goal = self.engine.create_goal()
+        source = self.engine.submit(
+            source_goal, "workforce.task", {},
+            idempotency_key="worker-knowledge-source", max_attempts=1,
+        )
+        self.engine.claim("worker-knowledge-reviewer")
+        self.engine.complete(source["id"], "worker-knowledge-reviewer", {
+            "ok": True,
+            "review_evidence": {
+                "reviewer_id": "human-curator", "status": "approved", "approved": True,
+            },
+        })
+        self.engine.create_knowledge_candidate(
+            "worker-lesson-1", source["id"], {
+                "title": "Use primary evidence",
+                "lesson": "Prefer primary sources.",
+                "domain": "python",
+                "tags": ["research"],
+            },
+        )
+        verified = self.engine.transition_knowledge(
+            "worker-lesson-1", expected_state="candidate", new_state="verified",
+            actor_id="human-curator",
+        )
         payload = {
             "description": "Review API code",
             "assigned_employee_id": self.employee.employee_id,
@@ -103,9 +127,11 @@ class WorkforceWorkerTests(unittest.TestCase):
             "execution_authorized": False,
             "review_required": False,
             "knowledge_context": [{
-                "knowledge_id": "lesson-1", "title": "Use primary evidence",
-                "lesson": "Prefer primary sources.", "source_task_id": "source-1",
-                "reviewed_by": "curator-1",
+                "knowledge_id": verified["knowledge_id"],
+                "title": verified["knowledge"]["title"],
+                "lesson": verified["knowledge"]["lesson"],
+                "source_task_id": verified["source_task_id"],
+                "reviewed_by": verified["reviewed_by"],
             }],
         }
         task = self.submit(payload=payload)
