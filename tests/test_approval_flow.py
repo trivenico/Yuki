@@ -129,10 +129,11 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             pass
 
         planner = UnavailablePlanner()
-        pending = self.coordinator.record(
+        coordinator = ApprovalCoordinator()
+        pending = coordinator.record(
             planner, action_result("retry after wiring"), actor="owner", session_id="session-a"
         )
-        unavailable = self.coordinator.approve(
+        unavailable = coordinator.approve(
             planner, pending.pending_id, actor="owner", session_id="session-a",
             confirmation_digest=action_digest("retry after wiring"), confirm=lambda _action: True,
         )
@@ -140,10 +141,12 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertFalse(unavailable.ok)
 
         executed = []
-        planner.execute_approved_action = lambda action: (
-            executed.append(action) or SimpleNamespace(ok=True)
-        )
-        completed = self.coordinator.approve(
+        class ExplicitExecutor:
+            def execute(self, action):
+                executed.append(action)
+                return SimpleNamespace(ok=True)
+        coordinator.action_executor = ExplicitExecutor()
+        completed = coordinator.approve(
             planner, pending.pending_id, actor="owner", session_id="session-a",
             confirmation_digest=action_digest("retry after wiring"), confirm=lambda _action: True,
         )
