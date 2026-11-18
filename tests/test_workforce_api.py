@@ -138,7 +138,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         item = self.pending.put(
             "notes.write", {"text": "private"},
             {"skill_id": "notes.write", "arguments": {"text": "private"}},
-            actor=self.admin_session.user.user_id, session_id="session",
+            actor=self.admin_session.user.user_id, session_id=self.admin_session.token,
         )
         self.audit.append(
             event_type="requested", pending_id=item.pending_id,
@@ -151,6 +151,10 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(body["count"], 1)
         self.assertEqual(body["pending"][0]["pending_id"], item.pending_id)
         self.assertNotIn("arguments", body["pending"][0])
+        second_session = self.auth.authenticate("admin-user", "a-secure-test-password")
+        status, other_session_body = self.request("/v1/workforce/approvals", token=second_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(other_session_body["count"], 0)
         status, body = self.request(
             "/v1/workforce/approvals/audit", token=self.admin_session.token
         )
