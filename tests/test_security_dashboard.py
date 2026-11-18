@@ -86,7 +86,8 @@ class SecurityDashboardPanelTests(unittest.TestCase):
                    return_value=QMessageBox.No) as question:
             page.security_controls["start"].click()
         prompt = question.call_args.args[2]
-        self.assertIn("local process inventory", prompt)
+        self.assertIn("one bounded local process snapshot", prompt)
+        self.assertIn("will not continuously monitor", prompt)
         self.assertIn("will not capture network traffic", prompt)
         self.assertIn("will not terminate", prompt)
         page.close()
