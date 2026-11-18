@@ -53,6 +53,12 @@ class VoiceAudioValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_voice_sample(payload, source_owner_consent=True, max_bytes=0)
 
+    def test_rejects_declared_frame_count_larger_than_file_before_read(self):
+        payload = bytearray(make_wav())
+        payload[40:44] = (0xFFFFFFFF).to_bytes(4, "little")
+        with self.assertRaises(VoiceSampleValidationError):
+            validate_voice_sample(bytes(payload), source_owner_consent=True)
+
     def test_rejects_too_many_channels(self):
         with self.assertRaises(VoiceSampleValidationError):
             validate_voice_sample(make_wav(channels=3), source_owner_consent=True)
