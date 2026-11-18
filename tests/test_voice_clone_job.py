@@ -215,6 +215,29 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], VoiceCloneWorkerCancelled)
 
+    def test_posix_limit_lowering_preserves_current_soft_hard_invariant(self):
+        from voice.clone_process import _set_bounded_limit
+
+        class FakeResource:
+            RLIM_INFINITY = -1
+
+            def __init__(self):
+                self.applied = None
+
+            def getrlimit(self, limit_id):
+                return (8, 16)
+
+            def setrlimit(self, limit_id, values):
+                self.applied = values
+                if values[0] > values[1]:
+                    raise ValueError("current limit exceeds maximum limit")
+
+        resource = FakeResource()
+        _set_bounded_limit(resource, 1, 4, 6, name="RLIMIT_DATA")
+        # The hard cap cannot be lowered below the pre-existing soft cap,
+        # but the soft cap itself is still reduced to the requested bound.
+        self.assertEqual(resource.applied, (4, 8))
+
     def test_worker_limits_reject_unsafe_values(self):
         from voice.clone_process import VoiceCloneWorkerLimits
         with self.assertRaises(ValueError):
