@@ -29,6 +29,15 @@ class VoiceCloneWorkerTimeout(VoiceCloneWorkerError):
     """The isolated provider worker exceeded its wall-clock budget."""
 
 
+class VoiceCloneResourceLimitError(RuntimeError):
+    """A named OS resource limit could not be applied."""
+
+    def __init__(self, limit_name: str, error_type: str):
+        self.limit_name = limit_name
+        self.error_type = error_type
+        super().__init__(f"{limit_name}:{error_type}")
+
+
 @dataclass(frozen=True)
 class VoiceCloneWorkerLimits:
     memory_bytes: int = 6 * 1024 * 1024 * 1024
