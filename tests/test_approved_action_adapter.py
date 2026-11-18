@@ -130,6 +130,14 @@ class ApprovedActionAdapterTests(unittest.TestCase):
             })
         self.assertEqual(self.agent.calls, [])
 
+    def test_replaced_agent_registry_is_rejected(self):
+        self.agent.registry = Registry(SimpleNamespace(name="notes.write", risk="medium"))
+        with self.assertRaisesRegex(RuntimeError, "registry changed"):
+            self.adapter.execute({
+                "skill_id": "notes.write", "arguments": {"text": "hello"}
+            })
+        self.assertEqual(self.agent.calls, [])
+
     def test_unsupported_risk_is_rejected_at_configuration(self):
         critical = SimpleNamespace(name="dangerous", risk="critical")
         with self.assertRaisesRegex(ValueError, "risk level"):
