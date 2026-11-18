@@ -111,10 +111,6 @@ class VoiceProfileRegistry:
             if self._path.is_symlink():
                 raise VoiceProfileRegistryError("Voice profile registry must not be a symlink.")
             os.replace(temporary, self._path)
-            try:
-                os.chmod(self._path, 0o600)
-            except OSError as exc:
-                raise VoiceProfileRegistryError("Could not secure voice profile registry permissions.") from exc
         finally:
             try:
                 if os.path.exists(temporary):
@@ -183,8 +179,10 @@ class VoiceProfileRegistry:
                 raise
             return dict(record, profile_id=profile_id)
 
-    def activate_profile(self, profile_id: str) -> dict:
+    def activate_profile(self, profile_id: str, *, confirmed: bool) -> dict:
         self._require_authorized()
+        if confirmed is not True:
+            raise VoiceProfileAuthorizationError("Explicit confirmation is required to change the default voice.")
         with self._lock:
             record = self._get(profile_id)
             if record["status"] != "approved":
@@ -201,8 +199,10 @@ class VoiceProfileRegistry:
                 raise
             return dict(record, profile_id=profile_id)
 
-    def revert_to_previous(self) -> dict:
+    def revert_to_previous(self, *, confirmed: bool) -> dict:
         self._require_authorized()
+        if confirmed is not True:
+            raise VoiceProfileAuthorizationError("Explicit confirmation is required to restore the previous voice.")
         with self._lock:
             previous = self._state["previous_id"]
             if previous is None:
@@ -221,8 +221,10 @@ class VoiceProfileRegistry:
                 raise
             return dict(record, profile_id=previous)
 
-    def disable_profile(self, profile_id: str) -> None:
+    def disable_profile(self, profile_id: str, *, confirmed: bool) -> None:
         self._require_authorized()
+        if confirmed is not True:
+            raise VoiceProfileAuthorizationError("Explicit confirmation is required to disable a voice profile.")
         with self._lock:
             record = self._get(profile_id)
             if self._state["active_id"] == profile_id:
@@ -235,8 +237,10 @@ class VoiceProfileRegistry:
                 record["status"] = old_status
                 raise
 
-    def delete_profile(self, profile_id: str) -> None:
+    def delete_profile(self, profile_id: str, *, confirmed: bool) -> None:
         self._require_authorized()
+        if confirmed is not True:
+            raise VoiceProfileAuthorizationError("Explicit confirmation is required to delete a voice profile.")
         with self._lock:
             record = self._get(profile_id)
             if profile_id in {self._state["active_id"], self._state["previous_id"]}:
