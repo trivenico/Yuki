@@ -64,3 +64,26 @@ def test_invalid_profile_and_query_are_rejected():
     registry = AgentRegistry()
     with pytest.raises(ValueError, match="required_capabilities"):
         registry.recommend(set())
+
+
+
+def test_recommendation_rejects_text_unhashable_and_boolean_constraints():
+    registry = AgentRegistry()
+    for invalid in ("python", [["python"]], [None]):
+        with pytest.raises(ValueError):
+            registry.recommend(invalid)
+    with pytest.raises(ValueError, match="max_autonomy_tier"):
+        registry.recommend({"python"}, max_autonomy_tier=True)
+
+
+def test_profile_rejects_boolean_numeric_counters_and_scores():
+    base = default_workforce()[0]
+    for field, value in (
+        ("active_tasks", True),
+        ("max_concurrent_tasks", True),
+        ("tasks_completed", True),
+        ("quality_score", True),
+        ("success_rate", True),
+    ):
+        with pytest.raises(ValueError):
+            AgentProfile(**{**base.__dict__, field: value})
