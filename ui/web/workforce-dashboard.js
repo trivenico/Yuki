@@ -1,6 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
+  let initialized = false;
   const state = { page: 1, pageSize: 25, totalPages: 1, department: "", search: "", status: "" };
   const token = () => sessionStorage.getItem("yuki_token");
   const request = async (path) => {
@@ -93,7 +94,8 @@
     } catch (error) { $("workforce-status").textContent = "Unable to load workforce data: " + error.message; }
   };
   const initialize = async () => {
-    if (!token()) return;
+    if (initialized || !token()) return;
+    initialized = true;
     try {
       const identity = await request("/v1/auth/me");
       if (!identity.user || !["admin", "operator"].includes(identity.user.role)) return;
@@ -112,7 +114,7 @@
       });
       $("new-chat").addEventListener("click", () => showDashboard(false));
       $("conversation-list").addEventListener("click", () => showDashboard(false));
-      window.addEventListener("yuki:session-ended", () => { $("workforce-nav").hidden = true; showDashboard(false); });
+      window.addEventListener("yuki:session-ended", () => { initialized = false; $("workforce-nav").hidden = true; showDashboard(false); });
     } catch (_) { $("workforce-nav").hidden = true; }
   };
   window.addEventListener("yuki:session-ready", initialize);
