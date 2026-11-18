@@ -37,7 +37,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         employee = self.registry.recommend({"python"}, limit=1)[0]
         reviewed = self.engine.submit(
             goal_id, "workforce.task",
-            {"assigned_employee_id": employee.employee_id, "description": "Reviewed task"},
+            {"assigned_employee_id": employee.employee_id, "description": "Reviewed task", "review_required": True},
             idempotency_key="reviewed-performance", max_attempts=1,
         )
         self.engine.claim("performance-worker", task_type="workforce.task")
@@ -54,13 +54,29 @@ class WorkforceDashboardTests(unittest.TestCase):
         })
         unreviewed = self.engine.submit(
             goal_id, "workforce.task",
-            {"assigned_employee_id": employee.employee_id, "description": "Unreviewed task"},
+            {"assigned_employee_id": employee.employee_id, "description": "Unreviewed task", "review_required": False},
             idempotency_key="unreviewed-performance", max_attempts=1,
         )
         self.engine.claim("performance-worker", task_type="workforce.task")
         self.engine.complete(unreviewed["id"], "performance-worker", {
             "ok": True, "status": "completed", "employee_id": employee.employee_id,
             "review_required": False, "review_evidence": None,
+        })
+
+        # A result that claims review but conflicts with its task payload is
+        # not counted as independent QA evidence.
+        inconsistent = self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Mismatched task", "review_required": False},
+            idempotency_key="mismatched-performance", max_attempts=1,
+        )
+        self.engine.claim("performance-worker", task_type="workforce.task")
+        self.engine.complete(inconsistent["id"], "performance-worker", {
+            "ok": True, "status": "completed:reviewed", "employee_id": employee.employee_id,
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "INDEPENDENT-QA", "status": "approved", "approved": True,
+            },
         })
 
         snapshot = self.dashboard.snapshot()
