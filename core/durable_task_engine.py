@@ -463,8 +463,9 @@ class DurableTaskEngine:
         """Propose a bounded revision to an existing verified lesson; never activates it."""
         if not isinstance(knowledge_id, str) or not 1 <= len(knowledge_id) <= 256:
             raise ValueError("invalid knowledge_id")
-        if not isinstance(revision_id, str) or not 1 <= len(revision_id) <= 256:
-            raise ValueError("invalid revision_id")
+        if (not isinstance(revision_id, str) or not 1 <= len(revision_id) <= 256
+                or revision_id == f"{knowledge_id}:v1"):
+            raise ValueError("invalid or reserved revision_id")
         if not isinstance(knowledge, dict) or set(knowledge) != {"title", "lesson", "domain", "tags"}:
             raise ValueError("knowledge revision has an invalid schema")
         for key, maximum in (("title", 200), ("lesson", 4000), ("domain", 120)):
