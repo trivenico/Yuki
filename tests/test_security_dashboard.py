@@ -80,6 +80,18 @@ class SecurityDashboardPanelTests(unittest.TestCase):
         self.assertNotIn("attacker-controlled", controls["alerts"].item(0).text())
         page.close()
 
+    def test_start_confirmation_discloses_process_only_scope(self):
+        page, _calls = self.make_panel()
+        with patch("PySide6.QtWidgets.QMessageBox.question",
+                   return_value=QMessageBox.No) as question:
+            page.security_controls["start"].click()
+        prompt = question.call_args.args[2]
+        self.assertIn("one bounded local process snapshot", prompt)
+        self.assertIn("will not continuously monitor", prompt)
+        self.assertIn("will not capture network traffic", prompt)
+        self.assertIn("terminate processes", prompt)
+        page.close()
+
     def test_state_controls_refresh_and_stop(self):
         page, calls = self.make_panel()
         controls = page.security_controls

@@ -26,6 +26,19 @@ def _close_expired_controller(controller: Any) -> Exception | None:
     return None
 
 
+def _run_cleanup_steps(*steps) -> Exception | None:
+    """Attempt every cleanup step and return the first failure for retry handling."""
+    errors = []
+    for step in steps:
+        if step is None:
+            continue
+        try:
+            step()
+        except Exception as exc:
+            errors.append(exc)
+    return errors[0] if errors else None
+
+
 def _close_startup_resources(resources) -> None:
     """Best-effort reverse-order cleanup for partially composed desktop startup."""
     seen: set[int] = set()
@@ -340,28 +353,64 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit(None, exc)
 
+    class SecurityWorkerSignals(QObject):
+        finished = Signal(str, object, object, object, object, bool)
+
+    class SecurityWorker(QRunnable):
+        """Run one bounded security lifecycle operation away from the GUI thread."""
+
+        def __init__(self, action, service, identity):
+            super().__init__()
+            self.action = action
+            self.service = service
+            self.identity = identity
+            self.signals = SecurityWorkerSignals()
+
+        @Slot()
+        def run(self):
+            result = None
+            error = None
+            try:
+                if self.action == "start":
+                    self.service.start(consent=True)
+                    result = self.service.snapshot()
+                elif self.action == "refresh":
+                    result = self.service.snapshot()
+                elif self.action == "stop":
+                    self.service.stop()
+                else:
+                    raise ValueError("Unsupported security operation.")
+            except Exception as exc:
+                error = exc
+            authorized = self.service.authorized
+            self.signals.finished.emit(
+                self.action, result, error, self.service, self, authorized,
+            )
+
+
     class LogoutWorkerSignals(QObject):
         finished = Signal(object)
 
     class LogoutWorker(QRunnable):
-        """Revoke the current session after preceding desktop work drains."""
+        """Revoke monitoring and the authenticated session after work drains."""
 
-        def __init__(self, controller, sessions):
+        def __init__(self, security_service, controller, sessions):
             super().__init__()
+            self.security_service = security_service
             self.controller = controller
             self.sessions = sessions
             self.signals = LogoutWorkerSignals()
 
         @Slot()
         def run(self):
-            error = None
-            try:
-                if self.controller is not None:
-                    self.controller.logout()
-                elif self.sessions is not None:
-                    self.sessions.logout()
-            except Exception as exc:
-                error = exc
+            steps = []
+            if self.security_service is not None:
+                steps.append(self.security_service.close)
+            if self.controller is not None:
+                steps.append(self.controller.logout)
+            elif self.sessions is not None:
+                steps.append(self.sessions.logout)
+            error = _run_cleanup_steps(*steps)
             self.signals.finished.emit(error)
 
     class ShutdownWorkerSignals(QObject):
@@ -370,8 +419,9 @@ def run() -> int:
     class ShutdownWorker(QRunnable):
         """Run ordered service shutdown away from the Qt event thread."""
 
-        def __init__(self, lifecycle, controller, sessions):
+        def __init__(self, security_service, lifecycle, controller, sessions):
             super().__init__()
+            self.security_service = security_service
             self.lifecycle = lifecycle
             self.controller = controller
             self.sessions = sessions
@@ -379,13 +429,13 @@ def run() -> int:
 
         @Slot()
         def run(self):
-            error = None
-            try:
-                _shutdown_desktop_services(
-                    self.lifecycle, self.controller, self.sessions,
-                )
-            except Exception as exc:
-                error = exc
+            steps = []
+            if self.security_service is not None:
+                steps.append(self.security_service.close)
+            steps.append(lambda: _shutdown_desktop_services(
+                self.lifecycle, self.controller, self.sessions,
+            ))
+            error = _run_cleanup_steps(*steps)
             self.signals.finished.emit(error)
 
     class YukiWindow(QMainWindow):
@@ -403,6 +453,10 @@ def run() -> int:
             self.voice_session = None
             self.speech_session = None
             self.speech_worker = None
+            self.security_service = None
+            self.security_identity = None
+            self.security_worker = None
+            self.security_panel = None
             self.busy = False
             self._logout_started = False
             self._logout_worker = None
@@ -504,6 +558,14 @@ def run() -> int:
             chat_layout.addWidget(self.chat_status)
             tabs = QTabWidget()
             tabs.addTab(chat, "Chat")
+
+            from ui.desktop.security_dashboard import SecurityDashboardPanel
+            self.security_panel = SecurityDashboardPanel.create(
+                on_start=lambda: self._security_submit("start"),
+                on_stop=lambda: self._security_submit("stop"),
+                on_refresh=lambda: self._security_submit("refresh"),
+            )
+            tabs.addTab(self.security_panel, "Security")
 
             specialists_page = QWidget()
             specialists_layout = QVBoxLayout(specialists_page)
@@ -684,8 +746,14 @@ def run() -> int:
             migration_layout.addWidget(self.migration_status)
             tabs.addTab(migration_page, "Migration")
             self.authenticated_tabs = tabs
-
-            self.pages.addWidget(tabs)
+            authenticated_page = QWidget()
+            authenticated_layout = QVBoxLayout(authenticated_page)
+            self.security_global_status = QLabel("Security session: off")
+            self.security_global_status.setObjectName("securityGlobalStatus")
+            self.security_global_status.setWordWrap(True)
+            authenticated_layout.addWidget(self.security_global_status)
+            authenticated_layout.addWidget(tabs, 1)
+            self.pages.addWidget(authenticated_page)
 
         def _clear_migration_preview(self):
             self.migration_preview = None
@@ -1010,6 +1078,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.login_button.setEnabled(True)
 
         def _open_session(self, identity):
+            if self.security_service is not None:
+                raise DesktopStartupError("Previous security-session cleanup is incomplete.")
             # A fresh authenticated session restores the chat controls and tabs
             # after any prior fail-closed cleanup-retry state.
             for index in range(self.authenticated_tabs.count()):
@@ -1074,6 +1144,12 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
             )
+            from ui.desktop.security_service import create_authenticated_desktop_security_service
+            self.security_identity = identity
+            self.security_service = create_authenticated_desktop_security_service(
+                self.sessions, identity,
+            )
+            self.security_panel.security_presenter.set_state("off", enabled=False)
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
@@ -1082,6 +1158,102 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self._refresh_specialists()
             self._refresh_tasks()
             self.message.setFocus()
+
+        def _security_submit(self, action: str):
+            service = self.security_service
+            identity = self.security_identity
+            if (
+                service is None or identity is None or self.controller is None
+                or self.security_worker is not None
+                or self._logout_started or self._shutdown_started
+            ):
+                return
+            controls = self.security_panel.security_controls
+            for name in ("start", "stop", "refresh"):
+                controls[name].setEnabled(False)
+            operation_state = {
+                "start": "starting…",
+                "stop": "stopping…",
+                "refresh": "refreshing…",
+            }.get(action, "working…")
+            controls["status"].setText("Security session: " + operation_state)
+            self.security_global_status.setText("Security session: " + operation_state)
+            worker = SecurityWorker(action, service, identity)
+            worker.signals.finished.connect(self._security_finished)
+            self.security_worker = worker
+            self.pool.start(worker)
+
+        @Slot(str, object, object, object, object, bool)
+        def _security_finished(self, action, result, error, captured_service, worker, authorized):
+            if self.security_worker is worker:
+                self.security_worker = None
+            # The service/controller revalidates the token around every
+            # start and snapshot. Here compare the captured identity object only;
+            # never perform keyring or database I/O in the GUI callback.
+            identity_current = (
+                self.security_identity is not None
+                and worker.identity is self.security_identity
+                and self.sessions is not None
+            )
+            # A completion from a replaced service/session is stale, not a
+            # reason to revoke the currently authenticated session.
+            if (
+                captured_service is not self.security_service
+                or not identity_current
+                or self._logout_started or self._shutdown_started
+            ):
+                return
+            if not authorized:
+                self._return_to_login()
+                return
+            presenter = self.security_panel.security_presenter
+            if error is not None:
+                try:
+                    still_active = captured_service.active
+                except Exception:
+                    still_active = False
+                presenter.set_state(
+                    "cleanup required" if action == "stop" else "unavailable",
+                    enabled=(action == "stop" or still_active),
+                )
+                controls = self.security_panel.security_controls
+                detail = type(error).__name__
+                cause = error
+                missing_process_dependency = False
+                for _ in range(3):
+                    if cause is None:
+                        break
+                    if isinstance(cause, ImportError) or type(cause).__name__ == "ProcessMonitorError":
+                        missing_process_dependency = True
+                        break
+                    cause = getattr(cause, "__cause__", None)
+                if missing_process_dependency:
+                    detail += "; install the optional dependency with pip install '.[security-monitoring]'"
+                controls["status"].setText(
+                    "Security session: operation failed (" + detail + "). "
+                    "Sign out to revoke the security session and retry cleanup."
+                )
+                self.security_global_status.setText(
+                    "Security session: cleanup required"
+                    if action == "stop" else "Security session: unavailable"
+                )
+                return
+            if action == "stop":
+                presenter.set_state("off", enabled=False)
+                self.security_global_status.setText("Security session: off")
+                return
+            if isinstance(result, dict):
+                try:
+                    presenter.render(result)
+                except Exception as exc:
+                    presenter.set_state("unavailable", enabled=False)
+                    self.security_panel.security_controls["status"].setText(
+                        "Security session: snapshot rejected (" + type(exc).__name__ + ")."
+                    )
+                    self.security_global_status.setText("Security session: unavailable")
+                    return
+            presenter.set_state("active", enabled=True)
+            self.security_global_status.setText("Security session: active · manual refresh")
 
         def _set_memory_context(self, enabled: bool):
             if self.controller is None:
@@ -1645,6 +1817,9 @@ Version: {version}",
                     )
             self.speech_session = None
             self.speech_worker = None
+            self.security_worker = None
+            self.security_panel.security_presenter.set_state("off", enabled=False)
+            self.security_global_status.setText("Security session: off")
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
@@ -1686,6 +1861,9 @@ Version: {version}",
 
 
         def _return_to_login(self):
+            if self.security_service is not None and not self._logout_started:
+                self._logout()
+                return
             controller = self.controller
             cleanup_error = _close_expired_controller(controller)
             self._clear_authenticated_session_ui()
@@ -1741,6 +1919,9 @@ Version: {version}",
                 )
                 return
             self.controller = None
+            self.security_service = None
+            self.security_identity = None
+            self.security_worker = None
             self._return_to_login()
             if not self._shutdown_started:
                 self.setEnabled(True)
@@ -1767,7 +1948,9 @@ Version: {version}",
             self.login_status.setText(
                 "Yuki is finishing active work before signing out…"
             )
-            worker = LogoutWorker(self.controller, self.sessions)
+            worker = LogoutWorker(
+                self.security_service, self.controller, self.sessions,
+            )
             worker.signals.finished.connect(self._logout_finished)
             self._logout_worker = worker
             # The single-thread pool guarantees this runs after the active
@@ -1781,10 +1964,13 @@ Version: {version}",
                 # cleanup hooks are retryable; do not exit with revocation
                 # incomplete or silently discard the only retry handle.
                 self._shutdown_started = False
-                self.setEnabled(True)
+                # Re-enable only the dedicated retry-sign-out path. The helper
+                # disables authenticated tabs and every session action so a
+                # failed shutdown cannot leave a live controller usable.
+                self._restrict_to_logout_retry()
                 self.login_status.setText(
-                    "Shutdown cleanup incomplete. Session actions remain blocked. "
-                    "Close Yuki again to retry cleanup."
+                    "Shutdown cleanup incomplete. Only retry sign out or close "
+                    "Yuki to retry cleanup."
                 )
                 QMessageBox.warning(
                     self, "Yuki shutdown",
@@ -1795,6 +1981,8 @@ Version: {version}",
                 return
             self._shutdown_complete = True
             self.controller = None
+            self.security_service = None
+            self.security_identity = None
             self.close()
 
         def closeEvent(self, event):
@@ -1824,7 +2012,9 @@ Version: {version}",
             # The pool is single-threaded: this shutdown task runs only after
             # any active provider/backup/plan operation has returned. Resource
             # closure therefore cannot race an in-flight desktop operation.
-            worker = ShutdownWorker(self.lifecycle, self.controller, self.sessions)
+            worker = ShutdownWorker(
+                self.security_service, self.lifecycle, self.controller, self.sessions,
+            )
             worker.signals.finished.connect(self._shutdown_finished)
             self._shutdown_worker = worker
             self.pool.start(worker)

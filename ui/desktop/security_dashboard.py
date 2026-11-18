@@ -48,8 +48,9 @@ class SecurityDashboardPanel:
         layout.addWidget(heading)
 
         explanation = QLabel(
-            "Read-only monitoring. No process termination, firewall changes, "
-            "or automatic remediation. Monitoring stays off until you start it."
+            "On-demand, read-only local process snapshots. Continuous/background "
+            "monitoring is not implemented yet. No process termination, firewall "
+            "changes, network capture, uploads, or automatic remediation."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -60,8 +61,8 @@ class SecurityDashboardPanel:
         layout.addWidget(status)
 
         actions = QHBoxLayout()
-        start = QPushButton("Start monitoring")
-        stop = QPushButton("Stop monitoring")
+        start = QPushButton("Start security session")
+        stop = QPushButton("Stop security session")
         refresh = QPushButton("Refresh")
         stop.setEnabled(False)
         refresh.setEnabled(False)
@@ -88,7 +89,7 @@ class SecurityDashboardPanel:
         class Presenter:
             def set_state(self, state: str, *, enabled: bool):
                 safe_state = _plain(state, 80)
-                status.setText("Monitoring: " + safe_state)
+                status.setText("Security session: " + safe_state)
                 start.setEnabled(not enabled)
                 stop.setEnabled(enabled)
                 refresh.setEnabled(enabled)
@@ -153,11 +154,12 @@ class SecurityDashboardPanel:
         def confirm_start():
             answer = QMessageBox.question(
                 page,
-                "Start read-only monitoring",
-                "Yuki will inspect a bounded process inventory and authorized "
-                "connection metadata for security alerts. It will not terminate "
+                "Start read-only security session",
+                "Yuki will inspect one bounded local process snapshot now and "
+                "whenever you choose Refresh during this sign-in session. It will "
+                "not continuously monitor, capture network traffic, terminate "
                 "processes, change firewall rules, or upload monitoring data. "
-                "Start monitoring for this session?",
+                "Start this session?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )

@@ -1,9 +1,13 @@
 import threading
 import unittest
 
+from unittest.mock import patch
+
 from ui.desktop.security_service import (
     DesktopSecurityService,
+    DesktopSecurityServiceError,
     SecuritySessionError,
+    create_authenticated_desktop_security_service,
 )
 
 
@@ -64,6 +68,12 @@ class DesktopSecurityServiceTests(unittest.TestCase):
         self.assertFalse(self.service.configured)
         self.assertEqual(self.factory_calls, 0)
 
+    def test_authorization_status_is_revalidated_without_constructing_monitor(self):
+        self.assertTrue(self.service.authorized)
+        self.authorized = False
+        self.assertFalse(self.service.authorized)
+        self.assertEqual(self.factory_calls, 0)
+
     def test_consent_and_authorization_gate_factory(self):
         with self.assertRaises(SecuritySessionError):
             self.service.start(consent=False)
@@ -89,6 +99,17 @@ class DesktopSecurityServiceTests(unittest.TestCase):
         with self.assertRaises(SecuritySessionError):
             self.service.start(consent=True)
         self.assertEqual(self.factory_calls, 0)
+
+    def test_snapshot_sensor_errors_are_wrapped_at_service_boundary(self):
+        self.service.start(consent=True)
+
+        def fail_snapshot():
+            raise RuntimeError("private sensor detail")
+
+        self.controller.snapshot = fail_snapshot
+        with self.assertRaises(DesktopSecurityServiceError) as caught:
+            self.service.snapshot()
+        self.assertNotIn("private sensor detail", str(caught.exception))
 
     def test_close_is_idempotent_and_prevents_restart(self):
         self.service.start(consent=True)
@@ -157,11 +178,62 @@ class DesktopSecurityServiceTests(unittest.TestCase):
         self.service.close()
         self.assertTrue(controller.closed)
         self.assertEqual(len(calls), 2)
+
     def test_close_before_start_never_constructs_monitor(self):
         self.service.close()
         self.assertEqual(self.factory_calls, 0)
         with self.assertRaises(SecuritySessionError):
             self.service.start(consent=True)
+
+    def test_authenticated_factory_is_lazy_and_bound_to_exact_identity(self):
+        identity = object()
+
+        class Sessions:
+            current = identity
+
+            def current_identity(self):
+                return self.current
+
+        sessions = Sessions()
+        service = create_authenticated_desktop_security_service(sessions, identity)
+        self.assertFalse(service.configured)
+        with self.assertRaises(SecuritySessionError):
+            service.start(consent=False)
+        self.assertFalse(service.configured)
+
+        class ProcessMonitor:
+            def snapshot(self):
+                return {
+                    "processes": [{"pid": 7, "name": "editor", "status": "running"}],
+                    "process_count": 1,
+                    "truncated": False,
+                    "alerts": [],
+                    "read_only": True,
+                    "persisted": False,
+                }
+
+        with patch("defense.process_monitor.ReadOnlyProcessMonitor",
+                   return_value=ProcessMonitor()) as factory:
+            service.start(consent=True)
+            self.assertEqual(factory.call_count, 1)
+            self.assertTrue(service.snapshot()["read_only"])
+            sessions.current = object()
+            with self.assertRaises(SecuritySessionError):
+                service.snapshot()
+            self.assertFalse(service.active)
+            service.close()
+
+    def test_authenticated_factory_rejects_expired_identity_before_sensor_creation(self):
+        identity = object()
+
+        class Sessions:
+            def current_identity(self):
+                return None
+
+        service = create_authenticated_desktop_security_service(Sessions(), identity)
+        with self.assertRaises(SecuritySessionError):
+            service.start(consent=True)
+        self.assertFalse(service.configured)
 
 
 if __name__ == "__main__":
