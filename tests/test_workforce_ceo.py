@@ -39,6 +39,87 @@ class WorkforceCEOTests(unittest.TestCase):
         second = self.engine.claim("ceo-test-worker", task_type="workforce.task")
         self.assertEqual(second["id"], task_by_plan_id["implementation"])
 
+    def test_ceo_attaches_only_verified_provenance_bound_knowledge_to_tasks(self):
+        source_goal = self.engine.create_goal()
+        source = self.engine.submit(
+            source_goal, "workforce.task", {},
+            idempotency_key="verified-knowledge-source", max_attempts=1,
+        )
+        self.engine.claim("knowledge-review-worker")
+        self.engine.complete(source["id"], "knowledge-review-worker", {
+            "ok": True,
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "independent-reviewer",
+                "status": "approved",
+                "approved": True,
+            },
+        })
+        candidate = self.engine.create_knowledge_candidate(
+            "research-lesson", source["id"], {
+                "title": "Cite primary evidence",
+                "lesson": "Prefer primary sources and record evidence provenance.",
+                "domain": "research",
+                "tags": ["evidence"],
+            },
+        )
+        self.assertEqual(candidate["state"], "candidate")
+
+        execution_without_candidate = self.ceo.plan_and_dispatch("Research the market")
+        first_task = self.engine.get_task(execution_without_candidate.assignments[0].task_id)
+        self.assertEqual(first_task["payload"]["knowledge_context"], [])
+
+        self.engine.transition_knowledge(
+            "research-lesson", expected_state="candidate", new_state="verified",
+            actor_id="knowledge-curator", review_note="Evidence checked.",
+        )
+        execution = self.ceo.plan_and_dispatch("Research the market")
+        task = self.engine.get_task(execution.assignments[0].task_id)
+        context = task["payload"]["knowledge_context"]
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0]["knowledge_id"], "research-lesson")
+        self.assertEqual(context[0]["source_task_id"], source["id"])
+        self.assertEqual(context[0]["reviewed_by"], "knowledge-curator")
+        self.assertIn("primary sources", context[0]["lesson"])
+
+    def test_ceo_rejects_knowledge_context_drift_on_goal_retry(self):
+        source_goal = self.engine.create_goal()
+        source = self.engine.submit(
+            source_goal, "workforce.task", {},
+            idempotency_key="knowledge-drift-source", max_attempts=1,
+        )
+        self.engine.claim("knowledge-drift-worker")
+        self.engine.complete(source["id"], "knowledge-drift-worker", {
+            "ok": True,
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "independent-reviewer",
+                "status": "approved",
+                "approved": True,
+            },
+        })
+        self.engine.create_knowledge_candidate(
+            "later-research-lesson", source["id"], {
+                "title": "Check primary sources",
+                "lesson": "Use source provenance in research summaries.",
+                "domain": "research",
+                "tags": ["research"],
+            },
+        )
+        goal_id = self.engine.create_goal(owner_id="owner-knowledge")
+        first = self.ceo.plan_and_dispatch("Research the market", goal_id=goal_id)
+        self.assertEqual(
+            self.engine.get_task(first.assignments[0].task_id)["payload"]["knowledge_context"],
+            [],
+        )
+        self.engine.transition_knowledge(
+            "later-research-lesson", expected_state="candidate", new_state="verified",
+            actor_id="knowledge-curator",
+        )
+        with self.assertRaises(Exception):
+            self.ceo.plan_and_dispatch("Research the market", goal_id=goal_id)
+        self.assertEqual(len(self.engine.list_tasks(goal_id)), len(first.assignments))
+
     def test_report_distinguishes_queued_from_completed(self):
         execution = self.ceo.plan_and_dispatch("Research the market and report findings")
         report = self.ceo.report(execution)
