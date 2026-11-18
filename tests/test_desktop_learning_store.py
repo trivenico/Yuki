@@ -67,10 +67,19 @@ class DesktopLearningStoreTests(unittest.TestCase):
                     learning_consent=True,
                 )
                 callbacks["on_reject"](second)
+                third = coordinator.propose_correction(
+                    messages=[
+                        {"role": "user", "content": "Review a third sample."},
+                        {"role": "assistant", "content": "Keep this pending until reviewed."},
+                    ],
+                    source_reference="task:pending-delete",
+                    task_type="coding",
+                    learning_consent=True,
+                )
                 state = callbacks["on_refresh"]()
                 deleted = callbacks["on_delete_all"]()
                 after_delete = callbacks["on_refresh"]()
-            self.assertEqual(deleted, {"pending": 0, "approved": 1})
+            self.assertEqual(deleted, {"pending": 1, "approved": 1})
             self.assertEqual(after_delete["approved_count"], 0)
             self.assertEqual(after_delete["retained_pending_count"], 0)
             self.assertEqual(state["approved_count"], 1)
@@ -78,6 +87,7 @@ class DesktopLearningStoreTests(unittest.TestCase):
             self.assertTrue(ledger.verify_example_approval(first, "authenticated-owner"))
             self.assertFalse(ledger.verify_example_approval(second, "authenticated-owner"))
             self.assertFalse(ledger.verify_example_approval(first, "authenticated-owner"))
+            self.assertFalse(ledger.verify_example_approval(third, "authenticated-owner"))
 
     def test_factory_builds_restart_safe_actor_bound_learning_coordinator(self):
         try:
