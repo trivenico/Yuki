@@ -121,3 +121,33 @@ class DesktopSecurityService:
             controller = self._controller
             if controller is not None:
                 controller.close()
+
+
+
+def create_authenticated_desktop_security_service(sessions: Any, identity: Any) -> DesktopSecurityService:
+    """Create a lazy read-only monitor bound to one exact desktop login identity.
+
+    No sensor or optional process-inspection dependency is imported until the
+    user explicitly starts monitoring and the monitor factory is invoked.
+    """
+    current_identity = getattr(sessions, "current_identity", None)
+    if not callable(current_identity) or identity is None:
+        raise TypeError("An authenticated desktop session identity is required.")
+
+    def authorize() -> bool:
+        try:
+            return current_identity() == identity
+        except Exception:
+            return False
+
+    def monitor_factory():
+        from defense.process_monitor import ReadOnlyProcessMonitor
+        from defense.security_monitor import DesktopSecurityMonitor
+        return DesktopSecurityMonitor(
+            process_monitor=ReadOnlyProcessMonitor(max_processes=2048),
+        )
+
+    return DesktopSecurityService(
+        authorize=authorize,
+        monitor_factory=monitor_factory,
+    )
