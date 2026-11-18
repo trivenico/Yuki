@@ -47,7 +47,7 @@ class EncryptedLearningStore:
         self.path = Path(path).expanduser()
         if self.path.is_symlink():
             raise SecureLearningStoreError("Learning data path must not be a symbolic link.")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.path.parent.is_symlink() or not self.path.parent.is_dir():
             raise SecureLearningStoreError("Learning data directory is unavailable or unsafe.")
         if os.name == "posix":
