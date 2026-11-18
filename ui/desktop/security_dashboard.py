@@ -48,9 +48,9 @@ class SecurityDashboardPanel:
         layout.addWidget(heading)
 
         explanation = QLabel(
-            "Read-only local process inventory. No process termination, firewall "
-            "changes, network capture, uploads, or automatic remediation. "
-            "Monitoring stays off until you start it."
+            "On-demand, read-only local process snapshots. Continuous/background "
+            "monitoring is not implemented yet. No process termination, firewall "
+            "changes, network capture, uploads, or automatic remediation."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -89,7 +89,7 @@ class SecurityDashboardPanel:
         class Presenter:
             def set_state(self, state: str, *, enabled: bool):
                 safe_state = _plain(state, 80)
-                status.setText("Monitoring: " + safe_state)
+                status.setText("Security session: " + safe_state)
                 start.setEnabled(not enabled)
                 stop.setEnabled(enabled)
                 refresh.setEnabled(enabled)
@@ -155,10 +155,11 @@ class SecurityDashboardPanel:
             answer = QMessageBox.question(
                 page,
                 "Start read-only monitoring",
-                "Yuki will inspect a bounded local process inventory for this "
-                "sign-in session. It will not capture network traffic, terminate "
+                "Yuki will inspect one bounded local process snapshot now and "
+                "whenever you choose Refresh during this sign-in session. It will "
+                "not continuously monitor, capture network traffic, terminate "
                 "processes, change firewall rules, or upload monitoring data. "
-                "Start monitoring for this session?",
+                "Start this session?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
