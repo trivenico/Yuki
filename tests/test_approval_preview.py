@@ -1,6 +1,6 @@
 import unittest
 
-from core.approval_preview import confirmation_digest, redact_preview
+from core.approval_preview import confirmation_digest, redact_preview, verify_confirmation_digest
 
 
 class ApprovalPreviewRedactionTests(unittest.TestCase):
@@ -37,6 +37,17 @@ class ApprovalPreviewRedactionTests(unittest.TestCase):
         self.assertEqual(len(digest), 64)
         self.assertEqual(digest, confirmation_digest(reordered))
         self.assertNotEqual(digest, confirmation_digest(changed))
+
+    def test_confirmation_verification_requires_exact_valid_digest(self):
+        action = {"skill_id": "notes.write", "arguments": {"text": "approve this exact note"}}
+        digest = confirmation_digest(action)
+        self.assertTrue(verify_confirmation_digest(action, digest))
+        self.assertFalse(verify_confirmation_digest(
+            {"skill_id": "notes.write", "arguments": {"text": "different note"}}, digest
+        ))
+        self.assertFalse(verify_confirmation_digest(action, digest.upper()))
+        self.assertFalse(verify_confirmation_digest(action, "not-a-digest"))
+        self.assertFalse(verify_confirmation_digest(action, None))
 
     def test_confirmation_digest_rejects_non_json_values(self):
         with self.assertRaises(ValueError):
