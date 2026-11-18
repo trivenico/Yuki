@@ -3,7 +3,6 @@ import unittest
 
 from ui.desktop.security_service import (
     DesktopSecurityService,
-    DesktopSecurityServiceError,
     SecuritySessionError,
 )
 
@@ -102,6 +101,62 @@ class DesktopSecurityServiceTests(unittest.TestCase):
             self.service.start(consent=True)
         self.assertEqual(self.factory_calls, 1)
 
+    def test_stop_waits_for_startup_and_cannot_be_undone_by_late_enable(self):
+        self.service.start(consent=True)
+        controller = self.controller
+        entered = threading.Event()
+        release = threading.Event()
+
+        def delayed_start(*, consent):
+            entered.set()
+            release.wait(2)
+            controller.active = True
+
+        controller.start = delayed_start
+        start_errors = []
+        starter = threading.Thread(
+            target=lambda: self._capture(
+                lambda: self.service.start(consent=True), start_errors
+            )
+        )
+        starter.start()
+        self.assertTrue(entered.wait(1))
+        stopper = threading.Thread(target=self.service.stop)
+        stopper.start()
+        self.assertTrue(stopper.is_alive())
+        release.set()
+        starter.join(2)
+        stopper.join(2)
+        self.assertFalse(starter.is_alive())
+        self.assertFalse(stopper.is_alive())
+        self.assertFalse(start_errors)
+        self.assertFalse(self.service.active)
+
+    def _capture(self, callback, errors):
+        try:
+            callback()
+        except Exception as exc:
+            errors.append(exc)
+
+    def test_close_retries_failed_controller_cleanup(self):
+        self.service.start(consent=True)
+        controller = self.controller
+        original_close = controller.close
+        calls = []
+
+        def fail_once():
+            calls.append(True)
+            if len(calls) == 1:
+                raise RuntimeError('temporary cleanup failure')
+            original_close()
+
+        controller.close = fail_once
+        with self.assertRaises(RuntimeError):
+            self.service.close()
+        self.assertFalse(controller.closed)
+        self.service.close()
+        self.assertTrue(controller.closed)
+        self.assertEqual(len(calls), 2)
     def test_close_before_start_never_constructs_monitor(self):
         self.service.close()
         self.assertEqual(self.factory_calls, 0)
