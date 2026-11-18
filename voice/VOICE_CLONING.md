@@ -233,3 +233,20 @@ use with voice samples. In particular:
 These are explicit release blockers, not claims that the current foundation
 already provides those guarantees. Keep cloning disabled in the desktop
 product until the relevant controls and clean-machine tests are complete.
+
+
+### Artifact-store directory-handle hardening
+
+On POSIX systems with directory-relative `open`, `link`, and `unlink`
+operations, the encrypted artifact store opens its private directory once
+without following a final symlink and retains that descriptor. Artifact
+creation, reads, and deletion are then performed relative to that descriptor;
+reads require a regular file and enforce the size bound from `fstat`.
+Creation uses an exclusive temporary file and a no-overwrite hard link before
+removing the temporary name. The directory is fsynced after namespace changes.
+The regression test renames the original directory and replaces its old path
+with a symlink; the open descriptor continues to address only the original
+directory. Platforms without these POSIX primitives use a compatibility
+path-based branch and must not be considered cleared for adversarial local
+filesystem races. The profile registry has not yet been migrated to this
+handle-based pattern.
