@@ -67,6 +67,12 @@ class DesktopSecurityServiceTests(unittest.TestCase):
         self.assertFalse(self.service.configured)
         self.assertEqual(self.factory_calls, 0)
 
+    def test_authorization_status_is_revalidated_without_constructing_monitor(self):
+        self.assertTrue(self.service.authorized)
+        self.authorized = False
+        self.assertFalse(self.service.authorized)
+        self.assertEqual(self.factory_calls, 0)
+
     def test_consent_and_authorization_gate_factory(self):
         with self.assertRaises(SecuritySessionError):
             self.service.start(consent=False)
