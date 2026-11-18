@@ -200,8 +200,13 @@ class WorkforceWorker:
                 )
                 approved = getattr(review, "approved", None)
                 review_status = getattr(review, "status", None)
-                if type(approved) is not bool or not isinstance(review_status, str) or not review_status:
-                    raise TypeError("reviewer returned an invalid decision")
+                returned_reviewer_id = getattr(review, "reviewer_id", None)
+                if (
+                    type(approved) is not bool
+                    or not isinstance(review_status, str) or not review_status
+                    or returned_reviewer_id != reviewer_id
+                ):
+                    raise TypeError("reviewer returned an invalid or mismatched decision")
                 if not approved:
                     failed = self.engine.fail(task_id, self.worker_id, "independent review rejected")
                     return {"task_id": task_id, "state": failed["state"], "status": "review_rejected"}
