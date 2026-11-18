@@ -332,10 +332,10 @@ class DurableTaskEngine:
         # Conservative high-confidence screening; this is not a complete DLP system.
         sensitive_patterns = (
             r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
-            r"(?i)\\b(?:api[_-]?key|access[_-]?token|secret|password)\\s*[:=]\\s*\\S+",
-            r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{12,}",
-            r"\\bAKIA[0-9A-Z]{16}\\b",
-            r"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b",
+            r"(?i)\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*\S+",
+            r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}",
+            r"\bAKIA[0-9A-Z]{16}\b",
+            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
         )
         searchable_text = " ".join((knowledge["title"], knowledge["lesson"], knowledge["domain"], *tags))
         if any(re.search(pattern, searchable_text) for pattern in sensitive_patterns):
