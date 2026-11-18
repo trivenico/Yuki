@@ -65,13 +65,13 @@ def _set_bounded_limit(resource_module: Any, limit_id: int, requested_soft: int,
         hard = requested_hard
         if current_hard != resource_module.RLIM_INFINITY:
             hard = min(hard, current_hard)
-        # POSIX rejects lowering the hard limit below the current soft limit,
-        # even when the requested new soft limit is lower. Preserve that
-        # invariant, then lower soft to the requested bound. This matters on
-        # Darwin runners where RLIMIT_DATA may start above our target.
-        hard = max(current_soft, hard)
+        # Never raise the existing hard limit. Lower soft while retaining
+        # the current hard cap, then lower hard in a second operation. This
+        # avoids asking setrlimit() to lower hard below the *old* soft limit.
         soft = min(requested_soft, hard)
-        resource_module.setrlimit(limit_id, (soft, hard))
+        resource_module.setrlimit(limit_id, (soft, current_hard))
+        if hard != current_hard:
+            resource_module.setrlimit(limit_id, (soft, hard))
     except (OSError, ValueError) as exc:
         raise VoiceCloneResourceLimitError(name, type(exc).__name__) from exc
 
