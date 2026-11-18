@@ -89,6 +89,17 @@ class WorkforceExecutorTests(unittest.TestCase):
         self.assertEqual(result.status, "skill_registry_changed")
         self.assertEqual(self.agent.calls, [])
 
+    def test_registry_inventory_change_fails_closed(self):
+        extra = SimpleNamespace(
+            name="new_reader", capabilities=("code_review",),
+            permissions=("repo:read",), risk="low",
+        )
+        self.agent.registry._skills[extra.name] = extra
+        result = self.execute()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_registry_changed")
+        self.assertEqual(self.agent.calls, [])
+
     def test_skill_policy_metadata_drift_fails_closed(self):
         self.skill.permissions = ("repo:write",)
         self.executor = YukiAgentWorkforceExecutor(self.agent)
