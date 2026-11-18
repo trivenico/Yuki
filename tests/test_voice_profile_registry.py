@@ -1,3 +1,4 @@
+import multiprocessing
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,19 @@ from voice.profile_registry import (
     VoiceProfileRegistry,
     VoiceProfileRegistryError,
 )
+
+
+
+def _stage_profile_in_process(directory, profile_id, barrier):
+    registry = VoiceProfileRegistry(directory, authorize=lambda: True)
+    try:
+        barrier.wait(timeout=10)
+        registry.stage_profile(
+            profile_id, profile_id, "process-test", "artifact:" + profile_id,
+            source_owner_consent=True,
+        )
+    finally:
+        registry.close()
 
 
 class VoiceProfileRegistryTests(unittest.TestCase):
@@ -152,6 +166,33 @@ class VoiceProfileRegistryTests(unittest.TestCase):
         registry_file.chmod(0o644)
         with self.assertRaises(VoiceProfileRegistryError):
             VoiceProfileRegistry(Path(self.temp.name) / "voices", authorize=lambda: True)
+
+    def test_concurrent_processes_preserve_both_profile_updates(self):
+        if os.name != "posix" and os.name != "nt":
+            self.skipTest("Cross-process lock is unavailable on this platform.")
+        context = multiprocessing.get_context("spawn")
+        directory = str(Path(self.temp.name) / "voices")
+        barrier = context.Barrier(2)
+        processes = [
+            context.Process(target=_stage_profile_in_process, args=(directory, "process-one", barrier)),
+            context.Process(target=_stage_profile_in_process, args=(directory, "process-two", barrier)),
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(15)
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(3)
+                self.fail("Concurrent profile writer did not finish.")
+            self.assertEqual(process.exitcode, 0)
+        refreshed = VoiceProfileRegistry(Path(directory), authorize=lambda: True)
+        try:
+            ids = {profile["profile_id"] for profile in refreshed.list_profiles()}
+            self.assertEqual(ids, {"process-one", "process-two"})
+        finally:
+            refreshed.close()
 
     def test_rejects_invalid_profile_ids_and_duplicate_profiles(self):
         with self.assertRaises(ValueError):
