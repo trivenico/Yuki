@@ -1093,12 +1093,6 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.speech_session = None
             if self.security_service is not None:
                 raise DesktopStartupError("Previous security-session cleanup is incomplete.")
-            from ui.desktop.security_service import create_authenticated_desktop_security_service
-            self.security_identity = identity
-            self.security_service = create_authenticated_desktop_security_service(
-                self.sessions, identity,
-            )
-            self.security_panel.security_presenter.set_state("off", enabled=False)
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
@@ -1134,6 +1128,14 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
             )
+            if self.security_service is not None:
+                raise DesktopStartupError("Previous security-session cleanup is incomplete.")
+            from ui.desktop.security_service import create_authenticated_desktop_security_service
+            self.security_identity = identity
+            self.security_service = create_authenticated_desktop_security_service(
+                self.sessions, identity,
+            )
+            self.security_panel.security_presenter.set_state("off", enabled=False)
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
