@@ -64,6 +64,8 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._create_improvement_proposal(scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/improvement-proposals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
             return await self._transition_improvement_proposal(path, scope, receive, send)
+        if method == "GET" and re.fullmatch(r"/v1/workforce/improvement-proposals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/comparison", path):
+            return await self._compare_improvement_proposal(path, scope, send)
         if method != "GET":
             return await self._respond(send, 405, {"error": "method_not_allowed"})
         principal = await self._principal(scope)
@@ -245,6 +247,54 @@ class AuthenticatedWorkforceDashboardAPI:
         return await self._respond(send, 201 if result["created"] else 200, {
             "created": result["created"], "proposal": result["proposal"],
             "proposal_id": result["proposal_id"], "state": result["state"],
+        })
+
+    async def _compare_improvement_proposal(self, path, scope, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _session_token = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        proposal_id = path.rsplit("/", 2)[-2]
+        try:
+            proposal = await asyncio.to_thread(self.dashboard.task_engine.get_improvement_proposal, proposal_id)
+            baseline = proposal["proposal"].get("baseline")
+            if not isinstance(baseline, dict):
+                return await self._respond(send, 409, {"error": "proposal_baseline_unavailable"})
+            current = await asyncio.to_thread(self.dashboard.snapshot)
+            current_metrics = {
+                "workforce": current.get("workforce", {}),
+                "tasks": current.get("tasks", {}),
+                "performance": current.get("performance", {}),
+            }
+            changes = {}
+            for section in ("workforce", "tasks", "performance"):
+                before = baseline.get(section, {})
+                after = current_metrics[section]
+                section_changes = {}
+                if isinstance(before, dict) and isinstance(after, dict):
+                    for key, old_value in before.items():
+                        new_value = after.get(key)
+                        if (type(old_value) in (int, float) and type(new_value) in (int, float)):
+                            section_changes[key] = {
+                                "baseline": old_value,
+                                "current": new_value,
+                                "delta": new_value - old_value,
+                            }
+                changes[section] = section_changes
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "proposal_not_found"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "improvement_comparison_unavailable"})
+        return await self._respond(send, 200, {
+            "proposal_id": proposal_id,
+            "proposal_state": proposal["state"],
+            "baseline_captured_at": baseline.get("captured_at"),
+            "comparison_captured_at": self.dashboard.task_engine.clock(),
+            "baseline_scope": baseline.get("scope"),
+            "changes": changes,
+            "interpretation": "Descriptive snapshot differences only; they do not establish causation or intervention effectiveness.",
         })
 
     async def _transition_improvement_proposal(self, path, scope, receive, send):
