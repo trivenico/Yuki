@@ -383,5 +383,31 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertIsNone(result.result)
 
 
+    def test_dispatch_bounds_maximum_agent_subtask_and_idempotency_keys(self):
+        long_agent_id = "a" * 80
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "yuki.sqlite3"),
+            [SpecialistAgent(
+                long_agent_id, "Long ID specialist", frozenset({"long_task"}), "emit",
+                approval_class="read_only",
+            )],
+            authorize=lambda actor, action, _plan: actor == "alice" and action in {
+                "agent:plan", "agent:dispatch", "agent:read"
+            },
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="k" * 200,
+            subtasks=[SubtaskSpec(
+                "s" * 80, "Bounded long identifier task", ("long_task",),
+                requires_approval=False,
+            )],
+        )
+        dispatched = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task = self.store.get(dispatched.subtasks[0].task_id)
+        self.assertEqual(len(task.name), 99)
+        run = self.store.get(task.task_id)
+        self.assertLessEqual(len(run.idempotency_key), 200)
+
+
 if __name__ == "__main__":
     unittest.main()
