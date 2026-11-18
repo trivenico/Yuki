@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 from voice.audio_validation import VoiceSampleMetadata, validate_pcm_audio, validate_voice_sample
 from voice.profile_registry import VoiceProfileRegistry
@@ -64,7 +64,7 @@ class LocalVoiceCloneProvider(Protocol):
         self,
         sample_audio: bytes,
         *,
-        cancel_event: threading.Event,
+        cancel_event: Any,
         deadline_monotonic: float,
     ) -> VoiceCloneOutput:
         """Create an opaque reusable artifact and preview; honor cancellation."""
