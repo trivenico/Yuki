@@ -3,7 +3,7 @@ import unittest
 
 from ui.desktop.launch import (
     _close_expired_controller, _close_startup_resources,
-    _shutdown_desktop_services,
+    _shutdown_desktop_services, _run_cleanup_steps,
 )
 
 
@@ -19,6 +19,21 @@ class Controller:
 
 
 class DesktopLaunchCleanupTests(unittest.TestCase):
+    def test_cleanup_steps_attempt_all_operations_and_return_first_error(self):
+        events = []
+        first_error = RuntimeError("security cleanup failed")
+
+        def fail_security_cleanup():
+            events.append("security-close")
+            raise first_error
+
+        def revoke_desktop_session():
+            events.append("desktop-logout")
+
+        result = _run_cleanup_steps(fail_security_cleanup, revoke_desktop_session)
+        self.assertIs(result, first_error)
+        self.assertEqual(events, ["security-close", "desktop-logout"])
+
     def test_partial_startup_cleanup_is_reverse_order_deduplicated_and_best_effort(self):
         events = []
 
