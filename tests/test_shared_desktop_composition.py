@@ -122,11 +122,12 @@ class SharedDesktopCompositionTests(unittest.TestCase):
         identity = object()
         sessions = object()
         memory = object()
+        learning = object()
         store_factory = lambda _config: None
 
         build_shared_desktop_controller(
             config, provider=provider, identity=identity, sessions=sessions,
-            specialist_controller=specialists, memory=memory,
+            specialist_controller=specialists, memory=memory, learning=learning,
             store_factory=store_factory,
         )
 
@@ -135,6 +136,7 @@ class SharedDesktopCompositionTests(unittest.TestCase):
         self.assertIs(kwargs["identity"], identity)
         self.assertIs(kwargs["sessions"], sessions)
         self.assertIs(kwargs["memory"], memory)
+        self.assertIs(kwargs["learning"], learning)
         self.assertIs(kwargs["store_factory"], store_factory)
         self.assertIs(build.call_args.args[0], config)
 
