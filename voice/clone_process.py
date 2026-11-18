@@ -32,10 +32,22 @@ class VoiceCloneWorkerTimeout(VoiceCloneWorkerError):
 class VoiceCloneResourceLimitError(RuntimeError):
     """A named OS resource limit could not be applied."""
 
-    def __init__(self, limit_name: str, error_type: str):
+    def __init__(self, limit_name: str, error_type: str, *, stage: str = "set",
+                 current_soft: int | None = None, current_hard: int | None = None,
+                 requested_soft: int | None = None, requested_hard: int | None = None):
         self.limit_name = limit_name
         self.error_type = error_type
-        super().__init__(f"{limit_name}:{error_type}")
+        self.stage = stage
+        self.current_soft = current_soft
+        self.current_hard = current_hard
+        self.requested_soft = requested_soft
+        self.requested_hard = requested_hard
+        # Numeric OS limit values are safe diagnostics; do not include paths,
+        # environment values, provider details, or raw exception messages.
+        super().__init__(
+            f"{limit_name}:{error_type}:{stage}:"
+            f"{current_soft}:{current_hard}:{requested_soft}:{requested_hard}"
+        )
 
 
 @dataclass(frozen=True)
@@ -60,20 +72,27 @@ class VoiceCloneWorkerLimits:
 
 def _set_bounded_limit(resource_module: Any, limit_id: int, requested_soft: int,
                        requested_hard: int, *, name: str) -> None:
+    current_soft = current_hard = None
+    stage = "get"
     try:
         current_soft, current_hard = resource_module.getrlimit(limit_id)
         hard = requested_hard
         if current_hard != resource_module.RLIM_INFINITY:
             hard = min(hard, current_hard)
         # Never raise the existing hard limit. Lower soft while retaining
-        # the current hard cap, then lower hard in a second operation. This
-        # avoids asking setrlimit() to lower hard below the *old* soft limit.
+        # the current hard cap, then lower hard in a second operation.
         soft = min(requested_soft, hard)
+        stage = "lower-soft"
         resource_module.setrlimit(limit_id, (soft, current_hard))
         if hard != current_hard:
+            stage = "lower-hard"
             resource_module.setrlimit(limit_id, (soft, hard))
     except (OSError, ValueError) as exc:
-        raise VoiceCloneResourceLimitError(name, type(exc).__name__) from exc
+        raise VoiceCloneResourceLimitError(
+            name, type(exc).__name__, stage=stage,
+            current_soft=current_soft, current_hard=current_hard,
+            requested_soft=requested_soft, requested_hard=requested_hard,
+        ) from exc
 
 
 def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
