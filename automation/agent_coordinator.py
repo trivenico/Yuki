@@ -483,6 +483,13 @@ class SpecialistAgentCoordinator:
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
         assignments = {item.subtask_id: self._route(item) for item in items}
+        assigned_steps: dict[str, int] = {}
+        for agent in assignments.values():
+            assigned_steps[agent.agent_id] = assigned_steps.get(agent.agent_id, 0) + 1
+            if assigned_steps[agent.agent_id] > agent.max_steps:
+                raise AgentPlanError(
+                    f"specialist {agent.agent_id} exceeds its per-plan step budget."
+                )
         approval_requirements = {
             item.subtask_id: (
                 item.requires_approval
