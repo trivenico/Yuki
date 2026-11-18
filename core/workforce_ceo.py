@@ -116,12 +116,19 @@ class WorkforceCEO:
                 "state": state,
             })
         counts: dict[str, int] = {}
+        departments: dict[str, dict[str, int]] = {}
         for task in tasks:
-            counts[task["state"]] = counts.get(task["state"], 0) + 1
+            state = task["state"]
+            counts[state] = counts.get(state, 0) + 1
+            department = task["department"]
+            department_counts = departments.setdefault(department, {"total": 0})
+            department_counts["total"] += 1
+            department_counts[state] = department_counts.get(state, 0) + 1
         return {
             "goal_id": execution.goal_id,
             "total_tasks": len(tasks),
             "counts": counts,
+            "departments": departments,
             "tasks": tasks,
             "complete": bool(tasks) and all(task["state"] == "succeeded" for task in tasks),
         }
