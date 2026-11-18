@@ -190,6 +190,39 @@ class WorkforceCEOTests(unittest.TestCase):
             ["queued", "queued"],
         )
 
+    def test_existing_goal_rejects_changed_planner_dag(self):
+        class MutablePlanner(Planner):
+            def __init__(self):
+                self.changed = False
+
+            def decompose(self, goal):
+                task_id = "build_b" if self.changed else "build_a"
+                return self.validate_tasks((
+                    PlanTask(task_id, "Build component", ("coding",)),
+                ))
+
+        employee = AgentProfile(
+            employee_id="ENG-PLAN",
+            name="Plan Engineer",
+            department="Engineering",
+            role="Engineer",
+            capabilities=frozenset({"coding"}),
+            reports_to="YUKI-CEO",
+        )
+        planner = MutablePlanner()
+        ceo = WorkforceCEO(
+            planner=planner,
+            registry=AgentRegistry([employee]),
+            task_engine=self.engine,
+        )
+        goal_id = self.engine.create_goal(owner_id="owner-1")
+        first = ceo.plan_and_dispatch("Build component", goal_id=goal_id)
+        planner.changed = True
+        with self.assertRaisesRegex(Exception, "CEO plan changed"):
+            ceo.plan_and_dispatch("Build component", goal_id=goal_id)
+        self.assertEqual(len(self.engine.list_tasks(goal_id)), 1)
+        self.assertEqual(self.engine.list_tasks(goal_id)[0]["id"], first.assignments[0].task_id)
+
     def test_invalid_autonomy_tier_rejected(self):
         with self.assertRaises(ValueError):
             WorkforceCEO(
