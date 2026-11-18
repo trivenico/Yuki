@@ -26,10 +26,10 @@ def _template_fields(template: str) -> set[str]:
 
 def check_template_bundle(manifest: dict[str, Any], templates: dict[str, str]) -> dict[str, Any]:
     """Validate exact template names, semantic versions and placeholder declarations."""
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+    if not isinstance(manifest, dict) or type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 1:
         raise TemplateConsistencyError("unsupported or missing template manifest schema_version")
     version = manifest.get("bundle_version")
-    if not isinstance(version, str) or not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", version):
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise TemplateConsistencyError("bundle_version must use semantic version format")
     specs = manifest.get("templates")
     if not isinstance(specs, dict) or not specs or not isinstance(templates, dict) or set(specs) != set(templates):
