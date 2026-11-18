@@ -75,3 +75,43 @@ Failure, cancellation, rejection, consent revocation, or deletion must leave the
 ## Implementation boundary for the first release
 
 The first implementation should add profile lifecycle, consent, local storage, and command/confirmation integration around one reviewed cloning backend. Do not build a generic multi-provider marketplace or train a cloning model from scratch in the desktop app. Benchmark a candidate backend and verify its model license, inference requirements, supported platforms, and voice quality before selecting it. Keep cloning optional until that evaluation and hardware acceptance are complete.
+
+
+## Backend evaluation (18 November 2026)
+
+### Provisional first candidate: Qwen3-TTS 12Hz 0.6B Base
+
+The first backend to benchmark should be **Qwen/Qwen3-TTS-12Hz-0.6B-Base**, behind the provider boundary above. This is a provisional engineering choice, not a production approval or a promise of real-time performance.
+
+Evidence from the official project and model card:
+
+- The official Qwen3-TTS repository documents reference-audio voice cloning through `generate_voice_clone`, with `ref_audio` and (for the normal mode) the matching `ref_text`. It also documents reusable voice-clone prompts, so the application can derive a profile artifact once and reuse it for later synthesis.
+- The official Hugging Face model card identifies the 0.6B Base checkpoint as Apache-2.0 and describes cloning from a short reference clip. The listed model files are approximately 2.52 GB for the repository; the main safetensors file is about 1.83 GB and the speech-tokenizer weights about 682 MB. These are model assets, not an installed runtime footprint.
+- The official Python package declares Python >=3.9 and pins a specific Transformers version in its project metadata. This dependency stack must be isolated from Yuki's main desktop environment until compatibility and packaging are proven.
+- The documented quickstart uses CUDA and bfloat16. Do not assume CPU-only, Windows, macOS, Apple Silicon, or low-memory support without measured tests.
+- The model family supports English and Japanese among its documented languages. That is useful for Yuki's English voice target, but it does not establish the requested anime-inspired timbre; auditioning is mandatory.
+
+Official references:
+- Qwen3-TTS implementation and inference API: https://github.com/QwenLM/Qwen3-TTS
+- 0.6B Base model card, cloning instructions and model license: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
+- Package metadata and declared dependency versions: https://github.com/QwenLM/Qwen3-TTS/blob/main/pyproject.toml
+
+### Alternatives and exclusions
+
+- **OpenVoice V2** is a secondary candidate because its official repository states that V1/V2 code and models are MIT licensed and supports English and Japanese. Benchmark it against Qwen3 for naturalness, speaker similarity, inference latency, memory, platform support, and expressive control before choosing a fallback.
+- **XTTS-v2** is not the default product candidate: its model weights are under the Coqui Public Model License, which restricts use to non-commercial purposes. A permissive integration-code license does not override the model-weight license.
+- **F5-TTS** is not a default product candidate until the exact checkpoint license is verified; commonly distributed pretrained weights have non-commercial restrictions.
+- Never infer the license of weights from the repository's source-code license. Record and review each model, tokenizer, vocoder, and auxiliary asset separately.
+
+### Required benchmark before backend approval
+
+Run a controlled benchmark in an isolated environment (Kaggle GPU is suitable for initial evaluation; later repeat on supported desktop hardware):
+
+1. Use only a voice sample whose speaker has explicitly authorized cloning. Keep the sample private and do not add it to the repository or benchmark artifacts.
+2. Test the 0.6B Base model first; evaluate larger checkpoints only if the smaller model fails the quality target and hardware budget allows it.
+3. Measure cold model load, warm synthesis real-time factor, time-to-first-audio, peak RAM/VRAM, output duration, cancellation behavior, and repeatability across at least 20 fixed English test utterances.
+4. Evaluate intelligibility, pronunciation, speaker similarity, prosody, clipping/artifacts, and voice stability with blinded human listening. Compare against the approved Kokoro baseline.
+5. Test clean environments on Linux, Windows, and macOS before claiming desktop support. Record unsupported combinations rather than silently falling back to a remote provider.
+6. Do not activate the model for ordinary desktop speech until the quality, performance, license, privacy, and packaging gates pass.
+
+The application must not download these multi-gigabyte assets during startup. Model installation is a separate user-initiated action with displayed size, source, license, checksum/revision pin, destination, and cancellation support.
