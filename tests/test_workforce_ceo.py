@@ -1,8 +1,8 @@
 import unittest
 
 from core.durable_task_engine import DurableTaskEngine
-from core.planner import Planner
-from core.workforce import AgentRegistry, default_workforce
+from core.planner import PlanTask, Planner
+from core.workforce import AgentProfile, AgentRegistry, default_workforce
 from core.workforce_ceo import WorkforceCEO
 
 
@@ -71,6 +71,64 @@ class WorkforceCEOTests(unittest.TestCase):
             self.engine.claim("test-worker", task_type="workforce.task"),
             None,
         )
+
+
+    def test_capacity_reservations_spread_parallel_work_across_employees(self):
+        class TwoCodingSteps(Planner):
+            def decompose(self, goal):
+                return self.validate_tasks((
+                    PlanTask("build_a", "Build component A", ("coding",)),
+                    PlanTask("build_b", "Build component B", ("coding",)),
+                ))
+
+        employees = [
+            AgentProfile(
+                employee_id=f"ENG-{index:03d}",
+                name=f"Engineer {index}",
+                department="Engineering",
+                role="Engineer",
+                capabilities=frozenset({"coding"}),
+                reports_to="YUKI-CEO",
+                max_concurrent_tasks=1,
+            )
+            for index in (1, 2)
+        ]
+        ceo = WorkforceCEO(
+            planner=TwoCodingSteps(),
+            registry=AgentRegistry(employees),
+            task_engine=self.engine,
+        )
+        execution = ceo.plan_and_dispatch("Build two components")
+        self.assertEqual(
+            len({assignment.employee_id for assignment in execution.assignments}),
+            2,
+        )
+
+    def test_capacity_preflight_rejects_oversubscribed_plan(self):
+        class TwoCodingSteps(Planner):
+            def decompose(self, goal):
+                return self.validate_tasks((
+                    PlanTask("build_a", "Build component A", ("coding",)),
+                    PlanTask("build_b", "Build component B", ("coding",)),
+                ))
+
+        employee = AgentProfile(
+            employee_id="ENG-ONLY",
+            name="Only Engineer",
+            department="Engineering",
+            role="Engineer",
+            capabilities=frozenset({"coding"}),
+            reports_to="YUKI-CEO",
+            max_concurrent_tasks=1,
+        )
+        ceo = WorkforceCEO(
+            planner=TwoCodingSteps(),
+            registry=AgentRegistry([employee]),
+            task_engine=self.engine,
+        )
+        with self.assertRaises(Exception):
+            ceo.plan_and_dispatch("Build two components")
+        self.assertIsNone(self.engine.claim("capacity-check", task_type="workforce.task"))
 
     def test_invalid_autonomy_tier_rejected(self):
         with self.assertRaises(ValueError):
