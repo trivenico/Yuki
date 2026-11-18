@@ -241,7 +241,7 @@ class EncryptedLearningStoreTests(unittest.TestCase):
             def get_keyring(self):
                 return PlaintextKeyring()
 
-        with self.assertRaisesRegex(SecureLearningStoreError, "encryption key"):
+        with self.assertRaisesRegex(SecureLearningStoreError, "keyring"):
             EncryptedLearningStore(
                 self.path, keyring_module=PlaintextModule(self.values),
                 aesgcm_class=self.aesgcm, keyring_account="profile:plaintext",
