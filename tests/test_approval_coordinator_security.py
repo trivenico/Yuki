@@ -64,7 +64,7 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(self.planner.executed[0]["arguments"]["text"], "safe")
 
-    def test_confirmation_exception_fails_closed_and_consumes_request(self):
+    def test_confirmation_exception_preserves_persistent_request_for_retry(self):
         def broken(_):
             raise RuntimeError("UI unavailable")
 
@@ -73,15 +73,15 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
             session_id="session-1", confirmation_digest=confirmation_digest(self.action),
             confirm=broken,
         )
-        self.assertEqual(result.status, "approval_denied")
+        self.assertEqual(result.status, "confirmation_unavailable")
         self.assertEqual(self.planner.executed, [])
         replay = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
             session_id="session-1", confirmation_digest=confirmation_digest(self.action),
             confirm=lambda _: True,
         )
-        self.assertEqual(replay.status, "pending_not_found")
-        self.assertEqual(self.planner.executed, [])
+        self.assertTrue(replay.ok)
+        self.assertEqual(len(self.planner.executed), 1)
 
     def test_approval_is_actor_and_session_bound(self):
         wrong_actor = self.coordinator.approve(
