@@ -35,16 +35,14 @@ class VoiceSampleMetadata:
     size_bytes: int
 
 
-def validate_voice_sample(data: bytes, *, source_owner_consent: bool, max_bytes: int = MAX_SAMPLE_BYTES) -> VoiceSampleMetadata:
-    """Validate a consented WAV byte buffer before it reaches a clone provider."""
-    if source_owner_consent is not True:
-        raise VoiceSampleValidationError("Explicit source-owner consent is required.")
+def validate_pcm_audio(data: bytes, *, max_bytes: int = MAX_SAMPLE_BYTES) -> VoiceSampleMetadata:
+    """Validate bounded PCM WAV bytes without making consent claims."""
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 1 <= max_bytes <= MAX_SAMPLE_BYTES:
         raise ValueError("max_bytes must be between 1 byte and 10 MiB.")
     if not isinstance(data, bytes) or not data:
-        raise VoiceSampleValidationError("Voice sample must be non-empty bytes.")
+        raise VoiceSampleValidationError("Audio must be non-empty bytes.")
     if len(data) > max_bytes:
-        raise VoiceSampleValidationError("Voice sample exceeds the configured byte limit.")
+        raise VoiceSampleValidationError("Audio exceeds the configured byte limit.")
     if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         raise VoiceSampleValidationError("Only standard RIFF/WAVE PCM audio is supported.")
     try:
@@ -58,22 +56,29 @@ def validate_voice_sample(data: bytes, *, source_owner_consent: bool, max_bytes:
             duration = frame_count / sample_rate if sample_rate else 0.0
             expected = frame_count * channels * sample_width
             if expected > len(data):
-                raise VoiceSampleValidationError("Voice sample declares more audio data than the file contains.")
+                raise VoiceSampleValidationError("Audio declares more frame data than the file contains.")
             frames = audio.readframes(frame_count)
             if len(frames) != expected:
-                raise VoiceSampleValidationError("Voice sample frame data is truncated.")
+                raise VoiceSampleValidationError("Audio frame data is truncated.")
     except VoiceSampleValidationError:
         raise
     except (wave.Error, EOFError, OSError, ZeroDivisionError) as exc:
-        raise VoiceSampleValidationError("Voice sample is malformed or unsupported.") from exc
+        raise VoiceSampleValidationError("Audio is malformed or unsupported.") from exc
     if compression != "NONE" or compression_name.lower() != "not compressed":
         raise VoiceSampleValidationError("Compressed WAV audio is not supported.")
     if channels < 1 or channels > MAX_CHANNELS:
-        raise VoiceSampleValidationError("Voice sample must be mono or stereo.")
+        raise VoiceSampleValidationError("Audio must be mono or stereo.")
     if sample_width != REQUIRED_SAMPLE_WIDTH:
-        raise VoiceSampleValidationError("Voice sample must use 16-bit PCM audio.")
+        raise VoiceSampleValidationError("Audio must use 16-bit PCM.")
     if not MIN_SAMPLE_RATE <= sample_rate <= MAX_SAMPLE_RATE:
-        raise VoiceSampleValidationError("Voice sample sample-rate must be between 16 kHz and 48 kHz.")
+        raise VoiceSampleValidationError("Audio sample-rate must be between 16 kHz and 48 kHz.")
     if not MIN_DURATION_SECONDS <= duration <= MAX_DURATION_SECONDS:
-        raise VoiceSampleValidationError("Voice sample duration must be between 1 and 30 seconds.")
+        raise VoiceSampleValidationError("Audio duration must be between 1 and 30 seconds.")
     return VoiceSampleMetadata("wav", "pcm_s16le", sample_rate, channels, sample_width, frame_count, duration, len(data))
+
+
+def validate_voice_sample(data: bytes, *, source_owner_consent: bool, max_bytes: int = MAX_SAMPLE_BYTES) -> VoiceSampleMetadata:
+    """Require source-owner consent, then validate the reference audio."""
+    if source_owner_consent is not True:
+        raise VoiceSampleValidationError("Explicit source-owner consent is required.")
+    return validate_pcm_audio(data, max_bytes=max_bytes)
