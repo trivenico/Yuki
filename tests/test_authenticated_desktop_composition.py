@@ -80,6 +80,30 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
         self.assertEqual(self.provider.close_count, 0)
         self.assertTrue(session.runtime.closed)
 
+    def test_failed_runtime_composition_closes_learning_session(self):
+        class Learning:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        learning = Learning()
+
+        def fail_store(_config):
+            raise OSError("store unavailable")
+
+        with self.assertRaisesRegex(OSError, "store unavailable"):
+            build_authenticated_desktop_conversation(
+                {"workspace": self.tempdir.name},
+                provider=self.provider,
+                identity=self.identity,
+                sessions=self.sessions,
+                learning=learning,
+                store_factory=fail_store,
+            )
+        self.assertTrue(learning.closed)
+
     def test_rejects_identity_not_verified_by_current_session(self):
         self.sessions.identity = None
         with self.assertRaises(PermissionError):
