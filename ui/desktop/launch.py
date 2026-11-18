@@ -1186,13 +1186,13 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 and worker.identity is self.security_identity
                 and self.sessions is not None
             )
+            # A completion from a replaced service/session is stale, not a
+            # reason to revoke the currently authenticated session.
             if (
                 captured_service is not self.security_service
                 or not identity_current
                 or self._logout_started or self._shutdown_started
             ):
-                if not self._logout_started and not self._shutdown_started:
-                    self._return_to_login()
                 return
             if not authorized:
                 self._return_to_login()
