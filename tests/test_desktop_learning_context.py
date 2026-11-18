@@ -32,6 +32,10 @@ class FakeLearning:
     def __init__(self, patch):
         self.patch = patch
         self.calls = []
+        self.closed = False
+
+    def close(self):
+        self.closed = True
 
     def build_few_shot_patch(self, query, *, max_examples, max_chars):
         self.calls.append((query, max_examples, max_chars))
@@ -87,6 +91,14 @@ class DesktopLearningContextTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "invalid context"):
             adapter.send("Hello")
         self.assertIsNone(conversations.last_reply)
+
+    def test_adapter_close_invalidates_learning_coordinator_reference(self):
+        learning = FakeLearning("Approved historical examples.")
+        adapter, _ = _adapter(learning=learning)
+        adapter.close()
+        self.assertTrue(learning.closed)
+        self.assertIsNone(adapter.conversation_id)
+        self.assertIsNone(adapter._learning)
 
     def test_learning_dependency_must_expose_patch_builder(self):
         conversations = FakeConversations()
