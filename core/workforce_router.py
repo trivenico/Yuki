@@ -61,6 +61,8 @@ class WorkforceTaskRouter:
             raise ValueError("required_permissions must contain non-empty strings")
         if max_autonomy_tier not in range(4):
             raise ValueError("max_autonomy_tier must be between 0 and 3")
+        if max_attempts != 1:
+            raise ValueError("workforce tasks must use max_attempts=1; uncertain side effects require manual review")
 
         candidates = self.registry.recommend(
             capabilities,
