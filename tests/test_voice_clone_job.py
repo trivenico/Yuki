@@ -222,21 +222,20 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
             RLIM_INFINITY = -1
 
             def __init__(self):
-                self.applied = None
+                self.applied = []
 
             def getrlimit(self, limit_id):
                 return (8, 16)
 
             def setrlimit(self, limit_id, values):
-                self.applied = values
+                self.applied.append(values)
                 if values[0] > values[1]:
-                    raise ValueError("current limit exceeds maximum limit")
+                    raise ValueError("soft limit exceeds hard limit")
 
         resource = FakeResource()
         _set_bounded_limit(resource, 1, 4, 6, name="RLIMIT_DATA")
-        # The hard cap cannot be lowered below the pre-existing soft cap,
-        # but the soft cap itself is still reduced to the requested bound.
-        self.assertEqual(resource.applied, (4, 8))
+        # Lower soft while retaining the old hard cap, then lower hard.
+        self.assertEqual(resource.applied, [(4, 16), (4, 6)])
 
     def test_resource_limit_failure_has_sanitized_named_error(self):
         from voice.clone_process import _set_bounded_limit, VoiceCloneResourceLimitError
