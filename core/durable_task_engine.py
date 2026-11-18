@@ -84,6 +84,28 @@ class DurableTaskEngine:
               created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS workforce_improvement_events_idx
               ON workforce_improvement_events(proposal_id,id);
+            CREATE TABLE IF NOT EXISTS workforce_knowledge(
+              knowledge_id TEXT PRIMARY KEY,
+              fingerprint TEXT NOT NULL,
+              knowledge_json TEXT NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('candidate','verified','rejected')),
+              source_task_id TEXT NOT NULL REFERENCES tasks(id),
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              reviewed_by TEXT,
+              review_note TEXT,
+              UNIQUE(source_task_id,fingerprint));
+            CREATE TABLE IF NOT EXISTS workforce_knowledge_events(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              knowledge_id TEXT NOT NULL REFERENCES workforce_knowledge(knowledge_id),
+              event_type TEXT NOT NULL,
+              actor_id TEXT NOT NULL,
+              detail_json TEXT NOT NULL,
+              created_at REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS workforce_knowledge_state_idx
+              ON workforce_knowledge(state,updated_at);
+            CREATE INDEX IF NOT EXISTS workforce_knowledge_events_idx
+              ON workforce_knowledge_events(knowledge_id,id);
             CREATE TABLE IF NOT EXISTS goal_requests(
               owner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
               request_fingerprint TEXT NOT NULL, goal_id TEXT NOT NULL REFERENCES goals(id),
@@ -288,6 +310,131 @@ class DurableTaskEngine:
             })
             c.commit()
         return {"created": True, "plan": json.loads(plan_json)}
+
+    def create_knowledge_candidate(self, knowledge_id, source_task_id, knowledge):
+        """Persist a proposed lesson only when its source task has independent review evidence."""
+        if not isinstance(knowledge_id, str) or not 1 <= len(knowledge_id) <= 256:
+            raise ValueError("knowledge_id must contain 1..256 characters")
+        if not isinstance(source_task_id, str) or not 1 <= len(source_task_id) <= 256:
+            raise ValueError("source_task_id must contain 1..256 characters")
+        if not isinstance(knowledge, dict) or set(knowledge) != {"title", "lesson", "domain", "tags"}:
+            raise ValueError("knowledge must contain exactly title, lesson, domain, and tags")
+        for key, maximum in (("title", 200), ("lesson", 4000), ("domain", 120)):
+            value = knowledge[key]
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError(f"invalid knowledge {key}")
+        tags = knowledge["tags"]
+        if (not isinstance(tags, list) or len(tags) > 20
+                or any(not isinstance(tag, str) or not tag.strip() or len(tag) > 64 for tag in tags)
+                or len({tag.casefold() for tag in tags}) != len(tags)):
+            raise ValueError("knowledge tags must be unique bounded strings")
+        knowledge_json = self._json(knowledge)
+        if len(knowledge_json.encode("utf-8")) > 8192:
+            raise ValueError("knowledge candidate exceeds 8 KB")
+        fingerprint = hashlib.sha256(knowledge_json.encode("utf-8")).hexdigest()
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            task = c.execute("SELECT state,result_json FROM tasks WHERE id=?", (source_task_id,)).fetchone()
+            if task is None:
+                raise TaskNotFound("source task not found")
+            if task["state"] != "succeeded" or not task["result_json"]:
+                raise TaskConflict("knowledge requires a succeeded source task")
+            result = json.loads(task["result_json"])
+            evidence = result.get("review_evidence") if isinstance(result, dict) else None
+            if (not isinstance(evidence, dict)
+                    or evidence.get("approved") is not True
+                    or not isinstance(evidence.get("reviewer_id"), str)
+                    or not evidence["reviewer_id"].strip()
+                    or not isinstance(evidence.get("status"), str)
+                    or not evidence["status"].strip()):
+                raise TaskConflict("knowledge requires persisted independent review evidence")
+            existing = c.execute(
+                "SELECT knowledge_id,fingerprint,knowledge_json FROM workforce_knowledge WHERE source_task_id=? AND fingerprint=?",
+                (source_task_id, fingerprint),
+            ).fetchone()
+            if existing:
+                if existing["knowledge_json"] != knowledge_json:
+                    raise TaskConflict("knowledge fingerprint collision")
+                c.commit()
+                return {"created": False, **self.get_knowledge(existing["knowledge_id"])}
+            if c.execute("SELECT 1 FROM workforce_knowledge WHERE knowledge_id=?", (knowledge_id,)).fetchone():
+                raise TaskConflict("knowledge_id already exists")
+            c.execute(
+                "INSERT INTO workforce_knowledge(knowledge_id,fingerprint,knowledge_json,state,source_task_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (knowledge_id, fingerprint, knowledge_json, "candidate", source_task_id, now, now),
+            )
+            c.execute(
+                "INSERT INTO workforce_knowledge_events(knowledge_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (knowledge_id, "knowledge.proposed", "system", self._json({"source_task_id": source_task_id, "source_reviewer_id": evidence["reviewer_id"]}), now),
+            )
+            c.commit()
+        return {"created": True, **self.get_knowledge(knowledge_id)}
+
+    def transition_knowledge(self, knowledge_id, *, expected_state, new_state, actor_id, review_note=None):
+        if not isinstance(knowledge_id, str) or not 1 <= len(knowledge_id) <= 256:
+            raise ValueError("invalid knowledge_id")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 256:
+            raise ValueError("actor_id must be non-empty bounded text")
+        if not isinstance(review_note, (str, type(None))) or (review_note is not None and len(review_note) > 2000):
+            raise ValueError("review_note must be at most 2000 characters")
+        if expected_state != "candidate" or new_state not in {"verified", "rejected"}:
+            raise TaskConflict("invalid knowledge state transition")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute("SELECT state FROM workforce_knowledge WHERE knowledge_id=?", (knowledge_id,)).fetchone()
+            if row is None:
+                raise TaskNotFound("knowledge record not found")
+            if row["state"] != expected_state:
+                raise TaskConflict("knowledge state changed")
+            c.execute(
+                "UPDATE workforce_knowledge SET state=?,updated_at=?,reviewed_by=?,review_note=? WHERE knowledge_id=?",
+                (new_state, now, actor_id, review_note, knowledge_id),
+            )
+            c.execute(
+                "INSERT INTO workforce_knowledge_events(knowledge_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (knowledge_id, "knowledge." + new_state, actor_id, self._json({"review_note": review_note}), now),
+            )
+            c.commit()
+        return self.get_knowledge(knowledge_id)
+
+    def get_knowledge(self, knowledge_id):
+        with closing(self._connect()) as c:
+            row = c.execute("SELECT * FROM workforce_knowledge WHERE knowledge_id=?", (knowledge_id,)).fetchone()
+            if row is None:
+                raise TaskNotFound("knowledge record not found")
+            events = c.execute(
+                "SELECT * FROM workforce_knowledge_events WHERE knowledge_id=? ORDER BY id",
+                (knowledge_id,),
+            ).fetchall()
+        result = dict(row)
+        result["knowledge"] = json.loads(result.pop("knowledge_json"))
+        result.pop("fingerprint")
+        result["events"] = [
+            {"id": event["id"], "event_type": event["event_type"], "actor_id": event["actor_id"],
+             "detail": json.loads(event["detail_json"]), "created_at": event["created_at"]}
+            for event in events
+        ]
+        return result
+
+    def list_verified_knowledge(self, *, limit=100, domain=None):
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        if domain is not None and (not isinstance(domain, str) or not domain.strip() or len(domain) > 120):
+            raise ValueError("domain must be bounded non-empty text")
+        with closing(self._connect()) as c:
+            if domain is None:
+                rows = c.execute(
+                    "SELECT knowledge_id FROM workforce_knowledge WHERE state='verified' ORDER BY updated_at DESC,knowledge_id LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT knowledge_id FROM workforce_knowledge WHERE state='verified' AND json_extract(knowledge_json,'$.domain')=? ORDER BY updated_at DESC,knowledge_id LIMIT ?",
+                    (domain, limit),
+                ).fetchall()
+        return [self.get_knowledge(row["knowledge_id"]) for row in rows]
 
     def create_improvement_proposal(self, proposal_id, proposal):
         """Create an immutable, idempotent CEO improvement proposal.
