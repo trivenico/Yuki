@@ -30,7 +30,7 @@ Goal cards open a bounded execution timeline with task assignments and paginated
 
 Deployments may optionally pass `pending_approvals` and `approval_audit` to `build_conversation_runtime` alongside `workforce_dashboard`. The authenticated admin/operator API then exposes:
 
-- `GET /v1/workforce/approvals?limit=100` — safe pending metadata only (reference, skill identifier, expiry); action arguments and action snapshots are never returned.
+- `GET /v1/workforce/approvals?limit=100` — safe pending metadata for the authenticated action owner only (reference, skill identifier, expiry); action arguments and action snapshots are never returned.
 - `GET /v1/workforce/approvals/audit?limit=50` — metadata-only audit events with hashed actor/pending identifiers and a hash-chain integrity result.
 
 The web command center displays this inbox and audit history. This increment deliberately has no approve/deny buttons and cannot execute actions. Approval actions must continue through the existing `ApprovalCoordinator`, trusted actor/session binding, explicit confirmation, one-time consumption, and audited execution/recovery path. These services are optional and must be the same persistent stores used by the guarded runtime; the API does not create duplicate stores.
