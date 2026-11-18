@@ -79,6 +79,17 @@ class LearningCenterPanelTests(unittest.TestCase):
         self.page.deleteLater()
         self.app.processEvents()
 
+    def test_manual_submission_is_disabled_without_learning_consent(self):
+        controls = self.page.learning_controls
+        self.state["learning_consent"] = False
+        controls["refresh"].click()
+        self.wait_for_learning_idle()
+        self.assertFalse(controls["submit"].isEnabled())
+        self.state["learning_consent"] = True
+        controls["refresh"].click()
+        self.wait_for_learning_idle()
+        self.assertTrue(controls["submit"].isEnabled())
+
     def test_storage_callbacks_run_off_the_gui_thread(self):
         self.assertTrue(self.callback_thread_ids)
         self.assertTrue(all(thread_id != self.main_thread_id for thread_id in self.callback_thread_ids))
