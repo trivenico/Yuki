@@ -6,21 +6,18 @@ SecretService backends are accepted. The key is never written to app config.
 from __future__ import annotations
 
 import base64
-import ctypes
 import hashlib
 import os
 import re
-import stat
 import threading
-import time
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
+
+from voice.process_lock import cross_process_lock
 
 
 _SERVICE = "Yuki.VoiceArtifacts.v1"
 _ACCOUNT_RE = re.compile(r"^[a-zA-Z0-9_.@+-]{1,200}$")
 _KEY_BYTES = 32
-_LOCK_TIMEOUT_SECONDS = 30
 
 
 class VoiceKeyStoreError(RuntimeError):
@@ -29,81 +26,6 @@ class VoiceKeyStoreError(RuntimeError):
 
 class UnsupportedCredentialBackendError(VoiceKeyStoreError):
     """Raised when the active keyring backend is not an approved OS store."""
-
-
-@contextmanager
-def _cross_process_key_lock(account: str, lock_directory: str) -> Iterator[None]:
-    """Serialize key lifecycle operations across Yuki processes for this OS user."""
-    if os.name == "nt":
-        name = "Local\\YukiVoiceKeyLock-" + account
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
-        kernel32.CreateMutexW.restype = ctypes.c_void_p
-        kernel32.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint)
-        kernel32.WaitForSingleObject.restype = ctypes.c_uint
-        kernel32.ReleaseMutex.argtypes = (ctypes.c_void_p,)
-        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
-        handle = kernel32.CreateMutexW(None, 0, name)
-        if not handle:
-            raise VoiceKeyStoreError("Could not create the per-user voice key lock.")
-        try:
-            result = kernel32.WaitForSingleObject(handle, _LOCK_TIMEOUT_SECONDS * 1000)
-            if result not in (0x00000000, 0x00000080):  # WAIT_OBJECT_0 / WAIT_ABANDONED
-                raise VoiceKeyStoreError("Timed out waiting for the per-user voice key lock.")
-            try:
-                yield
-            finally:
-                if not kernel32.ReleaseMutex(handle):
-                    raise VoiceKeyStoreError("Could not release the per-user voice key lock.")
-        finally:
-            kernel32.CloseHandle(handle)
-        return
-
-    import fcntl
-
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        directory_fd = os.open(lock_directory, directory_flags)
-    except OSError as exc:
-        raise VoiceKeyStoreError("The private voice key-lock directory is unavailable.") from exc
-    try:
-        directory_stat = os.fstat(directory_fd)
-        if not stat.S_ISDIR(directory_stat.st_mode):
-            raise VoiceKeyStoreError("The voice key-lock path is not a directory.")
-        if hasattr(os, "getuid") and directory_stat.st_uid != os.getuid():
-            raise VoiceKeyStoreError("The voice key-lock directory is not owned by this user.")
-        if directory_stat.st_mode & 0o077:
-            raise VoiceKeyStoreError("The voice key-lock directory must be private (mode 0700).")
-        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            lock_fd = os.open(".voice-key-" + account + ".lock", flags, 0o600, dir_fd=directory_fd)
-        except OSError as exc:
-            raise VoiceKeyStoreError("Could not open the per-user voice key lock.") from exc
-        try:
-            lock_stat = os.fstat(lock_fd)
-            if not stat.S_ISREG(lock_stat.st_mode):
-                raise VoiceKeyStoreError("The voice key lock is not a regular file.")
-            if hasattr(os, "getuid") and lock_stat.st_uid != os.getuid():
-                raise VoiceKeyStoreError("The voice key lock is not owned by this user.")
-            if lock_stat.st_mode & 0o077:
-                os.fchmod(lock_fd, 0o600)
-            deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
-            while True:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if time.monotonic() >= deadline:
-                        raise VoiceKeyStoreError("Timed out waiting for the per-user voice key lock.")
-                    time.sleep(0.05)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
-    finally:
-        os.close(directory_fd)
 
 
 class VoiceEncryptionKeyProvider:
@@ -160,7 +82,7 @@ class VoiceEncryptionKeyProvider:
     def get_or_create_key(self) -> bytes:
         keyring_module = self._load_keyring()
         self._validate_backend(keyring_module)
-        with self._lock, _cross_process_key_lock(self._account, self._lock_directory):
+        with self._lock, cross_process_lock(self._account, self._lock_directory, namespace="VoiceKey", error_type=VoiceKeyStoreError):
             try:
                 encoded = keyring_module.get_password(_SERVICE, self._account)
                 if encoded is not None:
