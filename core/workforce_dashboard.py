@@ -187,6 +187,54 @@ class WorkforceDashboard:
                 ),
             })
 
+        improvement_recommendations = []
+        for signal in capability_signals:
+            if signal["coverage"] == "no_available_capacity":
+                improvement_recommendations.append({
+                    "id": f"capability-coverage:{signal['capability']}",
+                    "category": "capability_coverage",
+                    "priority": "high",
+                    "evidence": {
+                        "capability": signal["capability"],
+                        "queued_or_running_tasks": signal["queued_or_running_tasks"],
+                        "employees_with_capacity": signal["employees_with_capacity"],
+                    },
+                    "recommendation": "Review workforce coverage and consider an approved capability-development or staffing plan.",
+                    "requires_human_approval": True,
+                    "automatic_action_taken": False,
+                })
+
+        for signal in department_signals:
+            if signal["queued_tasks"] > 0:
+                improvement_recommendations.append({
+                    "id": f"department-backlog:{signal['department']}",
+                    "category": "department_backlog",
+                    "priority": "medium",
+                    "evidence": {
+                        "department": signal["department"],
+                        "queued_tasks": signal["queued_tasks"],
+                        "running_tasks": signal["running_tasks"],
+                    },
+                    "recommendation": "Review task prioritization and available departmental capacity before changing assignments.",
+                    "requires_human_approval": True,
+                    "automatic_action_taken": False,
+                })
+            if signal["failed_tasks"] >= 2:
+                improvement_recommendations.append({
+                    "id": f"failure-review:{signal['department']}",
+                    "category": "failure_pattern_review",
+                    "priority": "medium",
+                    "evidence": {
+                        "department": signal["department"],
+                        "failed_tasks": signal["failed_tasks"],
+                        "failure_rate": signal["failure_rate"],
+                        "failure_rate_denominator": signal["failure_rate_denominator"],
+                    },
+                    "recommendation": "Investigate the failed task records for a shared cause; do not infer employee fault from department-level counts.",
+                    "requires_human_approval": True,
+                    "automatic_action_taken": False,
+                })
+
         goal_rows = []
         for goal in goals:
             goal_tasks = [task for task in tasks if task["goal_id"] == goal["id"]]
@@ -230,7 +278,11 @@ class WorkforceDashboard:
                 "scope": "descriptive signals from the dashboard's bounded goal window and current registry",
                 "capability_demand": capability_signals,
                 "department_signals": department_signals,
+                "improvement_recommendations": improvement_recommendations,
                 "limitations": [
+                    "recommendations are deterministic review prompts, not autonomous plans or completed actions",
+                    "capability gaps do not establish that hiring or reassignment is the only remedy",
+                    "failure-pattern prompts require at least two failed tasks in a department and do not assign blame",
                     "capacity counts are current registry metadata, not guaranteed future availability",
                     "failure rates exclude cancelled tasks and are omitted when no succeeded/failed tasks exist",
                     "signals are not forecasts, employee quality scores, or authorization to reassign work",
