@@ -2,7 +2,10 @@
 
 ## Goal
 
-Keep the desktop assistant usable while a separate, opt-in pipeline prepares training data and candidate models. Training must never block or mutate the live inference runtime.
+See [Yuki continuous evolution architecture](YUKI_CONTINUOUS_EVOLUTION.md) for the broader low-compute learning strategy: approved memory, behavioral retrieval, reviewed capability growth, and optional model adaptation.
+
+
+Keep the desktop assistant usable while a separate, opt-in pipeline prepares training data and candidate models. Training must never block or mutate the live inference runtime. Day-to-day improvement should primarily use low-compute application-level adaptation; weight training is optional and evidence-driven.
 
 ## Data flow
 
