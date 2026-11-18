@@ -19,9 +19,9 @@ def _plain(value: object, limit: int = 240) -> str:
 class LearningCenterPanel:
     """Factory for a passive Qt panel with explicit consent and review actions.
 
-    No store, model, background worker, or audit log is created here. The
-    authenticated desktop owner supplies callbacks and owns their execution
-    lifecycle. Approval is impossible unless separate training consent is on.
+    No store, model, or audit log is created here. The panel runs supplied
+    storage/audit callbacks on one bounded Qt worker at a time and marshals
+    results back to the GUI thread. Approval requires both consent scopes.
     """
 
     @staticmethod
