@@ -104,6 +104,38 @@ class WorkforceTaskRouterTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.router.submit(**args)
 
+    def test_rejects_unhashable_and_text_capability_inputs_cleanly(self):
+        for invalid in ([["nested"]], "python", [None]):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.router.submit(
+                    goal_id=self.goal_id,
+                    description="Validate input",
+                    required_capabilities=invalid,
+                    idempotency_key="invalid-capability",
+                )
+
+    def test_rejects_boolean_autonomy_and_attempt_counts(self):
+        for field, value in (("max_autonomy_tier", True), ("max_attempts", True)):
+            args = {
+                "goal_id": self.goal_id,
+                "description": "Validate numeric types",
+                "required_capabilities": {"python"},
+                "idempotency_key": f"invalid-{field}",
+                field: value,
+            }
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.router.submit(**args)
+
+    def test_rejects_invalid_dependencies_before_queueing(self):
+        with self.assertRaises(ValueError):
+            self.router.submit(
+                goal_id=self.goal_id,
+                description="Validate dependencies",
+                required_capabilities={"python"},
+                idempotency_key="invalid-dependencies",
+                dependencies=[["task-id"]],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
