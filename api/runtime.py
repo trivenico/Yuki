@@ -28,15 +28,20 @@ from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
 from core.workforce_dashboard import WorkforceDashboard
+from core.workforce_application_runtime import WorkforceApplicationRuntime
 
 
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(
+        self, app: Any, application: ConversationApplicationRuntime,
+        workforce_application: WorkforceApplicationRuntime | None = None,
+    ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
+        self.workforce_application = workforce_application
         self.store = application.store
         self._closed = False
 
@@ -59,8 +64,12 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
-        self.application.close()
-        self._closed = True
+        try:
+            if self.workforce_application is not None:
+                self.workforce_application.close()
+        finally:
+            self.application.close()
+            self._closed = True
 
 
 def build_conversation_runtime(
@@ -85,6 +94,7 @@ def build_conversation_runtime(
     workforce_dashboard: WorkforceDashboard | None = None,
     pending_approvals: SQLitePendingApprovalStore | None = None,
     approval_audit: SQLiteApprovalAuditLog | None = None,
+    workforce_application: WorkforceApplicationRuntime | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -126,6 +136,8 @@ def build_conversation_runtime(
         raise TypeError("pending_approvals must be a SQLitePendingApprovalStore")
     if approval_audit is not None and not isinstance(approval_audit, SQLiteApprovalAuditLog):
         raise TypeError("approval_audit must be a SQLiteApprovalAuditLog")
+    if workforce_application is not None and not isinstance(workforce_application, WorkforceApplicationRuntime):
+        raise TypeError("workforce_application must be a WorkforceApplicationRuntime")
     if (pending_approvals is not None or approval_audit is not None) and workforce_dashboard is None:
         raise ValueError("approval inbox services require workforce_dashboard")
     if mcp_runtime is not None and oauth_connections is None:
@@ -175,7 +187,9 @@ def build_conversation_runtime(
                 app, auth_service, workforce_dashboard,
                 pending_approvals=pending_approvals, approval_audit=approval_audit,
             )
-        return ConversationRuntime(app, application)
+        return ConversationRuntime(app, application, workforce_application)
     except Exception:
+        if workforce_application is not None:
+            workforce_application.close()
         application.close()
         raise
