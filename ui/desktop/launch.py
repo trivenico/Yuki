@@ -1217,7 +1217,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 if missing_process_dependency:
                     detail += "; install the optional dependency with pip install '.[security-monitoring]'"
                 controls["status"].setText(
-                    "Security session: operation failed ( + detail + "). "
+                    "Security session: operation failed (" + detail + "). "
                     "Sign out to revoke the security session and retry cleanup."
                 )
                 self.security_global_status.setText(
