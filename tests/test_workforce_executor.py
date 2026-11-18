@@ -35,7 +35,11 @@ class WorkforceExecutorTests(unittest.TestCase):
         )
         self.agent = FakeAgent([self.skill])
         self.executor = YukiAgentWorkforceExecutor(self.agent)
-        self.employee = SimpleNamespace(autonomy_tier=1)
+        self.employee = SimpleNamespace(
+            autonomy_tier=1, status="available",
+            capabilities=("code_review", "time_read"),
+            permissions=("repo:read",),
+        )
 
     def execute(self, **overrides):
         values = {
