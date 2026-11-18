@@ -538,9 +538,9 @@ def run() -> int:
             voice_controls.addWidget(self.speech_stop_button)
             chat_layout.addLayout(voice_controls)
             wake_controls = QHBoxLayout()
-            self.wakeword_model_button = QPushButton("Choose Hey Yuki model…")
+            self.wakeword_model_button = QPushButton("Choose Yuki model…")
             self.wakeword_model_button.clicked.connect(self._choose_wakeword_model)
-            self.wakeword_start_button = QPushButton("Start Hey Yuki listening")
+            self.wakeword_start_button = QPushButton("Start Yuki listening")
             self.wakeword_start_button.setEnabled(False)
             self.wakeword_start_button.clicked.connect(self._start_wakeword_listener)
             self.wakeword_stop_button = QPushButton("Stop listening")
@@ -550,7 +550,7 @@ def run() -> int:
             wake_controls.addWidget(self.wakeword_start_button)
             wake_controls.addWidget(self.wakeword_stop_button)
             chat_layout.addLayout(wake_controls)
-            self.wakeword_status = QLabel("Hey Yuki listening is off. No background audio is captured.")
+            self.wakeword_status = QLabel("Yuki listening is off. No background audio is captured.")
             self.wakeword_status.setWordWrap(True)
             chat_layout.addWidget(self.wakeword_status)
             self.voice_status = QLabel("Microphone off. Spoken replies off. No background listening.")
@@ -1434,7 +1434,7 @@ Version: {version}",
 
         def _choose_wakeword_model(self):
             path, _ = QFileDialog.getOpenFileName(
-                self, "Choose local Hey Yuki ONNX model", "", "ONNX models (*.onnx)"
+                self, "Choose local Yuki ONNX model", "", "ONNX models (*.onnx)"
             )
             if not path:
                 return
@@ -1461,7 +1461,7 @@ Version: {version}",
                 if not self.wakeword_model_path:
                     return
             answer = QMessageBox.question(
-                self, "Start local Hey Yuki listening",
+                self, "Start local Yuki listening",
                 "Yuki will continuously process short microphone frames locally to detect the wake phrase. "
                 "No idle audio is saved, transcribed, or uploaded. After detection, Yuki records one "
                 "five-second local speech capture and places the transcript in the composer for your review. "
@@ -1523,7 +1523,7 @@ Version: {version}",
                     self.wakeword_start_button.setEnabled(False)
                     self.wakeword_stop_button.setEnabled(False)
                     self.wakeword_status.setText(
-                        "Hey Yuki listening is off. Microphone released."
+                        "Yuki listening is off. Microphone released."
                     )
                     if capture_after_close:
                         self._start_voice_capture()
@@ -1549,7 +1549,7 @@ Version: {version}",
                 return
             if operation == "start":
                 self.wakeword_status.setText(
-                    "Listening locally for Hey Yuki. Say the wake phrase to begin a five-second capture."
+                    "Listening locally for Yuki. Say the wake phrase to begin a five-second capture."
                 )
                 if self._wake_stop_requested:
                     self._wake_stop_requested = False
@@ -1568,7 +1568,7 @@ Version: {version}",
                     and self.voice_session.enabled
                 )
                 self.wakeword_stop_button.setEnabled(False)
-                self.wakeword_status.setText("Hey Yuki listening is off. Microphone released.")
+                self.wakeword_status.setText("Yuki listening is off. Microphone released.")
                 if self._wake_capture_after_stop:
                     self._wake_capture_after_stop = False
                     self._start_voice_capture()
@@ -1581,10 +1581,10 @@ Version: {version}",
                 return
             labels = {
                 "starting": "Loading local wake-word model and opening microphone…",
-                "listening": "Listening locally for Hey Yuki. No audio is saved or uploaded.",
+                "listening": "Listening locally for Yuki. No audio is saved or uploaded.",
                 "stopping": "Stopping wake-word listener and releasing microphone…",
-                "triggered": "Hey Yuki detected. Preparing a short capture…",
-                "disabled": "Hey Yuki listening is off. Microphone released.",
+                "triggered": "Yuki detected. Preparing a short capture…",
+                "disabled": "Yuki listening is off. Microphone released.",
                 "failed": "Wake-word listener stopped after an error.",
                 "closed": "Wake-word listener closed.",
             }
@@ -1644,7 +1644,7 @@ Version: {version}",
                 self.wakeword_model_button.setEnabled(True)
                 self.wakeword_stop_button.setEnabled(False)
                 self.wakeword_start_button.setEnabled(False)
-                self.wakeword_status.setText("Hey Yuki listening is off. Microphone released.")
+                self.wakeword_status.setText("Yuki listening is off. Microphone released.")
                 return
             if self._wakeword_operation == "close":
                 return
@@ -1702,7 +1702,7 @@ Version: {version}",
                 self.voice_session = VoiceSession(enabled=True)
                 self.voice_button.setEnabled(self.controller is not None and not self.busy)
                 self.voice_status.setText(
-                    "Microphone permission enabled for this session. Press Speak or explicitly start Hey Yuki listening."
+                    "Microphone permission enabled for this session. Press Speak or explicitly start Yuki listening."
                 )
                 self.wakeword_start_button.setEnabled(bool(self.wakeword_model_path))
             except Exception as exc:
