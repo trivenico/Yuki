@@ -58,4 +58,52 @@ def create_desktop_learning_coordinator(
 
 
 
-__all__ = ["create_desktop_learning_store", "create_desktop_learning_coordinator"]
+
+def build_learning_center_callbacks(
+    coordinator: ContinuousLearningCoordinator,
+    ledger: LearningAuthorizationLedger,
+) -> dict[str, Any]:
+    """Bind Learning Center actions to one actor-bound coordinator/ledger pair."""
+    if not isinstance(coordinator, ContinuousLearningCoordinator):
+        raise TypeError("coordinator must be a ContinuousLearningCoordinator.")
+    if not isinstance(ledger, LearningAuthorizationLedger):
+        raise TypeError("ledger must be a LearningAuthorizationLedger.")
+
+    def on_consent(purpose: str, enabled: bool) -> None:
+        ledger.record_consent(purpose, enabled)
+
+    def on_refresh() -> dict:
+        return coordinator.learning_center_state()
+
+    def on_review(proposal_id: str) -> dict | None:
+        return coordinator.correction_for_review(proposal_id)
+
+    def on_approve(proposal_id: str) -> None:
+        # Record the human decision first. The coordinator independently checks
+        # the durable audit record and current training consent before commit.
+        ledger.record_example_approval(proposal_id, True)
+        coordinator.approve_correction(
+            proposal_id,
+            training_consent=True,
+            approved_by=ledger.actor_id,
+        )
+
+    def on_reject(proposal_id: str) -> None:
+        ledger.record_example_approval(proposal_id, False)
+        if not coordinator.reject_correction(proposal_id):
+            raise RuntimeError("The pending correction was not found.")
+
+    return {
+        "on_consent": on_consent,
+        "on_refresh": on_refresh,
+        "on_review": on_review,
+        "on_approve": on_approve,
+        "on_reject": on_reject,
+    }
+
+
+__all__ = [
+    "build_learning_center_callbacks",
+    "create_desktop_learning_coordinator",
+    "create_desktop_learning_store",
+]
