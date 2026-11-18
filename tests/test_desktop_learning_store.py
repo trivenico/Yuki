@@ -125,6 +125,34 @@ class DesktopLearningStoreTests(unittest.TestCase):
             self.assertIsNotNone(reopened.build_few_shot_patch("Python unit test"))
             self.assertEqual(len(example_id), 24)
 
+    def test_session_accepts_only_explicit_correction_payload_with_learning_consent(self):
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
+        except ImportError:
+            self.skipTest("cryptography optional dependency not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "yuki-profile"
+            with patch("ui.desktop.learning.desktop_data_root", return_value=root):
+                session = create_desktop_learning_session(
+                    _Keyring(), actor_id="authenticated-owner",
+                )
+                messages = [
+                    {"role": "user", "content": "How should I test this?"},
+                    {"role": "assistant", "content": "Use a focused unit test."},
+                ]
+                with self.assertRaises(Exception):
+                    session.submit_correction(
+                        messages=messages, source_reference="conversation:turn-1",
+                        task_type="coding",
+                    )
+                session.callbacks["on_consent"]("learning", True)
+                proposal = session.submit_correction(
+                    messages=messages, source_reference="conversation:turn-1",
+                    task_type="coding",
+                )
+                self.assertEqual(session.callbacks["on_review"](proposal)["messages"], messages)
+                session.close()
+
     def test_desktop_learning_session_closes_coordinator_and_audit_callbacks(self):
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
