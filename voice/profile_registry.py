@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
+import stat
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -47,10 +49,28 @@ class VoiceProfileRegistry:
             raise VoiceProfileRegistryError("Voice profile directory is not a safe directory.")
         try:
             os.chmod(self._directory, 0o700)
+            self._directory_fd = None
+            self._dir_fd_supported = (
+                os.name == "posix"
+                and os.open in os.supports_dir_fd
+                and os.replace in os.supports_dir_fd
+            )
+            if self._dir_fd_supported:
+                flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+                self._directory_fd = os.open(self._directory, flags)
+                directory_stat = os.fstat(self._directory_fd)
+                if not stat.S_ISDIR(directory_stat.st_mode):
+                    raise VoiceProfileRegistryError("Voice profile directory is not a directory.")
+                if hasattr(os, "getuid") and directory_stat.st_uid != os.getuid():
+                    raise VoiceProfileRegistryError("Voice profile directory is not owned by this user.")
+                if directory_stat.st_mode & 0o077:
+                    raise VoiceProfileRegistryError("Voice profile directory must be private (mode 0700).")
+        except VoiceProfileRegistryError:
+            raise
         except OSError as exc:
-            raise VoiceProfileRegistryError("Could not secure voice profile directory permissions.") from exc
+            raise VoiceProfileRegistryError("Could not securely open voice profile directory.") from exc
         self._path = self._directory / "profiles.json"
-        if self._path.is_symlink():
+        if not self._dir_fd_supported and self._path.is_symlink():
             raise VoiceProfileRegistryError("Voice profile registry must not be a symlink.")
         self._state = self._load()
 
@@ -63,14 +83,33 @@ class VoiceProfileRegistry:
             raise VoiceProfileAuthorizationError("An authenticated session is required to manage voice profiles.")
 
     def _load(self) -> dict:
-        if not self._path.exists():
-            return {"schema_version": _SCHEMA_VERSION, "profiles": {}, "active_id": None, "previous_id": None}
-        if self._path.is_symlink() or not self._path.is_file():
-            raise VoiceProfileRegistryError("Voice profile registry is not a regular file.")
         try:
-            if self._path.stat().st_size > 256 * 1024:
-                raise VoiceProfileRegistryError("Voice profile registry exceeds its size limit.")
-            state = json.loads(self._path.read_text(encoding="utf-8"))
+            if self._dir_fd_supported:
+                try:
+                    fd = os.open(
+                        "profiles.json",
+                        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                        dir_fd=self._directory_fd,
+                    )
+                except FileNotFoundError:
+                    return {"schema_version": _SCHEMA_VERSION, "profiles": {}, "active_id": None, "previous_id": None}
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode):
+                    os.close(fd)
+                    raise VoiceProfileRegistryError("Voice profile registry is not a regular file.")
+                if info.st_size > 256 * 1024:
+                    os.close(fd)
+                    raise VoiceProfileRegistryError("Voice profile registry exceeds its size limit.")
+                with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                    state = json.load(handle)
+            else:
+                if not self._path.exists():
+                    return {"schema_version": _SCHEMA_VERSION, "profiles": {}, "active_id": None, "previous_id": None}
+                if self._path.is_symlink() or not self._path.is_file():
+                    raise VoiceProfileRegistryError("Voice profile registry is not a regular file.")
+                if self._path.stat().st_size > 256 * 1024:
+                    raise VoiceProfileRegistryError("Voice profile registry exceeds its size limit.")
+                state = json.loads(self._path.read_text(encoding="utf-8"))
         except VoiceProfileRegistryError:
             raise
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -104,6 +143,36 @@ class VoiceProfileRegistry:
 
     def _save(self) -> None:
         payload = json.dumps(self._state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if self._dir_fd_supported:
+            temporary = ".profiles-" + secrets.token_hex(16) + ".tmp"
+            fd = None
+            try:
+                fd = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=self._directory_fd,
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    fd = None
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(
+                    temporary, "profiles.json",
+                    src_dir_fd=self._directory_fd, dst_dir_fd=self._directory_fd,
+                )
+                os.fsync(self._directory_fd)
+            except OSError as exc:
+                raise VoiceProfileRegistryError("Voice profile registry could not be saved safely.") from exc
+            finally:
+                if fd is not None:
+                    os.close(fd)
+                try:
+                    os.unlink(temporary, dir_fd=self._directory_fd)
+                except OSError:
+                    pass
+            return
         fd, temporary = tempfile.mkstemp(prefix=".profiles-", suffix=".tmp", dir=self._directory)
         try:
             try:
