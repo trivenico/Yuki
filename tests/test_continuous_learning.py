@@ -28,6 +28,10 @@ class FakeMemory:
 class FakeDurableLearningStore:
     def __init__(self):
         self.state = {"schema_version": 1, "pending": [], "approved": []}
+        self.closed = False
+
+    def close(self):
+        self.closed = True
 
     def read(self):
         return copy.deepcopy(self.state)
@@ -279,6 +283,7 @@ class ContinuousLearningTests(unittest.TestCase):
         )
         learning.close()
         self.assertTrue(learning.closed)
+        self.assertTrue(store.closed)
         self.assertEqual(learning.pending_corrections(), [])
         self.assertIsNone(learning.build_few_shot_patch("Python unit test"))
         self.assertEqual(learning.approved_example_count, 0)
