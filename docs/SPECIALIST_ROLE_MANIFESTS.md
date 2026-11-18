@@ -35,3 +35,7 @@ Do not set `handler_ready=True` merely to make a role routable. Handler readines
 The existing `automation.specialist_worker` already provides bounded text-only provider handlers for research, coding, testing, and reporting. `build_initial_role_handlers(provider_manager)` maps those implementations to RES-12, ENG-03, ENG-16, and PROD-09 and returns the mapping expected by `SpecialistTaskWorker`.
 
 This is an adapter factory, not activation. It does not register handlers in the coordinator, change permissions, enable roles, or set `handler_ready=True`. Chief of Staff and Security Reviewer do not yet have matching role-specific implementations in this adapter map. All six role records remain disabled until a separately reviewed deployment composition wires the provider, worker, task authorization, and lifecycle controls together.
+
+## Plan audit snapshots
+
+Every newly created delegated subtask now records the selected specialist's `role_version` and `handler_id` alongside its assigned agent ID. This preserves which manifest revision was selected even if the live registry is later updated. Existing plan rows migrate with version 1 and a null handler snapshot because the earlier schema did not capture these fields.
