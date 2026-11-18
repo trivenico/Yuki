@@ -6,7 +6,6 @@ from core.approved_action_adapter import ApprovedActionAdapter, ApprovedActionBi
 from core.agent import YukiCoreAgent
 from core.permissions import PermissionGate
 from skills.base import Skill, SkillResult
-from skills.registry import SkillRegistry
 
 
 class Registry:
@@ -61,7 +60,7 @@ class ApprovedActionAdapterTests(unittest.TestCase):
         skill = WriteSkill()
         requests = []
         agent = YukiCoreAgent(
-            registry=SkillRegistry([skill]),
+            skills=[skill],
             permission_gate=PermissionGate(lambda request: requests.append(request) or True),
         )
         adapter = ApprovedActionAdapter(agent, {
