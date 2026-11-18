@@ -7,6 +7,8 @@ from .base import Skill, SkillResult
 class SystemSkill(Skill):
     name = "system"
     description = "Show Python and operating-system details."
+    capabilities = ("system_info",)
+    permissions = ()
 
     def run(self, argument: str = "") -> SkillResult:
         details = {
