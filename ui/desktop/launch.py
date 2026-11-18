@@ -78,7 +78,7 @@ def _shutdown_desktop_services(
         except Exception as exc:
             errors.append(exc)
         if errors:
-            raise RuntimeError("Desktop session cleanup was incomplete.") from errors[0]
+            raise errors[0]
 
     if lifecycle is not None:
         lifecycle.close(before_close=revoke_active_session)
@@ -420,12 +420,7 @@ def run() -> int:
             finally:
                 if self.security_pool is not None:
                     self.security_pool.waitForDone()
-            error = (
-                RuntimeError("Desktop sign-out cleanup was incomplete.")
-                if errors else None
-            )
-            if error is not None:
-                error.__cause__ = errors[0]
+            error = errors[0] if errors else None
             self.signals.finished.emit(error)
 
     class ShutdownWorkerSignals(QObject):
