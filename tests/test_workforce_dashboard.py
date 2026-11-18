@@ -32,6 +32,17 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(sum(row["employees"] for row in snapshot["departments"]), 100)
         self.assertEqual(snapshot["goals"][0]["goal_id"], goal_id)
 
+    def test_snapshot_reports_truncation_only_when_more_goals_exist(self):
+        first_goal = self.engine.create_goal()
+        exact_page = self.dashboard.snapshot(max_goals=1)
+        self.assertEqual([row["goal_id"] for row in exact_page["goals"]], [first_goal])
+        self.assertFalse(exact_page["truncated_goals"])
+
+        self.engine.create_goal()
+        truncated = self.dashboard.snapshot(max_goals=1)
+        self.assertEqual(len(truncated["goals"]), 1)
+        self.assertTrue(truncated["truncated_goals"])
+
     def test_snapshot_ignores_non_workforce_task_types(self):
         goal_id = self.engine.create_goal()
         self.engine.submit(goal_id, "other.task", {}, idempotency_key="other-task")
