@@ -14,11 +14,11 @@ Read-only endpoints:
 
 The dashboard dependency is deliberately injected. Deployments must pass the same registry and durable task engine used by their workforce runtime; this API does not create a second in-memory workforce or queue. The dashboard API does not expose task mutation, approvals, or execution controls.
 
-## Remaining graphical work
+## Remaining approval workflow work
 
-The executive command-center frontend is not implemented yet. The current web shell remains the chat interface. Future UI work should integrate with the authenticated endpoints above and display workforce status, employee/department views, task progress, and approval state. Any action controls must continue to use the existing permission and approval gates.
+The existing web shell now includes a read-only Executive Command Center, goal execution timeline, and optional CEO Approval Center inbox/audit view. The graphical dashboard does not yet submit approval decisions. Future action controls must use the existing `ApprovalCoordinator`, creator actor/session binding, explicit action confirmation, one-time pending-action consumption, audit events, and guarded execution/recovery path. Never bypass `core.permissions.PermissionGate`.
 
-A graphical dashboard and Textual TUI are not implemented yet. Future UI work should display the exact action, target/workspace, risk, and one-time approval decision; provide cancellation and an audit view; and never bypass `core.permissions.PermissionGate`.
+A graphical approval decision workflow and Textual TUI are not implemented yet. Before enabling approval buttons, show the exact action, target/workspace, arguments, risk and consequences; require an explicit per-action confirmation; preserve creator/session restrictions; and make uncertain outcomes visible for recovery rather than offering automatic retries.
 
 ## Executive workforce command center
 
