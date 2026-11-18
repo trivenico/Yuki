@@ -1,0 +1,57 @@
+name: Local wake-word adapter tests
+
+on:
+  pull_request:
+    paths:
+      - "voice/openwakeword_detector.py"
+      - "voice/openwakeword_session.py"
+      - "voice/wakeword_audio.py"
+      - "voice/wakeword_session.py"
+      - "tests/test_openwakeword_detector.py"
+      - "tests/test_wakeword_audio.py"
+      - "tests/test_wakeword_session.py"
+      - "requirements-wakeword-openwakeword.txt"
+      - ".github/workflows/wakeword-adapter-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "voice/openwakeword_detector.py"
+      - "voice/openwakeword_session.py"
+      - "voice/wakeword_audio.py"
+      - "voice/wakeword_session.py"
+      - "tests/test_openwakeword_detector.py"
+      - "tests/test_wakeword_audio.py"
+      - "tests/test_wakeword_session.py"
+      - "requirements-wakeword-openwakeword.txt"
+      - ".github/workflows/wakeword-adapter-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wakeword-adapter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-wakeword:
+    name: Local wake-word adapter (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-wakeword-openwakeword.txt
+      - name: Install optional inference runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-wakeword-openwakeword.txt
+          python -m pip install pytest
+      - name: Run local wake-word tests
+        run: |
+          python -m pytest -q \
+            tests/test_openwakeword_detector.py \
+            tests/test_wakeword_audio.py \
+            tests/test_wakeword_session.py
