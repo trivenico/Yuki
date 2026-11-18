@@ -430,5 +430,30 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(called, [])
 
 
+    def test_stale_status_refresh_cannot_regress_terminal_subtask_state(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="monotonic-subtask-status",
+            subtasks=[SubtaskSpec(
+                "implement", "Propose a safe patch", ("coding",),
+                requires_approval=False,
+            )],
+        )
+        plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = plan.subtasks[0].task_id
+        result = self.worker({"code-review": lambda _request: "review complete"}).run_once()
+        self.assertEqual(result.state, "succeeded")
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.coordinator._set_subtask(
+            plan.plan_id, "implement", status="queued",
+        )
+        with self.coordinator._connect() as db:
+            row = db.execute(
+                "SELECT status FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan.plan_id, "implement"),
+            ).fetchone()
+        self.assertEqual(row["status"], "succeeded")
+        self.assertEqual(self.store.get(task_id).state, "succeeded")
+
+
 if __name__ == "__main__":
     unittest.main()
