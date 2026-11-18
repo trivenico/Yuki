@@ -49,3 +49,7 @@ At plan creation, `review_required` and `human_approval` roles cannot be dispatc
 The `max_steps` ceiling is enforced at plan creation as the maximum number of subtasks assigned to one specialist in a single plan. It is not a model reasoning-step or wall-clock budget. `max_tokens` remains declarative until the provider adapter exposes a verifiable token-limit contract; no token-budget enforcement is claimed yet.
 
 Approval class is also stored in the plan snapshot and compared at dispatch. This makes dispatch fail closed if an approval policy is changed in the registry without a corresponding role-version bump.
+
+## Remaining activation gate: queued-task execution binding
+
+The coordinator checks the manifest snapshot immediately before it creates a task. The current `SpecialistTaskWorker` resolves a callable by agent ID and validates the allow-listed `emit` action, but it does not yet independently compare the queued task's role version and handler identity with the live registry at claim time. Therefore a manifest change after task creation is not detected by this layer. Keep the new role slots disabled until the worker receives a reviewed, fail-closed execution binding (including handler ID and role revision) and tests cover a change between enqueue and claim.
