@@ -210,6 +210,6 @@ class SecuritySessionController:
             self._generation += 1
             # Do not return while an in-flight startup could still enable the
             # monitor after shutdown has completed.
-            while self._starting:
+            while self._starting or self._stop_requests:
                 self._condition.wait()
         self._disable_monitor()
