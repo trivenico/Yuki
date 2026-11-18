@@ -721,6 +721,43 @@ class SpecialistAgentCoordinator:
 
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
+    def validate_task_manifest(self, *, task_id: str, agent_id: str) -> bool:
+        """Validate a queued specialist task against its persisted and live role snapshot.
+
+        Intended for the worker's claim-time guard. A missing plan binding, inactive
+        role, or any changed manifest field fails closed.
+        """
+        if (
+            not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200
+            or not isinstance(agent_id, str) or not _ID.fullmatch(agent_id)
+        ):
+            return False
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT
+                    s.agent_id, s.agent_role_version, s.handler_id,
+                    s.agent_action, s.agent_approval_class,
+                    a.role_version, a.handler_id AS current_handler_id,
+                    a.action AS current_action, a.approval_class AS current_approval_class,
+                    a.enabled, a.handler_ready
+                FROM agent_plan_subtasks AS s
+                JOIN specialist_agents AS a ON a.agent_id = s.agent_id
+                WHERE s.task_id=? AND s.agent_id=?
+                """,
+                (task_id, agent_id),
+            ).fetchone()
+        return bool(
+            row is not None
+            and row["enabled"] == 1
+            and row["handler_ready"] == 1
+            and row["agent_role_version"] == row["role_version"]
+            and row["handler_id"] is not None
+            and row["handler_id"] == row["current_handler_id"]
+            and row["agent_action"] == row["current_action"]
+            and row["agent_approval_class"] == row["current_approval_class"]
+        )
+
     def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
         with self._connect() as db:
             if task_id is None:
