@@ -69,7 +69,8 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
     def test_approval_is_actor_and_session_bound(self):
         wrong_actor = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="intruder",
-            session_id="session-1", confirm=lambda _: True,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
         )
         self.assertEqual(wrong_actor.status, "pending_not_found")
         correct = self.coordinator.approve(
