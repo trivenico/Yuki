@@ -141,6 +141,8 @@ def _create_windows_job(process: Any, limits: VoiceCloneWorkerLimits):
         wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
     ]
     kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -149,18 +151,28 @@ def _create_windows_job(process: Any, limits: VoiceCloneWorkerLimits):
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
         raise OSError(ctypes.get_last_error(), "Could not create voice-clone Job Object.")
+    process_handle = None
     try:
         if not kernel32.SetInformationJobObject(
             job, 9, ctypes.byref(info), ctypes.sizeof(info),
         ):
             raise OSError(ctypes.get_last_error(), "Could not configure voice-clone Job Object.")
-        process_handle = wintypes.HANDLE(int(process._handle))
+        # multiprocessing's private _handle is not a stable cross-version API.
+        # Open a process handle with the rights required by AssignProcessToJobObject.
+        process_handle = kernel32.OpenProcess(
+            0x0001 | 0x0100, False, int(process.pid),
+        )
+        if not process_handle:
+            raise OSError(ctypes.get_last_error(), "Could not open voice-clone worker process.")
         if not kernel32.AssignProcessToJobObject(job, process_handle):
             raise OSError(ctypes.get_last_error(), "Could not assign voice-clone worker to Job Object.")
         return job, kernel32
     except Exception:
         kernel32.CloseHandle(job)
         raise
+    finally:
+        if process_handle:
+            kernel32.CloseHandle(process_handle)
 
 
 def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
