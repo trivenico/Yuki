@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from threading import RLock
 from typing import Any, Callable
 
 from training.few_shot_patch import FewShotPatchLayer
@@ -46,6 +47,7 @@ class ContinuousLearningCoordinator:
         self._consent_verifier = consent_verifier
         self._approval_verifier = approval_verifier
         self._pending: dict[str, dict[str, Any]] = {}
+        self._lock = RLock()
 
     def _has_consent(self, purpose: str) -> bool:
         if self._consent_verifier is None:
@@ -75,8 +77,6 @@ class ContinuousLearningCoordinator:
         """Stage a correction only when durable learning consent is verified."""
         if learning_consent is not True or not self._has_consent("learning"):
             raise ContinuousLearningError("A verified, explicit learning-consent record is required.")
-        if len(self._pending) >= self.MAX_PENDING:
-            raise ContinuousLearningError("The pending correction review queue is full.")
         if not isinstance(source_reference, str) or not source_reference.strip() or len(source_reference) > 512:
             raise ValueError("source_reference must be bounded non-empty text.")
         if not isinstance(task_type, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", task_type):
@@ -87,21 +87,25 @@ class ContinuousLearningCoordinator:
              "\0".join(item["role"] + "\0" + item["content"] for item in normalized)).encode("utf-8")
         ).hexdigest()
         proposal_id = digest[:24]
-        if proposal_id not in self._pending:
-            self._pending[proposal_id] = {
-                "messages": [dict(item) for item in normalized],
-                "source_reference": source_reference,
-                "task_type": task_type,
-            }
+        with self._lock:
+            if proposal_id not in self._pending and len(self._pending) >= self.MAX_PENDING:
+                raise ContinuousLearningError("The pending correction review queue is full.")
+            if proposal_id not in self._pending:
+                self._pending[proposal_id] = {
+                    "messages": [dict(item) for item in normalized],
+                    "source_reference": source_reference,
+                    "task_type": task_type,
+                }
         return proposal_id
 
     def pending_corrections(self) -> list[dict[str, str]]:
         """Expose only bounded review metadata, never the private source reference."""
-        return [
-            {"proposal_id": proposal_id, "task_type": item["task_type"],
-             "message_count": str(len(item["messages"]))}
-            for proposal_id, item in sorted(self._pending.items())
-        ]
+        with self._lock:
+            return [
+                {"proposal_id": proposal_id, "task_type": item["task_type"],
+                 "message_count": str(len(item["messages"]))}
+                for proposal_id, item in sorted(self._pending.items())
+            ]
 
     def approve_correction(
         self,
@@ -111,7 +115,7 @@ class ContinuousLearningCoordinator:
         approved_by: str,
     ) -> str:
         """Approve one staged example using independently verified consent and authority."""
-        if not isinstance(proposal_id, str) or proposal_id not in self._pending:
+        if not isinstance(proposal_id, str):
             raise ContinuousLearningError("Correction proposal was not found.")
         if training_consent is not True or not self._has_consent("training"):
             raise ContinuousLearningError("A verified, explicit training-consent record is required.")
@@ -123,26 +127,30 @@ class ContinuousLearningCoordinator:
             approved = False
         if not approved:
             raise ContinuousLearningError("The authenticated reviewer did not approve this proposal.")
-        item = self._pending[proposal_id]
-        try:
-            example_id = self.generator.add_example(
-                messages=item["messages"],
-                source_reference=item["source_reference"],
-                task_type=item["task_type"],
-                training_consent=True,
-                human_approved=True,
-                approved_by=approved_by,
-            )
-        except (SFTDataError, ValueError) as exc:
-            raise ContinuousLearningError(str(exc)) from exc
-        del self._pending[proposal_id]
-        return example_id
+        with self._lock:
+            item = self._pending.get(proposal_id)
+            if item is None:
+                raise ContinuousLearningError("Correction proposal was not found.")
+            try:
+                example_id = self.generator.add_example(
+                    messages=item["messages"],
+                    source_reference=item["source_reference"],
+                    task_type=item["task_type"],
+                    training_consent=True,
+                    human_approved=True,
+                    approved_by=approved_by,
+                )
+            except (SFTDataError, ValueError) as exc:
+                raise ContinuousLearningError(str(exc)) from exc
+            del self._pending[proposal_id]
+            return example_id
 
     def reject_correction(self, proposal_id: str) -> bool:
         """Discard a staged correction without exporting it."""
         if not isinstance(proposal_id, str):
             return False
-        return self._pending.pop(proposal_id, None) is not None
+        with self._lock:
+            return self._pending.pop(proposal_id, None) is not None
 
     def build_few_shot_patch(
         self,
@@ -153,15 +161,17 @@ class ContinuousLearningCoordinator:
         max_chars: int = 6000,
     ) -> str | None:
         """Build a patch from approved examples only; no model or policy mutation."""
-        layer = FewShotPatchLayer(
-            self.generator.export_jsonl(), max_examples=max_examples, max_chars=max_chars,
-        )
+        with self._lock:
+            dataset = self.generator.export_jsonl()
+        layer = FewShotPatchLayer(dataset, max_examples=max_examples, max_chars=max_chars)
         return layer.build_patch(query, task_type=task_type)
 
     def export_sft_jsonl(self) -> str:
         """Return deterministic approved examples in memory; caller owns any file write."""
-        return self.generator.export_jsonl()
+        with self._lock:
+            return self.generator.export_jsonl()
 
     @property
     def approved_example_count(self) -> int:
-        return len(self.generator)
+        with self._lock:
+            return len(self.generator)
