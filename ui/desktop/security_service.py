@@ -9,6 +9,7 @@ from __future__ import annotations
 from threading import RLock
 from typing import Any, Callable
 
+
 class SecuritySessionError(RuntimeError):
     """Security consent or authenticated-session requirements were not met."""
 
@@ -39,7 +40,7 @@ class DesktopSecurityService:
         self._authorize = authorize
         self._monitor_factory = monitor_factory
         self._controller_factory = controller_factory
-        self._controller: SecuritySessionController | None = None
+        self._controller: Any | None = None
         self._lock = RLock()
         self._closed = False
         self._generation = 0
