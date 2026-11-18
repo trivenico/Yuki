@@ -88,6 +88,7 @@ class EncryptedLearningStore:
         self._account = keyring_account
         self._aad = _AAD_PREFIX + keyring_account.encode("utf-8")
         self._lock = RLock()
+        self._closed = False
         self._key = self._load_or_create_key()
 
     def _load_or_create_key(self) -> bytes:
@@ -227,7 +228,12 @@ class EncryptedLearningStore:
                 raise SecureLearningStoreError("Approved learning timestamp is invalid.")
         return copy.deepcopy(state)
 
+    def _ensure_open(self) -> None:
+        if self._closed or self._key is None:
+            raise SecureLearningStoreError("Encrypted learning store is closed.")
+
     def _read_unlocked(self) -> dict:
+        self._ensure_open()
         try:
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(self.path, flags)
@@ -272,6 +278,7 @@ class EncryptedLearningStore:
             raise SecureLearningStoreError("Encrypted learning authentication or validation failed; data was not changed.") from exc
 
     def _write_unlocked(self, state: dict) -> None:
+        self._ensure_open()
         validated = self._validate_state(state)
         nonce = os.urandom(12)
         plaintext = json.dumps(validated, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -311,20 +318,41 @@ class EncryptedLearningStore:
                 pass
 
     def read(self) -> dict:
-        with self._lock, self._process_lock():
-            return self._read_unlocked()
+        with self._lock:
+            self._ensure_open()
+            with self._process_lock():
+                return self._read_unlocked()
 
     def update(self, mutator: Callable[[dict], T]) -> T:
         """Run one atomic read/modify/write transaction under cross-process lock."""
         if not callable(mutator):
             raise TypeError("mutator must be callable")
-        with self._lock, self._process_lock():
-            state = self._read_unlocked()
-            result = mutator(state)
-            self._write_unlocked(state)
-            return result
+        with self._lock:
+            self._ensure_open()
+            with self._process_lock():
+                state = self._read_unlocked()
+                result = mutator(state)
+                self._write_unlocked(state)
+                return result
 
     def replace(self, state: dict) -> None:
         """Atomically replace all learning state; caller must obtain user approval."""
-        with self._lock, self._process_lock():
-            self._write_unlocked(state)
+        with self._lock:
+            self._ensure_open()
+            with self._process_lock():
+                self._write_unlocked(state)
+
+    def close(self) -> None:
+        """Invalidate this store instance and drop its in-memory key reference."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._key = None
+            self._keyring = None
+            self._aesgcm = None
+            self._aad = b""
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
