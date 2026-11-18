@@ -29,7 +29,8 @@ class ReviewDecision:
 
 
 class Reviewer:
-    def __init__(self, decision=None):
+    def __init__(self, decision=None, reviewer_id="QA-001"):
+        self.reviewer_id = reviewer_id
         self.decision = decision or ReviewDecision(True)
         self.calls = []
 
@@ -118,6 +119,49 @@ class WorkforceWorkerTests(unittest.TestCase):
         self.assertEqual(result["status"], "approval_required")
         self.assertNotEqual(self.engine.get_task(task["id"])["state"], "succeeded")
 
+
+
+    def test_self_review_is_rejected(self):
+        reviewer = Reviewer(reviewer_id=self.employee.employee_id)
+        worker = WorkforceWorker(
+            self.engine, self.registry, worker_id="review-worker",
+            executor=self.executor, reviewer=reviewer,
+        )
+        payload = {
+            "description": "Review API code",
+            "assigned_employee_id": self.employee.employee_id,
+            "required_capabilities": ["python", "api_design"],
+            "required_permissions": ["repo:read"],
+            "max_autonomy_tier": 1,
+            "execution_authorized": False,
+            "review_required": True,
+        }
+        task = self.submit(payload=payload)
+        result = worker.run_once()
+        self.assertEqual(result["status"], "self_review_denied")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
+        self.assertEqual(reviewer.calls, [])
+
+    def test_reviewer_without_identity_fails_closed(self):
+        reviewer = Reviewer()
+        reviewer.reviewer_id = ""
+        worker = WorkforceWorker(
+            self.engine, self.registry, worker_id="review-worker",
+            executor=self.executor, reviewer=reviewer,
+        )
+        payload = {
+            "description": "Review API code",
+            "assigned_employee_id": self.employee.employee_id,
+            "required_capabilities": ["python", "api_design"],
+            "required_permissions": ["repo:read"],
+            "max_autonomy_tier": 1,
+            "execution_authorized": False,
+            "review_required": True,
+        }
+        task = self.submit(payload=payload)
+        result = worker.run_once()
+        self.assertEqual(result["status"], "reviewer_identity_unavailable")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
 
     def test_review_required_task_completes_only_after_independent_approval(self):
         reviewer = Reviewer()
