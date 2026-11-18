@@ -23,7 +23,7 @@ class ApprovalPreviewRedactionTests(unittest.TestCase):
             "items": list(range(75)),
             "large": "x" * 1500,
         })
-        self.assertEqual(preview["deep"]["a"]["b"]["c"]["d"]["e"]["f"], "[truncated]")
+        self.assertEqual(preview["deep"]["a"]["b"]["c"]["d"]["e"], "[truncated]")
         self.assertEqual(len(preview["items"]), 51)
         self.assertEqual(preview["items"][-1], "[truncated]")
         self.assertTrue(preview["large"].endswith("…[truncated]"))
