@@ -15,7 +15,10 @@ from ui.desktop.conversation_adapter import DesktopConversationAdapter
 class AuthenticatedDesktopConversation:
     """Session-checked facade for one authenticated desktop account."""
 
-    def __init__(self, application: Any, *, identity: Any, sessions: Any, memory: Any = None) -> None:
+    def __init__(
+        self, application: Any, *, identity: Any, sessions: Any,
+        memory: Any = None, learning: Any = None,
+    ) -> None:
         actor_id = getattr(identity, "actor_id", None)
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 128:
             raise ValueError("identity must contain a valid authenticated actor_id.")
@@ -30,7 +33,7 @@ class AuthenticatedDesktopConversation:
         self._lifecycle = Condition(RLock())
         self._active_sends = 0
         self._conversation = DesktopConversationAdapter(
-            application, owner_id=actor_id, memory=memory,
+            application, owner_id=actor_id, memory=memory, learning=learning,
         )
 
     @property
