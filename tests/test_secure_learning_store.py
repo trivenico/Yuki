@@ -248,6 +248,19 @@ class EncryptedLearningStoreTests(unittest.TestCase):
             )
         self.assertEqual(self.values, {})
 
+    def test_close_drops_key_reference_and_rejects_future_operations(self):
+        store = self.make_store()
+        store.replace({"schema_version": 1, "pending": [], "approved": []})
+        self.assertFalse(store.closed)
+        store.close()
+        store.close()
+        self.assertTrue(store.closed)
+        self.assertIsNone(store._key)
+        with self.assertRaisesRegex(SecureLearningStoreError, "closed"):
+            store.read()
+        with self.assertRaisesRegex(SecureLearningStoreError, "closed"):
+            store.update(lambda state: state)
+
     def test_private_parent_directory_is_required(self):
         if os.name != "posix":
             self.skipTest("POSIX permission contract")
