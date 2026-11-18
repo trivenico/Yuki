@@ -223,7 +223,7 @@ class LearningCenterPanel:
                 # are deliberately not accepted by this view.
                 preview.setPlainText("\n\n".join(blocks))
                 selected_id["value"] = proposal_id
-                approve.setEnabled(state_cache["training"])
+                approve.setEnabled(state_cache["learning"] and state_cache["training"])
                 reject.setEnabled(state_cache["learning"])
 
         presenter = Presenter()
@@ -284,7 +284,7 @@ class LearningCenterPanel:
 
         def approve_selected(_checked=False):
             proposal_id = selected_id["value"]
-            if not proposal_id or not state_cache["training"]:
+            if not proposal_id or not (state_cache["learning"] and state_cache["training"]):
                 return
             answer = QMessageBox.question(
                 page,
