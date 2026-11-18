@@ -6,7 +6,9 @@ This adapter never executes model output, shell commands, or arbitrary code.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
+import math
+import threading
 
 from core.durable_task_engine import DurableTaskEngine
 from core.workforce import AgentRegistry
@@ -22,6 +24,8 @@ class WorkforceWorker:
         *,
         worker_id: str,
         executor: Any,
+        lease_seconds: int = 60,
+        heartbeat_interval_seconds: float = 20,
     ):
         if not isinstance(engine, DurableTaskEngine):
             raise TypeError("engine must be a DurableTaskEngine")
@@ -31,13 +35,50 @@ class WorkforceWorker:
             raise ValueError("worker_id must be non-empty bounded text")
         if not callable(getattr(executor, "authorize_and_execute", None)):
             raise TypeError("executor must implement authorize_and_execute()")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 2 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 2 to 3600")
+        if (isinstance(heartbeat_interval_seconds, bool)
+                or not isinstance(heartbeat_interval_seconds, (int, float))
+                or not math.isfinite(heartbeat_interval_seconds)
+                or heartbeat_interval_seconds <= 0
+                or heartbeat_interval_seconds > min(lease_seconds / 2, 300)):
+            raise ValueError("heartbeat interval must be finite, positive, and no greater than half the lease or 300 seconds")
         self.engine = engine
         self.registry = registry
         self.worker_id = worker_id
         self.executor = executor
+        self.lease_seconds = lease_seconds
+        self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
+
+    def _execute_with_heartbeat(self, **kwargs):
+        stop = threading.Event()
+        errors = []
+
+        def renew():
+            while not stop.wait(self.heartbeat_interval_seconds):
+                try:
+                    self.engine.heartbeat(
+                        kwargs["task_id"], self.worker_id,
+                        lease_seconds=self.lease_seconds,
+                    )
+                except Exception as error:
+                    errors.append(error)
+                    stop.set()
+                    return
+
+        thread = threading.Thread(target=renew, name="yuki-workforce-lease", daemon=True)
+        thread.start()
+        try:
+            outcome = self.executor.authorize_and_execute(**kwargs)
+        finally:
+            stop.set()
+            thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
+        if errors:
+            raise RuntimeError("workforce task lease heartbeat failed") from errors[0]
+        return outcome
 
     def run_once(self) -> dict[str, Any]:
-        task = self.engine.claim(self.worker_id, task_type="workforce.task")
+        task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds, task_type="workforce.task")
         if task is None:
             return {"state": "idle", "status": "no_task"}
         task_id = task["id"]
@@ -92,7 +133,7 @@ class WorkforceWorker:
             # This is the only execution seam. The injected executor must perform
             # fresh authorization and obtain any required approval; registry
             # assignment and this worker are never treated as approval.
-            outcome = self.executor.authorize_and_execute(
+            outcome = self._execute_with_heartbeat(
                 employee=employee,
                 description=payload["description"],
                 required_capabilities=tuple(sorted(required_capabilities)),
