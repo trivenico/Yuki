@@ -150,6 +150,19 @@ class DesktopLearningSession:
             raise RuntimeError("The authenticated learning session is closed.")
         return dict(self._callbacks)
 
+    def submit_correction(
+        self, *, messages: list[dict[str, str]], source_reference: str, task_type: str,
+    ) -> str:
+        """Stage only the exact interaction explicitly supplied by the desktop UI."""
+        if self._closed:
+            raise RuntimeError("The authenticated learning session is closed.")
+        return self.coordinator.propose_correction(
+            messages=messages,
+            source_reference=source_reference,
+            task_type=task_type,
+            learning_consent=True,
+        )
+
     def build_few_shot_patch(self, query: str, *, max_examples: int, max_chars: int):
         if self._closed:
             return None
