@@ -41,3 +41,7 @@ This is an adapter factory, not activation. It does not register handlers in the
 Every newly created delegated subtask now records the selected specialist's `role_version` and `handler_id` alongside its assigned agent ID. This preserves which manifest revision was selected even if the live registry is later updated. Existing plan rows migrate with version 1 and a null handler snapshot because the earlier schema did not capture these fields.
 
 New delegated subtasks also snapshot the selected action. Before task creation, dispatch compares the current registry's role version, handler ID, and action with the plan snapshot. If any of these changed while the plan was waiting, that subtask is marked failed rather than silently running against a different handler revision. Historical rows migrated without a snapshot remain null and therefore fail closed; create a fresh plan for those rows.
+
+## Approval-class enforcement
+
+At plan creation, `review_required` and `human_approval` roles cannot be dispatched as unapproved tasks, even if the caller sets `requires_approval=False`. A `read_only` role may use the caller's explicit approval choice. All approvals still flow through the existing task runtime's authenticated approval/session mechanism; the role class does not create a bypass or a new approval authority.
