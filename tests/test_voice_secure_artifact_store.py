@@ -110,6 +110,12 @@ class EncryptedVoiceArtifactStoreTests(unittest.TestCase):
         with self.assertRaises(VoiceArtifactStoreError):
             self.store.get(artifact_id)
 
+    def test_close_releases_directory_handle_and_blocks_operations(self):
+        self.store.close()
+        self.store.close()
+        with self.assertRaises(VoiceArtifactStoreError):
+            self.store.put(b"closed", source_owner_consent=True)
+
     def test_rejects_invalid_artifact_identifier(self):
         with self.assertRaises(ValueError):
             self.store.get("../outside")
