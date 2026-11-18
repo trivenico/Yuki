@@ -137,6 +137,12 @@ class VoiceProfileRegistryTests(unittest.TestCase):
         persisted = VoiceProfileRegistry(moved, authorize=lambda: True)
         self.assertEqual(persisted.list_profiles()[0]["profile_id"], "after-swap")
 
+    def test_close_releases_directory_handle_and_blocks_operations(self):
+        self.registry.close()
+        self.registry.close()
+        with self.assertRaises(VoiceProfileRegistryError):
+            self.registry.list_profiles()
+
     def test_rejects_invalid_profile_ids_and_duplicate_profiles(self):
         with self.assertRaises(ValueError):
             self.registry.stage_profile(
