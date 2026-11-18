@@ -105,6 +105,22 @@ class DurableTaskEngineTests(unittest.TestCase):
         reopened = DurableTaskEngine(self.db)
         self.assertEqual(reopened.get_knowledge("lesson-idempotency")["state"], "verified")
 
+    def test_knowledge_candidate_rejects_obvious_secrets_and_contact_identifiers(self):
+        task = self._create_reviewed_source_task("knowledge-sensitive-source")
+        base = {"title": "Operational lesson", "lesson": "Use bounded retries.", "domain": "workforce", "tags": []}
+        for value in (
+            "Contact admin@example.com for access.",
+            "password=correct-horse-battery-staple",
+            "Bearer abcdefghijklmnopqrstuvwxyz",
+            "-----BEGIN PRIVATE KEY-----",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.engine.create_knowledge_candidate(
+                        "sensitive-" + str(len(value)), task["id"],
+                        {**base, "lesson": value},
+                    )
+
     def test_knowledge_candidate_rejects_unbounded_or_extra_fields(self):
         task = self._create_reviewed_source_task("knowledge-validation")
         lesson = {"title": "Valid title", "lesson": "Valid lesson", "domain": "workforce", "tags": []}
