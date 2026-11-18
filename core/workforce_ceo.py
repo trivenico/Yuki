@@ -55,17 +55,26 @@ class WorkforceCEO:
         plan = self.planner.decompose(goal)
         # Preflight all required capabilities before creating a goal or queueing
         # any work. This prevents predictable staffing failures from partial plans.
+        reserved: dict[str, int] = {}
+        planned_assignees: dict[str, str] = {}
         for task in plan:
             candidates = self.registry.recommend(
                 task.required_capabilities,
                 max_autonomy_tier=self.max_autonomy_tier,
-                limit=1,
+                limit=100,
             )
-            if not candidates:
+            employee = next((
+                candidate for candidate in candidates
+                if candidate.active_tasks + reserved.get(candidate.employee_id, 0)
+                < candidate.max_concurrent_tasks
+            ), None)
+            if employee is None:
                 raise NoEligibleAgent(
-                    f"No employee can currently staff plan step '{task.task_id}' "
+                    f"No employee has remaining capacity for plan step '{task.task_id}' "
                     f"with capabilities {task.required_capabilities}."
                 )
+            planned_assignees[task.task_id] = employee.employee_id
+            reserved[employee.employee_id] = reserved.get(employee.employee_id, 0) + 1
 
         active_goal_id = goal_id if goal_id is not None else self.task_engine.create_goal()
         if not isinstance(active_goal_id, str) or not active_goal_id.strip():
@@ -82,6 +91,7 @@ class WorkforceCEO:
                 dependencies=dependencies,
                 max_autonomy_tier=self.max_autonomy_tier,
                 review_required=self.require_independent_review,
+                preferred_employee_id=planned_assignees[task.task_id],
             )
             task_ids[task.task_id] = assignment.task_id
             assignments.append(assignment)
