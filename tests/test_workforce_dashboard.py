@@ -86,6 +86,50 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["performance"]["independently_verified_successes"], 1)
         self.assertIn("no quality score", snapshot["performance"]["scoring"])
 
+    def test_decision_intelligence_reports_capacity_gaps_and_department_failures(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        queued = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Unstaffed capability demand",
+                "required_capabilities": ["rare_capability_not_in_directory"],
+            },
+            idempotency_key="intelligence-capacity-gap", max_attempts=1,
+        )
+        failed = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "A failed task",
+                "required_capabilities": ["python"],
+            },
+            idempotency_key="intelligence-failed-task", max_attempts=1,
+        )
+        self.engine.claim("intelligence-worker", task_type="workforce.task")
+        self.engine.fail(failed["id"], "intelligence-worker", "redacted failure")
+
+        snapshot = self.dashboard.snapshot()
+        intelligence = snapshot["decision_intelligence"]
+        gap = next(
+            row for row in intelligence["capability_demand"]
+            if row["capability"] == "rare_capability_not_in_directory"
+        )
+        self.assertEqual(gap["queued_or_running_tasks"], 1)
+        self.assertEqual(gap["employees_with_capacity"], 0)
+        self.assertEqual(gap["coverage"], "no_available_capacity")
+
+        department = next(
+            row for row in intelligence["department_signals"]
+            if row["department"] == employee.department
+        )
+        self.assertEqual(department["failed_tasks"], 1)
+        self.assertEqual(department["failure_rate"], 1.0)
+        self.assertEqual(department["failure_rate_denominator"], 1)
+        self.assertEqual(department["queued_tasks"], 1)
+        self.assertIn("not forecasts", " ".join(intelligence["limitations"]))
+
     def test_snapshot_reports_truncation_only_when_more_goals_exist(self):
         first_goal = self.engine.create_goal()
         exact_page = self.dashboard.snapshot(max_goals=1)
