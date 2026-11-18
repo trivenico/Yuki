@@ -393,5 +393,28 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertTrue(all(not records[agent_id]["enabled"] for agent_id in handlers))
 
 
+    def test_plan_persists_the_exact_specialist_manifest_version_and_handler(self):
+        specialist = SpecialistAgent(
+            "versioned-research", "Versioned Research", frozenset({"versioned_research"}),
+            "emit", enabled=True, role_version=7, handler_id="research-v2",
+            handler_ready=True, department="Research", owner="Research Lead",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="role-version-snapshot",
+            subtasks=[SubtaskSpec("analyze", "Analyze supplied evidence", ("versioned_research",))],
+        )
+        item = plan.subtasks[0]
+        self.assertEqual(item.agent_role_version, 7)
+        self.assertEqual(item.handler_id, "research-v2")
+
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        persisted = restarted.get_plan(actor_id="alice", plan_id=plan.plan_id).subtasks[0]
+        self.assertEqual(persisted.agent_role_version, 7)
+        self.assertEqual(persisted.handler_id, "research-v2")
+
+
 if __name__ == "__main__":
     unittest.main()
