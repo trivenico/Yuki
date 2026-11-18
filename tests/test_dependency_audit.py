@@ -33,6 +33,24 @@ class DependencyAuditTests(unittest.TestCase):
             second.write_text("demo>=1,<2\n", encoding="utf-8")
             self.assertEqual(audit_files([first, second]), [])
 
+    def test_allows_existing_relative_requirement_include(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "requirements.txt"
+            test = root / "requirements-test.txt"
+            runtime.write_text("demo>=1\\n", encoding="utf-8")
+            test.write_text("-r requirements.txt\\npytest>=8,<9\\n", encoding="utf-8")
+            self.assertEqual(audit_files([runtime, test]), [])
+
+    def test_rejects_missing_or_unsafe_requirement_include(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "requirements-test.txt"
+            path.write_text("-r ../outside.txt\\n-r missing.txt\\n", encoding="utf-8")
+            errors = audit_files([path])
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(any("unsafe requirement include" in error for error in errors))
+        self.assertTrue(any("missing requirement include" in error for error in errors))
+
     def test_ignores_comments_and_blank_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "requirements.txt"
