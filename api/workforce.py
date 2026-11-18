@@ -9,7 +9,7 @@ from urllib.parse import parse_qs
 from core.auth import BuiltInAuthService
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.pending_approvals import SQLitePendingApprovalStore
-from core.approval_preview import redact_preview
+from core.approval_preview import confirmation_digest, redact_preview
 from core.durable_task_engine import TaskNotFound
 from core.workforce_dashboard import WorkforceDashboard
 
@@ -111,6 +111,7 @@ class AuthenticatedWorkforceDashboardAPI:
                     "skill_id": item.skill_id,
                     "expires_at": item.expires_at,
                     "action": redact_preview(item.action),
+                    "confirmation_digest": confirmation_digest(item.action),
                     "risk": "explicit_confirmation_required",
                     "execution": "not_executed",
                 }
