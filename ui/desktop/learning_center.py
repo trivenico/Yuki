@@ -118,12 +118,15 @@ class LearningCenterPanel:
                 training = state.get("training_consent")
                 rows = state.get("pending", [])
                 approved_count = state.get("approved_count", 0)
+                retained_pending_count = state.get("retained_pending_count", len(rows))
                 if type(learning) is not bool or type(training) is not bool:
                     raise ValueError("Learning consent state is invalid.")
                 if not isinstance(rows, list) or len(rows) > 100:
                     raise ValueError("Pending correction list exceeds its limit.")
                 if type(approved_count) is not int or not 0 <= approved_count <= 10_000:
                     raise ValueError("Approved example count is invalid.")
+                if type(retained_pending_count) is not int or not 0 <= retained_pending_count <= 100:
+                    raise ValueError("Retained pending count is invalid.")
                 if not learning and rows:
                     raise ValueError("Pending corrections cannot be shown without learning consent.")
                 normalized = []
@@ -160,9 +163,15 @@ class LearningCenterPanel:
                     )
                     item.setData(Qt.UserRole, proposal_id)
                     pending.addItem(item)
-                summary.setText(
-                    f"{len(normalized)} pending corrections · {approved_count} approved examples"
-                )
+                if learning:
+                    summary.setText(
+                        f"{len(normalized)} pending corrections · {approved_count} approved examples stored"
+                    )
+                else:
+                    summary.setText(
+                        f"{retained_pending_count} pending corrections hidden by consent · "
+                        f"{approved_count} approved examples stored"
+                    )
                 saved_status = state.get("status")
                 if isinstance(saved_status, str) and saved_status.strip():
                     status.setText(_plain(saved_status, 500))
