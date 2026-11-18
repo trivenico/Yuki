@@ -41,7 +41,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
-            [SpecialistAgent("code-review", "Code review", frozenset({"coding"}), "emit")],
+            [SpecialistAgent(
+                "code-review", "Code review", frozenset({"coding"}), "emit",
+                approval_class="read_only",
+            )],
             authorize=lambda actor, action, _plan: actor == "alice" and action in {
                 "agent:plan", "agent:dispatch", "agent:read"
             },
