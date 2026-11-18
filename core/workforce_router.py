@@ -6,7 +6,7 @@ the queued task; the worker must still enforce its own permission/approval gates
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Optional
 
 from core.durable_task_engine import DurableTaskEngine
 from core.workforce import AgentRegistry, AgentProfile
@@ -51,6 +51,7 @@ class WorkforceTaskRouter:
         dependencies: Iterable[str] = (),
         max_attempts: int = 1,
         review_required: bool = False,
+        preferred_employee_id: Optional[str] = None,
     ) -> WorkforceAssignment:
         if not isinstance(description, str) or not description.strip() or len(description) > 20_000:
             raise ValueError("description must be non-empty and at most 20000 characters")
@@ -67,12 +68,21 @@ class WorkforceTaskRouter:
         if max_attempts != 1:
             raise ValueError("workforce tasks must use max_attempts=1; uncertain side effects require manual review")
 
+        if preferred_employee_id is not None and (
+            not isinstance(preferred_employee_id, str) or not preferred_employee_id.strip()
+        ):
+            raise ValueError("preferred_employee_id must be non-empty text when provided")
         candidates = self.registry.recommend(
             capabilities,
             required_permissions=permissions,
             max_autonomy_tier=max_autonomy_tier,
-            limit=1,
+            limit=100,
         )
+        if preferred_employee_id is not None:
+            candidates = tuple(
+                employee for employee in candidates
+                if employee.employee_id == preferred_employee_id
+            )
         if not candidates:
             raise NoEligibleAgent("No available employee satisfies task capability, permission, capacity, and autonomy constraints.")
         employee: AgentProfile = candidates[0]
