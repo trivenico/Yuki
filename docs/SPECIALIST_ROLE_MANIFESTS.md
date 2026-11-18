@@ -7,7 +7,7 @@ The coordinator's `specialist_agents` table remains the canonical registry. This
 Each specialist record now carries:
 - `department`, `role_version`, and `owner` for organizational identity and accountability;
 - `handler_id` and `handler_ready` to distinguish a role description from a reviewed executable handler;
-- `max_steps` and `max_tokens` as declared resource ceilings for a future worker integration;
+- `max_steps` as an enforced per-plan subtask ceiling and `max_tokens` as a declared ceiling pending provider support;
 - `approval_class` (`read_only`, `review_required`, or `human_approval`).
 
 The coordinator rejects routing to a specialist unless it is both enabled and handler-ready. Legacy records are migrated to the existing `emit` handler to preserve their current behavior.
@@ -35,6 +35,8 @@ Do not set `handler_ready=True` merely to make a role routable. Handler readines
 The existing `automation.specialist_worker` already provides bounded text-only provider handlers for research, coding, testing, and reporting. `build_initial_role_handlers(provider_manager)` maps those implementations to RES-12, ENG-03, ENG-16, and PROD-09 and returns the mapping expected by `SpecialistTaskWorker`.
 
 This is an adapter factory, not activation. It does not register handlers in the coordinator, change permissions, enable roles, or set `handler_ready=True`. Chief of Staff and Security Reviewer do not yet have matching role-specific implementations in this adapter map. All six role records remain disabled until a separately reviewed deployment composition wires the provider, worker, task authorization, and lifecycle controls together.
+
+For the starter provider roles, use `build_initial_role_worker(runtime, coordinator, provider_manager, worker_id=..., service_actor_id=...)`. This composition helper builds the four text-only adapters and always injects `coordinator.validate_task_manifest` into `SpecialistTaskWorker`. It rejects a coordinator bound to a different `TaskRuntime`. It does not register, enable, or mark any role ready; activation remains a separate reviewed operation. The existing `TaskRuntime` authorization callbacks continue to enforce task permissions.
 
 ## Plan audit snapshots
 
