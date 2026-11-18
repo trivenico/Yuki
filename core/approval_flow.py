@@ -95,8 +95,25 @@ class ApprovalCoordinator:
             ) from exc
         return ApprovalOutcome(False, "pending_approval", pending_id=pending_id, result=action)
 
+    @staticmethod
+    def _resolve_executor(planner):
+        """Resolve a callable execution boundary without consuming user consent."""
+        agent = getattr(planner, "agent", None)
+        agent_executor = getattr(agent, "execute_approved_action", None)
+        if callable(agent_executor):
+            return agent_executor
+        planner_executor = getattr(planner, "execute_approved_action", None)
+        return planner_executor if callable(planner_executor) else None
+
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict], bool]) -> ApprovalOutcome:
+        executor = self._resolve_executor(planner)
+        if executor is None:
+            # Keep the request pending: missing runtime wiring is not a user denial.
+            return ApprovalOutcome(
+                False, "execution_unavailable",
+                pending_id=pending_id if isinstance(pending_id, str) else None,
+            )
         pending = self._consume(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
@@ -120,11 +137,7 @@ class ApprovalCoordinator:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         try:
-            result = (
-                planner.agent.execute_approved_action(action)
-                if hasattr(planner, "agent") and hasattr(planner.agent, "execute_approved_action")
-                else planner.execute_approved_action(action)
-            )
+            result = executor(action)
         except Exception as exc:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
