@@ -4,7 +4,7 @@
 model_name: "yuki"
 target_phrase:
   - "yuki"
-custom_negative_phrases: []
+custom_negative_phrases:\n  - "you key"\n  - "you keep"\n  - "cookie"\n  - "you see"
 n_samples: 20000
 n_samples_val: 4000
 tts_batch_size: 32
