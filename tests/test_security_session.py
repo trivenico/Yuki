@@ -535,6 +535,38 @@ class SecuritySessionControllerTests(unittest.TestCase):
         self.assertFalse(self.controller.active)
         self.assertFalse(self.monitor.enabled)
 
+    def test_close_waits_for_reserved_stop_cleanup(self):
+        self.controller.start(consent=True)
+        entered = threading.Event()
+        release = threading.Event()
+        original_disable = self.controller._disable_monitor
+
+        def delayed_disable():
+            entered.set()
+            release.wait(2)
+            original_disable()
+
+        self.controller._disable_monitor = delayed_disable
+        errors = []
+        stopper = threading.Thread(
+            target=lambda: self._capture_error(self.controller.stop, errors)
+        )
+        stopper.start()
+        self.assertTrue(entered.wait(1))
+        closer = threading.Thread(
+            target=lambda: self._capture_error(self.controller.close, errors)
+        )
+        closer.start()
+        self.assertTrue(closer.is_alive())
+        release.set()
+        stopper.join(2)
+        closer.join(2)
+        self.assertFalse(stopper.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertFalse(errors)
+        self.assertFalse(self.monitor.enabled)
+        self.assertFalse(self.controller.active)
+
     def test_close_is_terminal(self):
         self.controller.start(consent=True)
         self.controller.close()
