@@ -167,6 +167,31 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 403)
 
+    def test_approval_preview_is_redacted_and_session_scoped(self):
+        item = self.pending.put(
+            "notes.write",
+            {"text": "private", "api_token": "super-secret-token"},
+            {"skill_id": "notes.write", "arguments": {
+                "text": "private", "api_token": "super-secret-token",
+                "nested": {"password": "hidden", "count": 3},
+            }},
+            actor=self.admin_session.user.user_id, session_id=self.admin_session.token,
+        )
+        path = "/v1/workforce/approvals/" + item.pending_id
+        status, body = self.request(path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["execution"], "not_executed")
+        self.assertEqual(body["risk"], "explicit_confirmation_required")
+        self.assertEqual(body["action"]["arguments"]["api_token"], "[REDACTED]")
+        self.assertEqual(body["action"]["arguments"]["nested"]["password"], "[REDACTED]")
+        self.assertEqual(body["action"]["arguments"]["nested"]["count"], 3)
+        self.assertNotIn("super-secret-token", json.dumps(body))
+        second_session = self.auth.authenticate("admin-user", "a-secure-test-password")
+        status, _ = self.request(path, token=second_session.token)
+        self.assertEqual(status, 404)
+        status, _ = self.request(path, token=self.user_session.token)
+        self.assertEqual(status, 403)
+
     def test_approval_inbox_requires_explicit_store_configuration(self):
         app = AuthenticatedWorkforceDashboardAPI(_Downstream(), self.auth, self.dashboard)
         async def run():
