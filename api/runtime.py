@@ -14,6 +14,8 @@ from api.web import YukiWebApplication
 from api.workforce import AuthenticatedWorkforceDashboardAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -81,6 +83,8 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     workforce_dashboard: WorkforceDashboard | None = None,
+    pending_approvals: SQLitePendingApprovalStore | None = None,
+    approval_audit: SQLiteApprovalAuditLog | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -118,6 +122,12 @@ def build_conversation_runtime(
         raise TypeError("evaluation_service must be an EvaluationService")
     if workforce_dashboard is not None and not isinstance(workforce_dashboard, WorkforceDashboard):
         raise TypeError("workforce_dashboard must be a WorkforceDashboard")
+    if pending_approvals is not None and not isinstance(pending_approvals, SQLitePendingApprovalStore):
+        raise TypeError("pending_approvals must be a SQLitePendingApprovalStore")
+    if approval_audit is not None and not isinstance(approval_audit, SQLiteApprovalAuditLog):
+        raise TypeError("approval_audit must be a SQLiteApprovalAuditLog")
+    if (pending_approvals is not None or approval_audit is not None) and workforce_dashboard is None:
+        raise ValueError("approval inbox services require workforce_dashboard")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -161,7 +171,10 @@ def build_conversation_runtime(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
         if workforce_dashboard is not None:
-            app = AuthenticatedWorkforceDashboardAPI(app, auth_service, workforce_dashboard)
+            app = AuthenticatedWorkforceDashboardAPI(
+                app, auth_service, workforce_dashboard,
+                pending_approvals=pending_approvals, approval_audit=approval_audit,
+            )
         return ConversationRuntime(app, application)
     except Exception:
         application.close()
