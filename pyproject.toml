@@ -34,6 +34,9 @@ desktop = [
   "keyring>=25,<27",
   "cryptography>=42,<47",
 ]
+security-monitoring = [
+  "psutil>=5.9,<8",
+]
 desktop-build = ["PyInstaller>=6.10,<7"]
 email = [
   "google-api-python-client>=2.201.0,<3.0",
