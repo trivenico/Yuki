@@ -23,6 +23,7 @@ def cross_process_lock(
     *,
     namespace: str = "Yuki",
     error_type: Type[RuntimeError] = ProcessLockError,
+    directory_fd: int | None = None,
 ) -> Iterator[None]:
     """Serialize a transaction across processes for one private directory.
 
@@ -63,11 +64,11 @@ def cross_process_lock(
 
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        directory_fd = os.open(lock_directory, directory_flags)
+        opened_directory_fd = os.dup(directory_fd) if directory_fd is not None else os.open(lock_directory, directory_flags)
     except OSError as exc:
         raise error_type("The private lock directory is unavailable.") from exc
     try:
-        directory_stat = os.fstat(directory_fd)
+        directory_stat = os.fstat(opened_directory_fd)
         if not stat.S_ISDIR(directory_stat.st_mode):
             raise error_type("The lock path is not a directory.")
         if hasattr(os, "getuid") and directory_stat.st_uid != os.getuid():
@@ -77,7 +78,7 @@ def cross_process_lock(
         lock_name = ".yuki-" + namespace.lower() + "-" + account + ".lock"
         flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
         try:
-            lock_fd = os.open(lock_name, flags, 0o600, dir_fd=directory_fd)
+            lock_fd = os.open(lock_name, flags, 0o600, dir_fd=opened_directory_fd)
         except OSError as exc:
             raise error_type("Could not open the cross-process lock file.") from exc
         try:
@@ -104,4 +105,4 @@ def cross_process_lock(
         finally:
             os.close(lock_fd)
     finally:
-        os.close(directory_fd)
+        os.close(opened_directory_fd)
