@@ -48,8 +48,9 @@ class SecurityDashboardPanel:
         layout.addWidget(heading)
 
         explanation = QLabel(
-            "Read-only monitoring. No process termination, firewall changes, "
-            "or automatic remediation. Monitoring stays off until you start it."
+            "Read-only local process inventory. No packet capture, network "
+            "monitoring, process termination, firewall changes, or automatic remediation. "
+            "Monitoring stays off until you start it."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -154,10 +155,9 @@ class SecurityDashboardPanel:
             answer = QMessageBox.question(
                 page,
                 "Start read-only monitoring",
-                "Yuki will inspect a bounded process inventory and authorized "
-                "connection metadata for security alerts. It will not terminate "
-                "processes, change firewall rules, or upload monitoring data. "
-                "Start monitoring for this session?",
+                "Yuki will inspect a bounded local process inventory for this "
+                "session. It will not capture network packets, terminate processes, "
+                "change firewall rules, or upload monitoring data. Start monitoring?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
