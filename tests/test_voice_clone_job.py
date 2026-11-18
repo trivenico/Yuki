@@ -38,7 +38,7 @@ class FakeLocalProvider:
             cancel_event.set()
         if self.fail:
             raise RuntimeError("provider failed")
-        return VoiceCloneOutput(b"opaque-clone-artifact", b"preview-audio")
+        return VoiceCloneOutput(b"opaque-clone-artifact", wav_sample())
 
 
 class FakeRemoteProvider(FakeLocalProvider):
@@ -67,7 +67,8 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
             source_owner_consent=True,
         )
         self.assertEqual(controller.state, VoiceCloneJobState.PREVIEW_READY)
-        self.assertEqual(result.preview_audio, b"preview-audio")
+        self.assertEqual(result.preview_audio, wav_sample())
+        self.assertFalse(controller.cancel())
         self.assertIsNone(self.registry.active_profile())
         profile = self.registry.list_profiles()[0]
         self.assertEqual(profile["status"], "staged")
@@ -108,7 +109,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
             def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
                 entered.set()
                 release.wait(2)
-                return VoiceCloneOutput(b"artifact", b"preview")
+                return VoiceCloneOutput(b"artifact", wav_sample())
 
         controller = self.controller(BlockingProvider())
         errors = []
@@ -129,10 +130,21 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(errors, [])
 
+
+    def test_rejects_invalid_preview_before_storing_artifact(self):
+        class InvalidPreviewProvider(FakeLocalProvider):
+            def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+                return VoiceCloneOutput(b"opaque-artifact", b"not-audio")
+
+        controller = self.controller(InvalidPreviewProvider())
+        with self.assertRaisesRegex(RuntimeError, "valid bounded PCM WAV"):
+            controller.run(wav_sample(), profile_id="bad-preview", display_name="Bad preview", source_owner_consent=True)
+        self.assertEqual(self.registry.list_profiles(), [])
+
     def test_rejects_oversized_provider_output(self):
         class LargeProvider(FakeLocalProvider):
             def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
-                return VoiceCloneOutput(b"x" * (20 * 1024 * 1024 + 1), b"preview")
+                return VoiceCloneOutput(b"x" * (20 * 1024 * 1024 + 1), wav_sample())
 
         controller = self.controller(LargeProvider())
         with self.assertRaises(RuntimeError):
