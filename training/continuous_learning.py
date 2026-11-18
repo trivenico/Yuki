@@ -447,13 +447,18 @@ class ContinuousLearningCoordinator:
             def clear_state(state):
                 approved = list(state["approved"])
                 pending = list(state["pending"])
-                for item in approved:
+                revoked_ids = set()
+                for item in [*pending, *approved]:
                     proposal_id = item.get("proposal_id")
                     if not isinstance(proposal_id, str):
                         raise ContinuousLearningError(
-                            "Stored approval metadata is malformed; deletion was stopped."
+                            "Stored proposal metadata is malformed; deletion was stopped."
                         )
-                    revoke_approval(proposal_id)
+                    if proposal_id not in revoked_ids:
+                        # Also revoke pending IDs: a prior interrupted approval
+                        # may have left an audit event before its store commit.
+                        revoke_approval(proposal_id)
+                        revoked_ids.add(proposal_id)
                 counts["pending"] = len(pending)
                 counts["approved"] = len(approved)
                 state["pending"].clear()
