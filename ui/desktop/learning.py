@@ -79,8 +79,14 @@ def build_learning_center_callbacks(
         return coordinator.correction_for_review(proposal_id)
 
     def on_approve(proposal_id: str) -> None:
+        # The selected sample must still be reviewable and both consent scopes
+        # must remain active at the moment the user confirms approval.
+        if not ledger.has_consent("learning") or not ledger.has_consent("training"):
+            raise RuntimeError("Both learning and training consent must be active.")
+        if coordinator.correction_for_review(proposal_id) is None:
+            raise RuntimeError("The pending correction is no longer available for review.")
         # Record the human decision first. The coordinator independently checks
-        # the durable audit record and current training consent before commit.
+        # the durable audit record and current consent again before commit.
         ledger.record_example_approval(proposal_id, True)
         coordinator.approve_correction(
             proposal_id,
