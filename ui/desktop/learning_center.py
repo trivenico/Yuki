@@ -263,7 +263,12 @@ class LearningCenterPanel:
         pool = QThreadPool.globalInstance()
         busy = {"value": False, "worker": None}
         disposed = {"value": False}
-        page.destroyed.connect(lambda: disposed.__setitem__("value", True))
+
+        def mark_disposed(_object=None):
+            disposed["value"] = True
+            busy["worker"] = None
+
+        page.destroyed.connect(mark_disposed)
 
         def set_controls_enabled(enabled: bool):
             for control in (
