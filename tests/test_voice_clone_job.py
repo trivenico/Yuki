@@ -1,4 +1,5 @@
 import io
+import multiprocessing
 import os
 import tempfile
 import threading
@@ -51,8 +52,14 @@ class FakeLocalProvider:
 
 
 class BlockingProvider(FakeLocalProvider):
+    def __init__(self, started_event=None):
+        super().__init__()
+        self.started_event = started_event
+
     def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
-        time.sleep(3)
+        if self.started_event is not None:
+            self.started_event.set()
+        time.sleep(5)
         return VoiceCloneOutput(b"artifact", wav_sample())
 
 
@@ -163,22 +170,37 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_isolated_worker_is_killed_at_wall_clock_deadline(self):
         executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
-        with self.assertRaises(VoiceCloneWorkerTimeout):
-            executor.run(
-                BlockingProvider(), wav_sample(), cancel_event=threading.Event(),
-                deadline_monotonic=time.monotonic() + 1,
-            )
-
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
-    def test_isolated_worker_is_killed_when_parent_cancels(self):
-        executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
-        cancel = threading.Event()
+        started = multiprocessing.get_context("spawn").Event()
         errors = []
 
         def run():
             try:
                 executor.run(
-                    BlockingProvider(), wav_sample(), cancel_event=cancel,
+                    BlockingProvider(started), wav_sample(), cancel_event=threading.Event(),
+                    deadline_monotonic=time.monotonic() + 2,
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        self.assertTrue(started.wait(5), "provider did not start before the test deadline")
+        worker.join(4)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], VoiceCloneWorkerTimeout)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    def test_isolated_worker_is_killed_when_parent_cancels(self):
+        executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
+        cancel = threading.Event()
+        started = multiprocessing.get_context("spawn").Event()
+        errors = []
+
+        def run():
+            try:
+                executor.run(
+                    BlockingProvider(started), wav_sample(), cancel_event=cancel,
                     deadline_monotonic=time.monotonic() + 10,
                 )
             except Exception as exc:
@@ -186,7 +208,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
 
         worker = threading.Thread(target=run)
         worker.start()
-        time.sleep(0.4)
+        self.assertTrue(started.wait(5), "provider did not start before cancellation")
         cancel.set()
         worker.join(5)
         self.assertFalse(worker.is_alive())
