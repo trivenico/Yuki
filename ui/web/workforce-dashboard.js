@@ -114,9 +114,9 @@
       });
       $("new-chat").addEventListener("click", () => showDashboard(false));
       $("conversation-list").addEventListener("click", () => showDashboard(false));
-      window.addEventListener("yuki:session-ended", () => { initialized = false; $("workforce-nav").hidden = true; showDashboard(false); });
     } catch (_) { $("workforce-nav").hidden = true; }
   };
+  window.addEventListener("yuki:session-ended", () => { initialized = false; $("workforce-nav").hidden = true; showDashboard(false); });
   window.addEventListener("yuki:session-ready", initialize);
   if (token()) initialize();
 })();
