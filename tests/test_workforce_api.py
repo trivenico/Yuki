@@ -124,6 +124,66 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(body["state"], "candidate")
         self.assertEqual(body["source_task_id"], candidate["source_task_id"])
 
+    def test_knowledge_revision_api_requires_role_and_human_approval(self):
+        self._seed_knowledge_candidate()
+        self.engine.transition_knowledge(
+            "api-knowledge-1", expected_state="candidate", new_state="verified",
+            actor_id="initial-curator",
+        )
+        revised = {
+            "title": "Keep retries bounded",
+            "lesson": "Use stable idempotency keys and bounded retry budgets for replayable dispatch.",
+            "domain": "workforce",
+            "tags": ["reliability"],
+        }
+        payload = {"revision_id": "api-revision-2", "knowledge": revised}
+        status, body = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1/revisions",
+            method="POST", token=self.user_session.token,
+            body=json.dumps(payload).encode(),
+            extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(status, 403)
+        status, body = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1/revisions",
+            method="POST", token=self.admin_session.token,
+            body=json.dumps(payload).encode(),
+            extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(body["state"], "proposed")
+        status, body = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1/revisions",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["revisions"][0]["state"], "proposed")
+        status, current = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(current["knowledge"]["lesson"], "Use stable idempotency keys for replayable task dispatch.")
+        transition = {
+            "expected_state": "proposed",
+            "new_state": "approved",
+            "review_note": "Compared the revision against the source evidence.",
+        }
+        status, body = self.request(
+            "/v1/workforce/knowledge-revisions/api-revision-2/transition",
+            method="POST", token=self.admin_session.token,
+            body=json.dumps(transition).encode(),
+            extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["reviewed_by"], "admin-user")
+        self.assertEqual(body["state"], "approved")
+        status, current = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(current["knowledge"], revised)
+
     def test_knowledge_api_review_is_actor_attributed_and_optimistic(self):
         self._seed_knowledge_candidate()
         payload = {
