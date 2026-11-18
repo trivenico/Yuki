@@ -18,6 +18,14 @@ class ApprovalCoordinator:
     def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if pending_store is not None:
+            required_store_methods = ("put", "consume", "deny")
+            if any(not callable(getattr(pending_store, name, None)) for name in required_store_methods):
+                raise TypeError("pending_store must implement put(), consume(), and deny().")
+            if audit_log is None or not callable(getattr(audit_log, "append", None)):
+                raise ValueError("Durable pending approvals require an append-capable audit_log.")
+        elif audit_log is not None and not callable(getattr(audit_log, "append", None)):
+            raise TypeError("audit_log must implement append().")
         self.pending_store = pending_store
         self.audit_log = audit_log
         self.max_pending = max_pending
