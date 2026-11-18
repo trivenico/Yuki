@@ -102,6 +102,18 @@ def build_learning_center_callbacks(
             ledger.record_example_approval(proposal_id, False)
             raise
 
+    def on_submit(
+        messages: list[dict[str, str]], source_reference: str, task_type: str,
+    ) -> str:
+        # This callback accepts only the exact two-message sample explicitly
+        # entered in the Learning Center; the coordinator re-verifies consent.
+        return coordinator.propose_correction(
+            messages=messages,
+            source_reference=source_reference,
+            task_type=task_type,
+            learning_consent=True,
+        )
+
     def on_delete_all() -> dict[str, int]:
         # Deletion is always available, including after consent is revoked.
         # Each prior approval is revoked in the same serialized store
@@ -124,6 +136,7 @@ def build_learning_center_callbacks(
         "on_approve": on_approve,
         "on_reject": on_reject,
         "on_delete_all": on_delete_all,
+        "on_submit": on_submit,
     }
 
 
