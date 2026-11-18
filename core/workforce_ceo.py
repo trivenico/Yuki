@@ -51,13 +51,52 @@ class WorkforceCEO:
         self.require_independent_review = require_independent_review
 
     def plan_and_dispatch(self, goal: str, *, goal_id: Optional[str] = None) -> CEOExecution:
-        """Preflight every task, then persist the plan as dependent workforce jobs."""
+        """Preflight and idempotently reconcile every step of a persisted DAG.
+
+        Existing task assignments are reused on retry. This is important because
+        a worker may start an early task, or a previous request may have failed
+        after only part of the DAG was submitted. Re-selecting an employee would
+        change the task fingerprint and turn a safe retry into a conflict.
+        """
         plan = self.planner.decompose(goal)
-        # Preflight all required capabilities before creating a goal or queueing
-        # any work. This prevents predictable staffing failures from partial plans.
+        if goal_id is not None and (
+            not isinstance(goal_id, str) or not goal_id.strip()
+        ):
+            raise ValueError("goal_id must be non-empty text")
+
         reserved: dict[str, int] = {}
         planned_assignees: dict[str, str] = {}
+        existing_tasks: dict[str, dict] = {}
         for task in plan:
+            task_key = f"ceo:{goal_id}:{task.task_id}" if goal_id is not None else None
+            existing = (
+                self.task_engine.get_task_by_idempotency(goal_id, task_key)
+                if task_key is not None else None
+            )
+            if existing is not None:
+                payload = existing["payload"]
+                employee_id = payload.get("assigned_employee_id")
+                employee = self.registry.get(employee_id) if isinstance(employee_id, str) else None
+                expected_capabilities = tuple(sorted(set(task.required_capabilities)))
+                if (
+                    employee is None
+                    or employee.status in {"offline", "disabled"}
+                    or not set(expected_capabilities).issubset(employee.capabilities)
+                    or employee.autonomy_tier > self.max_autonomy_tier
+                    or payload.get("description") != task.description.strip()
+                    or tuple(sorted(payload.get("required_capabilities", ()))) != expected_capabilities
+                    or tuple(sorted(payload.get("required_permissions", ()))) != ()
+                    or payload.get("max_autonomy_tier") != self.max_autonomy_tier
+                    or payload.get("review_required") is not self.require_independent_review
+                ):
+                    raise NoEligibleAgent(
+                        f"Persisted assignment for plan step '{task.task_id}' no longer matches current policy."
+                    )
+                existing_tasks[task.task_id] = existing
+                planned_assignees[task.task_id] = employee.employee_id
+                reserved[employee.employee_id] = reserved.get(employee.employee_id, 0) + 1
+                continue
+
             candidates = self.registry.recommend(
                 task.required_capabilities,
                 max_autonomy_tier=self.max_autonomy_tier,
@@ -77,22 +116,38 @@ class WorkforceCEO:
             reserved[employee.employee_id] = reserved.get(employee.employee_id, 0) + 1
 
         active_goal_id = goal_id if goal_id is not None else self.task_engine.create_goal()
-        if not isinstance(active_goal_id, str) or not active_goal_id.strip():
-            raise ValueError("goal_id must be non-empty text")
         task_ids: dict[str, str] = {}
         assignments: list[WorkforceAssignment] = []
         for task in plan:
             dependencies = tuple(task_ids[dependency] for dependency in task.depends_on)
-            assignment = self.router.submit(
-                goal_id=active_goal_id,
-                description=task.description,
-                required_capabilities=task.required_capabilities,
-                idempotency_key=f"ceo:{active_goal_id}:{task.task_id}",
-                dependencies=dependencies,
-                max_autonomy_tier=self.max_autonomy_tier,
-                review_required=self.require_independent_review,
-                preferred_employee_id=planned_assignees[task.task_id],
-            )
+            existing = existing_tasks.get(task.task_id)
+            if existing is not None:
+                if tuple(existing.get("dependencies", ())) != tuple(sorted(dependencies)):
+                    raise ValueError(
+                        f"Persisted dependencies for plan step '{task.task_id}' do not match the current plan."
+                    )
+                employee = self.registry.get(planned_assignees[task.task_id])
+                assignment = WorkforceAssignment(
+                    task_id=existing["id"],
+                    goal_id=active_goal_id,
+                    employee_id=employee.employee_id,
+                    employee_name=employee.name,
+                    department=employee.department,
+                    required_capabilities=tuple(sorted(set(task.required_capabilities))),
+                    required_permissions=(),
+                    autonomy_tier=employee.autonomy_tier,
+                )
+            else:
+                assignment = self.router.submit(
+                    goal_id=active_goal_id,
+                    description=task.description,
+                    required_capabilities=task.required_capabilities,
+                    idempotency_key=f"ceo:{active_goal_id}:{task.task_id}",
+                    dependencies=dependencies,
+                    max_autonomy_tier=self.max_autonomy_tier,
+                    review_required=self.require_independent_review,
+                    preferred_employee_id=planned_assignees[task.task_id],
+                )
             task_ids[task.task_id] = assignment.task_id
             assignments.append(assignment)
         return CEOExecution(active_goal_id, plan, tuple(assignments))
