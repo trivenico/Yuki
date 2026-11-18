@@ -57,6 +57,14 @@ class DesktopSecurityService:
         with self._lock:
             return self._controller is not None
 
+    @property
+    def authorized(self) -> bool:
+        """Revalidate the exact desktop identity without touching sensors."""
+        try:
+            return self._authorize() is True
+        except Exception:
+            return False
+
     def start(self, *, consent: bool) -> None:
         if consent is not True:
             raise SecuritySessionError("Explicit monitoring consent is required.")
