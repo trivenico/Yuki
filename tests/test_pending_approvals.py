@@ -19,16 +19,17 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
                 {"skill_id": "notes.write", "arguments": {"text": "private action argument"}},
                 actor="owner", session_id="session-a",
             )
-            rows = store.list_pending()
+            rows = store.list_pending(actor="owner")
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["pending_id"], item.pending_id)
             self.assertEqual(rows[0]["skill_id"], "notes.write")
             self.assertIn("expires_at", rows[0])
             self.assertNotIn("arguments", rows[0])
             self.assertNotIn("action", rows[0])
+            self.assertEqual(store.list_pending(actor="another-user"), [])
             for limit in (0, 201, True):
                 with self.assertRaises(ValueError):
-                    store.list_pending(limit=limit)
+                    store.list_pending(actor="owner", limit=limit)
 
     def test_consume_is_bound_to_actor_and_session(self):
         with tempfile.TemporaryDirectory() as tmp:
