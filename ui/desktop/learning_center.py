@@ -60,8 +60,6 @@ class LearningCenterPanel:
                 if callable(completion):
                     completion(result, error)
 
-        receiver = _LearningReceiver(page)
-
         class _LearningWorker(QRunnable):
             def __init__(self, action, callback, args):
                 super().__init__()
@@ -79,6 +77,7 @@ class LearningCenterPanel:
                     self.signals.finished.emit(None, exc)
 
         page = QWidget(parent)
+        receiver = _LearningReceiver(page)
         page.setObjectName("yukiLearningCenter")
         layout = QVBoxLayout(page)
 
@@ -262,7 +261,7 @@ class LearningCenterPanel:
         presenter = Presenter()
 
         pool = QThreadPool.globalInstance()
-        busy = {"value": False}
+        busy = {"value": False, "worker": None}
         disposed = {"value": False}
         page.destroyed.connect(lambda: disposed.__setitem__("value", True))
 
@@ -288,9 +287,11 @@ class LearningCenterPanel:
             set_controls_enabled(False)
             presenter.set_status("Working securely…")
             worker = _LearningWorker(action, callback, args)
+            busy["worker"] = worker
 
             def completed(result, error):
                 busy["value"] = False
+                busy["worker"] = None
                 if disposed["value"]:
                     return
                 set_controls_enabled(True)
