@@ -194,6 +194,15 @@ class EncryptedLearningStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(SecureLearningStoreError, "digest"):
             store.replace({"schema_version": 1, "pending": [], "approved": [altered]})
 
+    def test_world_readable_encrypted_file_is_rejected(self):
+        if os.name != "posix":
+            self.skipTest("POSIX permission contract")
+        store = self.make_store()
+        store.replace({"schema_version": 1, "pending": [], "approved": []})
+        self.path.chmod(0o644)
+        with self.assertRaisesRegex(SecureLearningStoreError, "permissions"):
+            store.read()
+
     def test_private_parent_directory_is_required(self):
         if os.name != "posix":
             self.skipTest("POSIX permission contract")
