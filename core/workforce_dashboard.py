@@ -189,3 +189,56 @@ class WorkforceDashboard:
             if employee["department"] == summary["name"]
         ]
         return {"department": summary, "employees": roster}
+
+    def goal_detail(self, goal_id: str, *, after_event_id: int = 0, event_limit: int = 100) -> dict[str, Any]:
+        """Return a bounded, read-only execution timeline for one persisted goal."""
+        if not isinstance(goal_id, str) or not 1 <= len(goal_id) <= 256:
+            raise ValueError("goal_id must be non-empty bounded text")
+        if type(after_event_id) is not int or after_event_id < 0:
+            raise ValueError("after_event_id must be a non-negative integer")
+        if type(event_limit) is not int or not 1 <= event_limit <= 200:
+            raise ValueError("event_limit must be between 1 and 200")
+        goal = self.task_engine.get_goal(goal_id)
+        employee_by_id = {employee.employee_id: employee for employee in self.registry.list_employees()}
+        task_rows = []
+        for task in self.task_engine.list_tasks(goal_id):
+            if task["task_type"] != "workforce.task":
+                continue
+            payload = task.get("payload") or {}
+            employee_id = payload.get("assigned_employee_id")
+            employee = employee_by_id.get(employee_id) if isinstance(employee_id, str) else None
+            description = payload.get("description")
+            task_rows.append({
+                "task_id": task["id"],
+                "description": description[:2000] if isinstance(description, str) else "",
+                "employee_id": employee_id if isinstance(employee_id, str) else None,
+                "employee_name": employee.name if employee else None,
+                "department": employee.department if employee else None,
+                "state": task["state"],
+                "attempts": task["attempts"],
+                "max_attempts": task["max_attempts"],
+                "created_at": task["created_at"],
+                "updated_at": task["updated_at"],
+            })
+        events = self.task_engine.list_events(goal_id, after_id=after_event_id, limit=event_limit + 1)
+        has_more = len(events) > event_limit
+        events = events[:event_limit]
+        # Omit arbitrary event detail; executor messages may contain sensitive data.
+        event_rows = [{
+            "id": event["id"],
+            "task_id": event["task_id"],
+            "event_type": event["event_type"],
+            "created_at": event["created_at"],
+        } for event in events]
+        return {
+            "goal": {
+                "goal_id": goal["id"],
+                "state": goal["state"],
+                "created_at": goal["created_at"],
+                "updated_at": goal["updated_at"],
+            },
+            "tasks": task_rows,
+            "events": event_rows,
+            "next_event_id": events[-1]["id"] if events else after_event_id,
+            "has_more_events": has_more,
+        }
