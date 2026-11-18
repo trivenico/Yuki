@@ -61,6 +61,10 @@ class DurableTaskEngine:
               id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id TEXT NOT NULL, task_id TEXT,
               event_type TEXT NOT NULL, detail_json TEXT NOT NULL, created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS events_goal_idx ON run_events(goal_id,id);
+            CREATE TABLE IF NOT EXISTS goal_plans(
+              goal_id TEXT PRIMARY KEY REFERENCES goals(id),
+              plan_fingerprint TEXT NOT NULL, plan_json TEXT NOT NULL,
+              created_at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS goal_requests(
               owner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
               request_fingerprint TEXT NOT NULL, goal_id TEXT NOT NULL REFERENCES goals(id),
@@ -231,6 +235,40 @@ class DurableTaskEngine:
             self._event(c,goal_id,task_id,"task.queued",{"task_type":task_type,"dependencies":list(deps)})
             c.commit()
         return self.get_task(task_id)
+
+    def bind_goal_plan(self, goal_id, plan):
+        """Persist the first CEO plan and reject any later plan drift for that goal."""
+        if not isinstance(goal_id, str) or not goal_id.strip():
+            raise ValueError("goal_id must be non-empty text")
+        plan_json = self._json(plan)
+        if len(plan_json.encode("utf-8")) > 65_536:
+            raise ValueError("CEO plan exceeds 64 KB limit")
+        fingerprint = hashlib.sha256(plan_json.encode("utf-8")).hexdigest()
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            goal = c.execute("SELECT id FROM goals WHERE id=?", (goal_id,)).fetchone()
+            if goal is None:
+                raise TaskNotFound("goal not found")
+            existing = c.execute(
+                "SELECT plan_fingerprint,plan_json FROM goal_plans WHERE goal_id=?",
+                (goal_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["plan_fingerprint"] != fingerprint or existing["plan_json"] != plan_json:
+                    raise TaskConflict("CEO plan changed for an existing goal")
+                c.commit()
+                return {"created": False, "plan": json.loads(existing["plan_json"])}
+            c.execute(
+                "INSERT INTO goal_plans(goal_id,plan_fingerprint,plan_json,created_at) VALUES(?,?,?,?)",
+                (goal_id, fingerprint, plan_json, now),
+            )
+            self._event(c, goal_id, None, "goal.plan_bound", {
+                "plan_fingerprint": fingerprint,
+                "task_count": len(plan) if isinstance(plan, list) else None,
+            })
+            c.commit()
+        return {"created": True, "plan": json.loads(plan_json)}
 
     def get_task_by_idempotency(self, goal_id, idempotency_key):
         """Return a task and its persisted dependency IDs for safe DAG recovery."""
