@@ -11,6 +11,7 @@ from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
+from api.workforce import AuthenticatedWorkforceDashboardAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_application_runtime import (
@@ -24,6 +25,7 @@ from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from core.workforce_dashboard import WorkforceDashboard
 
 
 class ConversationRuntime:
@@ -78,6 +80,7 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    workforce_dashboard: WorkforceDashboard | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -113,6 +116,8 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    if workforce_dashboard is not None and not isinstance(workforce_dashboard, WorkforceDashboard):
+        raise TypeError("workforce_dashboard must be a WorkforceDashboard")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -155,6 +160,8 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
+        if workforce_dashboard is not None:
+            app = AuthenticatedWorkforceDashboardAPI(app, auth_service, workforce_dashboard)
         return ConversationRuntime(app, application)
     except Exception:
         application.close()
