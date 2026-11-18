@@ -113,6 +113,28 @@ class ContinuousLearningTests(unittest.TestCase):
             )
         self.assertEqual(len(learning.pending_corrections()), learning.MAX_PENDING)
 
+    def test_review_api_exposes_sample_but_not_private_source_reference(self):
+        learning = _learning()
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="private://source-reference",
+            task_type="coding", learning_consent=True,
+        )
+        review = learning.correction_for_review(proposal)
+        self.assertEqual(review["proposal_id"], proposal)
+        self.assertEqual(review["messages"], _messages())
+        self.assertNotIn("source_reference", review)
+        self.assertNotIn("private://source-reference", json.dumps(review))
+
+    def test_review_api_hides_samples_when_learning_consent_is_revoked(self):
+        store = FakeDurableLearningStore()
+        learning = _learning(store=store)
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="task:review-consent",
+            task_type="coding", learning_consent=True,
+        )
+        revoked = _learning(store=store, consent=False)
+        self.assertIsNone(revoked.correction_for_review(proposal))
+
     def test_persisted_correction_survives_restart_and_approval(self):
         store = FakeDurableLearningStore()
         first = _learning(store=store)
