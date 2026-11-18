@@ -38,6 +38,14 @@ class SpecialistAgent:
     action: str
     permissions: frozenset[str] = frozenset()
     enabled: bool = True
+    department: str = "Unassigned"
+    role_version: int = 1
+    owner: str = "Yuki"
+    handler_id: str | None = None
+    handler_ready: bool = True
+    max_steps: int = 5
+    max_tokens: int = 4000
+    approval_class: str = "review_required"
 
 
 @dataclass(frozen=True)
@@ -142,20 +150,45 @@ class SpecialistAgentCoordinator:
                     permissions_json TEXT NOT NULL,
                     enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    department TEXT NOT NULL DEFAULT 'Unassigned',
+                    role_version INTEGER NOT NULL DEFAULT 1,
+                    owner TEXT NOT NULL DEFAULT 'Yuki',
+                    handler_id TEXT,
+                    handler_ready INTEGER NOT NULL DEFAULT 1 CHECK(handler_ready IN (0, 1)),
+                    max_steps INTEGER NOT NULL DEFAULT 5,
+                    max_tokens INTEGER NOT NULL DEFAULT 4000,
+                    approval_class TEXT NOT NULL DEFAULT 'review_required'
                 )
             """)
+            agent_columns = {row["name"] for row in db.execute("PRAGMA table_info(specialist_agents)")}
+            migrations = {
+                "department": "TEXT NOT NULL DEFAULT 'Unassigned'",
+                "role_version": "INTEGER NOT NULL DEFAULT 1",
+                "owner": "TEXT NOT NULL DEFAULT 'Yuki'",
+                "handler_id": "TEXT",
+                "handler_ready": "INTEGER NOT NULL DEFAULT 1",
+                "max_steps": "INTEGER NOT NULL DEFAULT 5",
+                "max_tokens": "INTEGER NOT NULL DEFAULT 4000",
+                "approval_class": "TEXT NOT NULL DEFAULT 'review_required'",
+            }
+            for column, definition in migrations.items():
+                if column not in agent_columns:
+                    db.execute(f"ALTER TABLE specialist_agents ADD COLUMN {column} {definition}")
             now = datetime.now(timezone.utc).isoformat()
             for agent in agent_map.values():
                 db.execute("""
                     INSERT OR IGNORE INTO specialist_agents(
                         agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        enabled, created_at, updated_at, department, role_version,
+                        owner, handler_id, handler_ready, max_steps, max_tokens, approval_class
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     agent.agent_id, agent.name,
                     json.dumps(sorted(agent.capabilities)), agent.action,
                     json.dumps(sorted(agent.permissions)), int(agent.enabled), now, now,
+                    agent.department, agent.role_version, agent.owner, agent.handler_id,
+                    int(agent.handler_ready), agent.max_steps, agent.max_tokens, agent.approval_class,
                 ))
         self._refresh_agent_registry()
 
@@ -190,8 +223,24 @@ class SpecialistAgentCoordinator:
             or any(not isinstance(item, str) or not _PERMISSION.fullmatch(item) for item in agent.permissions)
         ):
             raise ValueError("permissions must contain at most 32 bounded identifiers.")
-        if type(agent.enabled) is not bool:
-            raise ValueError("enabled must be a boolean.")
+        if type(agent.enabled) is not bool or type(agent.handler_ready) is not bool:
+            raise ValueError("enabled and handler_ready must be booleans.")
+        if not isinstance(agent.department, str) or not agent.department.strip() or len(agent.department) > 80:
+            raise ValueError("department must be bounded non-empty text.")
+        if type(agent.role_version) is not int or not 1 <= agent.role_version <= 1000000:
+            raise ValueError("role_version must be a positive bounded integer.")
+        if not isinstance(agent.owner, str) or not agent.owner.strip() or len(agent.owner) > 100:
+            raise ValueError("owner must be bounded non-empty text.")
+        if agent.handler_id is not None and (not isinstance(agent.handler_id, str) or not _ID.fullmatch(agent.handler_id)):
+            raise ValueError("handler_id must be a bounded identifier when provided.")
+        if type(agent.max_steps) is not int or not 1 <= agent.max_steps <= 20:
+            raise ValueError("max_steps must be between 1 and 20.")
+        if type(agent.max_tokens) is not int or not 1 <= agent.max_tokens <= 100000:
+            raise ValueError("max_tokens must be between 1 and 100000.")
+        if agent.approval_class not in {"read_only", "review_required", "human_approval"}:
+            raise ValueError("approval_class is not supported.")
+        if agent.handler_ready and not agent.handler_id:
+            raise ValueError("a handler-ready specialist must declare a handler_id.")
 
     def _allowed(self, actor_id: str, action: str, resource_id: str) -> bool:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
@@ -292,10 +341,18 @@ class SpecialistAgentCoordinator:
                 action=row["action"],
                 permissions=frozenset(permissions),
                 enabled=bool(row["enabled"]),
+                department=row["department"],
+                role_version=row["role_version"],
+                owner=row["owner"],
+                handler_id=row["handler_id"],
+                handler_ready=bool(row["handler_ready"]),
+                max_steps=row["max_steps"],
+                max_tokens=row["max_tokens"],
+                approval_class=row["approval_class"],
             )
             SpecialistAgentCoordinator._validate_agent(agent)
-            if row["enabled"] not in (0, 1):
-                raise ValueError("enabled state must be 0 or 1")
+            if row["enabled"] not in (0, 1) or row["handler_ready"] not in (0, 1):
+                raise ValueError("enabled and handler readiness must be 0 or 1")
             return agent
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
@@ -324,12 +381,14 @@ class SpecialistAgentCoordinator:
                     db.execute("""
                         INSERT INTO specialist_agents(
                             agent_id, name, capabilities_json, action, permissions_json,
-                            enabled, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            enabled, created_at, updated_at, department, role_version,
+                            owner, handler_id, handler_ready, max_steps, max_tokens, approval_class
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
                         agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                        now, now,
+                        now, now, agent.department, agent.role_version, agent.owner, agent.handler_id,
+                        int(agent.handler_ready), agent.max_steps, agent.max_tokens, agent.approval_class,
                     ))
             except sqlite3.IntegrityError as exc:
                 raise AgentPlanError("agent ID is already registered.") from exc
@@ -371,6 +430,14 @@ class SpecialistAgentCoordinator:
                     "name": agent.name,
                     "capabilities": tuple(sorted(agent.capabilities)),
                     "enabled": agent.enabled,
+                    "department": agent.department,
+                    "role_version": agent.role_version,
+                    "owner": agent.owner,
+                    "handler_id": agent.handler_id,
+                    "handler_ready": agent.handler_ready,
+                    "max_steps": agent.max_steps,
+                    "max_tokens": agent.max_tokens,
+                    "approval_class": agent.approval_class,
                 }
                 for agent in sorted(self.agents.values(), key=lambda item: item.agent_id)
             )
@@ -381,7 +448,7 @@ class SpecialistAgentCoordinator:
         with self._agent_lock:
             candidates = [
                 agent for agent in self.agents.values()
-                if agent.enabled and needed <= agent.capabilities
+                if agent.enabled and agent.handler_ready and needed <= agent.capabilities
                 and needed_permissions <= agent.permissions
             ]
             if not candidates:
@@ -489,7 +556,7 @@ class SpecialistAgentCoordinator:
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
+            if agent is None or not agent.enabled or not agent.handler_ready:
                 self._set_subtask(plan_id, row["subtask_id"], status="failed")
                 row["status"] = "failed"
                 continue
