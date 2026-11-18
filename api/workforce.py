@@ -7,18 +7,25 @@ import re
 from urllib.parse import parse_qs
 
 from core.auth import BuiltInAuthService
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.durable_task_engine import TaskNotFound
 from core.workforce_dashboard import WorkforceDashboard
 
 _QUERY_KEYS = {"max_goals"}
 _EMPLOYEE_QUERY_KEYS = {"department", "status", "search", "page", "page_size"}
 _GOAL_QUERY_KEYS = {"after_event_id", "event_limit"}
+_APPROVAL_QUERY_KEYS = {"limit"}
 
 
 class AuthenticatedWorkforceDashboardAPI:
     """Protect workforce visibility behind existing Yuki bearer sessions."""
 
-    def __init__(self, app, auth_service: BuiltInAuthService, dashboard: WorkforceDashboard):
+    def __init__(
+        self, app, auth_service: BuiltInAuthService, dashboard: WorkforceDashboard,
+        *, pending_approvals: SQLitePendingApprovalStore | None = None,
+        approval_audit: SQLiteApprovalAuditLog | None = None,
+    ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService")
         if not isinstance(dashboard, WorkforceDashboard):
@@ -26,6 +33,12 @@ class AuthenticatedWorkforceDashboardAPI:
         self.app = app
         self.auth = auth_service
         self.dashboard = dashboard
+        if pending_approvals is not None and not isinstance(pending_approvals, SQLitePendingApprovalStore):
+            raise TypeError("pending_approvals must be a SQLitePendingApprovalStore")
+        if approval_audit is not None and not isinstance(approval_audit, SQLiteApprovalAuditLog):
+            raise TypeError("approval_audit must be a SQLiteApprovalAuditLog")
+        self.pending_approvals = pending_approvals
+        self.approval_audit = approval_audit
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http" or not str(scope.get("path", "")).startswith("/v1/workforce"):
@@ -71,6 +84,25 @@ class AuthenticatedWorkforceDashboardAPI:
                     self.dashboard.goal_detail, goal_id,
                     after_event_id=after_event_id, event_limit=event_limit,
                 )
+            elif path == "/v1/workforce/approvals":
+                if set(query) - _APPROVAL_QUERY_KEYS:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                if self.pending_approvals is None:
+                    return await self._respond(send, 503, {"error": "approval_inbox_unavailable"})
+                limit = self._integer(query.get("limit", "100"), "limit")
+                pending = await asyncio.to_thread(self.pending_approvals.list_pending, limit=limit)
+                result = {"pending": pending, "count": len(pending)}
+            elif path == "/v1/workforce/approvals/audit":
+                if set(query) - _APPROVAL_QUERY_KEYS:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                if self.approval_audit is None:
+                    return await self._respond(send, 503, {"error": "approval_audit_unavailable"})
+                limit = self._integer(query.get("limit", "100"), "limit")
+                events, valid = await asyncio.gather(
+                    asyncio.to_thread(self.approval_audit.list_events, limit=limit),
+                    asyncio.to_thread(self.approval_audit.verify_chain),
+                )
+                result = {"events": events, "count": len(events), "chain_valid": valid}
             elif path == "/v1/workforce/departments":
                 if set(query) != {"name"}:
                     return await self._respond(send, 400, {"error": "department_name_required"})
