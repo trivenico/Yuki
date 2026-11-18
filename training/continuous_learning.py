@@ -316,8 +316,11 @@ class ContinuousLearningCoordinator:
         *,
         training_consent: bool,
         approved_by: str,
+        approval_recorder: Callable[[str, bool], Any] | None = None,
     ) -> str:
         """Approve one staged example using independently verified consent and authority."""
+        if approval_recorder is not None and not callable(approval_recorder):
+            raise TypeError("approval_recorder must be callable.")
         if not isinstance(proposal_id, str):
             raise ContinuousLearningError("Correction proposal was not found.")
         if (
@@ -326,7 +329,7 @@ class ContinuousLearningCoordinator:
             or not self._has_consent("training")
         ):
             raise ContinuousLearningError("Verified learning and separate training consent are required.")
-        if not self._is_approved(proposal_id, approved_by):
+        if approval_recorder is None and not self._is_approved(proposal_id, approved_by):
             raise ContinuousLearningError("The authenticated reviewer did not approve this proposal.")
         with self._lock:
             if self.store is not None:
@@ -365,6 +368,10 @@ class ContinuousLearningCoordinator:
                     )
                     if current is None:
                         raise ContinuousLearningError("Correction proposal was already reviewed.")
+                    if approval_recorder is not None:
+                        approval_recorder(proposal_id, True)
+                    if not self._is_approved(proposal_id, approved_by):
+                        raise ContinuousLearningError("The authenticated reviewer did not approve this proposal.")
                     latest["pending"].remove(current)
                     if not any(row["example_id"] == example_id for row in latest["approved"]):
                         latest["approved"].append(approved_record)
@@ -380,6 +387,10 @@ class ContinuousLearningCoordinator:
             item = self._pending.get(proposal_id)
             if item is None:
                 raise ContinuousLearningError("Correction proposal was not found.")
+            if approval_recorder is not None:
+                approval_recorder(proposal_id, True)
+            if not self._is_approved(proposal_id, approved_by):
+                raise ContinuousLearningError("The authenticated reviewer did not approve this proposal.")
             try:
                 example_id = self.generator.add_example(
                     messages=item["messages"],
