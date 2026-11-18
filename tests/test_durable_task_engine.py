@@ -131,6 +131,66 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.engine.create_knowledge_candidate("bad-tags", task["id"], {**lesson, "tags": ["duplicate", "DUPLICATE"]})
 
+    def test_knowledge_revision_requires_human_approval_and_preserves_history(self):
+        source = self._create_reviewed_source_task("knowledge-revision-source")
+        original = {
+            "title": "Prefer bounded retries",
+            "lesson": "Use bounded retries for transient failures.",
+            "domain": "workforce",
+            "tags": ["reliability"],
+        }
+        self.engine.create_knowledge_candidate("revision-lesson", source["id"], original)
+        self.engine.transition_knowledge(
+            "revision-lesson", expected_state="candidate", new_state="verified",
+            actor_id="initial-curator",
+        )
+        revised = {**original, "lesson": "Use bounded retries with jitter for transient failures."}
+        proposal = self.engine.create_knowledge_revision("revision-lesson", "revision-2", revised)
+        self.assertTrue(proposal["created"])
+        self.assertEqual(proposal["state"], "proposed")
+        self.assertEqual(self.engine.get_knowledge("revision-lesson")["knowledge"], original)
+        self.assertEqual(self.engine.list_verified_knowledge()[0]["knowledge"], original)
+        with self.assertRaises(TaskConflict):
+            self.engine.transition_knowledge_revision(
+                "revision-2", expected_state="proposed", new_state="approved",
+                actor_id="",
+            )
+        approved = self.engine.transition_knowledge_revision(
+            "revision-2", expected_state="proposed", new_state="approved",
+            actor_id="independent-curator", review_note="Compared both versions and source evidence.",
+        )
+        self.assertEqual(approved["state"], "approved")
+        self.assertEqual(approved["reviewed_by"], "independent-curator")
+        current = self.engine.get_knowledge("revision-lesson")
+        self.assertEqual(current["knowledge"], revised)
+        self.assertEqual(len(self.engine.list_knowledge_revisions("revision-lesson")), 1)
+        replay = self.engine.create_knowledge_revision("revision-lesson", "revision-2", revised)
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["version"], 2)
+
+    def test_knowledge_revision_rejects_stale_or_unverified_parent(self):
+        source = self._create_reviewed_source_task("knowledge-revision-stale-source")
+        lesson = {
+            "title": "Keep evidence",
+            "lesson": "Preserve evidence references.",
+            "domain": "workforce",
+            "tags": [],
+        }
+        self.engine.create_knowledge_candidate("revision-stale-lesson", source["id"], lesson)
+        with self.assertRaises(TaskConflict):
+            self.engine.create_knowledge_revision("revision-stale-lesson", "revision-before-verification", lesson)
+        self.engine.transition_knowledge(
+            "revision-stale-lesson", expected_state="candidate", new_state="verified",
+            actor_id="curator",
+        )
+        self.engine.create_knowledge_revision("revision-stale-lesson", "revision-reject", {**lesson, "lesson": "Alternative lesson."})
+        rejected = self.engine.transition_knowledge_revision(
+            "revision-reject", expected_state="proposed", new_state="rejected",
+            actor_id="curator",
+        )
+        self.assertEqual(rejected["state"], "rejected")
+        self.assertEqual(self.engine.get_knowledge("revision-stale-lesson")["knowledge"], lesson)
+
     def test_improvement_proposal_lifecycle_is_durable_and_actor_attributed(self):
         proposal = {
             "category": "department_backlog",
