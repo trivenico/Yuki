@@ -14,6 +14,10 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.durable_task_engine import DurableTaskEngine
+from core.workforce import AgentRegistry, default_workforce
+from core.workforce_dashboard import WorkforceDashboard
+from api.workforce import AuthenticatedWorkforceDashboardAPI
 
 
 class _NoApprovals:
@@ -29,6 +33,23 @@ def _loop():
 
 
 class ConversationRuntimeTests(unittest.TestCase):
+    def test_runtime_mounts_optional_authenticated_workforce_dashboard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            engine = DurableTaskEngine(str(root / "tasks.sqlite"))
+            dashboard = WorkforceDashboard(
+                registry=AgentRegistry(default_workforce()), task_engine=engine
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), workforce_dashboard=dashboard,
+            )
+            self.assertIsInstance(runtime.app, AuthenticatedWorkforceDashboardAPI)
+            self.assertIs(runtime.app.dashboard, dashboard)
+            runtime.close()
+            engine.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
