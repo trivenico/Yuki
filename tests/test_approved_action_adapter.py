@@ -6,6 +6,9 @@ from core.approved_action_adapter import ApprovedActionAdapter, ApprovedActionBi
 from core.agent import YukiCoreAgent
 from core.permissions import PermissionGate
 from skills.base import Skill, SkillResult
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
+from skills.base import Skill, SkillResult
 
 
 class Registry:
@@ -144,6 +147,68 @@ class ApprovedActionAdapterTests(unittest.TestCase):
             ApprovedActionAdapter(Agent(critical), {
                 "dangerous": ApprovedActionBinding("dangerous", lambda _: "")
             })
+
+
+    def test_real_agent_permission_gate_is_rechecked_before_skill_execution(self):
+        class RecordingSkill(Skill):
+            name = "notes.write"
+            description = "Write a note"
+            risk = "medium"
+            requires_approval = True
+
+            def __init__(self):
+                self.executions = []
+
+            def run(self, argument=""):
+                self.executions.append(argument)
+                return SkillResult(True, "written")
+
+        skill = RecordingSkill()
+        requests = []
+        agent = YukiCoreAgent(
+            skills=[skill],
+            permission_gate=PermissionGate(
+                approver=lambda request: requests.append(request) or False
+            ),
+        )
+        adapter = ApprovedActionAdapter(agent, {
+            "notes.write": ApprovedActionBinding("notes.write", lambda args: args["text"])
+        })
+        with self.assertRaisesRegex(RuntimeError, "permission|approval|not approved"):
+            adapter.execute({"skill_id": "notes.write", "arguments": {"text": "hello"}})
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].action, "skill:notes.write:sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        self.assertEqual(skill.executions, [])
+
+    def test_real_agent_executes_only_after_permission_gate_and_one_shot_guard(self):
+        class RecordingSkill(Skill):
+            name = "notes.write"
+            description = "Write a note"
+            risk = "medium"
+            requires_approval = True
+
+            def __init__(self):
+                self.executions = []
+
+            def run(self, argument=""):
+                self.executions.append(argument)
+                return SkillResult(True, "written")
+
+        skill = RecordingSkill()
+        requests = []
+        agent = YukiCoreAgent(
+            skills=[skill],
+            permission_gate=PermissionGate(
+                approver=lambda request: requests.append(request) or True
+            ),
+        )
+        adapter = ApprovedActionAdapter(agent, {
+            "notes.write": ApprovedActionBinding("notes.write", lambda args: args["text"])
+        })
+        result = adapter.execute({"skill_id": "notes.write", "arguments": {"text": "hello"}})
+        self.assertTrue(result.ok)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(skill.executions, ["hello"])
 
     def test_decoder_must_return_bounded_text(self):
         bad = ApprovedActionAdapter(self.agent, {
