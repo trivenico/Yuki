@@ -85,6 +85,31 @@ class EncryptedVoiceArtifactStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             EncryptedVoiceArtifactStore(root / "bad", key=b"short", authorize=lambda: True)
 
+    def test_posix_directory_handle_prevents_parent_path_swap(self):
+        if os.name != "posix" or os.open not in os.supports_dir_fd or os.link not in os.supports_dir_fd:
+            self.skipTest("POSIX directory-relative file operations are unavailable.")
+        original = self.directory
+        moved = Path(self.temp.name) / "moved-artifacts"
+        attacker = Path(self.temp.name) / "attacker-artifacts"
+        attacker.mkdir(mode=0o700)
+        original.rename(moved)
+        original.symlink_to(attacker, target_is_directory=True)
+        artifact_id = self.store.put(b"still-in-original-directory", source_owner_consent=True)
+        self.assertTrue((moved / (artifact_id + ".ykv")).is_file())
+        self.assertFalse((attacker / (artifact_id + ".ykv")).exists())
+        self.assertEqual(self.store.get(artifact_id), b"still-in-original-directory")
+        self.store.delete(artifact_id, confirmed=True)
+        self.assertFalse((moved / (artifact_id + ".ykv")).exists())
+
+    def test_rejects_non_regular_artifact_file(self):
+        if os.name != "posix":
+            self.skipTest("POSIX special-file test.")
+        artifact_id = "a" * 32
+        path = self.directory / (artifact_id + ".ykv")
+        path.symlink_to(self.directory / "missing-target")
+        with self.assertRaises(VoiceArtifactStoreError):
+            self.store.get(artifact_id)
+
     def test_rejects_invalid_artifact_identifier(self):
         with self.assertRaises(ValueError):
             self.store.get("../outside")
