@@ -35,7 +35,7 @@ class LearningCenterPanel:
         on_reject: Callable[[str], None],
         on_delete_all: Callable[[], dict[str, int]],
     ):
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
         from PySide6.QtWidgets import (
             QCheckBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
             QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
@@ -44,6 +44,25 @@ class LearningCenterPanel:
         callbacks = (on_consent, on_refresh, on_review, on_approve, on_reject, on_delete_all)
         if not all(callable(callback) for callback in callbacks):
             raise TypeError("Learning Center callbacks must be callable.")
+
+        class _LearningSignals(QObject):
+            finished = Signal(object, object, object)
+
+        class _LearningWorker(QRunnable):
+            def __init__(self, action, callback, args):
+                super().__init__()
+                self.action = action
+                self.callback = callback
+                self.args = args
+                self.signals = _LearningSignals()
+
+            @Slot()
+            def run(self):
+                try:
+                    result = self.callback(*self.args)
+                    self.signals.finished.emit(self, result, None)
+                except Exception as exc:
+                    self.signals.finished.emit(self, None, exc)
 
         page = QWidget(parent)
         page.setObjectName("yukiLearningCenter")
@@ -228,15 +247,71 @@ class LearningCenterPanel:
 
         presenter = Presenter()
 
+        pool = QThreadPool.globalInstance()
+        active_workers = set()
+        busy = {"value": False}
+
+        def set_controls_enabled(enabled: bool):
+            for control in (
+                learning_consent, training_consent, refresh, pending,
+                approve, reject, delete_all,
+            ):
+                control.setEnabled(enabled)
+            if enabled:
+                approve.setEnabled(
+                    selected_id["value"] is not None
+                    and state_cache["learning"] and state_cache["training"]
+                )
+                reject.setEnabled(
+                    selected_id["value"] is not None and state_cache["learning"]
+                )
+
+        def run_async(action, callback, args=(), *, on_success=None, on_error=None):
+            if busy["value"]:
+                return False
+            busy["value"] = True
+            set_controls_enabled(False)
+            presenter.set_status("Working securely…")
+            worker = _LearningWorker(action, callback, args)
+            active_workers.add(worker)
+
+            def completed(finished_worker, result, error):
+                active_workers.discard(finished_worker)
+                busy["value"] = False
+                set_controls_enabled(True)
+                if error is not None:
+                    if on_error is not None:
+                        on_error(error)
+                    else:
+                        presenter.set_status("The learning operation could not be completed safely.")
+                    return
+                if on_success is not None:
+                    on_success(result)
+
+            worker.signals.finished.connect(completed)
+            pool.start(worker)
+            return True
+
         def refresh_state(_checked=False):
-            try:
-                presenter.render_state(on_refresh())
-            except Exception:
+            def refreshed(state):
+                try:
+                    presenter.render_state(state)
+                    set_controls_enabled(True)
+                except Exception:
+                    presenter.set_status("Could not safely load learning status. Personalization is paused.")
+                    pending.clear()
+                    preview.clear()
+                    approve.setEnabled(False)
+                    reject.setEnabled(False)
+
+            def failed(_error):
                 presenter.set_status("Could not safely load learning status. Personalization is paused.")
                 pending.clear()
                 preview.clear()
                 approve.setEnabled(False)
                 reject.setEnabled(False)
+
+            run_async("refresh", on_refresh, on_success=refreshed, on_error=failed)
 
         def consent_changed(purpose: str, enabled: bool, checkbox):
             previous = state_cache[purpose]
@@ -259,14 +334,20 @@ class LearningCenterPanel:
                     checkbox.setChecked(previous)
                     checkbox.blockSignals(False)
                     return
-            try:
-                on_consent(purpose, enabled)
+
+            def saved(_result):
                 refresh_state()
-            except Exception:
+
+            def failed(_error):
                 checkbox.blockSignals(True)
                 checkbox.setChecked(previous)
                 checkbox.blockSignals(False)
                 presenter.set_status("The consent change could not be saved. The previous setting remains.")
+
+            run_async(
+                "consent", on_consent, (purpose, enabled),
+                on_success=saved, on_error=failed,
+            )
 
         def selection_changed(item, _previous=None):
             if item is None:
@@ -276,11 +357,23 @@ class LearningCenterPanel:
             if not isinstance(proposal_id, str) or not _SAFE_ID.fullmatch(proposal_id):
                 presenter.render_review("", None)
                 return
-            try:
-                presenter.render_review(proposal_id, on_review(proposal_id))
-            except Exception:
-                presenter.render_review("", None)
-                presenter.set_status("The correction preview could not be loaded safely.")
+
+            def reviewed(result):
+                if selected_id["value"] != proposal_id:
+                    return
+                try:
+                    presenter.render_review(proposal_id, result)
+                except Exception:
+                    presenter.render_review("", None)
+                    presenter.set_status("The correction preview could not be loaded safely.")
+
+            run_async(
+                "review", on_review, (proposal_id,),
+                on_success=reviewed,
+                on_error=lambda _error: presenter.set_status(
+                    "The correction preview could not be loaded safely."
+                ),
+            )
 
         def approve_selected(_checked=False):
             proposal_id = selected_id["value"]
@@ -297,12 +390,18 @@ class LearningCenterPanel:
             )
             if answer != QMessageBox.Yes:
                 return
-            try:
-                on_approve(proposal_id)
-                refresh_state()
+
+            def approved(_result):
                 presenter.set_status("Correction approved and recorded.")
-            except Exception:
-                presenter.set_status("Approval could not be committed. The sample remains unapproved.")
+                refresh_state()
+
+            run_async(
+                "approve", on_approve, (proposal_id,),
+                on_success=approved,
+                on_error=lambda _error: presenter.set_status(
+                    "Approval could not be committed. The sample remains unapproved."
+                ),
+            )
 
         def reject_selected(_checked=False):
             proposal_id = selected_id["value"]
@@ -315,12 +414,18 @@ class LearningCenterPanel:
             )
             if answer != QMessageBox.Yes:
                 return
-            try:
-                on_reject(proposal_id)
-                refresh_state()
+
+            def rejected(_result):
                 presenter.set_status("Pending correction rejected.")
-            except Exception:
-                presenter.set_status("The correction could not be removed from encrypted storage.")
+                refresh_state()
+
+            run_async(
+                "reject", on_reject, (proposal_id,),
+                on_success=rejected,
+                on_error=lambda _error: presenter.set_status(
+                    "The correction could not be removed from encrypted storage."
+                ),
+            )
 
         def delete_all_data(_checked=False):
             answer = QMessageBox.question(
@@ -334,8 +439,8 @@ class LearningCenterPanel:
             )
             if answer != QMessageBox.Yes:
                 return
-            try:
-                counts = on_delete_all()
+
+            def deleted(counts):
                 if (
                     not isinstance(counts, dict)
                     or type(counts.get("pending")) is not int
@@ -343,16 +448,21 @@ class LearningCenterPanel:
                     or not 0 <= counts["pending"] <= 100
                     or not 0 <= counts["approved"] <= 10_000
                 ):
-                    raise ValueError("Deletion result is invalid.")
-                refresh_state()
+                    presenter.set_status("Deletion result was invalid; verify storage before retrying.")
+                    return
                 presenter.set_status(
                     f"Deleted {counts['pending']} pending corrections and "
                     f"{counts['approved']} approved examples."
                 )
-            except Exception:
-                presenter.set_status(
+                refresh_state()
+
+            run_async(
+                "delete", on_delete_all,
+                on_success=deleted,
+                on_error=lambda _error: presenter.set_status(
                     "Deletion could not be completed safely. Stored learning data was retained."
-                )
+                ),
+            )
 
         learning_consent.toggled.connect(
             lambda enabled: consent_changed("learning", enabled, learning_consent)
