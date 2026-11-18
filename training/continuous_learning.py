@@ -84,6 +84,7 @@ class ContinuousLearningCoordinator:
         """Reload encrypted state and verify all authorizations in one bounded audit scan."""
         state = self.store.read()
         proposal_ids = [item["proposal_id"] for item in state["approved"]]
+        authorization_valid = True
         if self._authorization_snapshot is not None:
             try:
                 authorization = self._authorization_snapshot(proposal_ids)
@@ -100,6 +101,7 @@ class ContinuousLearningCoordinator:
             except Exception:
                 # A broken/tampered audit log must disable personalization, not
                 # silently fall back to stale in-memory approvals.
+                authorization_valid = False
                 self._last_learning_error = "Learning authorization audit is unavailable; personalization is paused."
                 authorization = {
                     "learning": False, "training": False,
@@ -146,7 +148,7 @@ class ContinuousLearningCoordinator:
                     ) from exc
         self._pending = pending
         self.generator = generator
-        if self._authorization_snapshot is None or authorization["learning"] or authorization["training"]:
+        if authorization_valid:
             self._last_learning_error = None
         return authorization
 
