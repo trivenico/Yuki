@@ -103,7 +103,7 @@ class VoiceProfileRegistry:
                     account, self._directory, namespace="VoiceProfile",
                     error_type=VoiceProfileRegistryError, directory_fd=self._directory_fd,
                 ):
-                    self._require_open()
+                    self._require_authorized()
                     # Every operation starts from the latest committed snapshot.
                     self._state = self._load()
                     yield
