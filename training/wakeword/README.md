@@ -6,7 +6,8 @@ runtime such as Kaggle; it does not require the user's Android phone or local PC
 
 ## Design
 
-- Phrase: the single English wake word `Yuki` (target pronunciation: “YOO-kee”). Do not prepend “Hey”.\n- Include speaker, accent, distance and room-noise variation. Train hard negatives for near-homophones such as “you key”, “you keep”, “cookie” and “you see”; measure false activations on natural conversation, not only synthetic clips.
+- Phrase: the single English wake word `Yuki` (target pronunciation: “YOO-kee”). Do not prepend “Hey”.
+- Include speaker, accent, distance and room-noise variation. Train hard negatives for near-homophones such as “you key”, “you keep”, “cookie” and “you see”; measure false activations on natural conversation, not only synthetic clips.
 - Training framework: upstream [openWakeWord](https://github.com/dscripka/openWakeWord)
   custom-model trainer, pinned to release `v0.6.0` for the initial reproducible
   experiment. Review upstream changes before upgrading.
