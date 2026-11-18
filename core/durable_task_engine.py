@@ -5,6 +5,7 @@ This module persists state but never executes task code or authorizes side effec
 from __future__ import annotations
 import json
 import math
+import re
 import hashlib
 import sqlite3
 from contextlib import closing
@@ -328,6 +329,17 @@ class DurableTaskEngine:
                 or any(not isinstance(tag, str) or not tag.strip() or len(tag) > 64 for tag in tags)
                 or len({tag.casefold() for tag in tags}) != len(tags)):
             raise ValueError("knowledge tags must be unique bounded strings")
+        # Conservative high-confidence screening; this is not a complete DLP system.
+        sensitive_patterns = (
+            r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+            r"(?i)\\b(?:api[_-]?key|access[_-]?token|secret|password)\\s*[:=]\\s*\\S+",
+            r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{12,}",
+            r"\\bAKIA[0-9A-Z]{16}\\b",
+            r"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b",
+        )
+        searchable_text = " ".join((knowledge["title"], knowledge["lesson"], knowledge["domain"], *tags))
+        if any(re.search(pattern, searchable_text) for pattern in sensitive_patterns):
+            raise ValueError("knowledge contains a credential or personal contact identifier")
         knowledge_json = self._json(knowledge)
         if len(knowledge_json.encode("utf-8")) > 8192:
             raise ValueError("knowledge candidate exceeds 8 KB")
