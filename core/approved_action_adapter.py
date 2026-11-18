@@ -51,7 +51,7 @@ class ApprovedActionAdapter:
             risk = getattr(skill, "risk", None)
             if risk not in {"low", "medium", "high"}:
                 raise ValueError("Configured skill has an unsupported or critical risk level.")
-            resolved[action_id] = (binding, skill)
+            resolved[action_id] = (binding, skill, risk)
 
         self._agent = agent
         self._registry = registry
@@ -69,7 +69,7 @@ class ApprovedActionAdapter:
         if configured is None:
             raise ValueError("Approved action ID is not explicitly configured.")
 
-        binding, expected_skill = configured
+        binding, expected_skill, expected_risk = configured
         # The agent's registry attribute is mutable even though individual registry
         # entries cannot be replaced. Refuse a swapped registry before run_skill().
         if getattr(self._agent, "registry", None) is not self._registry:
@@ -77,8 +77,8 @@ class ApprovedActionAdapter:
         current_skill = self._registry.get(binding.skill_name)
         if current_skill is not expected_skill:
             raise RuntimeError("Registered skill identity changed; execution was blocked.")
-        if getattr(current_skill, "risk", None) not in {"low", "medium", "high"}:
-            raise RuntimeError("Registered skill risk is no longer supported.")
+        if getattr(current_skill, "risk", None) != expected_risk:
+            raise RuntimeError("Registered skill risk changed; execution was blocked.")
 
         argument = binding.decode_arguments(dict(arguments))
         if not isinstance(argument, str) or len(argument) > 20000:
@@ -90,4 +90,8 @@ class ApprovedActionAdapter:
 
         # run_skill performs a fresh PermissionGate request and the guarded,
         # one-shot registered-skill invocation. Never call skill.execute here.
-        return self._agent.run_skill(binding.skill_name, argument)
+        result = self._agent.run_skill(binding.skill_name, argument)
+        if getattr(result, "ok", False) is not True:
+            stage = getattr(result, "stage", "execution_failed")
+            raise PermissionError(f"Registered skill invocation was not completed ({stage}).")
+        return result
