@@ -2,6 +2,8 @@ import io
 import tempfile
 import threading
 import unittest
+import os
+import time
 import wave
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from voice.clone_job import (
 )
 from voice.profile_registry import VoiceProfileRegistry
 from voice.secure_artifact_store import EncryptedVoiceArtifactStore
+from voice.clone_process import ProcessIsolatedVoiceCloneExecutor, VoiceCloneWorkerTimeout
 
 
 def wav_sample(seconds=3):
@@ -41,6 +44,22 @@ class FakeLocalProvider:
         return VoiceCloneOutput(b"opaque-clone-artifact", wav_sample())
 
 
+class BlockingProvider(FakeLocalProvider):
+    def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+        time.sleep(3)
+        return VoiceCloneOutput(b"artifact", wav_sample())
+
+
+class LargeProvider(FakeLocalProvider):
+    def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+        return VoiceCloneOutput(b"x" * (20 * 1024 * 1024 + 1), wav_sample())
+
+
+class InvalidPreviewProvider(FakeLocalProvider):
+    def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+        return VoiceCloneOutput(b"opaque-artifact", b"not-audio")
+
+
 class FakeRemoteProvider(FakeLocalProvider):
     is_local = False
 
@@ -60,6 +79,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
     def controller(self, provider=None):
         return VoiceCloneJobController(provider or FakeLocalProvider(), self.store, self.registry)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_success_stages_profile_but_never_activates_it(self):
         controller = self.controller()
         result = controller.run(
@@ -101,15 +121,10 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(controller.state, VoiceCloneJobState.FAILED)
         self.assertEqual(self.registry.list_profiles(), [])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_rejects_concurrent_job(self):
         entered = threading.Event()
         release = threading.Event()
-
-        class BlockingProvider(FakeLocalProvider):
-            def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
-                entered.set()
-                release.wait(2)
-                return VoiceCloneOutput(b"artifact", wav_sample())
 
         controller = self.controller(BlockingProvider())
         errors = []
@@ -131,21 +146,15 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_rejects_invalid_preview_before_storing_artifact(self):
-        class InvalidPreviewProvider(FakeLocalProvider):
-            def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
-                return VoiceCloneOutput(b"opaque-artifact", b"not-audio")
-
         controller = self.controller(InvalidPreviewProvider())
         with self.assertRaisesRegex(RuntimeError, "valid bounded PCM WAV"):
             controller.run(wav_sample(), profile_id="bad-preview", display_name="Bad preview", source_owner_consent=True)
         self.assertEqual(self.registry.list_profiles(), [])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_rejects_oversized_provider_output(self):
-        class LargeProvider(FakeLocalProvider):
-            def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
-                return VoiceCloneOutput(b"x" * (20 * 1024 * 1024 + 1), wav_sample())
-
         controller = self.controller(LargeProvider())
         with self.assertRaises(RuntimeError):
             controller.run(wav_sample(), profile_id="new-voice", display_name="New voice", source_owner_consent=True)
