@@ -579,7 +579,19 @@ class SpecialistAgentCoordinator:
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled or not agent.handler_ready:
+            # A plan is bound to the exact manifest revision selected at submit.
+            # If the role changed while waiting for dependencies, fail closed
+            # rather than silently dispatching under a different handler/policy.
+            manifest_matches = (
+                agent is not None
+                and agent.role_version == row["agent_role_version"]
+                and agent.handler_id == row["handler_id"]
+                and agent.action == row["agent_action"]
+            )
+            if (
+                not manifest_matches or agent is None
+                or not agent.enabled or not agent.handler_ready
+            ):
                 self._set_subtask(plan_id, row["subtask_id"], status="failed")
                 row["status"] = "failed"
                 continue
