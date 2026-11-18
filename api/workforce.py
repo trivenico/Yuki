@@ -11,6 +11,7 @@ from core.workforce_dashboard import WorkforceDashboard
 
 _QUERY_KEYS = {"max_goals"}
 _EMPLOYEE_QUERY_KEYS = {"department", "status", "search", "page", "page_size"}
+_GOAL_QUERY_KEYS = {"after_event_id", "event_limit"}
 
 
 class AuthenticatedWorkforceDashboardAPI:
@@ -59,6 +60,16 @@ class AuthenticatedWorkforceDashboardAPI:
                     page=page,
                     page_size=page_size,
                 )
+            elif re.fullmatch(r"/v1/workforce/goals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", path):
+                if set(query) - _GOAL_QUERY_KEYS:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                goal_id = path.rsplit("/", 1)[-1]
+                after_event_id = self._integer(query.get("after_event_id", "0"), "after_event_id")
+                event_limit = self._integer(query.get("event_limit", "100"), "event_limit")
+                result = await asyncio.to_thread(
+                    self.dashboard.goal_detail, goal_id,
+                    after_event_id=after_event_id, event_limit=event_limit,
+                )
             elif path == "/v1/workforce/departments":
                 if set(query) != {"name"}:
                     return await self._respond(send, 400, {"error": "department_name_required"})
@@ -66,7 +77,7 @@ class AuthenticatedWorkforceDashboardAPI:
             else:
                 return await self._respond(send, 404, {"error": "not_found"})
         except KeyError:
-            return await self._respond(send, 404, {"error": "department_not_found"})
+            return await self._respond(send, 404, {"error": "resource_not_found"})
         except (TypeError, ValueError):
             return await self._respond(send, 400, {"error": "invalid_query"})
         except Exception:
