@@ -93,6 +93,43 @@ class WorkforceWorkerTests(unittest.TestCase):
         self.assertEqual(self.executor.calls[0]["required_permissions"], ("repo:read",))
         self.assertEqual(self.engine.get_task(task["id"])["result"]["employee_id"], "ENG-001")
 
+    def test_worker_forwards_bounded_knowledge_context_to_executor(self):
+        payload = {
+            "description": "Review API code",
+            "assigned_employee_id": self.employee.employee_id,
+            "required_capabilities": ["python", "api_design"],
+            "required_permissions": ["repo:read"],
+            "max_autonomy_tier": 1,
+            "execution_authorized": False,
+            "review_required": False,
+            "knowledge_context": [{
+                "knowledge_id": "lesson-1", "title": "Use primary evidence",
+                "lesson": "Prefer primary sources.", "source_task_id": "source-1",
+                "reviewed_by": "curator-1",
+            }],
+        }
+        task = self.submit(payload=payload)
+        result = self.worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertEqual(self.executor.calls[0]["knowledge_context"], payload["knowledge_context"])
+
+    def test_worker_rejects_malformed_knowledge_context_before_execution(self):
+        payload = {
+            "description": "Review API code",
+            "assigned_employee_id": self.employee.employee_id,
+            "required_capabilities": ["python"],
+            "required_permissions": [],
+            "max_autonomy_tier": 1,
+            "execution_authorized": False,
+            "review_required": False,
+            "knowledge_context": [{"lesson": "untrusted malformed context"}],
+        }
+        task = self.submit(payload=payload)
+        result = self.worker.run_once()
+        self.assertEqual(result["status"], "invalid_payload")
+        self.assertEqual(self.executor.calls, [])
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
+
     def test_rejects_retryable_side_effect_task_without_execution(self):
         task = self.submit(max_attempts=3)
         result = self.worker.run_once()
