@@ -297,6 +297,18 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             )
             self.assertEqual(status, expected)
 
+    def test_goal_submission_enforces_streamed_body_limit(self):
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"idempotency-key", b"oversized"),
+        ]
+        status, body = self.request(
+            "/v1/workforce/goals", method="POST", token=self.admin_session.token,
+            body=b" " * 16_385, extra_headers=headers,
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(body["error"], "request_body_too_large")
+
     def test_goal_submission_requires_role_and_explicit_runtime(self):
         status, _ = self.request(
             "/v1/workforce/goals", method="POST", token=self.user_session.token,
