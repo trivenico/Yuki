@@ -85,7 +85,7 @@ class DesktopLearningStoreTests(unittest.TestCase):
             self.assertEqual(after_delete["approved_count"], 0)
             self.assertEqual(after_delete["retained_pending_count"], 0)
             self.assertEqual(state["approved_count"], 1)
-            self.assertEqual(state["pending"], [])
+            self.assertEqual([item["proposal_id"] for item in state["pending"]], [third])
             self.assertTrue(ledger.verify_example_approval(first, "authenticated-owner"))
             self.assertFalse(ledger.verify_example_approval(second, "authenticated-owner"))
             self.assertFalse(ledger.verify_example_approval(first, "authenticated-owner"))
