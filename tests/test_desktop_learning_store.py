@@ -10,6 +10,7 @@ from ui.desktop.learning import (
     create_desktop_learning_coordinator,
     create_desktop_learning_session,
     create_desktop_learning_store,
+    create_authenticated_learning_center,
 )
 
 
@@ -89,6 +90,59 @@ class DesktopLearningStoreTests(unittest.TestCase):
             self.assertFalse(ledger.verify_example_approval(second, "authenticated-owner"))
             self.assertFalse(ledger.verify_example_approval(first, "authenticated-owner"))
             self.assertFalse(ledger.verify_example_approval(third, "authenticated-owner"))
+
+    def test_authenticated_learning_center_factory_binds_one_session_to_panel(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtTest import QTest
+        except ImportError:
+            self.skipTest("PySide6 desktop extra not installed")
+        app = QApplication.instance() or QApplication([])
+        class Identity:
+            actor_id = "authenticated-owner"
+
+        identity = Identity()
+
+        class Sessions:
+            def current_identity(self):
+                return identity
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "yuki-profile"
+            with patch("ui.desktop.learning.desktop_data_root", return_value=root):
+                panel, session = create_authenticated_learning_center(
+                    None, _Keyring(), identity=identity, sessions=Sessions(),
+                )
+                elapsed = 0
+                status = panel.learning_controls["status"]
+                while status.text() == "Working securely…" and elapsed < 5000:
+                    QTest.qWait(10)
+                    elapsed += 10
+                self.assertIs(panel.learning_session, session)
+                self.assertEqual(session.ledger.actor_id, "authenticated-owner")
+                panel.close()
+                session.close()
+                panel.deleteLater()
+                app.processEvents()
+
+    def test_authenticated_learning_center_rejects_stale_identity_before_storage(self):
+        class Identity:
+            actor_id = "authenticated-owner"
+
+        identity = Identity()
+
+        class Sessions:
+            def current_identity(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "yuki-profile"
+            with patch("ui.desktop.learning.desktop_data_root", return_value=root):
+                with self.assertRaisesRegex(PermissionError, "no longer authenticated"):
+                    create_authenticated_learning_center(
+                        None, _Keyring(), identity=identity, sessions=Sessions(),
+                    )
+            self.assertFalse(root.exists())
 
     def test_factory_builds_restart_safe_actor_bound_learning_coordinator(self):
         try:
