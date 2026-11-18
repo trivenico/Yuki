@@ -7,6 +7,8 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
@@ -49,6 +51,36 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.app.dashboard, dashboard)
             runtime.close()
             engine.close()
+
+    def test_runtime_mounts_optional_approval_inbox_services(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            engine = DurableTaskEngine(str(root / "tasks.sqlite"))
+            dashboard = WorkforceDashboard(
+                registry=AgentRegistry(default_workforce()), task_engine=engine
+            )
+            pending = SQLitePendingApprovalStore(str(root / "pending.sqlite"))
+            audit = SQLiteApprovalAuditLog(str(root / "approval-audit.sqlite"))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), workforce_dashboard=dashboard,
+                pending_approvals=pending, approval_audit=audit,
+            )
+            self.assertIs(runtime.app.pending_approvals, pending)
+            self.assertIs(runtime.app.approval_audit, audit)
+            runtime.close()
+            engine.close()
+
+    def test_runtime_rejects_approval_services_without_workforce_dashboard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            pending = SQLitePendingApprovalStore(str(Path(directory) / "pending.sqlite"))
+            with self.assertRaisesRegex(ValueError, "require workforce_dashboard"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), pending_approvals=pending,
+                )
 
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
