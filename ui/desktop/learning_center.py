@@ -48,6 +48,15 @@ class LearningCenterPanel:
         class _LearningSignals(QObject):
             finished = Signal(object, object, object)
 
+        class _LearningReceiver(QObject):
+            @Slot(object, object, object)
+            def dispatch(self, worker, result, error):
+                completion = getattr(worker, "completion", None)
+                if callable(completion):
+                    completion(result, error)
+
+        receiver = _LearningReceiver(page)
+
         class _LearningWorker(QRunnable):
             def __init__(self, action, callback, args):
                 super().__init__()
@@ -277,7 +286,7 @@ class LearningCenterPanel:
             worker = _LearningWorker(action, callback, args)
             active_workers.add(worker)
 
-            def completed(finished_worker, result, error):
+            def completed(result, error):
                 active_workers.discard(finished_worker)
                 busy["value"] = False
                 if disposed["value"]:
@@ -292,7 +301,8 @@ class LearningCenterPanel:
                 if on_success is not None:
                     on_success(result)
 
-            worker.signals.finished.connect(completed)
+            worker.completion = completed
+            worker.signals.finished.connect(receiver.dispatch)
             pool.start(worker)
             return True
 
