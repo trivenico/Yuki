@@ -736,8 +736,14 @@ def run() -> int:
             migration_layout.addWidget(self.migration_status)
             tabs.addTab(migration_page, "Migration")
             self.authenticated_tabs = tabs
-
-            self.pages.addWidget(tabs)
+            authenticated_page = QWidget()
+            authenticated_layout = QVBoxLayout(authenticated_page)
+            self.security_global_status = QLabel("Security monitoring: off")
+            self.security_global_status.setObjectName("securityGlobalStatus")
+            self.security_global_status.setWordWrap(True)
+            authenticated_layout.addWidget(self.security_global_status)
+            authenticated_layout.addWidget(tabs, 1)
+            self.pages.addWidget(authenticated_page)
 
         def _clear_migration_preview(self):
             self.migration_preview = None
@@ -1157,13 +1163,13 @@ MIGRATION COMPLETE — verified manifest written to destination."
             controls = self.security_panel.security_controls
             for name in ("start", "stop", "refresh"):
                 controls[name].setEnabled(False)
-            controls["status"].setText(
-                "Monitoring: " + {
-                    "start": "starting…",
-                    "stop": "stopping…",
-                    "refresh": "refreshing…",
-                }.get(action, "working…")
-            )
+            operation_state = {
+                "start": "starting…",
+                "stop": "stopping…",
+                "refresh": "refreshing…",
+            }.get(action, "working…")
+            controls["status"].setText("Monitoring: " + operation_state)
+            self.security_global_status.setText("Security monitoring: " + operation_state)
             worker = SecurityWorker(action, service, identity)
             worker.signals.finished.connect(self._security_finished)
             self.security_worker = worker
@@ -1207,9 +1213,14 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     "Monitoring: operation failed (" + detail + "). "
                     "Sign out to revoke the security session and retry cleanup."
                 )
+                self.security_global_status.setText(
+                    "Security monitoring: cleanup required"
+                    if action == "stop" else "Security monitoring: unavailable"
+                )
                 return
             if action == "stop":
                 presenter.set_state("off", enabled=False)
+                self.security_global_status.setText("Security monitoring: off")
                 return
             if isinstance(result, dict):
                 try:
@@ -1219,8 +1230,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self.security_panel.security_controls["status"].setText(
                         "Monitoring: snapshot rejected (" + type(exc).__name__ + ")."
                     )
+                    self.security_global_status.setText("Security monitoring: unavailable")
                     return
             presenter.set_state("active", enabled=True)
+            self.security_global_status.setText("Security monitoring: active · local process inventory")
 
         def _set_memory_context(self, enabled: bool):
             if self.controller is None:
@@ -1786,6 +1799,7 @@ Version: {version}",
             self.speech_worker = None
             self.security_worker = None
             self.security_panel.security_presenter.set_state("off", enabled=False)
+            self.security_global_status.setText("Security monitoring: off")
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
