@@ -96,7 +96,29 @@ class DesktopSecurityService:
                 raise SecuritySessionError("Desktop security monitoring is not active.")
             controller = self._controller
             generation = self._generation
-        result = controller.snapshot()
+        try:
+            result = controller.snapshot()
+        except Exception as exc:
+            with self._lock:
+                session_changed = (
+                    self._closed or generation != self._generation
+                    or controller is not self._controller
+                )
+            if session_changed:
+                raise SecuritySessionError(
+                    "The desktop security session changed during refresh."
+                ) from exc
+            try:
+                authorized = self._authorize() is True
+            except Exception:
+                authorized = False
+            if not authorized:
+                raise SecuritySessionError(
+                    "The authenticated desktop session is no longer valid."
+                ) from exc
+            raise DesktopSecurityServiceError(
+                "The desktop security snapshot failed safely."
+            ) from exc
         with self._lock:
             if self._closed or generation != self._generation or controller is not self._controller:
                 raise SecuritySessionError("The desktop security session changed during refresh.")
