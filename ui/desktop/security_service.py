@@ -57,7 +57,6 @@ class DesktopSecurityService:
             return self._controller is not None
 
     def start(self, *, consent: bool) -> None:
-        # Check both gates before constructing optional monitoring components.
         if consent is not True:
             raise SecuritySessionError("Explicit monitoring consent is required.")
         try:
@@ -67,12 +66,12 @@ class DesktopSecurityService:
         if not authorized:
             raise SecuritySessionError("An authenticated desktop session is required.")
 
+        # Serialize startup with stop/close so a late enable cannot undo stop.
         with self._lock:
             if self._closed:
                 raise SecuritySessionError("The desktop security service is closed.")
             controller = self._controller
             if controller is None:
-                # The factory runs only after explicit consent and auth checks.
                 monitor = self._monitor_factory()
                 factory = self._controller_factory
                 if factory is None:
@@ -82,15 +81,13 @@ class DesktopSecurityService:
                 controller = factory(monitor, authorize=self._authorize)
                 self._controller = controller
             self._generation += 1
-
-        try:
-            controller.start(consent=True)
-        except Exception as exc:
-            # Keep the controller reachable: start() may have attempted a
-            # compensating disable and may require an explicit cleanup retry.
-            raise DesktopSecurityServiceError(
-                "Desktop security monitoring could not be started."
-            ) from exc
+            try:
+                controller.start(consent=True)
+            except Exception as exc:
+                # Keep the controller reachable if compensating cleanup failed.
+                raise DesktopSecurityServiceError(
+                    "Desktop security monitoring could not be started."
+                ) from exc
 
     def snapshot(self) -> dict:
         with self._lock:
