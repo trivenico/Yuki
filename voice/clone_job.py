@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from voice.audio_validation import VoiceSampleMetadata, validate_voice_sample
+from voice.audio_validation import VoiceSampleMetadata, validate_pcm_audio, validate_voice_sample
 from voice.profile_registry import VoiceProfileRegistry
 from voice.secure_artifact_store import EncryptedVoiceArtifactStore
 
@@ -115,7 +115,11 @@ class VoiceCloneJobController:
     def cancel(self) -> bool:
         """Request cooperative cancellation; false means no active job."""
         with self._lock:
-            if self._active_job is None:
+            if self._active_job is None or self._state in {
+                VoiceCloneJobState.PREVIEW_READY,
+                VoiceCloneJobState.CANCELLED,
+                VoiceCloneJobState.FAILED,
+            }:
                 return False
             self._cancel.set()
             return True
@@ -162,8 +166,10 @@ class VoiceCloneJobController:
                 raise VoiceCloneJobError("Generated profile artifact exceeds the 20 MiB limit.")
             if not isinstance(output.preview_audio, bytes) or not output.preview_audio:
                 raise VoiceCloneJobError("Local provider returned an empty preview.")
-            if len(output.preview_audio) > 10 * 1024 * 1024:
-                raise VoiceCloneJobError("Generated preview exceeds the 10 MiB limit.")
+            try:
+                validate_pcm_audio(output.preview_audio, max_bytes=10 * 1024 * 1024)
+            except ValueError as exc:
+                raise VoiceCloneJobError("Generated preview must be valid bounded PCM WAV audio.") from exc
             self._check_cancelled(deadline)
             with self._lock:
                 self._state = VoiceCloneJobState.STORING
@@ -171,11 +177,13 @@ class VoiceCloneJobController:
                 output.profile_artifact, source_owner_consent=source_owner_consent,
             )
             self._check_cancelled(deadline)
-            self._registry.stage_profile(
-                profile_id, display_name, self._provider.provider_id, artifact_ref,
-                source_owner_consent=source_owner_consent,
-            )
             with self._lock:
+                # Serialize final cancellation check and profile commit against cancel().
+                self._check_cancelled(deadline)
+                self._registry.stage_profile(
+                    profile_id, display_name, self._provider.provider_id, artifact_ref,
+                    source_owner_consent=source_owner_consent,
+                )
                 self._state = VoiceCloneJobState.PREVIEW_READY
             return VoiceCloneJobResult(
                 job_id, profile_id, artifact_ref, output.preview_audio, metadata,
