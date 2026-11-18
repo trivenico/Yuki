@@ -119,6 +119,33 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome.status, "recovery_required")
         self.assertEqual(len(self.planner.executed), 1)
 
+    def test_missing_execution_runtime_does_not_consume_pending_approval(self):
+        class UnavailablePlanner:
+            pass
+
+        planner = UnavailablePlanner()
+        pending = self.coordinator.record(
+            planner, action_result("retry after wiring"), actor="owner", session_id="session-a"
+        )
+        unavailable = self.coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(unavailable.status, "execution_unavailable")
+        self.assertFalse(unavailable.ok)
+
+        executed = []
+        planner.execute_approved_action = lambda action: (
+            executed.append(action) or SimpleNamespace(ok=True)
+        )
+        completed = self.coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(len(executed), 1)
+        self.assertEqual(executed[0]["arguments"]["text"], "retry after wiring")
+
     def test_record_requires_explicit_approval_before_execution(self):
         self.assertEqual(self.pending.status, "pending_approval")
         self.assertFalse(self.pending.ok)
