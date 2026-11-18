@@ -92,8 +92,9 @@ class LearningCenterPanel:
         explanation = QLabel(
             "Yuki never scans chat history for training. Submit a specific correction "
             "only when you choose. Personalization consent and model-training consent "
-            "are separate: learning consent controls few-shot personalization, while "
-            "training consent controls SFT dataset export. Approved examples never "
+            "are separate. Both must be active when you approve an example; "
+            "learning consent controls later few-shot personalization, while training "
+            "consent separately controls SFT dataset export. Approved examples never "
             "change model weights automatically. Turning consent off stops its "
             "corresponding use. Use the deletion control below to permanently remove "
             "all saved pending and approved learning samples. Audit records retain only "
