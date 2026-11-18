@@ -123,8 +123,9 @@ class DesktopSecurityService:
                 controller.close()
 
 
-
-def create_authenticated_desktop_security_service(sessions: Any, identity: Any) -> DesktopSecurityService:
+def create_authenticated_desktop_security_service(
+    sessions: Any, identity: Any,
+) -> DesktopSecurityService:
     """Create a lazy read-only monitor bound to one exact desktop login identity.
 
     No sensor or optional process-inspection dependency is imported until the
