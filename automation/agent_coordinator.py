@@ -855,14 +855,16 @@ class SpecialistAgentCoordinator:
                     UPDATE agent_plan_subtasks
                     SET status=CASE
                         WHEN status IN (
-                            'running', 'succeeded', 'failed', 'cancelled',
-                            'interrupted', 'blocked'
+                            'succeeded', 'failed', 'cancelled', 'interrupted', 'blocked'
+                        ) THEN status
+                        WHEN status='running' AND ? NOT IN (
+                            'succeeded', 'failed', 'cancelled', 'interrupted', 'blocked'
                         ) THEN status
                         ELSE ?
                     END
                     WHERE plan_id=? AND subtask_id=?
                     """,
-                    (status, plan_id, subtask_id),
+                    (status, status, plan_id, subtask_id),
                 )
             else:
                 db.execute(
@@ -870,11 +872,15 @@ class SpecialistAgentCoordinator:
                     UPDATE agent_plan_subtasks
                     SET task_id=COALESCE(task_id, ?),
                         status=CASE
-                            WHEN status IN ('running', 'succeeded', 'failed', 'cancelled', 'interrupted', 'blocked')
-                            THEN status ELSE ? END
+                            WHEN status IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'blocked')
+                            THEN status
+                            WHEN status='running' AND ? NOT IN (
+                                'succeeded', 'failed', 'cancelled', 'interrupted', 'blocked'
+                            ) THEN status
+                            ELSE ? END
                     WHERE plan_id=? AND subtask_id=? AND (task_id IS NULL OR task_id=?)
                     """,
-                    (task_id, status, plan_id, subtask_id, task_id),
+                    (task_id, status, status, plan_id, subtask_id, task_id),
                 )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
