@@ -113,7 +113,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "executed":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit(), action_executor=self.planner)
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
