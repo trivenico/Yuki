@@ -119,7 +119,7 @@ class ContinuousLearningCoordinator:
                 "approved_proposal_ids": [],
             }
             approved_ids = set()
-            if authorization["training"]:
+            if authorization["learning"] or authorization["training"]:
                 for item in state["approved"]:
                     if self._is_approved(item["proposal_id"], item["approved_by"]):
                         approved_ids.add(item["proposal_id"])
