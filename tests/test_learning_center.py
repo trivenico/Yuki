@@ -70,7 +70,7 @@ class LearningCenterPanelTests(unittest.TestCase):
 
     def test_delete_all_requires_confirmation_and_invokes_callback(self):
         from PySide6.QtWidgets import QMessageBox
-        with patch("ui.desktop.learning_center.QMessageBox.question", return_value=QMessageBox.Yes):
+        with patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.Yes):
             self.page.learning_controls["delete_all"].click()
             self.app.processEvents()
         self.assertEqual(self.deleted, [True])
