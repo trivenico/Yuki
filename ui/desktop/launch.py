@@ -1189,12 +1189,12 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 controls["start"].setEnabled(False)
                 controls["stop"].setEnabled(False)
                 controls["refresh"].setEnabled(False)
-                controls["status"].setText("Monitoring: stopping")
+                controls["status"].setText("Security: stopping")
             elif action == "refresh":
                 controls["start"].setEnabled(False)
                 controls["stop"].setEnabled(True)
                 controls["refresh"].setEnabled(False)
-                controls["status"].setText("Monitoring: refreshing")
+                controls["status"].setText("Security: scanning")
             worker = SecurityWorker(service, generation, action)
             worker.signals.finished.connect(self._security_finished)
             self.security_pool.start(worker)
@@ -1231,7 +1231,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 return
             try:
                 self.security_presenter.render(result)
-                self.security_presenter.set_state("active", enabled=True)
+                self.security_presenter.set_state("ready", enabled=True)
             except Exception as exc:
                 self.security_presenter.set_state(
                     "snapshot rejected (" + type(exc).__name__ + ")",
