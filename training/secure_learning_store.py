@@ -228,6 +228,11 @@ class EncryptedLearningStore:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size <= 0 or info.st_size > _MAX_FILE_BYTES:
                 raise SecureLearningStoreError("Encrypted learning file is not a bounded regular file.")
+            if os.name == "posix":
+                if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+                    raise SecureLearningStoreError("Encrypted learning file has an unexpected owner.")
+                if stat.S_IMODE(info.st_mode) & 0o077:
+                    raise SecureLearningStoreError("Encrypted learning file permissions are not private.")
             chunks, remaining = [], _MAX_FILE_BYTES + 1
             while remaining:
                 chunk = os.read(descriptor, min(remaining, 65536))
