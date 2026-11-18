@@ -169,8 +169,9 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
-    def claim(self, worker_id, *, lease_seconds=60):
+    def claim(self, worker_id, *, lease_seconds=60, task_type=None):
         if not isinstance(worker_id,str) or not 1 <= len(worker_id) <= 256: raise ValueError("invalid worker_id")
+        if task_type is not None and (not isinstance(task_type, str) or not 1 <= len(task_type) <= 128): raise ValueError("invalid task_type")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600: raise ValueError("lease_seconds must be an integer in 1..3600")
         now=self.clock()
         with closing(self._connect()) as c:
