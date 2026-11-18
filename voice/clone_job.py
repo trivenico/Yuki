@@ -1,8 +1,8 @@
 """Provider-neutral, consent-gated voice-clone job orchestration.
 
-This controller is synchronous and must run on a dedicated worker. It does not
-claim to sandbox or forcibly terminate provider code; process isolation remains
-a separate release gate.
+This controller is synchronous and must run on a dedicated worker. Provider
+inference runs in a killable child process with POSIX resource limits, but this
+is not an OS sandbox and Windows remains fail-closed pending Job Object limits.
 """
 from __future__ import annotations
 
@@ -74,9 +74,9 @@ class LocalVoiceCloneProvider(Protocol):
 class VoiceCloneJobController:
     """Run one clone job and leave its profile staged for audition.
 
-    The provider must be reviewed, local, and cooperative: it must honor the
-    cancellation event and deadline. This controller cannot preempt a stuck
-    in-process provider. A process-isolated executor is required for release.
+    The provider must be reviewed and local. Inference runs in a spawned process
+    so the parent can terminate a stuck provider. The child still runs with the
+    user's OS permissions; this is not a filesystem or network sandbox.
     """
 
     def __init__(
