@@ -90,7 +90,7 @@ class AuthenticatedWorkforceDashboardAPI:
                 if self.pending_approvals is None:
                     return await self._respond(send, 503, {"error": "approval_inbox_unavailable"})
                 limit = self._integer(query.get("limit", "100"), "limit")
-                pending = await asyncio.to_thread(self.pending_approvals.list_pending, limit=limit)
+                pending = await asyncio.to_thread(self.pending_approvals.list_pending, actor=user.user_id, limit=limit)
                 result = {"pending": pending, "count": len(pending)}
             elif path == "/v1/workforce/approvals/audit":
                 if set(query) - _APPROVAL_QUERY_KEYS:
