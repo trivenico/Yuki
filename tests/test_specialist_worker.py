@@ -352,13 +352,14 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = self.worker({"code-review": lambda text: "completed: " + text}).run_once()
         self.assertEqual(result.task_id, task.task_id)
         self.assertEqual(result.state, "succeeded")
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         with self.coordinator._connect() as db:
             row = db.execute(
                 "SELECT task_id, status FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
                 (plan.plan_id, "implement"),
             ).fetchone()
         self.assertEqual(row["task_id"], task.task_id)
-        self.assertEqual(row["status"], "running")
+        self.assertEqual(row["status"], "succeeded")
 
 
 if __name__ == "__main__":
