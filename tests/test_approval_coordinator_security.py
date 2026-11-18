@@ -34,6 +34,23 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
             self.planner, result, actor="owner", session_id="session-1"
         )
 
+    def test_digest_mismatch_does_not_consume_persistent_request(self):
+        mismatch = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirmation_digest=confirmation_digest({
+                "skill_id": "notes.write", "arguments": {"text": "different"}
+            }), confirm=lambda _: True,
+        )
+        self.assertEqual(mismatch.status, "confirmation_mismatch")
+        self.assertEqual(self.planner.executed, [])
+        confirmed = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
+        )
+        self.assertTrue(confirmed.ok)
+        self.assertEqual(len(self.planner.executed), 1)
+
     def test_confirmation_callback_cannot_mutate_executed_snapshot(self):
         def mutate_for_display(display):
             display["arguments"]["text"] = "tampered"
