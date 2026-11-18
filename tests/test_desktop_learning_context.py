@@ -1,6 +1,7 @@
 import unittest
 
 from core.conversation_application_runtime import ConversationApplicationRuntime
+from ui.desktop.authenticated_conversation import AuthenticatedDesktopConversation
 from ui.desktop.conversation_adapter import DesktopConversationAdapter
 
 
@@ -99,6 +100,32 @@ class DesktopLearningContextTests(unittest.TestCase):
         self.assertTrue(learning.closed)
         self.assertIsNone(adapter.conversation_id)
         self.assertIsNone(adapter._learning)
+
+    def test_authenticated_session_invalidation_closes_learning_context(self):
+        class Identity:
+            actor_id = "owner-1"
+
+        class Sessions:
+            def __init__(self, identity):
+                self.identity = identity
+
+            def current_identity(self):
+                return self.identity
+
+        identity = Identity()
+        sessions = Sessions(identity)
+        learning = FakeLearning("Approved historical examples.")
+        conversations = FakeConversations()
+        application = ConversationApplicationRuntime(
+            conversations=conversations, store=FakeStore(), owner_id="owner-1",
+        )
+        facade = AuthenticatedDesktopConversation(
+            application, identity=identity, sessions=sessions, learning=learning,
+        )
+        facade.invalidate()
+        self.assertTrue(learning.closed)
+        with self.assertRaises(PermissionError):
+            facade.send("This must not be sent after logout.")
 
     def test_learning_dependency_must_expose_patch_builder(self):
         conversations = FakeConversations()
