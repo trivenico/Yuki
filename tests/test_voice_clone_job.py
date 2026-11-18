@@ -59,7 +59,7 @@ class BlockingProvider(FakeLocalProvider):
     def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
         if self.started_event is not None:
             self.started_event.set()
-        time.sleep(5)
+        time.sleep(3)
         return VoiceCloneOutput(b"artifact", wav_sample())
 
 
