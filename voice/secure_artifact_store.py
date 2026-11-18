@@ -59,6 +59,7 @@ class EncryptedVoiceArtifactStore:
         if not 1 <= max_artifact_bytes <= _MAX_ARTIFACT_BYTES:
             raise ValueError("max_artifact_bytes is outside the supported limit.")
         self._cipher = AESGCM(key)
+        self._closed = False
         self._authorize = authorize
         self._max_bytes = max_artifact_bytes
         self._lock = threading.RLock()
@@ -93,12 +94,24 @@ class EncryptedVoiceArtifactStore:
             raise VoiceArtifactStoreError("Could not securely open voice artifact directory.") from exc
 
     def _require_authorized(self) -> None:
+        if self._closed:
+            raise VoiceArtifactStoreError("Voice artifact store is closed.")
         try:
             allowed = self._authorize()
         except Exception as exc:
             raise VoiceArtifactAuthorizationError("Voice artifact authorization could not be verified.") from exc
         if allowed is not True:
             raise VoiceArtifactAuthorizationError("An authenticated session is required for voice artifacts.")
+
+    def close(self) -> None:
+        """Close the retained directory handle; safe to call more than once."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._directory_fd is not None:
+                os.close(self._directory_fd)
+                self._directory_fd = None
 
     @staticmethod
     def _aad(artifact_id: str) -> bytes:
