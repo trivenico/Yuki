@@ -56,8 +56,11 @@ def validate_voice_sample(data: bytes, *, source_owner_consent: bool, max_bytes:
             compression = audio.getcomptype()
             compression_name = audio.getcompname()
             duration = frame_count / sample_rate if sample_rate else 0.0
+            expected = frame_count * channels * sample_width
+            if expected > len(data):
+                raise VoiceSampleValidationError("Voice sample declares more audio data than the file contains.")
             frames = audio.readframes(frame_count)
-            if len(frames) != frame_count * channels * sample_width:
+            if len(frames) != expected:
                 raise VoiceSampleValidationError("Voice sample frame data is truncated.")
     except VoiceSampleValidationError:
         raise
