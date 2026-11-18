@@ -178,6 +178,7 @@ class WorkforceWorker:
             status = getattr(outcome, "status", None)
             if type(ok) is not bool or not isinstance(status, str) or not status:
                 raise TypeError("executor returned an invalid outcome")
+            review_evidence = None
             if ok and payload["review_required"]:
                 if self.reviewer is None:
                     failed = self.engine.fail(task_id, self.worker_id, "independent review unavailable")
@@ -211,10 +212,16 @@ class WorkforceWorker:
                     failed = self.engine.fail(task_id, self.worker_id, "independent review rejected")
                     return {"task_id": task_id, "state": failed["state"], "status": "review_rejected"}
                 status = f"{status}:reviewed"
+                review_evidence = {
+                    "reviewer_id": reviewer_id,
+                    "status": review_status,
+                    "approved": True,
+                }
             if ok:
                 completed = self.engine.complete(task_id, self.worker_id, {
                     "ok": True, "status": status, "employee_id": employee.employee_id,
                     "review_required": payload["review_required"],
+                    "review_evidence": review_evidence,
                 })
                 return {"task_id": task_id, "state": completed["state"], "status": status}
             failed = self.engine.fail(task_id, self.worker_id, status)
