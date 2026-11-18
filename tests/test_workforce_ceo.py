@@ -31,12 +31,13 @@ class WorkforceCEOTests(unittest.TestCase):
             task = self.engine.get_task(assignment.task_id)
             self.assertEqual(task["state"], "queued")
             self.assertEqual(task["goal_id"], execution.goal_id)
-            if step.depends_on:
-                self.assertTrue(task["dependencies"])
-                self.assertEqual(
-                    set(task["dependencies"]),
-                    {task_by_plan_id[key] for key in step.depends_on},
-                )
+        # The dependency gate prevents implementation from being claimed while
+        # research is still queued; after research succeeds, implementation opens.
+        first = self.engine.claim("ceo-test-worker", task_type="workforce.task")
+        self.assertEqual(first["id"], task_by_plan_id["research"])
+        self.engine.complete(first["id"], "ceo-test-worker", {"ok": True})
+        second = self.engine.claim("ceo-test-worker", task_type="workforce.task")
+        self.assertEqual(second["id"], task_by_plan_id["implementation"])
 
     def test_report_distinguishes_queued_from_completed(self):
         execution = self.ceo.plan_and_dispatch("Research the market and report findings")
