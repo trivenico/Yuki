@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -33,8 +34,15 @@ class LearningCenterPanelTests(unittest.TestCase):
         }
         self.reviewed = []
         self.deleted = []
+        self.callback_thread_ids = []
+        self.main_thread_id = threading.get_ident()
+
+        def on_refresh():
+            self.callback_thread_ids.append(threading.get_ident())
+            return dict(self.state)
 
         def on_review(proposal_id):
+            self.callback_thread_ids.append(threading.get_ident())
             self.reviewed.append(proposal_id)
             return {
                 "proposal_id": proposal_id,
@@ -46,7 +54,7 @@ class LearningCenterPanelTests(unittest.TestCase):
 
         self.page = LearningCenterPanel.create(
             on_consent=lambda purpose, enabled: None,
-            on_refresh=lambda: dict(self.state),
+            on_refresh=on_refresh,
             on_review=on_review,
             on_approve=lambda proposal_id: None,
             on_reject=lambda proposal_id: None,
@@ -66,6 +74,10 @@ class LearningCenterPanelTests(unittest.TestCase):
         self.page.close()
         self.page.deleteLater()
         self.app.processEvents()
+
+    def test_storage_callbacks_run_off_the_gui_thread(self):
+        self.assertTrue(self.callback_thread_ids)
+        self.assertTrue(all(thread_id != self.main_thread_id for thread_id in self.callback_thread_ids))
 
     def test_render_review_uses_plain_text_and_enables_approval_only_with_consent(self):
         controls = self.page.learning_controls
