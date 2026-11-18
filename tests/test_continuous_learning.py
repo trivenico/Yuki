@@ -222,6 +222,31 @@ class ContinuousLearningTests(unittest.TestCase):
         self.assertIsNone(revoked.build_few_shot_patch("Python unit test"))
         self.assertEqual(revoked.approved_example_count, 0)
 
+    def test_approval_is_recorded_only_inside_transaction_for_existing_pending_item(self):
+        store = FakeDurableLearningStore()
+        learning = _learning(store=store)
+        calls = []
+        with self.assertRaises(ContinuousLearningError):
+            learning.approve_correction(
+                "f" * 24,
+                training_consent=True,
+                approved_by="owner",
+                approval_recorder=lambda proposal_id, approved: calls.append((proposal_id, approved)),
+            )
+        self.assertEqual(calls, [])
+
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="task:approval-lock",
+            task_type="coding", learning_consent=True,
+        )
+        learning.approve_correction(
+            proposal,
+            training_consent=True,
+            approved_by="owner",
+            approval_recorder=lambda proposal_id, approved: calls.append((proposal_id, approved)),
+        )
+        self.assertEqual(calls, [(proposal, True)])
+
     def test_delete_all_learning_data_revokes_before_atomic_clear(self):
         store = FakeDurableLearningStore()
         learning = _learning(store=store)
