@@ -4,7 +4,9 @@ from __future__ import annotations
 from typing import Any
 
 
-def create_desktop_security_service(sessions: Any, session_id: str):
+def create_desktop_security_service(
+    sessions: Any, session_id: str, *, process_provider: Any = None,
+):
     """Bind the opt-in read-only monitor to exactly one authenticated session.
 
     No process enumeration or sensor construction happens here. The monitor
@@ -27,7 +29,9 @@ def create_desktop_security_service(sessions: Any, session_id: str):
         from defense.security_monitor import DesktopSecurityMonitor
 
         return DesktopSecurityMonitor(
-            process_monitor=ReadOnlyProcessMonitor(max_processes=2048),
+            process_monitor=ReadOnlyProcessMonitor(
+                max_processes=2048, provider=process_provider,
+            ),
             enabled=False,
         )
 
