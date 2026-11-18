@@ -50,6 +50,8 @@ The `max_steps` ceiling is enforced at plan creation as the maximum number of su
 
 Approval class is also stored in the plan snapshot and compared at dispatch. This makes dispatch fail closed if an approval policy is changed in the registry without a corresponding role-version bump.
 
-## Remaining activation gate: queued-task execution binding
+## Worker claim-time manifest binding
 
-The coordinator checks the manifest snapshot immediately before it creates a task. The current `SpecialistTaskWorker` resolves a callable by agent ID and validates the allow-listed `emit` action, but it does not yet independently compare the queued task's role version and handler identity with the live registry at claim time. Therefore a manifest change after task creation is not detected by this layer. Keep the new role slots disabled until the worker receives a reviewed, fail-closed execution binding (including handler ID and role revision) and tests cover a change between enqueue and claim.
+Coordinator-created tasks are marked as manifest-bound. The worker requires an injected validator for these tasks and fails them closed if the validator is missing, raises, or reports a mismatch. The coordinator validator joins the queued task back to its plan snapshot and current role registry, checking role version, handler ID, action, approval class, enabled state, and handler readiness. Tests cover both an unchanged role and a role revision changed after enqueue but before worker claim.
+
+This is an execution-integrity guard, not an OS sandbox or a provider-code identity attestation. Deployment must inject the coordinator's validator into every specialist worker; legacy unmarked task names remain compatible and do not receive this new guard. The initial role slots remain disabled until reviewed deployment wiring and the remaining permissions/budget/lifecycle controls are complete.
