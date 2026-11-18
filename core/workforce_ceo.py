@@ -58,6 +58,10 @@ class WorkforceCEO:
         after only part of the DAG was submitted. Re-selecting an employee would
         change the task fingerprint and turn a safe retry into a conflict.
         """
+        if goal_id is not None and (
+            not isinstance(goal_id, str) or not goal_id.strip()
+        ):
+            raise ValueError("goal_id must be non-empty text")
         plan = self.planner.decompose(goal)
         if goal_id is not None:
             # Bind the exact normalized DAG before any assignments are written.
@@ -75,10 +79,6 @@ class WorkforceCEO:
                     for task in plan
                 ],
             )
-        if goal_id is not None and (
-            not isinstance(goal_id, str) or not goal_id.strip()
-        ):
-            raise ValueError("goal_id must be non-empty text")
 
         reserved: dict[str, int] = {}
         planned_assignees: dict[str, str] = {}
