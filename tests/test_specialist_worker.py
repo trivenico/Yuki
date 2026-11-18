@@ -366,5 +366,22 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(row["status"], "succeeded")
 
 
+    def test_manifest_change_during_handler_prevents_result_acceptance(self):
+        task_id = self.create_task()
+
+        def change_manifest(_text):
+            with self.coordinator._connect() as db:
+                db.execute(
+                    "UPDATE specialist_agents SET role_version=role_version+1 WHERE agent_id='code-review'"
+                )
+            return "result from stale role"
+
+        result = self.worker({"code-review": change_manifest}).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+        self.assertIsNone(result.result)
+
+
 if __name__ == "__main__":
     unittest.main()
