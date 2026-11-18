@@ -47,9 +47,10 @@ class AuthenticatedWorkforceDashboardAPI:
         method = scope.get("method", "GET").upper()
         if method != "GET":
             return await self._respond(send, 405, {"error": "method_not_allowed"})
-        user = await self._principal(scope)
-        if user is None:
+        principal = await self._principal(scope)
+        if principal is None:
             return await self._respond(send, 401, {"error": "authentication_required"})
+        user, session_token = principal
         if user.role not in {"admin", "operator"}:
             return await self._respond(send, 403, {"error": "workforce_access_denied"})
 
@@ -90,7 +91,7 @@ class AuthenticatedWorkforceDashboardAPI:
                 if self.pending_approvals is None:
                     return await self._respond(send, 503, {"error": "approval_inbox_unavailable"})
                 limit = self._integer(query.get("limit", "100"), "limit")
-                pending = await asyncio.to_thread(self.pending_approvals.list_pending, actor=user.user_id, limit=limit)
+                pending = await asyncio.to_thread(self.pending_approvals.list_pending, actor=user.user_id, session_id=session_token, limit=limit)
                 result = {"pending": pending, "count": len(pending)}
             elif path == "/v1/workforce/approvals/audit":
                 if set(query) - _APPROVAL_QUERY_KEYS:
@@ -126,7 +127,8 @@ class AuthenticatedWorkforceDashboardAPI:
         scheme, separator, token = authorization.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
-        return await asyncio.to_thread(self.auth.resolve_session, token)
+        user = await asyncio.to_thread(self.auth.resolve_session, token)
+        return (user, token) if user is not None else None
 
     @staticmethod
     def _query(scope):
