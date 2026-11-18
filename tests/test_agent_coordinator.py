@@ -27,9 +27,9 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         }
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
-                            "emit", frozenset({"web:read"})),
+                            "emit", frozenset({"web:read"}), approval_class="read_only"),
             SpecialistAgent("writer", "Writing specialist", frozenset({"write", "summarize"}),
-                            "emit", frozenset({"artifact:write"})),
+                            "emit", frozenset({"artifact:write"}), approval_class="read_only"),
             SpecialistAgent("general", "Generalist", frozenset({"research", "summarize", "write"}),
                             "emit"),
             SpecialistAgent("disabled", "Disabled specialist", frozenset({"research"}),
