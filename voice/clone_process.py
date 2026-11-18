@@ -11,6 +11,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 import struct
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -63,7 +64,16 @@ def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
         raise RuntimeError("Voice-clone resource limits are not implemented on this platform.")
     import resource
 
-    _set_bounded_limit(resource, resource.RLIMIT_AS, limits.memory_bytes, limits.memory_bytes)
+    # macOS exposes RLIMIT_AS but does not reliably permit changing it.
+    # RLIMIT_DATA is the supported address-space-adjacent heap bound there;
+    # Linux uses RLIMIT_AS for a stricter total virtual-address-space cap.
+    if sys.platform == "darwin":
+        memory_limit = getattr(resource, "RLIMIT_DATA", None)
+        if memory_limit is None:
+            raise RuntimeError("macOS does not expose a supported worker memory limit")
+    else:
+        memory_limit = resource.RLIMIT_AS
+    _set_bounded_limit(resource, memory_limit, limits.memory_bytes, limits.memory_bytes)
     _set_bounded_limit(resource, resource.RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds + 1)
     _set_bounded_limit(resource, resource.RLIMIT_FSIZE, limits.file_bytes, limits.file_bytes)
     _set_bounded_limit(resource, resource.RLIMIT_NOFILE, limits.open_files, limits.open_files)
