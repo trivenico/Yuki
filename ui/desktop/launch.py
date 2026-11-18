@@ -1217,7 +1217,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 if missing_process_dependency:
                     detail += "; install the optional dependency with pip install '.[security-monitoring]'"
                 controls["status"].setText(
-                    "Monitoring: operation failed (" + detail + "). "
+                    "Security session: operation failed ( + detail + "). "
                     "Sign out to revoke the security session and retry cleanup."
                 )
                 self.security_global_status.setText(
@@ -1235,7 +1235,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 except Exception as exc:
                     presenter.set_state("unavailable", enabled=False)
                     self.security_panel.security_controls["status"].setText(
-                        "Monitoring: snapshot rejected (" + type(exc).__name__ + ")."
+                        "Security session: snapshot rejected ( + type(exc).__name__ + ")."
                     )
                     self.security_global_status.setText("Security session: unavailable")
                     return
