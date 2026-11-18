@@ -1097,8 +1097,6 @@ MIGRATION COMPLETE — verified manifest written to destination."
                         + type(exc).__name__ + ")."
                     )
             self.speech_session = None
-            if self.security_service is not None:
-                raise DesktopStartupError("Previous security-session cleanup is incomplete.")
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
@@ -1207,7 +1205,16 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 )
                 controls = self.security_panel.security_controls
                 detail = type(error).__name__
-                if "ProcessMonitorError" in detail or "ImportError" in detail:
+                cause = error
+                missing_process_dependency = False
+                for _ in range(3):
+                    if cause is None:
+                        break
+                    if isinstance(cause, ImportError) or type(cause).__name__ == "ProcessMonitorError":
+                        missing_process_dependency = True
+                        break
+                    cause = getattr(cause, "__cause__", None)
+                if missing_process_dependency:
                     detail += "; install the optional dependency with pip install '.[security-monitoring]'"
                 controls["status"].setText(
                     "Monitoring: operation failed (" + detail + "). "
