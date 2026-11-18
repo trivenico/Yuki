@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from training.continuous_learning import ContinuousLearningError
+from training.learning_authorization import LearningAuthorizationError
 from ui.desktop.learning import (
     build_learning_center_callbacks,
     create_desktop_learning_coordinator,
@@ -140,7 +142,7 @@ class DesktopLearningStoreTests(unittest.TestCase):
                     {"role": "user", "content": "How should I test this?"},
                     {"role": "assistant", "content": "Use a focused unit test."},
                 ]
-                with self.assertRaises(Exception):
+                with self.assertRaises(ContinuousLearningError):
                     session.submit_correction(
                         messages=messages, source_reference="conversation:turn-1",
                         task_type="coding",
@@ -172,7 +174,7 @@ class DesktopLearningStoreTests(unittest.TestCase):
                 self.assertFalse(callbacks["on_refresh"]()["learning_consent"])
                 with self.assertRaises(RuntimeError):
                     _ = session.callbacks
-                with self.assertRaises(Exception):
+                with self.assertRaises(LearningAuthorizationError):
                     callbacks["on_consent"]("training", True)
 
     def test_factory_uses_private_profile_scoped_encrypted_store(self):
