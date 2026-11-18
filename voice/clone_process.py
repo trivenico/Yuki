@@ -127,8 +127,10 @@ class ProcessIsolatedVoiceCloneExecutor:
             name="yuki-voice-clone-worker",
             daemon=True,
         )
+        started = False
         try:
             process.start()
+            started = True
             send_conn.close()
             while True:
                 if cancel_event.is_set():
@@ -155,9 +157,12 @@ class ProcessIsolatedVoiceCloneExecutor:
                     raise VoiceCloneWorkerError(f"voice clone worker exited ({process.exitcode})")
         finally:
             receive_conn.close()
-            if process.is_alive():
-                self._stop(process)
-            process.close()
+            if started:
+                if process.is_alive():
+                    self._stop(process)
+                process.close()
+            else:
+                send_conn.close()
 
     def _stop(self, process: Any) -> None:
         if process.is_alive():
