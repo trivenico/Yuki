@@ -131,6 +131,62 @@ class WorkforceDashboard:
             department["independently_verified_successes"] += counts["independently_verified"]
             department["active_tasks"] += active
 
+        # CEO decision intelligence is descriptive and bounded to the same
+        # goal window as this snapshot. It never changes staffing or task state.
+        capability_demand: Counter = Counter()
+        for task in tasks:
+            if task["state"] not in {"queued", "running"}:
+                continue
+            payload = task.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            required = payload.get("required_capabilities", ())
+            if isinstance(required, (list, tuple)):
+                for capability in set(
+                    item for item in required
+                    if isinstance(item, str) and item.strip()
+                ):
+                    capability_demand[capability] += 1
+
+        capability_supply: Counter = Counter()
+        for employee in employee_rows:
+            if employee["status"] not in {"available", "busy"} or employee["available_slots"] < 1:
+                continue
+            for capability in employee["capabilities"]:
+                capability_supply[capability] += 1
+
+        capability_signals = [
+            {
+                "capability": capability,
+                "queued_or_running_tasks": demand,
+                "employees_with_capacity": capability_supply[capability],
+                "coverage": (
+                    "no_available_capacity"
+                    if capability_supply[capability] == 0
+                    else "capacity_present"
+                ),
+            }
+            for capability, demand in sorted(capability_demand.items())
+        ]
+
+        department_signals = []
+        for department in sorted(department_rows.values(), key=lambda row: row["name"]):
+            terminal = department["succeeded_tasks"] + department["failed_tasks"]
+            failed = department["failed_tasks"]
+            department_signals.append({
+                "department": department["name"],
+                "queued_tasks": department["queued_tasks"],
+                "running_tasks": department["running_tasks"],
+                "failed_tasks": failed,
+                "failure_rate": (failed / terminal) if terminal else None,
+                "failure_rate_denominator": terminal,
+                "signal": (
+                    "backlog_present" if department["queued_tasks"] > 0
+                    else "failures_present" if failed > 0
+                    else "no_current_signal"
+                ),
+            })
+
         goal_rows = []
         for goal in goals:
             goal_tasks = [task for task in tasks if task["goal_id"] == goal["id"]]
@@ -170,6 +226,16 @@ class WorkforceDashboard:
                 "scoring": "descriptive evidence counts only; no quality score or ranking is inferred",
             },
             "departments": sorted(department_rows.values(), key=lambda row: row["name"]),
+            "decision_intelligence": {
+                "scope": "descriptive signals from the dashboard's bounded goal window and current registry",
+                "capability_demand": capability_signals,
+                "department_signals": department_signals,
+                "limitations": [
+                    "capacity counts are current registry metadata, not guaranteed future availability",
+                    "failure rates exclude cancelled tasks and are omitted when no succeeded/failed tasks exist",
+                    "signals are not forecasts, employee quality scores, or authorization to reassign work",
+                ],
+            },
             "employees": employee_rows,
             "goals": goal_rows,
             "truncated_goals": truncated_goals,
