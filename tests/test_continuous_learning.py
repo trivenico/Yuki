@@ -270,6 +270,25 @@ class ContinuousLearningTests(unittest.TestCase):
         self.assertEqual(store.read()["approved"], [])
         self.assertEqual(store.read()["pending"], [])
 
+    def test_close_invalidates_session_coordinator_without_deleting_persisted_data(self):
+        store = FakeDurableLearningStore()
+        learning = _learning(store=store)
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="task:close",
+            task_type="coding", learning_consent=True,
+        )
+        learning.close()
+        self.assertTrue(learning.closed)
+        self.assertEqual(learning.pending_corrections(), [])
+        self.assertIsNone(learning.build_few_shot_patch("Python unit test"))
+        self.assertEqual(learning.approved_example_count, 0)
+        self.assertEqual(len(store.read()["pending"]), 1)
+        with self.assertRaises(ContinuousLearningError):
+            learning.propose_correction(
+                messages=_messages(), source_reference="task:after-close",
+                task_type="coding", learning_consent=True,
+            )
+
     def test_rejected_correction_never_enters_dataset(self):
         learning = _learning()
         proposal = learning.propose_correction(messages=_messages(), source_reference="task:43",
