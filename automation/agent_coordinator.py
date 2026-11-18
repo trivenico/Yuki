@@ -71,6 +71,7 @@ class PlannedSubtask:
     status: str
     agent_role_version: int = 1
     handler_id: str | None = None
+    agent_action: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ class SpecialistAgentCoordinator:
                     status TEXT NOT NULL,
                     agent_role_version INTEGER NOT NULL DEFAULT 1,
                     handler_id TEXT,
+                    agent_action TEXT,
                     PRIMARY KEY(plan_id, subtask_id),
                     FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
                 )
@@ -148,6 +150,8 @@ class SpecialistAgentCoordinator:
                 db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN agent_role_version INTEGER NOT NULL DEFAULT 1")
             if "handler_id" not in columns:
                 db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN handler_id TEXT")
+            if "agent_action" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN agent_action TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS specialist_agents (
@@ -487,6 +491,7 @@ class SpecialistAgentCoordinator:
              "agent_id": assignments[i.subtask_id].agent_id,
              "agent_role_version": assignments[i.subtask_id].role_version,
              "handler_id": assignments[i.subtask_id].handler_id,
+             "agent_action": assignments[i.subtask_id].action,
              "action": assignments[i.subtask_id].action}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
@@ -510,13 +515,13 @@ class SpecialistAgentCoordinator:
                     INSERT INTO agent_plan_subtasks(
                         plan_id, subtask_id, agent_id, description, capabilities_json, permissions_json,
                         dependencies_json, requires_approval, task_id, status,
-                        agent_role_version, handler_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', ?, ?)
+                        agent_role_version, handler_id, agent_action
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', ?, ?, ?)
                 """, (plan_id, item.subtask_id, agent.agent_id, item.description.strip(),
                       json.dumps(sorted(item.required_capabilities)),
                       json.dumps(sorted(item.required_permissions)),
                       json.dumps(list(item.depends_on)), int(item.requires_approval),
-                      agent.role_version, agent.handler_id))
+                      agent.role_version, agent.handler_id, agent.action))
             return self._read_plan(db, plan_id)
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
@@ -719,6 +724,7 @@ class SpecialistAgentCoordinator:
                 depends_on=tuple(json.loads(s["dependencies_json"])),
                 requires_approval=bool(s["requires_approval"]), task_id=s["task_id"], status=s["status"],
                 agent_role_version=s["agent_role_version"], handler_id=s["handler_id"],
+                agent_action=s["agent_action"],
             ) for s in subtasks),
         )
 
