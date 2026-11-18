@@ -143,6 +143,16 @@ class VoiceProfileRegistryTests(unittest.TestCase):
         with self.assertRaises(VoiceProfileRegistryError):
             self.registry.list_profiles()
 
+    def test_rejects_world_readable_registry_file(self):
+        import os
+        if os.name != "posix":
+            self.skipTest("POSIX permission test.")
+        self.stage("private-check")
+        registry_file = Path(self.temp.name) / "voices" / "profiles.json"
+        registry_file.chmod(0o644)
+        with self.assertRaises(VoiceProfileRegistryError):
+            VoiceProfileRegistry(Path(self.temp.name) / "voices", authorize=lambda: True)
+
     def test_rejects_invalid_profile_ids_and_duplicate_profiles(self):
         with self.assertRaises(ValueError):
             self.registry.stage_profile(
