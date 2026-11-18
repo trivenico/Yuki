@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any
+from typing import Any, Callable
 
 from training.few_shot_patch import FewShotPatchLayer
-from training.sft_data_generator import SFTDataError, SFTDataGenerator
+from training.sft_data_generator import SFTDataError, SFTDataGenerator, _canonical_messages
 
 
 class ContinuousLearningError(RuntimeError):
@@ -18,16 +18,42 @@ class ContinuousLearningError(RuntimeError):
 
 
 class ContinuousLearningCoordinator:
-    """Coordinate explicit memory, correction review, and inference-time examples."""
+    """Coordinate explicit memory, correction review, and inference-time examples.
+
+    Consent and approval callbacks must consult the application's authenticated,
+    durable consent/approval records. Caller-supplied booleans alone are not an
+    authorization boundary.
+    """
 
     MAX_PENDING = 100
 
-    def __init__(self, *, memory: Any = None, dataset_version: str = "1.0.0") -> None:
+    def __init__(
+        self,
+        *,
+        memory: Any = None,
+        dataset_version: str = "1.0.0",
+        consent_verifier: Callable[[str], bool] | None = None,
+        approval_verifier: Callable[[str, str], bool] | None = None,
+    ) -> None:
         if memory is not None and not callable(getattr(memory, "remember", None)):
             raise TypeError("memory must provide remember().")
+        if consent_verifier is not None and not callable(consent_verifier):
+            raise TypeError("consent_verifier must be callable.")
+        if approval_verifier is not None and not callable(approval_verifier):
+            raise TypeError("approval_verifier must be callable.")
         self.memory = memory
         self.generator = SFTDataGenerator(dataset_version=dataset_version)
+        self._consent_verifier = consent_verifier
+        self._approval_verifier = approval_verifier
         self._pending: dict[str, dict[str, Any]] = {}
+
+    def _has_consent(self, purpose: str) -> bool:
+        if self._consent_verifier is None:
+            return False
+        try:
+            return self._consent_verifier(purpose) is True
+        except Exception:
+            return False
 
     def remember(self, text: str, *, category: str = "note") -> dict:
         """Save only through the existing session-consented memory facade."""
@@ -38,19 +64,23 @@ class ContinuousLearningCoordinator:
         except Exception as exc:
             raise ContinuousLearningError("Memory could not save this item; check memory consent and storage.") from exc
 
-    def propose_correction(self, *, messages: list[dict[str, str]], source_reference: str,
-                           task_type: str, learning_consent: bool) -> str:
-        """Stage a correction for review; staging never implies training approval."""
-        if learning_consent is not True:
-            raise ContinuousLearningError("Explicit learning consent is required to stage a correction.")
+    def propose_correction(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        source_reference: str,
+        task_type: str,
+        learning_consent: bool,
+    ) -> str:
+        """Stage a correction only when durable learning consent is verified."""
+        if learning_consent is not True or not self._has_consent("learning"):
+            raise ContinuousLearningError("A verified, explicit learning-consent record is required.")
         if len(self._pending) >= self.MAX_PENDING:
             raise ContinuousLearningError("The pending correction review queue is full.")
         if not isinstance(source_reference, str) or not source_reference.strip() or len(source_reference) > 512:
             raise ValueError("source_reference must be bounded non-empty text.")
         if not isinstance(task_type, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", task_type):
             raise ValueError("task_type must be a stable identifier.")
-        # Validate content before holding it in the short-lived review queue.
-        from training.sft_data_generator import _canonical_messages
         normalized = _canonical_messages(messages)
         digest = hashlib.sha256(
             (source_reference + "\0" + task_type + "\0" +
@@ -73,19 +103,34 @@ class ContinuousLearningCoordinator:
             for proposal_id, item in sorted(self._pending.items())
         ]
 
-    def approve_correction(self, proposal_id: str, *, training_consent: bool,
-                           human_approved: bool, approved_by: str) -> str:
-        """Approve one staged example for SFT and later few-shot retrieval."""
+    def approve_correction(
+        self,
+        proposal_id: str,
+        *,
+        training_consent: bool,
+        approved_by: str,
+    ) -> str:
+        """Approve one staged example using independently verified consent and authority."""
         if not isinstance(proposal_id, str) or proposal_id not in self._pending:
             raise ContinuousLearningError("Correction proposal was not found.")
+        if training_consent is not True or not self._has_consent("training"):
+            raise ContinuousLearningError("A verified, explicit training-consent record is required.")
+        if self._approval_verifier is None:
+            raise ContinuousLearningError("No authenticated human-approval verifier is configured.")
+        try:
+            approved = self._approval_verifier(proposal_id, approved_by) is True
+        except Exception:
+            approved = False
+        if not approved:
+            raise ContinuousLearningError("The authenticated reviewer did not approve this proposal.")
         item = self._pending[proposal_id]
         try:
             example_id = self.generator.add_example(
                 messages=item["messages"],
                 source_reference=item["source_reference"],
                 task_type=item["task_type"],
-                training_consent=training_consent,
-                human_approved=human_approved,
+                training_consent=True,
+                human_approved=True,
                 approved_by=approved_by,
             )
         except (SFTDataError, ValueError) as exc:
@@ -99,8 +144,14 @@ class ContinuousLearningCoordinator:
             return False
         return self._pending.pop(proposal_id, None) is not None
 
-    def build_few_shot_patch(self, query: str, *, task_type: str | None = None,
-                             max_examples: int = 3, max_chars: int = 6000) -> str | None:
+    def build_few_shot_patch(
+        self,
+        query: str,
+        *,
+        task_type: str | None = None,
+        max_examples: int = 3,
+        max_chars: int = 6000,
+    ) -> str | None:
         """Build a patch from approved examples only; no model or policy mutation."""
         layer = FewShotPatchLayer(
             self.generator.export_jsonl(), max_examples=max_examples, max_chars=max_chars,
