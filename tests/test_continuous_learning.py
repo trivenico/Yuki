@@ -268,7 +268,12 @@ class ContinuousLearningTests(unittest.TestCase):
         self.assertEqual(len(store.read()["approved"]), 1)
 
         revoked = []
-        counts = learning.delete_all_learning_data(revoke_approval=revoked.append)
+
+        def record_revocation(proposal_id):
+            revoked.append(proposal_id)
+            return len(revoked)
+
+        counts = learning.delete_all_learning_data(revoke_approval=record_revocation)
         self.assertEqual(counts, {"pending": 0, "approved": 1})
         self.assertEqual(revoked, [proposal])
         self.assertEqual(store.read()["approved"], [])
@@ -293,6 +298,18 @@ class ContinuousLearningTests(unittest.TestCase):
                 messages=_messages(), source_reference="task:after-close",
                 task_type="coding", learning_consent=True,
             )
+
+    def test_delete_all_rejects_unacknowledged_approval_revocation(self):
+        store = FakeDurableLearningStore()
+        learning = _learning(store=store)
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="task:delete-unacked",
+            task_type="coding", learning_consent=True,
+        )
+        learning.approve_correction(proposal, training_consent=True, approved_by="owner")
+        with self.assertRaisesRegex(ContinuousLearningError, "not durably acknowledged"):
+            learning.delete_all_learning_data(revoke_approval=lambda _proposal_id: None)
+        self.assertEqual(len(store.read()["approved"]), 1)
 
     def test_rejected_correction_never_enters_dataset(self):
         learning = _learning()
