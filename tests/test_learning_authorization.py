@@ -41,6 +41,17 @@ class LearningAuthorizationLedgerTests(unittest.TestCase):
         self.ledger.record_example_approval(proposal, False)
         self.assertFalse(self.ledger.verify_example_approval(proposal, "authenticated-owner"))
 
+    def test_authorization_snapshot_checks_many_examples_in_one_call(self):
+        self.ledger.record_consent("learning", True)
+        self.ledger.record_consent("training", True)
+        first, second = "a" * 24, "b" * 24
+        self.ledger.record_example_approval(first, True)
+        self.ledger.record_example_approval(second, False)
+        snapshot = self.ledger.authorization_snapshot([first, second])
+        self.assertTrue(snapshot["learning"])
+        self.assertTrue(snapshot["training"])
+        self.assertEqual(snapshot["approved_proposal_ids"], [first])
+
     def test_audit_tampering_fails_closed(self):
         self.ledger.record_consent("learning", True)
         import sqlite3
