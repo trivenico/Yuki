@@ -423,6 +423,48 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(body["state"], "completed")
         self.assertEqual(body["outcome"], {"observed": True})
 
+    def test_recommendation_can_become_idempotent_durable_proposal(self):
+        employee = next(item for item in self.dashboard.registry.list_employees() if item.department == "Engineering")
+        goal_id = self.engine.create_goal()
+        self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Review queued engineering work"},
+            idempotency_key="proposal-source-task", max_attempts=1,
+        )
+        status, snapshot = self.request("/v1/workforce/dashboard", token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        recommendation = next(
+            item for item in snapshot["decision_intelligence"]["improvement_recommendations"]
+            if item["category"] == "department_backlog" and item["evidence"]["department"] == "Engineering"
+        )
+        path = "/v1/workforce/improvement-proposals"
+        headers = [(b"content-type", b"application/json")]
+        body = json.dumps({"recommendation_id": recommendation["id"]}).encode()
+        status, first = self.request(path, method="POST", token=self.admin_session.token, body=body, extra_headers=headers)
+        self.assertEqual(status, 201)
+        self.assertTrue(first["created"])
+        self.assertEqual(first["state"], "proposed")
+        self.assertEqual(first["proposal"]["source"], "workforce_decision_intelligence")
+        self.assertEqual(first["proposal"]["recommendation_id"], recommendation["id"])
+        self.assertTrue(first["proposal"]["requires_human_approval"])
+        self.assertFalse(first["proposal"]["automatic_action_taken"])
+        status, replay = self.request(path, method="POST", token=self.admin_session.token, body=body, extra_headers=headers)
+        self.assertEqual(status, 200)
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["proposal_id"], first["proposal_id"])
+        self.assertEqual(len(self.engine.list_improvement_proposals()), 1)
+
+    def test_recommendation_proposal_creation_requires_role_and_exact_schema(self):
+        path = "/v1/workforce/improvement-proposals"
+        headers = [(b"content-type", b"application/json")]
+        status, _ = self.request(path, method="POST", token=self.user_session.token, body=b"{}", extra_headers=headers)
+        self.assertEqual(status, 403)
+        status, body = self.request(path, method="POST", token=self.admin_session.token, body=b'{"recommendation_id":"missing"}', extra_headers=headers)
+        self.assertEqual(status, 404)
+        status, body = self.request(path, method="POST", token=self.admin_session.token, body=b'{"recommendation_id":"x","proposal":{}}', extra_headers=headers)
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_proposal_request")
+
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
         self.assertEqual(status, 404)
