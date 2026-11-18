@@ -257,7 +257,6 @@ class LearningCenterPanel:
         presenter = Presenter()
 
         pool = QThreadPool.globalInstance()
-        active_workers = set()
         busy = {"value": False}
         disposed = {"value": False}
         page.destroyed.connect(lambda: disposed.__setitem__("value", True))
@@ -284,10 +283,8 @@ class LearningCenterPanel:
             set_controls_enabled(False)
             presenter.set_status("Working securely…")
             worker = _LearningWorker(action, callback, args)
-            active_workers.add(worker)
 
             def completed(result, error):
-                active_workers.discard(finished_worker)
                 busy["value"] = False
                 if disposed["value"]:
                     return
