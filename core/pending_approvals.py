@@ -112,11 +112,14 @@ class SQLitePendingApprovalStore:
         return item
 
 
-    def list_pending(self, *, limit: int = 100) -> list[dict[str, str]]:
-        """List safe inbox metadata only; never return action arguments or snapshots."""
+    def list_pending(self, *, actor: str, limit: int = 100) -> list[dict[str, str]]:
+        """List safe metadata for one authenticated actor; never return action snapshots."""
+        if not isinstance(actor, str) or not actor.strip() or len(actor) > 256:
+            raise ValueError("actor must be a non-empty bounded identity")
         if type(limit) is not int or not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200")
         now = datetime.now(timezone.utc).isoformat()
+        actor_hash = self._identity_hash(actor)
         with self._connect() as db:
             db.execute(
                 "DELETE FROM pending_approvals WHERE expires_at <= ? OR actor_hash IS NULL OR session_hash IS NULL",
@@ -125,9 +128,9 @@ class SQLitePendingApprovalStore:
             rows = db.execute(
                 """SELECT pending_id, skill_id, expires_at
                    FROM pending_approvals
-                   WHERE actor_hash IS NOT NULL AND session_hash IS NOT NULL
+                   WHERE actor_hash = ? AND session_hash IS NOT NULL
                    ORDER BY expires_at ASC, pending_id ASC LIMIT ?""",
-                (limit,),
+                (actor_hash, limit),
             ).fetchall()
         return [
             {"pending_id": row[0], "skill_id": row[1], "expires_at": row[2]}
