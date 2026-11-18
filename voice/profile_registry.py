@@ -5,6 +5,7 @@ adapter. This registry stores only profile metadata and opaque artifact referenc
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -12,9 +13,12 @@ import secrets
 import stat
 import tempfile
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
+
+from voice.process_lock import cross_process_lock
 
 
 _PROFILE_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
@@ -82,6 +86,24 @@ class VoiceProfileRegistry:
     def _require_open(self) -> None:
         if self._closed:
             raise VoiceProfileRegistryError("Voice profile registry is closed.")
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """Refresh and operate on registry state under a process-wide lock."""
+        with self._lock:
+            self._require_open()
+            account = hashlib.sha256(str(self._directory.resolve()).encode("utf-8")).hexdigest()
+            try:
+                with cross_process_lock(
+                    account, self._directory, namespace="VoiceProfile",
+                    error_type=VoiceProfileRegistryError,
+                ):
+                    self._require_open()
+                    # Every operation starts from the latest committed snapshot.
+                    self._state = self._load()
+                    yield
+            except VoiceProfileRegistryError:
+                raise
 
     def _require_authorized(self) -> None:
         self._require_open()
