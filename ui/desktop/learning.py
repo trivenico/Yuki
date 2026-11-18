@@ -174,8 +174,10 @@ class DesktopLearningSession:
         if self._closed:
             return
         self._closed = True
-        self.coordinator.close()
+        # Close the authorization gate first so no new audit writes can race
+        # coordinator teardown or a pending encrypted-store transaction.
         self.ledger.close()
+        self.coordinator.close()
         self._callbacks.clear()
 
     @property
