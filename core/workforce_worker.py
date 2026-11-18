@@ -182,6 +182,13 @@ class WorkforceWorker:
                 if self.reviewer is None:
                     failed = self.engine.fail(task_id, self.worker_id, "independent review unavailable")
                     return {"task_id": task_id, "state": failed["state"], "status": "reviewer_unavailable"}
+                reviewer_id = getattr(self.reviewer, "reviewer_id", None)
+                if not isinstance(reviewer_id, str) or not reviewer_id.strip():
+                    failed = self.engine.fail(task_id, self.worker_id, "reviewer identity unavailable")
+                    return {"task_id": task_id, "state": failed["state"], "status": "reviewer_identity_unavailable"}
+                if reviewer_id == employee.employee_id:
+                    failed = self.engine.fail(task_id, self.worker_id, "self review is prohibited")
+                    return {"task_id": task_id, "state": failed["state"], "status": "self_review_denied"}
                 review = self._review_with_heartbeat(
                     task_id=task_id,
                     review_context={
