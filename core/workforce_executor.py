@@ -57,8 +57,24 @@ class YukiAgentWorkforceExecutor:
             return WorkforceExecutionOutcome(False, "invalid_capabilities", "Required capabilities are invalid.")
         if not isinstance(required_permissions, tuple):
             return WorkforceExecutionOutcome(False, "invalid_permissions", "Required permissions are invalid.")
+        if any(not isinstance(item, str) or not item.strip() for item in required_capabilities):
+            return WorkforceExecutionOutcome(False, "invalid_capabilities", "Required capabilities are invalid.")
+        if any(not isinstance(item, str) or not item.strip() for item in required_permissions):
+            return WorkforceExecutionOutcome(False, "invalid_permissions", "Required permissions are invalid.")
         if type(max_autonomy_tier) is not int or max_autonomy_tier not in range(4):
             return WorkforceExecutionOutcome(False, "invalid_autonomy", "Autonomy limit is invalid.")
+        employee_capabilities = getattr(employee, "capabilities", None)
+        employee_permissions = getattr(employee, "permissions", None)
+        if not isinstance(employee_capabilities, (tuple, list, set, frozenset)):
+            return WorkforceExecutionOutcome(False, "employee_policy_invalid", "Employee capability policy is unavailable.")
+        if not isinstance(employee_permissions, (tuple, list, set, frozenset)):
+            return WorkforceExecutionOutcome(False, "employee_policy_invalid", "Employee permission policy is unavailable.")
+        if not set(required_capabilities).issubset(employee_capabilities):
+            return WorkforceExecutionOutcome(False, "employee_capability_denied", "Employee lacks a required capability.")
+        if not set(required_permissions).issubset(employee_permissions):
+            return WorkforceExecutionOutcome(False, "employee_permission_denied", "Employee lacks a required permission.")
+        if getattr(employee, "status", "unavailable") != "available":
+            return WorkforceExecutionOutcome(False, "employee_unavailable", "Employee is not available.")
         if getattr(employee, "autonomy_tier", 4) > max_autonomy_tier:
             return WorkforceExecutionOutcome(False, "autonomy_denied", "Employee exceeds task autonomy limit.")
 
