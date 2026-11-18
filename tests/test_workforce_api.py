@@ -11,6 +11,8 @@ from core.pending_approvals import SQLitePendingApprovalStore
 from core.durable_task_engine import DurableTaskEngine
 from core.workforce import AgentRegistry, default_workforce
 from core.workforce_dashboard import WorkforceDashboard
+from core.planner import Planner
+from core.workforce_ceo import WorkforceCEO
 
 
 class _Downstream:
@@ -29,30 +31,40 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.auth.create_account("regular-user", "another-secure-password")
         self.user_session = self.auth.authenticate("regular-user", "another-secure-password")
         self.engine = DurableTaskEngine(str(root / "tasks.sqlite"))
-        self.dashboard = WorkforceDashboard(
-            registry=AgentRegistry(default_workforce()), task_engine=self.engine
+        registry = AgentRegistry(default_workforce())
+        self.dashboard = WorkforceDashboard(registry=registry, task_engine=self.engine)
+        self.ceo = WorkforceCEO(
+            planner=Planner(max_steps=5), registry=registry, task_engine=self.engine
         )
         self.pending = SQLitePendingApprovalStore(str(root / "pending.sqlite"))
         self.audit = SQLiteApprovalAuditLog(str(root / "approval-audit.sqlite"))
         self.app = AuthenticatedWorkforceDashboardAPI(
             _Downstream(), self.auth, self.dashboard,
             pending_approvals=self.pending, approval_audit=self.audit,
+            workforce_ceo=self.ceo,
         )
 
     def tearDown(self):
         self.engine.close()
         self.tempdir.cleanup()
 
-    def request(self, path, *, method="GET", token=None, query=b""):
+    def request(self, path, *, method="GET", token=None, query=b"", body=b"", extra_headers=None):
         async def run():
             messages = []
+            received = False
             async def receive():
-                return {"type": "http.request", "body": b"", "more_body": False}
+                nonlocal received
+                if received:
+                    return {"type": "http.request", "body": b"", "more_body": False}
+                received = True
+                return {"type": "http.request", "body": body, "more_body": False}
             async def send(message):
                 messages.append(message)
             headers = []
             if token:
                 headers.append((b"authorization", f"Bearer {token}".encode()))
+            if extra_headers:
+                headers.extend(extra_headers)
             await self.app({
                 "type": "http", "method": method, "path": path,
                 "headers": headers, "query_string": query,
@@ -229,6 +241,85 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             query=b"after_event_id=10000",
         )
         self.assertEqual(status, 404)
+
+    def test_authenticated_goal_submission_is_idempotent(self):
+        payload = json.dumps({"goal": "Research the market and report findings"}).encode()
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"idempotency-key", b"market-plan-001"),
+        ]
+        status, first = self.request(
+            "/v1/workforce/goals", method="POST", token=self.admin_session.token,
+            body=payload, extra_headers=headers,
+        )
+        self.assertEqual(status, 202)
+        self.assertTrue(first["created"])
+        self.assertEqual(first["execution"], "queued")
+        self.assertEqual(first["report"]["counts"], {"queued": 2})
+        goal_id = first["goal_id"]
+        stored = self.engine.get_goal(goal_id)
+        self.assertEqual(stored["owner_id"], self.admin_session.user.user_id)
+        task_ids = {task["id"] for task in self.engine.list_tasks(goal_id)}
+        status, replay = self.request(
+            "/v1/workforce/goals", method="POST", token=self.admin_session.token,
+            body=payload, extra_headers=headers,
+        )
+        self.assertEqual(status, 202)
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["goal_id"], goal_id)
+        self.assertEqual({task["id"] for task in self.engine.list_tasks(goal_id)}, task_ids)
+        self.assertEqual(len(self.engine.list_tasks(goal_id)), 2)
+
+    def test_goal_submission_rejects_conflicting_key_and_invalid_requests(self):
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"idempotency-key", b"same-key"),
+        ]
+        status, _ = self.request(
+            "/v1/workforce/goals", method="POST", token=self.admin_session.token,
+            body=b'{"goal":"Research the market"}', extra_headers=headers,
+        )
+        self.assertEqual(status, 202)
+        status, body = self.request(
+            "/v1/workforce/goals", method="POST", token=self.admin_session.token,
+            body=b'{"goal":"Build a product"}', extra_headers=headers,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "idempotency_conflict")
+        for body_bytes, extra, expected in (
+            (b'{"goal":""}', headers, 400),
+            (b'{"goal":"x"}', [(b"content-type", b"application/json")], 400),
+            (b'{"goal":"x"}', [(b"content-type", b"text/plain"), (b"idempotency-key", b"x")], 415),
+        ):
+            status, _ = self.request(
+                "/v1/workforce/goals", method="POST", token=self.admin_session.token,
+                body=body_bytes, extra_headers=extra,
+            )
+            self.assertEqual(status, expected)
+
+    def test_goal_submission_requires_role_and_explicit_runtime(self):
+        status, _ = self.request(
+            "/v1/workforce/goals", method="POST", token=self.user_session.token,
+            body=b'{"goal":"Research"}',
+            extra_headers=[(b"content-type", b"application/json"), (b"idempotency-key", b"nope")],
+        )
+        self.assertEqual(status, 403)
+        app = AuthenticatedWorkforceDashboardAPI(_Downstream(), self.auth, self.dashboard)
+        async def run():
+            messages = []
+            async def receive():
+                return {"type": "http.request", "body": b'{"goal":"Research"}', "more_body": False}
+            async def send(message):
+                messages.append(message)
+            await app({
+                "type": "http", "method": "POST", "path": "/v1/workforce/goals",
+                "headers": [
+                    (b"authorization", f"Bearer {self.admin_session.token}".encode()),
+                    (b"content-type", b"application/json"), (b"idempotency-key", b"disabled"),
+                ], "query_string": b"",
+            }, receive, send)
+            return messages
+        self.assertEqual(asyncio.run(run())[0]["status"], 503)
 
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
