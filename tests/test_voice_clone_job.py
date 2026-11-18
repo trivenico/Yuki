@@ -1,0 +1,144 @@
+import io
+import tempfile
+import threading
+import unittest
+import wave
+from pathlib import Path
+
+from voice.clone_job import (
+    VoiceCloneJobCancelled,
+    VoiceCloneJobController,
+    VoiceCloneJobState,
+    VoiceCloneOutput,
+)
+from voice.profile_registry import VoiceProfileRegistry
+from voice.secure_artifact_store import EncryptedVoiceArtifactStore
+
+
+def wav_sample(seconds=3):
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(24000)
+        audio.writeframes(b"\x00" * (2 * 24000 * seconds))
+    return output.getvalue()
+
+
+class FakeLocalProvider:
+    provider_id = "test-local-provider"
+    is_local = True
+
+    def __init__(self, *, cancel_during=False, fail=False):
+        self.cancel_during = cancel_during
+        self.fail = fail
+
+    def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+        if self.cancel_during:
+            cancel_event.set()
+        if self.fail:
+            raise RuntimeError("provider failed")
+        return VoiceCloneOutput(b"opaque-clone-artifact", b"preview-audio")
+
+
+class FakeRemoteProvider(FakeLocalProvider):
+    is_local = False
+
+
+class VoiceCloneJobControllerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.authorized = True
+        authorize = lambda: self.authorized
+        self.store = EncryptedVoiceArtifactStore(root / "artifacts", key=b"\x31" * 32, authorize=authorize)
+        self.registry = VoiceProfileRegistry(root / "profiles", authorize=authorize)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def controller(self, provider=None):
+        return VoiceCloneJobController(provider or FakeLocalProvider(), self.store, self.registry)
+
+    def test_success_stages_profile_but_never_activates_it(self):
+        controller = self.controller()
+        result = controller.run(
+            wav_sample(), profile_id="new-voice", display_name="New voice",
+            source_owner_consent=True,
+        )
+        self.assertEqual(controller.state, VoiceCloneJobState.PREVIEW_READY)
+        self.assertEqual(result.preview_audio, b"preview-audio")
+        self.assertIsNone(self.registry.active_profile())
+        profile = self.registry.list_profiles()[0]
+        self.assertEqual(profile["status"], "staged")
+        self.assertEqual(profile["artifact_ref"], result.artifact_ref)
+        self.assertEqual(self.store.get(result.artifact_ref), b"opaque-clone-artifact")
+
+    def test_requires_consent_and_valid_sample_before_provider(self):
+        controller = self.controller()
+        with self.assertRaises(ValueError):
+            controller.run(b"not audio", profile_id="new-voice", display_name="New voice", source_owner_consent=True)
+        with self.assertRaises(Exception):
+            controller.run(wav_sample(), profile_id="new-voice", display_name="New voice", source_owner_consent=False)
+        self.assertEqual(self.registry.list_profiles(), [])
+
+    def test_rejects_remote_provider(self):
+        with self.assertRaises(ValueError):
+            self.controller(FakeRemoteProvider())
+
+    def test_cancellation_after_provider_returns_does_not_stage_profile(self):
+        controller = self.controller(FakeLocalProvider(cancel_during=True))
+        with self.assertRaises(VoiceCloneJobCancelled):
+            controller.run(wav_sample(), profile_id="new-voice", display_name="New voice", source_owner_consent=True)
+        self.assertEqual(controller.state, VoiceCloneJobState.CANCELLED)
+        self.assertEqual(self.registry.list_profiles(), [])
+
+    def test_provider_failure_preserves_registry(self):
+        controller = self.controller(FakeLocalProvider(fail=True))
+        with self.assertRaises(RuntimeError):
+            controller.run(wav_sample(), profile_id="new-voice", display_name="New voice", source_owner_consent=True)
+        self.assertEqual(controller.state, VoiceCloneJobState.FAILED)
+        self.assertEqual(self.registry.list_profiles(), [])
+
+    def test_rejects_concurrent_job(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingProvider(FakeLocalProvider):
+            def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+                entered.set()
+                release.wait(2)
+                return VoiceCloneOutput(b"artifact", b"preview")
+
+        controller = self.controller(BlockingProvider())
+        errors = []
+
+        def run():
+            try:
+                controller.run(wav_sample(), profile_id="first", display_name="First", source_owner_consent=True)
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        with self.assertRaises(RuntimeError):
+            controller.run(wav_sample(), profile_id="second", display_name="Second", source_owner_consent=True)
+        release.set()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+
+    def test_rejects_oversized_provider_output(self):
+        class LargeProvider(FakeLocalProvider):
+            def create_clone(self, sample_audio, *, cancel_event, deadline_monotonic):
+                return VoiceCloneOutput(b"x" * (20 * 1024 * 1024 + 1), b"preview")
+
+        controller = self.controller(LargeProvider())
+        with self.assertRaises(RuntimeError):
+            controller.run(wav_sample(), profile_id="new-voice", display_name="New voice", source_owner_consent=True)
+        self.assertEqual(self.registry.list_profiles(), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
