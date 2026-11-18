@@ -238,6 +238,24 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         # but the soft cap itself is still reduced to the requested bound.
         self.assertEqual(resource.applied, (4, 8))
 
+    def test_resource_limit_failure_has_sanitized_named_error(self):
+        from voice.clone_process import _set_bounded_limit, VoiceCloneResourceLimitError
+
+        class FailingResource:
+            RLIM_INFINITY = -1
+
+            def getrlimit(self, limit_id):
+                return (1, 2)
+
+            def setrlimit(self, limit_id, values):
+                raise ValueError("platform-specific detail must not escape")
+
+        with self.assertRaises(VoiceCloneResourceLimitError) as caught:
+            _set_bounded_limit(FailingResource(), 1, 1, 2, name="RLIMIT_DATA")
+        self.assertEqual(caught.exception.limit_name, "RLIMIT_DATA")
+        self.assertEqual(caught.exception.error_type, "ValueError")
+        self.assertNotIn("platform-specific detail", str(caught.exception))
+
     def test_worker_limits_reject_unsafe_values(self):
         from voice.clone_process import VoiceCloneWorkerLimits
         with self.assertRaises(ValueError):
