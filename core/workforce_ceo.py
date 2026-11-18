@@ -59,6 +59,22 @@ class WorkforceCEO:
         change the task fingerprint and turn a safe retry into a conflict.
         """
         plan = self.planner.decompose(goal)
+        if goal_id is not None:
+            # Bind the exact normalized DAG before any assignments are written.
+            # A changed planner output on retry must not silently orphan or
+            # mutate already queued work under the same durable goal.
+            self.task_engine.bind_goal_plan(
+                goal_id,
+                [
+                    {
+                        "task_id": task.task_id,
+                        "description": task.description,
+                        "required_capabilities": sorted(set(task.required_capabilities)),
+                        "depends_on": list(task.depends_on),
+                    }
+                    for task in plan
+                ],
+            )
         if goal_id is not None and (
             not isinstance(goal_id, str) or not goal_id.strip()
         ):
