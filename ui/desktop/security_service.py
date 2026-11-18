@@ -9,7 +9,8 @@ from __future__ import annotations
 from threading import RLock
 from typing import Any, Callable
 
-from defense.security_session import SecuritySessionController, SecuritySessionError
+class SecuritySessionError(RuntimeError):
+    """Security consent or authenticated-session requirements were not met."""
 
 
 class DesktopSecurityServiceError(RuntimeError):
@@ -29,6 +30,7 @@ class DesktopSecurityService:
         *,
         authorize: Callable[[], bool],
         monitor_factory: Callable[[], Any],
+        controller_factory: Callable[..., Any] | None = None,
     ) -> None:
         if not callable(authorize):
             raise TypeError("authorize must be callable")
@@ -36,6 +38,7 @@ class DesktopSecurityService:
             raise TypeError("monitor_factory must be callable")
         self._authorize = authorize
         self._monitor_factory = monitor_factory
+        self._controller_factory = controller_factory
         self._controller: SecuritySessionController | None = None
         self._lock = RLock()
         self._closed = False
@@ -71,9 +74,12 @@ class DesktopSecurityService:
             if controller is None:
                 # The factory runs only after explicit consent and auth checks.
                 monitor = self._monitor_factory()
-                controller = SecuritySessionController(
-                    monitor, authorize=self._authorize,
-                )
+                factory = self._controller_factory
+                if factory is None:
+                    # Import only when explicit consent starts monitoring.
+                    from defense.security_session import SecuritySessionController
+                    factory = SecuritySessionController
+                controller = factory(monitor, authorize=self._authorize)
                 self._controller = controller
             self._generation += 1
 
