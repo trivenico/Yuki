@@ -96,7 +96,7 @@ class VoiceProfileRegistry:
             try:
                 with cross_process_lock(
                     account, self._directory, namespace="VoiceProfile",
-                    error_type=VoiceProfileRegistryError,
+                    error_type=VoiceProfileRegistryError, directory_fd=self._directory_fd,
                 ):
                     self._require_open()
                     # Every operation starts from the latest committed snapshot.
