@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "dataset_id": "yuki-hey-yuki-v1",
+  "dataset_id": "yuki-wakeword-v1",
   "notes": "Copy this file into the dataset root, add each exact asset, review its terms, and replace placeholder values. This example is intentionally invalid until completed.",
   "assets": [
     {
