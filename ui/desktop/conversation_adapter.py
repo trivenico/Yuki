@@ -180,6 +180,21 @@ class DesktopConversationAdapter:
         with self._lock:
             self._conversation_id = None
 
+    def submit_correction(
+        self, *, messages: list[dict[str, str]], source_reference: str, task_type: str,
+    ) -> str:
+        """Submit only the exact user-selected turn; never inspect conversation history."""
+        with self._lock:
+            learning = self._learning
+        submit = getattr(learning, "submit_correction", None)
+        if not callable(submit):
+            raise RuntimeError("The authenticated desktop learning session is unavailable.")
+        return submit(
+            messages=messages,
+            source_reference=source_reference,
+            task_type=task_type,
+        )
+
     def close(self) -> None:
         """Drop session-scoped learning references and prevent later reuse."""
         with self._lock:
