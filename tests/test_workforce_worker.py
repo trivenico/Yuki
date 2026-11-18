@@ -53,6 +53,17 @@ class WorkforceWorkerTests(unittest.TestCase):
             max_attempts=max_attempts,
         )
 
+    def test_worker_leaves_other_task_types_queued(self):
+        unrelated = self.engine.submit(
+            self.goal, "skill.invoke", {"skill_name": "safe", "argument": ""},
+            idempotency_key="unrelated", max_attempts=1,
+        )
+        workforce = self.submit()
+        result = self.worker.run_once()
+        self.assertEqual(result["task_id"], workforce["id"])
+        self.assertEqual(self.engine.get_task(workforce["id"])["state"], "succeeded")
+        self.assertEqual(self.engine.get_task(unrelated["id"])["state"], "queued")
+
     def test_dispatches_only_after_revalidating_profile_and_delegates_approval(self):
         task = self.submit()
         result = self.worker.run_once()
