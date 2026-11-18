@@ -56,7 +56,9 @@ class LearningCenterPanel:
             "Yuki never scans chat history for training. Submit a specific correction "
             "only when you choose. Personalization consent and model-training consent "
             "are separate. Approved examples may guide responses, but they do not "
-            "change model weights automatically."
+            "change model weights automatically. Turning consent off stops future use; "
+            "it does not delete samples already saved in encrypted storage. Data-deletion "
+            "controls are not included in this panel yet."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
