@@ -1,6 +1,6 @@
 import unittest
 
-from core.approval_preview import redact_preview
+from core.approval_preview import confirmation_digest, redact_preview
 
 
 class ApprovalPreviewRedactionTests(unittest.TestCase):
@@ -28,6 +28,19 @@ class ApprovalPreviewRedactionTests(unittest.TestCase):
         self.assertEqual(preview["items"][-1], "[truncated]")
         self.assertTrue(preview["large"].endswith("…[truncated]"))
         self.assertLessEqual(len(preview["large"]), 1012)
+
+    def test_confirmation_digest_binds_exact_snapshot_and_is_stable(self):
+        first = {"skill_id": "notes.write", "arguments": {"text": "hello", "count": 1}}
+        reordered = {"arguments": {"count": 1, "text": "hello"}, "skill_id": "notes.write"}
+        changed = {"skill_id": "notes.write", "arguments": {"text": "changed", "count": 1}}
+        digest = confirmation_digest(first)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(digest, confirmation_digest(reordered))
+        self.assertNotEqual(digest, confirmation_digest(changed))
+
+    def test_confirmation_digest_rejects_non_json_values(self):
+        with self.assertRaises(ValueError):
+            confirmation_digest({"value": float("nan")})
 
     def test_does_not_echo_unsupported_objects(self):
         class Secret:
