@@ -43,6 +43,18 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             session_id=session_id, confirm=confirm,
         )
 
+    def test_durable_pending_store_requires_audit_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            with self.assertRaisesRegex(ValueError, "require an append-capable audit_log"):
+                ApprovalCoordinator(pending_store=store)
+
+    def test_durable_pending_store_rejects_invalid_audit_adapter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            with self.assertRaisesRegex(ValueError, "require an append-capable audit_log"):
+                ApprovalCoordinator(pending_store=store, audit_log=object())
+
     def test_audit_failure_does_not_leave_pending_request_available(self):
         class BrokenAudit:
             def append(self, **_event):
