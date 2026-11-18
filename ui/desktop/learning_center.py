@@ -337,15 +337,21 @@ class LearningCenterPanel:
                         after_refresh()
                 except Exception:
                     presenter.set_status("Could not safely load learning status. Personalization is paused.")
+                    state_cache["learning"] = False
+                    state_cache["training"] = False
                     pending.clear()
                     preview.clear()
+                    submit.setEnabled(False)
                     approve.setEnabled(False)
                     reject.setEnabled(False)
 
             def failed(_error):
                 presenter.set_status("Could not safely load learning status. Personalization is paused.")
+                state_cache["learning"] = False
+                state_cache["training"] = False
                 pending.clear()
                 preview.clear()
+                submit.setEnabled(False)
                 approve.setEnabled(False)
                 reject.setEnabled(False)
 
