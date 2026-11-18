@@ -75,7 +75,8 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.assertEqual(wrong_actor.status, "pending_not_found")
         correct = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=lambda _: True,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
         )
         self.assertTrue(correct.ok)
         self.assertEqual(len(self.planner.executed), 1)
