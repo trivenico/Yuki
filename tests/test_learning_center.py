@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -30,6 +31,7 @@ class LearningCenterPanelTests(unittest.TestCase):
             "approved_count": 0,
         }
         self.reviewed = []
+        self.deleted = []
 
         def on_review(proposal_id):
             self.reviewed.append(proposal_id)
@@ -47,7 +49,7 @@ class LearningCenterPanelTests(unittest.TestCase):
             on_review=on_review,
             on_approve=lambda proposal_id: None,
             on_reject=lambda proposal_id: None,
-            on_delete_all=lambda: {"pending": 0, "approved": 0},
+            on_delete_all=lambda: self.deleted.append(True) or {"pending": 2, "approved": 3},
         )
 
     def tearDown(self):
@@ -65,6 +67,14 @@ class LearningCenterPanelTests(unittest.TestCase):
         self.assertTrue(controls["approve"].isEnabled())
         self.assertTrue(controls["reject"].isEnabled())
         self.assertTrue(controls["delete_all"].isEnabled())
+
+    def test_delete_all_requires_confirmation_and_invokes_callback(self):
+        from PySide6.QtWidgets import QMessageBox
+        with patch("ui.desktop.learning_center.QMessageBox.question", return_value=QMessageBox.Yes):
+            self.page.learning_controls["delete_all"].click()
+            self.app.processEvents()
+        self.assertEqual(self.deleted, [True])
+        self.assertIn("Deleted 2 pending corrections and 3 approved examples", self.page.learning_controls["status"].text())
 
     def test_training_consent_off_disables_approval(self):
         state = dict(self.state)
