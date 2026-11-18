@@ -93,9 +93,12 @@ class EncryptedVoiceArtifactStore:
         except OSError as exc:
             raise VoiceArtifactStoreError("Could not securely open voice artifact directory.") from exc
 
-    def _require_authorized(self) -> None:
+    def _require_open(self) -> None:
         if self._closed:
             raise VoiceArtifactStoreError("Voice artifact store is closed.")
+
+    def _require_authorized(self) -> None:
+        self._require_open()
         try:
             allowed = self._authorize()
         except Exception as exc:
@@ -135,6 +138,7 @@ class EncryptedVoiceArtifactStore:
         encrypted = _MAGIC + nonce + self._cipher.encrypt(nonce, data, self._aad(artifact_id))
         destination = self._path_for(artifact_id)
         with self._lock:
+            self._require_open()
             if self._dir_fd_supported:
                 temporary_name = ".voice-" + secrets.token_hex(16) + ".tmp"
                 temporary_fd = None
@@ -199,6 +203,7 @@ class EncryptedVoiceArtifactStore:
         self._require_authorized()
         path = self._path_for(artifact_id)
         with self._lock:
+            self._require_open()
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
             try:
                 if self._dir_fd_supported:
@@ -236,6 +241,7 @@ class EncryptedVoiceArtifactStore:
             raise VoiceArtifactAuthorizationError("Explicit confirmation is required to delete voice audio.")
         path = self._path_for(artifact_id)
         with self._lock:
+            self._require_open()
             try:
                 if self._dir_fd_supported:
                     os.unlink(artifact_id + ".ykv", dir_fd=self._directory_fd)
