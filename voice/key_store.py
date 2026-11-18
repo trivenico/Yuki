@@ -12,6 +12,7 @@ import os
 import re
 import stat
 import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -86,7 +87,15 @@ def _cross_process_key_lock(account: str, lock_directory: str) -> Iterator[None]
                 raise VoiceKeyStoreError("The voice key lock is not owned by this user.")
             if lock_stat.st_mode & 0o077:
                 os.fchmod(lock_fd, 0o600)
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise VoiceKeyStoreError("Timed out waiting for the per-user voice key lock.")
+                    time.sleep(0.05)
             try:
                 yield
             finally:
