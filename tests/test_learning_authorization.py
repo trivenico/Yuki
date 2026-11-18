@@ -61,10 +61,11 @@ class LearningAuthorizationLedgerTests(unittest.TestCase):
             self.ledger.record_example_approval("not-a-proposal", True)
 
     def test_audit_write_failure_does_not_claim_consent(self):
-        class BrokenAudit:
+        class BrokenAudit(SQLiteApprovalAuditLog):
             def append(self, **kwargs):
                 raise OSError("disk unavailable")
-        broken = LearningAuthorizationLedger(BrokenAudit(), actor_id="owner")
+        broken_audit = BrokenAudit(str(Path(self.temp.name) / "broken.sqlite3"))
+        broken = LearningAuthorizationLedger(broken_audit, actor_id="owner")
         with self.assertRaises(LearningAuthorizationError):
             broken.record_consent("learning", True)
 
