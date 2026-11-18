@@ -161,6 +161,49 @@ class WorkforceDashboardTests(unittest.TestCase):
             snapshot["decision_intelligence"]["limitations"]
         ))
 
+    def test_goal_rows_distinguish_partial_success_from_terminal_completion(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        succeeded = self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Success"},
+            idempotency_key="outcome-success", max_attempts=1,
+        )
+        self.engine.claim("outcome-worker", task_type="workforce.task")
+        self.engine.complete(succeeded["id"], "outcome-worker", {
+            "ok": True, "status": "completed", "employee_id": employee.employee_id,
+            "review_required": False, "review_evidence": None,
+        })
+        failed = self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Failure"},
+            idempotency_key="outcome-failure", max_attempts=1,
+        )
+        self.engine.claim("outcome-worker", task_type="workforce.task")
+        self.engine.fail(failed["id"], "outcome-worker", "redacted failure")
+
+        row = next(
+            item for item in self.dashboard.snapshot()["goals"]
+            if item["goal_id"] == goal_id
+        )
+        self.assertEqual(row["state"], "completed")
+        self.assertEqual(row["task_outcome"], "partially_succeeded")
+        self.assertEqual(row["task_counts"]["succeeded"], 1)
+        self.assertEqual(row["task_counts"]["failed"], 1)
+
+    def test_goal_rows_report_empty_and_active_task_outcomes(self):
+        empty_goal = self.engine.create_goal()
+        active_goal = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        self.engine.submit(
+            active_goal, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Queued"},
+            idempotency_key="outcome-queued", max_attempts=1,
+        )
+        rows = {row["goal_id"]: row for row in self.dashboard.snapshot()["goals"]}
+        self.assertEqual(rows[empty_goal]["task_outcome"], "no_tasks")
+        self.assertEqual(rows[active_goal]["task_outcome"], "in_progress")
+
     def test_snapshot_reports_truncation_only_when_more_goals_exist(self):
         first_goal = self.engine.create_goal()
         exact_page = self.dashboard.snapshot(max_goals=1)
