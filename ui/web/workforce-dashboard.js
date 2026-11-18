@@ -2,7 +2,7 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   let initialized = false;
-  const state = { page: 1, pageSize: 25, totalPages: 1, department: "", search: "", status: "" };
+  const state = { page: 1, pageSize: 25, totalPages: 1, department: "", search: "", status: "", goalId: "", nextEventId: 0 };
   const token = () => sessionStorage.getItem("yuki_token");
   const request = async (path) => {
     const response = await fetch(path, { headers: { Authorization: "Bearer " + (token() || ""), Accept: "application/json" }, cache: "no-store" });
@@ -48,8 +48,10 @@
     const goals = $("workforce-goals");
     goals.replaceChildren();
     (data.goals || []).slice(0, 12).forEach((goal) => {
-      const row = el("div", "workforce-goal");
+      const row = el("button", "workforce-goal");
+      row.type = "button";
       row.append(el("strong", "", goal.goal_id), el("span", "", goal.state + " · " + goal.total_tasks + " tasks"));
+      row.addEventListener("click", () => loadGoalDetail(goal.goal_id).catch((e) => $("workforce-status").textContent = e.message));
       goals.append(row);
     });
     if (!(data.goals || []).length) goals.append(el("p", "workforce-empty", "No persisted workforce goals yet."));
@@ -85,6 +87,30 @@
     if (state.status) params.set("status", state.status);
     renderDirectory(await request("/v1/workforce/employees?" + params.toString()));
   };
+  const loadGoalDetail = async (goalId, afterEventId = 0, append = false) => {
+    state.goalId = goalId;
+    const params = new URLSearchParams({ after_event_id: String(afterEventId), event_limit: "50" });
+    const data = await request("/v1/workforce/goals/" + encodeURIComponent(goalId) + "?" + params.toString());
+    $("workforce-goal-detail").hidden = false;
+    $("workforce-goal-meta").textContent = "Goal " + data.goal.goal_id + " · " + data.goal.state + " · " + data.tasks.length + " workforce tasks";
+    const tasks = $("workforce-goal-tasks");
+    if (!append) tasks.replaceChildren();
+    data.tasks.forEach((task) => {
+      const row = el("div", "workforce-timeline-row");
+      row.append(el("strong", "", task.description || task.task_id), el("span", "", (task.employee_name || task.employee_id || "Unassigned") + " · " + task.state));
+      tasks.append(row);
+    });
+    const events = $("workforce-goal-events");
+    if (!append) events.replaceChildren();
+    data.events.forEach((event) => {
+      const row = el("div", "workforce-timeline-event");
+      row.append(el("span", "", "#" + event.id + " · " + event.event_type), el("time", "", new Date(event.created_at * 1000).toLocaleString()));
+      events.append(row);
+    });
+    state.nextEventId = data.next_event_id;
+    $("workforce-events-more").hidden = !data.has_more_events;
+  };
+
   const refresh = async () => {
     $("workforce-status").textContent = "Refreshing workforce data…";
     try {
@@ -103,6 +129,10 @@
       $("workforce-nav").hidden = false;
       $("workforce-nav").addEventListener("click", () => { showDashboard(true); refresh(); });
       $("workforce-refresh").addEventListener("click", refresh);
+      $("workforce-goal-close").addEventListener("click", () => { $("workforce-goal-detail").hidden = true; state.goalId = ""; });
+      $("workforce-events-more").addEventListener("click", () => {
+        if (state.goalId) loadGoalDetail(state.goalId, state.nextEventId, true).catch((e) => $("workforce-status").textContent = e.message);
+      });
       $("workforce-prev").addEventListener("click", () => { state.page = Math.max(1, state.page - 1); loadDirectory().catch((e) => $("workforce-status").textContent = e.message); });
       $("workforce-next").addEventListener("click", () => { state.page = Math.min(state.totalPages, state.page + 1); loadDirectory().catch((e) => $("workforce-status").textContent = e.message); });
       $("workforce-search").addEventListener("input", () => { state.search = $("workforce-search").value.trim(); state.page = 1; loadDirectory().catch((e) => $("workforce-status").textContent = e.message); });
