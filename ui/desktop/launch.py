@@ -1235,7 +1235,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 except Exception as exc:
                     presenter.set_state("unavailable", enabled=False)
                     self.security_panel.security_controls["status"].setText(
-                        "Security session: snapshot rejected ( + type(exc).__name__ + ")."
+                        "Security session: snapshot rejected (" + type(exc).__name__ + ")."
                     )
                     self.security_global_status.setText("Security session: unavailable")
                     return
