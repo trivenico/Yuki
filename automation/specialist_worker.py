@@ -245,7 +245,7 @@ class SpecialistTaskWorker:
             if self.manifest_validator is not None:
                 try:
                     valid_manifest = (
-                        self.manifest_validator(claimed.run_id, agent_id) is True
+                        self.manifest_validator(task_id=claimed.run_id, agent_id=agent_id) is True
                     )
                 except Exception:
                     valid_manifest = False
