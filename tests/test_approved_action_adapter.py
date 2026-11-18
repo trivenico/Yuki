@@ -3,6 +3,10 @@ import unittest
 from types import SimpleNamespace
 
 from core.approved_action_adapter import ApprovedActionAdapter, ApprovedActionBinding
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
+from skills.base import Skill, SkillResult
+from skills.registry import SkillRegistry
 
 
 class Registry:
@@ -39,6 +43,67 @@ class ApprovedActionAdapterTests(unittest.TestCase):
         })
         self.assertTrue(result.ok)
         self.assertEqual(self.agent.calls, [("notes.write", "hello")])
+
+    def test_real_agent_requires_fresh_permission_gate_approval(self):
+        class WriteSkill(Skill):
+            name = "notes_write"
+            description = "Write a test note"
+            risk = "medium"
+            requires_approval = True
+
+            def __init__(self):
+                self.invocations = []
+
+            def run(self, argument=""):
+                self.invocations.append(argument)
+                return SkillResult(True, "written")
+
+        skill = WriteSkill()
+        requests = []
+        agent = YukiCoreAgent(
+            registry=SkillRegistry([skill]),
+            permission_gate=PermissionGate(lambda request: requests.append(request) or True),
+        )
+        adapter = ApprovedActionAdapter(agent, {
+            "notes_write": ApprovedActionBinding("notes_write", lambda args: args["text"])
+        })
+        result = adapter.execute({
+            "skill_id": "notes_write", "arguments": {"text": "exact approved text"}
+        })
+        self.assertTrue(result.ok)
+        self.assertEqual(skill.invocations, ["exact approved text"])
+        self.assertEqual(len(requests), 1)
+        self.assertIn("sha256:", requests[0].action)
+
+    def test_real_agent_permission_gate_denial_prevents_skill_execution(self):
+        class WriteSkill(Skill):
+            name = "notes_write"
+            description = "Write a test note"
+            risk = "medium"
+
+            def __init__(self):
+                self.invocations = []
+
+            def run(self, argument=""):
+                self.invocations.append(argument)
+                return SkillResult(True, "written")
+
+        skill = WriteSkill()
+        requests = []
+        agent = YukiCoreAgent(
+            registry=SkillRegistry([skill]),
+            permission_gate=PermissionGate(lambda request: requests.append(request) or False),
+        )
+        adapter = ApprovedActionAdapter(agent, {
+            "notes_write": ApprovedActionBinding("notes_write", lambda args: args["text"])
+        })
+        result = adapter.execute({
+            "skill_id": "notes_write", "arguments": {"text": "must not execute"}
+        })
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "permission_denied")
+        self.assertEqual(skill.invocations, [])
+        self.assertEqual(len(requests), 1)
 
     def test_unknown_action_id_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "not explicitly configured"):
