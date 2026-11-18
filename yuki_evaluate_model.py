@@ -1,16 +1,24 @@
-"""Run a small explicit benchmark against a Hugging Face Inference Router model."""
+"""Run a bounded benchmark against a Hugging Face Inference Router model."""
 from __future__ import annotations
+
 import argparse
 import json
 import os
 import sys
-from providers.model_evaluation import EvaluationError, HuggingFaceChatClient, evaluate_model
+
+from providers.model_evaluation import (
+    EvaluationError,
+    HuggingFaceChatClient,
+    evaluate_model,
+    validate_system_prompt,
+)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Evaluate a Hugging Face model on a local JSON benchmark.")
     parser.add_argument("--model", required=True, help="Exact organization/model identifier")
     parser.add_argument("--benchmark", required=True, help="Path to a local JSON benchmark file")
+    parser.add_argument("--system-prompt-file", help="Optional UTF-8 system prompt file (maximum 16000 characters)")
     parser.add_argument("--limit", type=int, default=5, help="Maximum cases to run (1-20)")
     parser.add_argument("--timeout", type=float, default=20, help="Per-request timeout (1-30 seconds)")
     parser.add_argument("--output", help="Optional new JSON report path (must not already exist)")
@@ -20,12 +28,26 @@ def main(argv=None):
             benchmark = json.load(handle)
         if not isinstance(benchmark, dict) or not isinstance(benchmark.get("cases"), list):
             raise ValueError("benchmark JSON must be an object with a cases list")
+        system_prompt = None
+        if args.system_prompt_file:
+            with open(args.system_prompt_file, "r", encoding="utf-8") as handle:
+                system_prompt = handle.read(16_001)
+            if len(system_prompt) > 16_000:
+                raise ValueError("system prompt file exceeds the 16000-character limit")
+            system_prompt = validate_system_prompt(system_prompt)
         token = os.environ.get("HF_TOKEN", "")
         client = HuggingFaceChatClient(token, timeout=args.timeout)
-        report = evaluate_model(args.model, benchmark["cases"],
-                                lambda prompt: client.generate(args.model, prompt),
-                                max_cases=args.limit)
-    except (OSError, json.JSONDecodeError, ValueError, EvaluationError) as exc:
+        if system_prompt is None:
+            generate = lambda prompt: client.generate(args.model, prompt)
+        else:
+            generate = lambda prompt, instructions: client.generate(
+                args.model, prompt, system_prompt=instructions,
+            )
+        report = evaluate_model(
+            args.model, benchmark["cases"], generate,
+            max_cases=args.limit, system_prompt=system_prompt,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, EvaluationError) as exc:
         print(f"model evaluation failed: {exc}", file=sys.stderr)
         return 2
     rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
@@ -42,6 +64,7 @@ def main(argv=None):
     else:
         print(rendered, end="")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
