@@ -86,6 +86,54 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["performance"]["independently_verified_successes"], 1)
         self.assertIn("no quality score", snapshot["performance"]["scoring"])
 
+    def test_knowledge_effectiveness_reports_observational_task_outcomes(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        context = [{
+            "knowledge_id": "lesson-observe-1", "title": "Prefer primary evidence",
+            "lesson": "Use primary sources.", "source_task_id": "lesson-source",
+            "reviewed_by": "human-curator",
+        }]
+        successful = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Reviewed task",
+                "review_required": True,
+                "knowledge_context": context,
+            },
+            idempotency_key="knowledge-effectiveness-success", max_attempts=1,
+        )
+        self.engine.claim("knowledge-effectiveness-worker", task_type="workforce.task")
+        self.engine.complete(successful["id"], "knowledge-effectiveness-worker", {
+            "ok": True, "status": "completed:reviewed",
+            "employee_id": employee.employee_id, "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "INDEPENDENT-QA", "status": "approved", "approved": True,
+            },
+        })
+        failed = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Failed task",
+                "review_required": True,
+                "knowledge_context": context,
+            },
+            idempotency_key="knowledge-effectiveness-failure", max_attempts=1,
+        )
+        self.engine.claim("knowledge-effectiveness-worker", task_type="workforce.task")
+        self.engine.fail(failed["id"], "knowledge-effectiveness-worker", "redacted failure")
+
+        snapshot = self.dashboard.snapshot()
+        lesson = snapshot["knowledge_effectiveness"]["lessons"][0]
+        self.assertEqual(lesson["knowledge_id"], "lesson-observe-1")
+        self.assertEqual(lesson["exposures"], 2)
+        self.assertEqual(lesson["succeeded_tasks"], 1)
+        self.assertEqual(lesson["failed_tasks"], 1)
+        self.assertEqual(lesson["independently_verified_successes"], 1)
+        self.assertIn("association", " ".join(snapshot["knowledge_effectiveness"]["limitations"]))
+
     def test_decision_intelligence_reports_capacity_gaps_and_department_failures(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
