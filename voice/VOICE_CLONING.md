@@ -260,3 +260,9 @@ construction and confirms that metadata is written only into the originally
 opened directory. This does not solve multi-process lost updates: registry
 state and mutation locks are still process-local, so concurrent writer support
 remains disabled pending an inter-process transaction/locking design.
+
+Both storage objects now expose an idempotent `close()` method to release
+their retained directory descriptor. Callers must close them during logout,
+account switch, and application shutdown; operations after close fail closed.
+The lifecycle integration that guarantees those calls in the desktop app is
+still outstanding.
