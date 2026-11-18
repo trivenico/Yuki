@@ -23,9 +23,10 @@ class Executor:
 
 
 class ReviewDecision:
-    def __init__(self, approved, status="reviewed"):
+    def __init__(self, approved, status="reviewed", reviewer_id="QA-001"):
         self.approved = approved
         self.status = status
+        self.reviewer_id = reviewer_id
 
 
 class Reviewer:
@@ -36,6 +37,7 @@ class Reviewer:
 
     def review(self, **kwargs):
         self.calls.append(kwargs)
+        self.decision.reviewer_id = self.reviewer_id
         return self.decision
 
 class WorkforceWorkerTests(unittest.TestCase):
