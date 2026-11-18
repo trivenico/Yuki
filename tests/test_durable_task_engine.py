@@ -44,6 +44,69 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(completed["state"], "succeeded")
         self.assertEqual(engine.get_task(task["id"])["result"], {"done": True})
 
+    def test_improvement_proposal_lifecycle_is_durable_and_actor_attributed(self):
+        proposal = {
+            "category": "department_backlog",
+            "priority": "medium",
+            "recommendation": "Review queue prioritization",
+            "evidence": {"queued_tasks": 3, "window": "bounded"},
+        }
+        created = self.engine.create_improvement_proposal("proposal-1", proposal)
+        self.assertTrue(created["created"])
+        replay = self.engine.create_improvement_proposal("proposal-1", dict(reversed(list(proposal.items()))))
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["state"], "proposed")
+        with self.assertRaises(TaskConflict):
+            self.engine.create_improvement_proposal("proposal-1", {**proposal, "priority": "high"})
+
+        approved = self.engine.transition_improvement_proposal(
+            "proposal-1", expected_state="proposed", new_state="approved",
+            actor_id="operator-7", decision_note="Reviewed evidence",
+        )
+        self.assertEqual(approved["decided_by"], "operator-7")
+        self.assertEqual(approved["state"], "approved")
+        with self.assertRaises(TaskConflict):
+            self.engine.transition_improvement_proposal(
+                "proposal-1", expected_state="proposed", new_state="rejected",
+                actor_id="operator-8",
+            )
+        completed = self.engine.transition_improvement_proposal(
+            "proposal-1", expected_state="approved", new_state="completed",
+            actor_id="operator-7", outcome={"observed_change": "queue reduced", "causal_claim": False},
+        )
+        self.assertEqual(completed["outcome"]["causal_claim"], False)
+        self.assertEqual([event["actor_id"] for event in completed["events"]], ["system", "operator-7", "operator-7"])
+
+        restarted = DurableTaskEngine(self.db)
+        persisted = restarted.get_improvement_proposal("proposal-1")
+        self.assertEqual(persisted["state"], "completed")
+        self.assertEqual(persisted["outcome"]["observed_change"], "queue reduced")
+
+    def test_improvement_proposal_rejects_invalid_transitions_and_unbounded_fields(self):
+        self.engine.create_improvement_proposal("proposal-2", {"recommendation": "Inspect"})
+        with self.assertRaises(TaskConflict):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="completed",
+                actor_id="operator-1", outcome={"observed_change": "x"},
+            )
+        with self.assertRaises(ValueError):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="approved",
+                actor_id="operator-1", decision_note="x" * 2001,
+            )
+        with self.assertRaises(ValueError):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="rejected",
+                actor_id="operator-1", outcome={"not_allowed": True},
+            )
+        with self.assertRaises(ValueError):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="approved",
+                actor_id=" ",
+            )
+        with self.assertRaises(ValueError):
+            self.engine.list_improvement_proposals(limit=True)
+
     def test_task_survives_engine_restart_and_emits_events(self):
         task = self.engine.submit(self.goal, "summarize", {"text": "hello"}, idempotency_key="one")
         again = DurableTaskEngine(self.db)
