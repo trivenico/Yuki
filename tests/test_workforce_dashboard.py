@@ -130,6 +130,37 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(department["queued_tasks"], 1)
         self.assertIn("not forecasts", " ".join(intelligence["limitations"]))
 
+    def test_improvement_recommendations_are_evidence_bound_and_never_execute(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        for index in range(2):
+            task = self.engine.submit(
+                goal_id, "workforce.task",
+                {
+                    "assigned_employee_id": employee.employee_id,
+                    "description": f"Failure sample {index}",
+                    "required_capabilities": ["python"],
+                },
+                idempotency_key=f"improvement-failure-{index}", max_attempts=1,
+            )
+            self.engine.claim("improvement-worker", task_type="workforce.task")
+            self.engine.fail(task["id"], "improvement-worker", "redacted failure")
+
+        snapshot = self.dashboard.snapshot()
+        recommendations = snapshot["decision_intelligence"]["improvement_recommendations"]
+        failure_review = next(
+            item for item in recommendations
+            if item["category"] == "failure_pattern_review"
+            and item["evidence"]["department"] == employee.department
+        )
+        self.assertEqual(failure_review["evidence"]["failed_tasks"], 2)
+        self.assertEqual(failure_review["evidence"]["failure_rate_denominator"], 2)
+        self.assertTrue(failure_review["requires_human_approval"])
+        self.assertFalse(failure_review["automatic_action_taken"])
+        self.assertIn("do not assign blame", " ".join(
+            snapshot["decision_intelligence"]["limitations"]
+        ))
+
     def test_snapshot_reports_truncation_only_when_more_goals_exist(self):
         first_goal = self.engine.create_goal()
         exact_page = self.dashboard.snapshot(max_goals=1)
