@@ -250,3 +250,13 @@ directory. Platforms without these POSIX primitives use a compatibility
 path-based branch and must not be considered cleared for adversarial local
 filesystem races. The profile registry has not yet been migrated to this
 handle-based pattern.
+
+
+The profile registry's POSIX path opens the metadata file with no-follow
+semantics relative to its retained directory descriptor, validates it with
+`fstat`, and performs atomic replacement using directory-relative rename.
+A regression test replaces the visible directory path with a symlink after
+construction and confirms that metadata is written only into the originally
+opened directory. This does not solve multi-process lost updates: registry
+state and mutation locks are still process-local, so concurrent writer support
+remains disabled pending an inter-process transaction/locking design.
