@@ -15,7 +15,12 @@ class FakeSessions:
 class DesktopSecurityRuntimeTests(unittest.TestCase):
     def test_service_is_bound_to_the_exact_authenticated_session(self):
         sessions = FakeSessions()
-        service = create_desktop_security_service(sessions, "session-a")
+        service = create_desktop_security_service(
+            sessions, "session-a",
+            process_provider=lambda: [
+                {"pid": 11, "name": "yuki-test", "status": "running"},
+            ],
+        )
         self.assertFalse(service.active)
         self.assertFalse(service.configured)
         service.start(consent=True)
@@ -37,7 +42,9 @@ class DesktopSecurityRuntimeTests(unittest.TestCase):
 
     def test_monitor_factory_is_lazy_and_service_is_read_only(self):
         sessions = FakeSessions()
-        service = create_desktop_security_service(sessions, "session-a")
+        service = create_desktop_security_service(
+            sessions, "session-a", process_provider=lambda: [],
+        )
         self.assertFalse(service.configured)
         service.start(consent=True)
         result = service.snapshot()
