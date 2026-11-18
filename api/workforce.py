@@ -153,6 +153,74 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._respond(send, 503, {"error": "workforce_dashboard_unavailable"})
         return await self._respond(send, 200, result)
 
+    async def _submit_goal(self, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _session_token = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        if self.workforce_ceo is None:
+            return await self._respond(send, 503, {"error": "goal_submission_unavailable"})
+        headers = {
+            key.lower(): value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and isinstance(value, bytes)
+        }
+        content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+        if content_type != b"application/json":
+            return await self._respond(send, 415, {"error": "application_json_required"})
+        idempotency_key = headers.get(b"idempotency-key", b"").decode("latin-1")
+        if not 1 <= len(idempotency_key) <= 256 or any(ord(ch) < 33 or ord(ch) > 126 for ch in idempotency_key):
+            return await self._respond(send, 400, {"error": "valid_idempotency_key_required"})
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message.get("type") != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if not isinstance(chunk, bytes):
+                return await self._respond(send, 400, {"error": "invalid_request_body"})
+            body.extend(chunk)
+            if len(body) > _MAX_GOAL_BODY_BYTES:
+                return await self._respond(send, 413, {"error": "request_body_too_large"})
+            more_body = bool(message.get("more_body", False))
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return await self._respond(send, 400, {"error": "invalid_json"})
+        if not isinstance(payload, dict) or set(payload) != {"goal"}:
+            return await self._respond(send, 400, {"error": "invalid_goal_request"})
+        goal = payload["goal"]
+        if not isinstance(goal, str) or not goal.strip() or len(goal) > 4000:
+            return await self._respond(send, 400, {"error": "goal_must_be_1_to_4000_characters"})
+        request = {"goal": goal.strip()}
+        try:
+            intake = await asyncio.to_thread(
+                self.dashboard.task_engine.create_owned_goal,
+                user.user_id, idempotency_key, request,
+            )
+            execution = await asyncio.to_thread(
+                self.workforce_ceo.plan_and_dispatch,
+                request["goal"], goal_id=intake["goal"]["id"],
+            )
+            report = await asyncio.to_thread(self.workforce_ceo.report, execution)
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "idempotency_conflict"})
+        except Exception:
+            # The durable goal and request key remain available for an exact retry.
+            return await self._respond(send, 422, {
+                "error": "goal_planning_or_dispatch_failed",
+                "retryable": True,
+            })
+        return await self._respond(send, 202, {
+            "goal_id": intake["goal"]["id"],
+            "created": intake["created"],
+            "replayed": not intake["created"],
+            "execution": "queued",
+            "report": report,
+        })
+
     async def _principal(self, scope):
         headers = {
             key.lower(): value for key, value in scope.get("headers", [])
