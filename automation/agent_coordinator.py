@@ -175,6 +175,12 @@ class SpecialistAgentCoordinator:
             for column, definition in migrations.items():
                 if column not in agent_columns:
                     db.execute(f"ALTER TABLE specialist_agents ADD COLUMN {column} {definition}")
+            # Existing rows predate explicit handler metadata and all use the
+            # coordinator's sole supported action, "emit".
+            db.execute(
+                "UPDATE specialist_agents SET handler_id='emit' "
+                "WHERE handler_ready=1 AND handler_id IS NULL"
+            )
             now = datetime.now(timezone.utc).isoformat()
             for agent in agent_map.values():
                 db.execute("""
