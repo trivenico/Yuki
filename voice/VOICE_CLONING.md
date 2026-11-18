@@ -213,14 +213,16 @@ use with voice samples. In particular:
   instances. This does not yet constitute clean-machine acceptance of Windows
   mutex ACL behavior or multi-process native keyring behavior; those platform
   tests remain required before concurrent desktop instances are supported.
-- Artifact and profile paths perform symlink checks, but those checks are not
-  anchored to an already-open directory handle. A local process able to modify
-  the parent directory may race path validation and file operations. Harden
-  directory traversal and file replacement against symlink/rename races, and
-  add Windows ACL validation, before storing real user voice data.
-- The profile registry and artifact store currently use process-local locks.
-  Multi-process updates are not transactional; do not run multiple writers
-  against the same per-user profile directory.
+- POSIX artifact and profile paths now use retained directory descriptors,
+  no-follow opens, ownership/mode validation, and directory-relative mutations.
+  Windows still uses compatibility path-based branches and requires native
+  handle/reparse-point and ACL hardening before real voice data is stored.
+- Profile-registry reads and mutations now run as cross-process transactions:
+  each operation takes a per-directory OS lock, reloads the latest committed
+  state, revalidates authorization, then performs its read or atomic mutation.
+  A spawned-process regression test verifies that concurrent writers preserve
+  both profile updates. Windows mutex ACL and clean-machine acceptance remain
+  release gates.
 - The isolated worker is not a security sandbox. It inherits the user's
   filesystem and network permissions. Do not load third-party or remote
   providers in it until OS-enforced filesystem and network restrictions,
@@ -257,9 +259,11 @@ semantics relative to its retained directory descriptor, validates it with
 `fstat`, and performs atomic replacement using directory-relative rename.
 A regression test replaces the visible directory path with a symlink after
 construction and confirms that metadata is written only into the originally
-opened directory. This does not solve multi-process lost updates: registry
-state and mutation locks are still process-local, so concurrent writer support
-remains disabled pending an inter-process transaction/locking design.
+opened directory. Registry operations now also use a cross-process transaction
+lock anchored to that retained directory descriptor. Each operation reloads
+the latest snapshot while holding the lock, so separate Yuki processes cannot
+silently overwrite one another's profile changes. A spawned-process test
+exercises simultaneous profile creation.
 
 Both storage objects now expose an idempotent `close()` method to release
 their retained directory descriptor. Callers must close them during logout,
@@ -273,3 +277,19 @@ have no group/other permission bits. Regression tests cover deliberately
 world-readable artifacts and profile metadata. This is defense in depth inside
 a private directory; it is not a substitute for Windows ACL verification or
 an OS sandbox.
+
+
+### Cross-process profile-registry transactions
+
+The profile registry and OS-key-store provider now share the reusable
+`voice.process_lock` primitive. POSIX registry locks are opened relative to
+the retained directory descriptor and identify the directory by its device
+and inode, so replacing the visible path does not redirect the lock. Windows
+uses a named mutex keyed to the normalized per-user registry path; native
+mutex ACL/reparse-point validation and clean-machine acceptance remain
+release gates. Every public registry read and mutation reacquires the
+process-wide lock, reloads the latest on-disk snapshot, revalidates the
+authenticated session, and then performs the operation. The regression test
+spawns two independent Yuki processes at a barrier and verifies both new
+profiles survive. This protects registry metadata transactions; it does not
+make artifact-store writes cross-process transactional.
