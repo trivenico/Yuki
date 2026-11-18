@@ -33,24 +33,24 @@ class AgentProfile:
             raise ValueError("employee_id must be non-empty")
         if not self.name.strip() or not self.department.strip() or not self.role.strip():
             raise ValueError("name, department, and role must be non-empty")
-        if not self.capabilities or any(not x.strip() for x in self.capabilities):
+        if not self.capabilities or any(not isinstance(x, str) or not x.strip() for x in self.capabilities):
             raise ValueError("at least one non-empty capability is required")
         if not self.reports_to.strip():
             raise ValueError("reports_to must be non-empty")
-        if self.autonomy_tier not in range(4):
+        if type(self.autonomy_tier) is not int or self.autonomy_tier not in range(4):
             raise ValueError("autonomy_tier must be between 0 and 3")
         if self.status not in {"available", "busy", "offline", "disabled"}:
             raise ValueError("unsupported employee status")
-        if self.active_tasks < 0 or self.max_concurrent_tasks < 1:
-            raise ValueError("task counts must be non-negative and capacity positive")
+        if type(self.active_tasks) is not int or type(self.max_concurrent_tasks) is not int or self.active_tasks < 0 or self.max_concurrent_tasks < 1:
+            raise ValueError("task counts must be non-negative integers and capacity positive")
         if self.active_tasks > self.max_concurrent_tasks:
             raise ValueError("active_tasks cannot exceed max_concurrent_tasks")
         for field_name in ("quality_score", "success_rate"):
             value = getattr(self, field_name)
-            if not 0.0 <= value <= 1.0:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field_name} must be between 0 and 1")
-        if self.tasks_completed < 0:
-            raise ValueError("tasks_completed must be non-negative")
+        if type(self.tasks_completed) is not int or self.tasks_completed < 0:
+            raise ValueError("tasks_completed must be a non-negative integer")
 
 
 # Each entry defines one department and ten distinct employee specializations.
@@ -186,13 +186,12 @@ def default_workforce() -> tuple[AgentProfile, ...]:
         lead_id = f"{department_id.upper()}-001"
         for index, (role, capability_text) in enumerate(roles, start=1):
             employee_id = f"{department_id.upper()}-{index:03d}"
-            capabilities = frozenset(capability_text.split())
             employees.append(AgentProfile(
                 employee_id=employee_id,
                 name=role,
                 department=department_name,
                 role=role,
-                capabilities=capabilities,
+                capabilities=frozenset(capability_text.split()),
                 reports_to="YUKI-CEO" if index == 1 else lead_id,
             ))
     return tuple(employees)
@@ -222,6 +221,21 @@ class AgentRegistry:
             employees = (e for e in employees if e.department.casefold() == department.casefold())
         return tuple(sorted(employees, key=lambda e: e.employee_id))
 
+    @staticmethod
+    def _normalize(values: Iterable[str], field_name: str, *, required: bool) -> frozenset[str]:
+        if isinstance(values, (str, bytes)):
+            raise ValueError(f"{field_name} must be an iterable of non-empty strings, not text")
+        try:
+            items = tuple(values)
+        except TypeError as exc:
+            raise ValueError(f"{field_name} must be an iterable of non-empty strings") from exc
+        if any(not isinstance(item, str) or not item.strip() for item in items):
+            raise ValueError(f"{field_name} must contain only non-empty strings")
+        normalized = frozenset(items)
+        if required and not normalized:
+            raise ValueError(f"{field_name} must contain at least one value")
+        return normalized
+
     def recommend(
         self,
         required_capabilities: Iterable[str],
@@ -231,14 +245,10 @@ class AgentRegistry:
         limit: int = 5,
     ) -> tuple[AgentProfile, ...]:
         """Return eligible candidates; this is ranking, never authorization."""
-        required = frozenset(required_capabilities)
-        permissions = frozenset(required_permissions)
-        if not required or any(not isinstance(x, str) or not x.strip() for x in required):
-            raise ValueError("required_capabilities must contain non-empty strings")
-        if any(not isinstance(x, str) or not x.strip() for x in permissions):
-            raise ValueError("required_permissions must contain non-empty strings")
-        if max_autonomy_tier not in range(4):
-            raise ValueError("max_autonomy_tier must be between 0 and 3")
+        required = self._normalize(required_capabilities, "required_capabilities", required=True)
+        permissions = self._normalize(required_permissions, "required_permissions", required=False)
+        if type(max_autonomy_tier) is not int or max_autonomy_tier not in range(4):
+            raise ValueError("max_autonomy_tier must be an integer between 0 and 3")
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
             raise ValueError("limit must be a positive integer")
 
