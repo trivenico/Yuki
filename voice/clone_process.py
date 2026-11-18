@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import struct
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -63,7 +64,7 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
     try:
         _apply_posix_limits(limits)
         if cancel_event.is_set():
-            send_conn.send(("cancelled", None))
+            send_conn.send_bytes(b"CANCELLED")
             return
         result = provider.create_clone(
             sample_audio, cancel_event=cancel_event, deadline_monotonic=deadline,
@@ -81,11 +82,17 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
         if (not isinstance(result.preview_audio, bytes)
                 or not 1 <= len(result.preview_audio) <= 10 * 1024 * 1024):
             raise ValueError("provider preview is outside the allowed size")
-        send_conn.send(("ok", result))
+        payload = (
+            b"OK"
+            + struct.pack("!II", len(result.profile_artifact), len(result.preview_audio))
+            + result.profile_artifact
+            + result.preview_audio
+        )
+        send_conn.send_bytes(payload)
     except BaseException as exc:
-        # Never send exception messages, which may contain paths or sample data.
+        # Data-only IPC: never unpickle provider-controlled objects in the parent.
         try:
-            send_conn.send(("error", type(exc).__name__))
+            send_conn.send_bytes(("ERROR:" + type(exc).__name__).encode("ascii", "replace")[:128])
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
@@ -144,15 +151,25 @@ class ProcessIsolatedVoiceCloneExecutor:
                     raise VoiceCloneWorkerTimeout("voice clone worker timed out")
                 if receive_conn.poll(min(self.poll_interval, remaining)):
                     try:
-                        status, payload = receive_conn.recv()
+                        payload = receive_conn.recv_bytes(maxlength=30 * 1024 * 1024 + 10)
                     except (EOFError, OSError) as exc:
                         raise VoiceCloneWorkerError("voice clone worker exited without a result") from exc
                     process.join(self.terminate_grace_seconds)
-                    if status == "ok":
-                        return payload
-                    if status == "cancelled":
+                    if payload == b"CANCELLED":
                         raise VoiceCloneWorkerCancelled("voice clone worker cancelled")
-                    raise VoiceCloneWorkerError(f"voice clone provider failed ({payload})")
+                    if payload.startswith(b"ERROR:"):
+                        error_type = payload[6:134].decode("ascii", "replace")
+                        raise VoiceCloneWorkerError(f"voice clone provider failed ({error_type})")
+                    if not payload.startswith(b"OK") or len(payload) < 10:
+                        raise VoiceCloneWorkerError("voice clone worker returned an invalid frame")
+                    artifact_size, preview_size = struct.unpack("!II", payload[2:10])
+                    if (not 1 <= artifact_size <= 20 * 1024 * 1024
+                            or not 1 <= preview_size <= 10 * 1024 * 1024
+                            or len(payload) != 10 + artifact_size + preview_size):
+                        raise VoiceCloneWorkerError("voice clone worker returned invalid output sizes")
+                    from voice.clone_job import VoiceCloneOutput
+                    artifact_end = 10 + artifact_size
+                    return VoiceCloneOutput(payload[10:artifact_end], payload[artifact_end:])
                 if not process.is_alive() and not receive_conn.poll():
                     raise VoiceCloneWorkerError(f"voice clone worker exited ({process.exitcode})")
         finally:
