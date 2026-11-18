@@ -83,6 +83,20 @@ class ContinuousLearningTests(unittest.TestCase):
         self.assertIn("approved historical examples", patch)
         self.assertEqual(learning.approved_example_count, 1)
 
+    def test_pending_review_queue_is_bounded(self):
+        learning = _learning()
+        for index in range(learning.MAX_PENDING):
+            learning.propose_correction(
+                messages=_messages(answer=f"Answer {index} with a distinct result."),
+                source_reference=f"task:{index}", task_type="coding", learning_consent=True,
+            )
+        with self.assertRaises(ContinuousLearningError):
+            learning.propose_correction(
+                messages=_messages(answer="One more distinct answer."),
+                source_reference="task:overflow", task_type="coding", learning_consent=True,
+            )
+        self.assertEqual(len(learning.pending_corrections()), learning.MAX_PENDING)
+
     def test_rejected_correction_never_enters_dataset(self):
         learning = _learning()
         proposal = learning.propose_correction(messages=_messages(), source_reference="task:43",
