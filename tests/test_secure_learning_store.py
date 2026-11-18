@@ -163,6 +163,37 @@ class EncryptedLearningStoreTests(unittest.TestCase):
         except (OSError, RuntimeError) as exc:
             self.skipTest(f"multiprocessing unavailable in this environment: {exc}")
 
+    def test_approved_record_integrity_is_checked_before_persistence(self):
+        from training.sft_data_generator import SFTDataGenerator
+        messages = [
+            {"role": "user", "content": "How should I test this?"},
+            {"role": "assistant", "content": "Use a focused unit test."},
+        ]
+        source = "task:approved"
+        generator = SFTDataGenerator()
+        example_id = generator.add_example(
+            messages=messages, source_reference=source, task_type="coding",
+            training_consent=True, human_approved=True, approved_by="owner",
+        )
+        import hashlib
+        canonical_source = source + "\0" + "coding" + "\0" + "user\0" + messages[0]["content"] + "\0" + "assistant\0" + messages[1]["content"]
+        proposal_id = hashlib.sha256(canonical_source.encode("utf-8")).hexdigest()[:24]
+        row = {
+            "example_id": example_id, "proposal_id": proposal_id,
+            "messages": messages, "source_reference": source, "task_type": "coding",
+            "approved_by": "owner", "approved_at": "2026-11-18T00:00:00+00:00",
+        }
+        store = self.make_store()
+        store.replace({"schema_version": 1, "pending": [], "approved": [row]})
+        self.assertEqual(store.read()["approved"], [row])
+        altered = dict(row)
+        altered["messages"] = [
+            {"role": "user", "content": "Altered question"},
+            {"role": "assistant", "content": "Use a focused unit test."},
+        ]
+        with self.assertRaisesRegex(SecureLearningStoreError, "digest"):
+            store.replace({"schema_version": 1, "pending": [], "approved": [altered]})
+
     def test_private_parent_directory_is_required(self):
         if os.name != "posix":
             self.skipTest("POSIX permission contract")
