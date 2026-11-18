@@ -112,8 +112,8 @@ def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
     # supported runners, so macOS is rejected before a worker is spawned.
     memory_limit = resource.RLIMIT_AS
     _set_bounded_limit(
-        resource, memory_limit, memory_bytes, memory_bytes,
-        name="RLIMIT_DATA" if sys.platform == "darwin" else "RLIMIT_AS",
+        resource, memory_limit, limits.memory_bytes, limits.memory_bytes,
+        name="RLIMIT_AS",
     )
     _set_bounded_limit(resource, resource.RLIMIT_CPU, limits.cpu_seconds,
                        limits.cpu_seconds + 1, name="RLIMIT_CPU")
