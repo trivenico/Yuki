@@ -6,6 +6,7 @@ from unittest.mock import patch
 from ui.desktop.learning import (
     build_learning_center_callbacks,
     create_desktop_learning_coordinator,
+    create_desktop_learning_session,
     create_desktop_learning_store,
 )
 
@@ -113,6 +114,28 @@ class DesktopLearningStoreTests(unittest.TestCase):
             self.assertTrue(reopened_ledger.has_consent("training"))
             self.assertIsNotNone(reopened.build_few_shot_patch("Python unit test"))
             self.assertEqual(len(example_id), 24)
+
+    def test_desktop_learning_session_closes_coordinator_and_audit_callbacks(self):
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
+        except ImportError:
+            self.skipTest("cryptography optional dependency not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "yuki-profile"
+            with patch("ui.desktop.learning.desktop_data_root", return_value=root):
+                session = create_desktop_learning_session(
+                    _Keyring(), actor_id="authenticated-owner",
+                )
+                callbacks = session.callbacks
+                callbacks["on_consent"]("learning", True)
+                session.close()
+                self.assertTrue(session.closed)
+                self.assertIsNone(session.build_few_shot_patch("Python tests", max_examples=3, max_chars=4000))
+                self.assertFalse(callbacks["on_refresh"]()["learning_consent"])
+                with self.assertRaises(RuntimeError):
+                    _ = session.callbacks
+                with self.assertRaises(Exception):
+                    callbacks["on_consent"]("training", True)
 
     def test_factory_uses_private_profile_scoped_encrypted_store(self):
         try:
