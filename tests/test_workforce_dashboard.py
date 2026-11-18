@@ -48,6 +48,37 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["tasks"]["total"], 0)
         self.assertEqual(len(snapshot["employees"]), 100)
 
+    def test_employee_directory_filters_and_paginates(self):
+        first = self.dashboard.employee_directory(department="Engineering", page=1, page_size=3)
+        second = self.dashboard.employee_directory(department="Engineering", page=2, page_size=3)
+        self.assertEqual(first["total"], 10)
+        self.assertEqual(len(first["employees"]), 3)
+        self.assertEqual(first["total_pages"], 4)
+        self.assertNotEqual(
+            first["employees"][0]["employee_id"],
+            second["employees"][0]["employee_id"],
+        )
+        searched = self.dashboard.employee_directory(search="backend")
+        self.assertTrue(all("backend" in " ".join(row["capabilities"]) for row in searched["employees"]))
+
+    def test_department_detail_returns_live_roster(self):
+        detail = self.dashboard.department_detail("engineering")
+        self.assertEqual(detail["department"]["employees"], 10)
+        self.assertEqual(len(detail["employees"]), 10)
+        with self.assertRaises(KeyError):
+            self.dashboard.department_detail("not-a-department")
+
+    def test_employee_directory_rejects_invalid_filters_and_pagination(self):
+        for kwargs in (
+            {"page": True},
+            {"page_size": 101},
+            {"status": []},
+            {"search": 12},
+            {"department": ""},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.dashboard.employee_directory(**kwargs)
+
 
 if __name__ == "__main__":
     unittest.main()
