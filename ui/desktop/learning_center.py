@@ -309,11 +309,13 @@ class LearningCenterPanel:
             pool.start(worker)
             return True
 
-        def refresh_state(_checked=False):
+        def refresh_state(_checked=False, *, after_refresh=None):
             def refreshed(state):
                 try:
                     presenter.render_state(state)
                     set_controls_enabled(True)
+                    if after_refresh is not None:
+                        after_refresh()
                 except Exception:
                     presenter.set_status("Could not safely load learning status. Personalization is paused.")
                     pending.clear()
