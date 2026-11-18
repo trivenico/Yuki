@@ -48,6 +48,17 @@ class DesktopLearningStoreTests(unittest.TestCase):
                 callbacks = build_learning_center_callbacks(coordinator, ledger)
                 callbacks["on_consent"]("learning", True)
                 callbacks["on_consent"]("training", True)
+                submitted = callbacks["on_submit"](
+                    [
+                        {"role": "user", "content": "Please explain this test."},
+                        {"role": "assistant", "content": "Use a focused unit test."},
+                    ],
+                    "desktop-learning-center",
+                    "coding",
+                )
+                self.assertEqual(
+                    callbacks["on_review"](submitted)["proposal_id"], submitted,
+                )
                 first = coordinator.propose_correction(
                     messages=[
                         {"role": "user", "content": "Review this sample."},
