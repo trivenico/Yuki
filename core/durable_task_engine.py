@@ -232,6 +232,27 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
+    def get_task_by_idempotency(self, goal_id, idempotency_key):
+        """Return a task and its persisted dependency IDs for safe DAG recovery."""
+        if not isinstance(goal_id, str) or not goal_id.strip():
+            raise ValueError("goal_id must be non-empty text")
+        if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 256:
+            raise ValueError("idempotency_key must contain 1..256 characters")
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM tasks WHERE goal_id=? AND idempotency_key=?",
+                (goal_id, idempotency_key),
+            ).fetchone()
+            if row is None:
+                return None
+            task = self._decode(row)
+            dependencies = c.execute(
+                "SELECT depends_on FROM dependencies WHERE task_id=? ORDER BY depends_on",
+                (task["id"],),
+            ).fetchall()
+        task["dependencies"] = [item["depends_on"] for item in dependencies]
+        return task
+
     def claim(self, worker_id, *, lease_seconds=60, task_type=None):
         if not isinstance(worker_id,str) or not 1 <= len(worker_id) <= 256: raise ValueError("invalid worker_id")
         if task_type is not None and (not isinstance(task_type, str) or not 1 <= len(task_type) <= 128): raise ValueError("invalid task_type")
