@@ -387,7 +387,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             worker_id="initial-role-worker", service_actor_id="worker-service",
         )
         self.assertIs(worker.runtime, self.runtime)
-        self.assertIs(worker.manifest_validator, self.coordinator.validate_task_manifest)
+        self.assertIs(worker.manifest_validator.__self__, self.coordinator)
         self.assertEqual(set(worker.handlers), set(INITIAL_PROVIDER_ROLE_MAP))
         self.assertEqual(set(handlers), set(INITIAL_PROVIDER_ROLE_MAP))
         self.assertEqual(handlers["RES-12"]("Research supplied evidence"), "bounded specialist output")
