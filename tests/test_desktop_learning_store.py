@@ -3,7 +3,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ui.desktop.learning import create_desktop_learning_coordinator, create_desktop_learning_store
+from ui.desktop.learning import (
+    build_learning_center_callbacks,
+    create_desktop_learning_coordinator,
+    create_desktop_learning_store,
+)
 
 
 class _Backend:
@@ -25,6 +29,49 @@ class _Keyring:
 
 
 class DesktopLearningStoreTests(unittest.TestCase):
+    def test_learning_center_callbacks_audit_approve_and_reject(self):
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
+        except ImportError:
+            self.skipTest("cryptography optional dependency not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "yuki-profile"
+            keyring = _Keyring()
+            with patch("ui.desktop.learning.desktop_data_root", return_value=root):
+                coordinator, ledger = create_desktop_learning_coordinator(
+                    keyring, actor_id="authenticated-owner",
+                )
+                callbacks = build_learning_center_callbacks(coordinator, ledger)
+                callbacks["on_consent"]("learning", True)
+                callbacks["on_consent"]("training", True)
+                first = coordinator.propose_correction(
+                    messages=[
+                        {"role": "user", "content": "Review this sample."},
+                        {"role": "assistant", "content": "This is a suitable example."},
+                    ],
+                    source_reference="task:approve",
+                    task_type="coding",
+                    learning_consent=True,
+                )
+                review = callbacks["on_review"](first)
+                self.assertEqual(review["proposal_id"], first)
+                callbacks["on_approve"](first)
+                second = coordinator.propose_correction(
+                    messages=[
+                        {"role": "user", "content": "Review another sample."},
+                        {"role": "assistant", "content": "This sample should be discarded."},
+                    ],
+                    source_reference="task:reject",
+                    task_type="coding",
+                    learning_consent=True,
+                )
+                callbacks["on_reject"](second)
+                state = callbacks["on_refresh"]()
+            self.assertEqual(state["approved_count"], 1)
+            self.assertEqual(state["pending"], [])
+            self.assertTrue(ledger.verify_example_approval(first, "authenticated-owner"))
+            self.assertFalse(ledger.verify_example_approval(second, "authenticated-owner"))
+
     def test_factory_builds_restart_safe_actor_bound_learning_coordinator(self):
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
