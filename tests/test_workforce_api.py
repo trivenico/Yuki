@@ -77,6 +77,99 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             return messages[0]["status"], decoded
         return asyncio.run(run())
 
+    def _seed_knowledge_candidate(self):
+        goal = self.engine.create_goal()
+        task = self.engine.submit(
+            goal, "workforce.task", {}, idempotency_key="api-knowledge-source",
+            max_attempts=1,
+        )
+        claimed = self.engine.claim("api-knowledge-worker")
+        self.engine.complete(task["id"], "api-knowledge-worker", {
+            "ok": True,
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "independent-reviewer",
+                "status": "approved",
+                "approved": True,
+            },
+        })
+        return self.engine.create_knowledge_candidate(
+            "api-knowledge-1", task["id"], {
+                "title": "Keep retries bounded",
+                "lesson": "Use stable idempotency keys for replayable task dispatch.",
+                "domain": "workforce",
+                "tags": ["reliability"],
+            },
+        )
+
+    def test_knowledge_api_requires_auth_and_only_returns_verified_records(self):
+        candidate = self._seed_knowledge_candidate()
+        status, body = self.request("/v1/workforce/knowledge")
+        self.assertEqual(status, 401)
+        status, body = self.request(
+            "/v1/workforce/knowledge", token=self.user_session.token,
+        )
+        self.assertEqual(status, 403)
+        status, body = self.request(
+            "/v1/workforce/knowledge", token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["knowledge"], [])
+        self.assertEqual(body["visibility"], "verified_only")
+        status, body = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["state"], "candidate")
+        self.assertEqual(body["source_task_id"], candidate["source_task_id"])
+
+    def test_knowledge_api_review_is_actor_attributed_and_optimistic(self):
+        self._seed_knowledge_candidate()
+        payload = {
+            "expected_state": "candidate",
+            "new_state": "verified",
+            "review_note": "Checked source evidence and confirmed lesson.",
+        }
+        status, body = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1/transition",
+            method="POST", token=self.admin_session.token,
+            body=json.dumps(payload).encode(),
+            extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["state"], "verified")
+        self.assertEqual(body["reviewed_by"], "admin-user")
+        status, body = self.request(
+            "/v1/workforce/knowledge", token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 1)
+        stale = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1/transition",
+            method="POST", token=self.admin_session.token,
+            body=json.dumps(payload).encode(),
+            extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(stale[0], 409)
+
+    def test_knowledge_api_rejects_invalid_transition_and_query(self):
+        self._seed_knowledge_candidate()
+        status, body = self.request(
+            "/v1/workforce/knowledge?all=true", token=self.admin_session.token,
+        )
+        self.assertEqual(status, 400)
+        status, body = self.request(
+            "/v1/workforce/knowledge/api-knowledge-1/transition",
+            method="POST", token=self.admin_session.token,
+            body=json.dumps({
+                "expected_state": "candidate",
+                "new_state": "deleted",
+            }).encode(),
+            extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(status, 409)
+
     def test_requires_authentication_and_restricts_regular_users(self):
         status, body = self.request("/v1/workforce/dashboard")
         self.assertEqual(status, 401)
