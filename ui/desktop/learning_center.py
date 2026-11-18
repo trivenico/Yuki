@@ -282,7 +282,7 @@ class LearningCenterPanel:
 
         def set_controls_enabled(enabled: bool):
             for control in (
-                learning_consent, training_consent, refresh, pending,
+                learning_consent, training_consent, refresh, submit, pending,
                 approve, reject, delete_all,
             ):
                 control.setEnabled(enabled)
