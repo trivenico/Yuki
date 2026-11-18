@@ -140,6 +140,26 @@ class SQLitePendingApprovalStore:
             for row in rows
         ]
 
+    def get_for_actor_session(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
+        """Read a pending snapshot only for its creator's exact authenticated session."""
+        if (not isinstance(pending_id, str) or not pending_id
+                or not isinstance(actor, str) or not actor.strip() or len(actor) > 256
+                or not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256):
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        with self._connect() as db:
+            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
+                FROM pending_approvals WHERE pending_id = ? AND actor_hash = ? AND session_hash = ?""",
+                (pending_id, actor_hash, session_hash)).fetchone()
+            if row is None:
+                return None
+            if row[3] <= now:
+                db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
+                return None
+            return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
+                                       row[3], row[4], row[5])
+
     def get(self, pending_id: str) -> StoredPendingAction | None:
         if not isinstance(pending_id, str) or not pending_id:
             return None
