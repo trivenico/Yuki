@@ -414,6 +414,49 @@ class ContinuousLearningCoordinator:
                     raise ContinuousLearningError("The correction could not be removed from encrypted storage.") from exc
             return self._pending.pop(proposal_id, None) is not None
 
+    def delete_all_learning_data(
+        self, *, revoke_approval: Callable[[str], Any],
+    ) -> dict[str, int]:
+        """Delete all pending and approved examples after revoking prior approvals.
+
+        The revocation callback is invoked inside the encrypted store's
+        cross-process transaction. If an audit revocation fails, the store
+        mutation aborts rather than deleting data while leaving a reusable
+        approval behind.
+        """
+        if not callable(revoke_approval):
+            raise TypeError("revoke_approval must be callable.")
+        if self.store is None:
+            raise ContinuousLearningError(
+                "Secure persistent learning storage is required for deletion."
+            )
+        with self._lock:
+            counts = {"pending": 0, "approved": 0}
+
+            def clear_state(state):
+                approved = list(state["approved"])
+                pending = list(state["pending"])
+                for item in approved:
+                    proposal_id = item.get("proposal_id")
+                    if not isinstance(proposal_id, str):
+                        raise ContinuousLearningError(
+                            "Stored approval metadata is malformed; deletion was stopped."
+                        )
+                    revoke_approval(proposal_id)
+                counts["pending"] = len(pending)
+                counts["approved"] = len(approved)
+                state["pending"].clear()
+                state["approved"].clear()
+
+            try:
+                self.store.update(clear_state)
+                self._refresh_persisted_state()
+            except Exception as exc:
+                raise ContinuousLearningError(
+                    "Learning data could not be safely deleted; existing data was retained."
+                ) from exc
+            return counts
+
     def build_few_shot_patch(
         self,
         query: str,
