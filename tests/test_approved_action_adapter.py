@@ -141,6 +141,13 @@ class ApprovedActionAdapterTests(unittest.TestCase):
             })
         self.assertEqual(self.agent.calls, [])
 
+
+    def test_changed_skill_risk_is_rejected(self):
+        self.skill.risk = "low"
+        with self.assertRaisesRegex(RuntimeError, "risk changed"):
+            self.adapter.execute({"skill_id": "notes.write", "arguments": {"text": "hello"}})
+        self.assertEqual(self.agent.calls, [])
+
     def test_unsupported_risk_is_rejected_at_configuration(self):
         critical = SimpleNamespace(name="dangerous", risk="critical")
         with self.assertRaisesRegex(ValueError, "risk level"):
@@ -174,9 +181,8 @@ class ApprovedActionAdapterTests(unittest.TestCase):
         adapter = ApprovedActionAdapter(agent, {
             "notes.write": ApprovedActionBinding("notes.write", lambda args: args["text"])
         })
-        result = adapter.execute({"skill_id": "notes.write", "arguments": {"text": "hello"}})
-        self.assertFalse(result.ok)
-        self.assertEqual(result.stage, "permission_denied")
+        with self.assertRaisesRegex(PermissionError, "permission_denied"):
+            adapter.execute({"skill_id": "notes.write", "arguments": {"text": "hello"}})
         self.assertEqual(len(requests), 1)
         self.assertEqual(requests[0].action, "skill:notes.write:sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
         self.assertEqual(skill.executions, [])
