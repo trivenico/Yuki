@@ -103,10 +103,40 @@ class ConversationRuntimeTests(unittest.TestCase):
                 workforce_application=workforce,
             )
             self.assertIs(runtime.workforce_application, workforce)
+            self.assertIsInstance(runtime.app, AuthenticatedWorkforceDashboardAPI)
+            self.assertIs(runtime.app.dashboard.registry, workforce.registry)
+            self.assertIs(runtime.app.dashboard.task_engine, workforce.engine)
             self.assertFalse(workforce.closed)
             runtime.close()
             runtime.close()
             self.assertTrue(workforce.closed)
+    def test_runtime_rejects_dashboard_using_different_workforce_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            other_engine = DurableTaskEngine(str(root / "other.sqlite"))
+            dashboard = WorkforceDashboard(
+                registry=workforce.registry, task_engine=other_engine,
+            )
+            try:
+                with self.assertRaisesRegex(ValueError, "workforce_dashboard must use"):
+                    build_conversation_runtime(
+                        {"storage_backend": "sqlite", "workspace": directory},
+                        auth_service=auth, agent_loop=_loop(),
+                        workforce_application=workforce, workforce_dashboard=dashboard,
+                    )
+                self.assertFalse(workforce.closed)
+            finally:
+                other_engine.close()
+                workforce.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
