@@ -19,6 +19,10 @@ from core.structured_tool_protocol import StructuredToolProtocol
 from core.durable_task_engine import DurableTaskEngine
 from core.workforce import AgentRegistry, default_workforce
 from core.workforce_dashboard import WorkforceDashboard
+from core.workforce_application_runtime import build_workforce_application_runtime
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
+from skills.time_skill import TimeSkill
 from api.workforce import AuthenticatedWorkforceDashboardAPI
 
 
@@ -82,6 +86,27 @@ class ConversationRuntimeTests(unittest.TestCase):
                     auth_service=auth, agent_loop=_loop(), pending_approvals=pending,
                 )
 
+    def test_runtime_owns_workforce_runtime_and_closes_it_on_shutdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                workforce_application=workforce,
+            )
+            self.assertIs(runtime.workforce_application, workforce)
+            self.assertFalse(workforce.closed)
+            runtime.close()
+            runtime.close()
+            self.assertTrue(workforce.closed)
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
