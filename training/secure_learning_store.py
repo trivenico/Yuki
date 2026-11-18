@@ -47,9 +47,11 @@ class EncryptedLearningStore:
         self.path = Path(path).expanduser()
         if self.path.is_symlink():
             raise SecureLearningStoreError("Learning data path must not be a symbolic link.")
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # The caller must provision a private parent (the desktop factory uses
+        # prepare_private_desktop_root). Do not create an arbitrary directory
+        # tree here, where intermediate ancestors might have permissive ACLs.
         if self.path.parent.is_symlink() or not self.path.parent.is_dir():
-            raise SecureLearningStoreError("Learning data directory is unavailable or unsafe.")
+            raise SecureLearningStoreError("Learning data directory must already exist and be private.")
         if os.name == "posix":
             info = self.path.parent.stat()
             if stat.S_IMODE(info.st_mode) & 0o077:
