@@ -221,6 +221,17 @@ class AuthenticatedWorkforceDashboardAPI:
                 "priority": recommendation["priority"],
                 "evidence": recommendation["evidence"],
                 "recommendation": recommendation["recommendation"],
+                "baseline": {
+                    "captured_at": self.dashboard.task_engine.clock(),
+                    "scope": "bounded_workforce_dashboard_snapshot",
+                    "goal_window": {
+                        "max_goals": 100,
+                        "included_goal_count": len(snapshot.get("goals", [])),
+                    },
+                    "workforce": snapshot.get("workforce", {}),
+                    "tasks": snapshot.get("tasks", {}),
+                    "performance": snapshot.get("performance", {}),
+                },
                 "requires_human_approval": True,
                 "automatic_action_taken": False,
             }
