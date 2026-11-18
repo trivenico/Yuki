@@ -46,13 +46,14 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
-    def build(self, *, memory=None):
+    def build(self, *, memory=None, learning=None):
         return build_authenticated_desktop_conversation(
             {"workspace": self.tempdir.name},
             provider=self.provider,
             identity=self.identity,
             sessions=self.sessions,
             memory=memory,
+            learning=learning,
             store_factory=lambda config: ConversationStore(
                 Path(config["workspace"]) / "conversations.sqlite3"
             ),
@@ -200,6 +201,35 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
         self.assertEqual(len(send_errors), 1)
         self.assertIsInstance(send_errors[0], PermissionError)
         self.assertEqual(self.provider.close_count, 0)
+
+    def test_learning_session_is_injected_into_chat_and_closed_with_runtime(self):
+        class Learning:
+            def __init__(self):
+                self.closed = False
+                self.calls = []
+
+            def build_few_shot_patch(self, query, *, max_examples, max_chars):
+                self.calls.append((query, max_examples, max_chars))
+                return "Approved historical examples."
+
+            def close(self):
+                self.closed = True
+
+        learning = Learning()
+        session = self.build(learning=learning)
+        try:
+            session.conversation.send("How do I test this?", request_id="desktop-learning")
+            self.assertEqual(
+                learning.calls,
+                [("How do I test this?", 3, 4_000)],
+            )
+            self.assertIn(
+                "Approved historical examples.",
+                self.provider.calls[0][0][0]["content"],
+            )
+        finally:
+            session.close()
+        self.assertTrue(learning.closed)
 
     def test_memory_context_is_bound_to_verified_desktop_session(self):
         class Memory:
