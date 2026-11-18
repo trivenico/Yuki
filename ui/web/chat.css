@@ -24,3 +24,43 @@
 .integration-action:disabled{opacity:.5;cursor:wait}
 .integration-action.danger-action{border-color:#633c43;background:#2c2024;color:#ffb3b3}
 @media(max-width:760px){.integration-list{max-height:22vh}.integration-row{padding:7px 6px}}
+
+/* Executive workforce command center */
+.workforce-nav{margin-top:8px;background:#211f2a;border-color:#49405f;color:#e5ddff}
+.workforce-dashboard{flex:1;min-height:0;overflow:auto;padding:28px clamp(18px,4vw,56px) 48px}
+.workforce-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:20px}
+.workforce-heading .eyebrow{margin:0 0 8px}
+.workforce-heading h1{font-size:27px;letter-spacing:-.8px;margin:0 0 7px}
+.workforce-status{font-size:12px;color:var(--muted);min-height:18px}
+.workforce-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0 30px}
+.workforce-metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.workforce-metric span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px}
+.workforce-metric strong{display:block;font-size:25px;margin-top:9px;font-variant-numeric:tabular-nums}
+.workforce-section-title{font-size:15px;margin:26px 0 12px}
+.workforce-departments{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.workforce-department{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:left;color:var(--text);min-width:0}
+.workforce-department:hover{border-color:#7666a7;background:#1e2028}
+.workforce-department strong{display:block;font-size:11px;line-height:1.4;min-height:30px}
+.workforce-department span{display:block;color:var(--muted);font-size:10px;margin-top:7px}
+.workforce-filters{display:flex;align-items:end;gap:12px;margin:15px 0}
+.workforce-filters label{display:grid;gap:6px;font-size:10px;color:var(--muted);flex:1;max-width:360px}
+.workforce-filters input,.workforce-filters select{width:100%;background:#15171c;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:10px;font:inherit;font-size:12px}
+.workforce-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}
+.workforce-table{width:100%;border-collapse:collapse;min-width:680px;font-size:11px}
+.workforce-table th,.workforce-table td{text-align:left;padding:12px;border-bottom:1px solid var(--line)}
+.workforce-table th{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.8px;background:#17191e}
+.workforce-table td{color:#d8dbe2}
+.workforce-table tr:last-child td{border-bottom:0}
+.workforce-employee-name{display:block;font-weight:700}
+.workforce-employee-id{display:block;color:var(--muted);font-size:9px;margin-top:4px}
+.workforce-state{display:inline-block;padding:4px 7px;border-radius:6px;background:#252932;color:#c8cbd3;font-size:9px}
+.workforce-state.available{color:#8fd8b2;background:#1d3029}
+.workforce-state.busy{color:#f0ce8b;background:#332c1e}
+.workforce-state.disabled,.workforce-state.offline{color:#e4a4a4;background:#342326}
+.workforce-pagination{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:10px;padding:10px 2px}
+.workforce-goals{display:grid;gap:8px}
+.workforce-goal{display:flex;justify-content:space-between;gap:15px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px;font-size:11px}
+.workforce-goal span{color:var(--muted)}
+.workforce-empty{color:var(--muted);font-size:12px;padding:12px}
+@media(max-width:1000px){.workforce-departments{grid-template-columns:repeat(3,minmax(0,1fr))}.workforce-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.workforce-heading{align-items:flex-start}.workforce-heading h1{font-size:22px}.workforce-departments{grid-template-columns:repeat(2,minmax(0,1fr))}.workforce-filters{align-items:stretch;flex-direction:column}.workforce-filters label{max-width:none}.workforce-metrics{gap:8px}.workforce-metric{padding:12px}.workforce-metric strong{font-size:21px}}
