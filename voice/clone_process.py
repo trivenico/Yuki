@@ -50,13 +50,16 @@ class VoiceCloneWorkerLimits:
 
 
 def _set_bounded_limit(resource_module: Any, limit_id: int, requested_soft: int,
-                       requested_hard: int) -> None:
-    _current_soft, current_hard = resource_module.getrlimit(limit_id)
-    hard = requested_hard
-    if current_hard != resource_module.RLIM_INFINITY:
-        hard = min(hard, current_hard)
-    soft = min(requested_soft, hard)
-    resource_module.setrlimit(limit_id, (soft, hard))
+                       requested_hard: int, *, name: str) -> None:
+    try:
+        _current_soft, current_hard = resource_module.getrlimit(limit_id)
+        hard = requested_hard
+        if current_hard != resource_module.RLIM_INFINITY:
+            hard = min(hard, current_hard)
+        soft = min(requested_soft, hard)
+        resource_module.setrlimit(limit_id, (soft, hard))
+    except (OSError, ValueError) as exc:
+        raise VoiceCloneResourceLimitError(name, type(exc).__name__) from exc
 
 
 def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
@@ -77,12 +80,18 @@ def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
         memory_bytes = min(memory_bytes, 3 * 1024 * 1024 * 1024)
     else:
         memory_limit = resource.RLIMIT_AS
-    _set_bounded_limit(resource, memory_limit, memory_bytes, memory_bytes)
-    _set_bounded_limit(resource, resource.RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds + 1)
-    _set_bounded_limit(resource, resource.RLIMIT_FSIZE, limits.file_bytes, limits.file_bytes)
-    _set_bounded_limit(resource, resource.RLIMIT_NOFILE, limits.open_files, limits.open_files)
+    _set_bounded_limit(
+        resource, memory_limit, memory_bytes, memory_bytes,
+        name="RLIMIT_DATA" if sys.platform == "darwin" else "RLIMIT_AS",
+    )
+    _set_bounded_limit(resource, resource.RLIMIT_CPU, limits.cpu_seconds,
+                       limits.cpu_seconds + 1, name="RLIMIT_CPU")
+    _set_bounded_limit(resource, resource.RLIMIT_FSIZE, limits.file_bytes,
+                       limits.file_bytes, name="RLIMIT_FSIZE")
+    _set_bounded_limit(resource, resource.RLIMIT_NOFILE, limits.open_files,
+                       limits.open_files, name="RLIMIT_NOFILE")
     if hasattr(resource, "RLIMIT_CORE"):
-        _set_bounded_limit(resource, resource.RLIMIT_CORE, 0, 0)
+        _set_bounded_limit(resource, resource.RLIMIT_CORE, 0, 0, name="RLIMIT_CORE")
 
 
 def _sanitize_worker_environment() -> None:
@@ -232,9 +241,14 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
         )
         send_conn.send_bytes(payload)
     except BaseException as exc:
-        # Report only a fixed stage and exception class; never forward provider text or tracebacks.
+        # Report only a fixed stage/limit and exception class; never forward provider text or tracebacks.
+        if isinstance(exc, VoiceCloneResourceLimitError):
+            stage = f"resource-limits-{exc.limit_name}"
+            error_type = exc.args[0].split(":", 1)[-1]
+        else:
+            error_type = type(exc).__name__
         try:
-            message = f"ERROR:{stage}:{type(exc).__name__}".encode("ascii", "replace")[:128]
+            message = f"ERROR:{stage}:{error_type}".encode("ascii", "replace")[:128]
             send_conn.send_bytes(message)
         except (BrokenPipeError, EOFError, OSError):
             pass
