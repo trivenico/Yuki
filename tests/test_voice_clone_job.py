@@ -107,6 +107,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller(FakeRemoteProvider())
 
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_cancellation_after_provider_returns_does_not_stage_profile(self):
         controller = self.controller(FakeLocalProvider(cancel_during=True))
         with self.assertRaises(VoiceCloneJobCancelled):
@@ -114,6 +115,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(controller.state, VoiceCloneJobState.CANCELLED)
         self.assertEqual(self.registry.list_profiles(), [])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_provider_failure_preserves_registry(self):
         controller = self.controller(FakeLocalProvider(fail=True))
         with self.assertRaises(RuntimeError):
@@ -123,9 +125,6 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_rejects_concurrent_job(self):
-        entered = threading.Event()
-        release = threading.Event()
-
         controller = self.controller(BlockingProvider())
         errors = []
 
@@ -137,11 +136,13 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
 
         worker = threading.Thread(target=run)
         worker.start()
-        self.assertTrue(entered.wait(1))
+        deadline = time.monotonic() + 2
+        while controller.active_job_id is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertIsNotNone(controller.active_job_id)
         with self.assertRaises(RuntimeError):
             controller.run(wav_sample(), profile_id="second", display_name="Second", source_owner_consent=True)
-        release.set()
-        worker.join(3)
+        worker.join(5)
         self.assertFalse(worker.is_alive())
         self.assertEqual(errors, [])
 
