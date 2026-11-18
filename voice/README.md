@@ -36,3 +36,9 @@ auditioning on supported desktop operating systems.
 - `voice/desktop_output.py` validates local backend prerequisites before reporting spoken replies as enabled. Piper requires an existing local model file, the Piper executable, and optional `sounddevice` / `soundfile` packages. pyttsx3 requires its optional package.
 - The desktop chat exposes a separate **Enable spoken replies** control and **Stop speaking** action. It does not grant microphone permission. Speech runs on a background worker and permission is revoked on sign-out and shutdown.
 - Text chat remains available when local speech dependencies or model files are missing. No wake-word listener, always-on microphone capture, or camera monitoring is enabled by this feature.
+
+## Consent-gated voice cloning foundation
+
+- `voice/clone_profiles.py` stores metadata for user-approved local cloned voices and a separately selected default profile. It requires an explicit source-authorization assertion, confines model directories to the private profile root, and writes an atomic manifest with restrictive POSIX permissions.
+- `voice/VOICE_CLONING.md` documents the intended capture → clone → preview → approve → switch/default workflow and the source-rights, privacy, disclosure, and anti-impersonation boundaries.
+- This is registry and policy groundwork only: there is no voice-cloning engine, recording workflow, clone preview, desktop settings UI, or active voice switching yet. No source recordings are stored by the registry.
