@@ -359,5 +359,39 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             ])
 
 
+    def test_initial_role_handlers_reuse_existing_provider_backed_worker(self):
+        from automation.agent_roles import (
+            INITIAL_PROVIDER_ROLE_MAP, build_initial_role_handlers,
+            register_initial_role_slots,
+        )
+
+        class Provider:
+            def is_available(self):
+                return True
+
+            def generate(self, prompt):
+                self.prompt = prompt
+                return "bounded specialist output"
+
+        class Manager:
+            def __init__(self):
+                self.provider = Provider()
+
+            def create_selected_adapter(self):
+                return self.provider
+
+        manager = Manager()
+        handlers = build_initial_role_handlers(manager)
+        self.assertEqual(set(handlers), set(INITIAL_PROVIDER_ROLE_MAP))
+        self.assertEqual(handlers["RES-12"]("Research supplied evidence"), "bounded specialist output")
+        self.assertIn("Specialist role: research", manager.provider.prompt)
+
+        # Building executable adapters is not permission to activate role records.
+        register_initial_role_slots(self.coordinator, actor_id="alice")
+        records = {item["agent_id"]: item for item in self.coordinator.list_agents(actor_id="alice")}
+        self.assertTrue(all(not records[agent_id]["handler_ready"] for agent_id in handlers))
+        self.assertTrue(all(not records[agent_id]["enabled"] for agent_id in handlers))
+
+
 if __name__ == "__main__":
     unittest.main()
