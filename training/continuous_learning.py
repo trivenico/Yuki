@@ -59,6 +59,7 @@ class ContinuousLearningCoordinator:
         self._approval_verifier = approval_verifier
         self._authorization_snapshot = authorization_snapshot
         self._pending: dict[str, dict[str, Any]] = {}
+        self._last_learning_error: str | None = None
         self._lock = RLock()
         if self.store is not None:
             self._refresh_persisted_state()
@@ -348,8 +349,12 @@ class ContinuousLearningCoordinator:
             if self.store is not None:
                 try:
                     authorization = self._refresh_persisted_state()
-                except Exception as exc:
-                    raise ContinuousLearningError("Approved learning data could not be read safely.") from exc
+                except Exception:
+                    # Personalization is optional: broken learning storage must
+                    # never take down the live conversation path.
+                    self._last_learning_error = "Encrypted learning data is unavailable; few-shot personalization is paused."
+                    return None
+                self._last_learning_error = None
                 if not authorization["training"]:
                     return None
             elif not self._has_consent("training"):
@@ -371,6 +376,11 @@ class ContinuousLearningCoordinator:
             elif not self._has_consent("training"):
                 raise ContinuousLearningError("Verified training consent is required to export this dataset.")
             return self.generator.export_jsonl()
+
+    @property
+    def last_learning_error(self) -> str | None:
+        """A sanitized status message for the desktop Learning Center."""
+        return self._last_learning_error
 
     @property
     def approved_example_count(self) -> int:
