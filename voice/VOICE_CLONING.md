@@ -155,10 +155,14 @@ account key before it is passed to the credential store. Key creation is
 verified with a read-after-write check, and key deletion requires confirmation
 and read-after-delete verification.
 
-The composition factory obtains the key from the OS store and injects it into
-the encrypted artifact store; it does not write key material to Yuki
-configuration, profile metadata, or logs. The authenticated session callback
-is still checked on each artifact operation.
+The composition factory prepares the per-user artifact directory before key
+access, obtains the key from the OS store, and injects it into the encrypted
+artifact store; it does not write key material to Yuki configuration, profile
+metadata, or logs. Key creation and deletion are serialized across processes
+using a named Windows mutex or a POSIX file lock in that private directory.
+The POSIX lock opens the directory without following a symlink and verifies
+ownership and restrictive permissions before opening the lock file. The
+authenticated session callback is still checked on each artifact operation.
 
 Platform caveat: availability and unlock behavior depend on the host OS and
 desktop session. Linux SecretService commonly requires a running, unlocked
@@ -203,11 +207,12 @@ This is **not an OS security sandbox**: the child still runs as the same user an
 The current storage and key-store foundations are not yet approved for production
 use with voice samples. In particular:
 
-- Key creation is protected only by an in-process lock. Two Yuki processes for
-  the same OS account can race while creating the first key in the native
-  credential store. A cross-process coordination mechanism or an atomic
-  credential-store primitive must be implemented and tested before concurrent
-  desktop instances are supported.
+- Key creation and deletion now use a per-account cross-process lock: a named
+  Windows mutex or an OS file lock on POSIX, anchored to the private per-user
+  voice artifact directory. A regression test covers concurrent provider
+  instances. This does not yet constitute clean-machine acceptance of Windows
+  mutex ACL behavior or multi-process native keyring behavior; those platform
+  tests remain required before concurrent desktop instances are supported.
 - Artifact and profile paths perform symlink checks, but those checks are not
   anchored to an already-open directory handle. A local process able to modify
   the parent directory may race path validation and file operations. Harden
