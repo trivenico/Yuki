@@ -45,7 +45,7 @@ class ApprovalPreviewRedactionTests(unittest.TestCase):
         self.assertFalse(verify_confirmation_digest(
             {"skill_id": "notes.write", "arguments": {"text": "different note"}}, digest
         ))
-        self.assertFalse(verify_confirmation_digest(action, digest.upper()))
+        self.assertFalse(verify_confirmation_digest(action, "A" * 64))
         self.assertFalse(verify_confirmation_digest(action, "not-a-digest"))
         self.assertFalse(verify_confirmation_digest(action, None))
 
