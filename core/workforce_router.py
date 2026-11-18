@@ -80,6 +80,7 @@ class WorkforceTaskRouter:
         max_attempts: int = 1,
         review_required: bool = False,
         preferred_employee_id: Optional[str] = None,
+        knowledge_context: Iterable[dict] = (),
     ) -> WorkforceAssignment:
         if not isinstance(goal_id, str) or not goal_id.strip():
             raise ValueError("goal_id must be non-empty text")
@@ -94,6 +95,24 @@ class WorkforceTaskRouter:
             raise ValueError("max_autonomy_tier must be an integer between 0 and 3")
         if type(review_required) is not bool:
             raise ValueError("review_required must be a boolean")
+        if isinstance(knowledge_context, (str, bytes)):
+            raise ValueError("knowledge_context must be a bounded iterable of records")
+        try:
+            knowledge_items = tuple(knowledge_context)
+        except TypeError as exc:
+            raise ValueError("knowledge_context must be iterable") from exc
+        if len(knowledge_items) > 5:
+            raise ValueError("knowledge_context cannot exceed five records")
+        normalized_knowledge = []
+        for item in knowledge_items:
+            if (not isinstance(item, dict)
+                    or set(item) != {"knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"}
+                    or any(not isinstance(item[key], str) or not item[key].strip()
+                           for key in item)):
+                raise ValueError("invalid verified knowledge context")
+            if len(item["title"]) > 200 or len(item["lesson"]) > 1000:
+                raise ValueError("knowledge context fields exceed limits")
+            normalized_knowledge.append(dict(item))
         if type(max_attempts) is not int or max_attempts != 1:
             raise ValueError("workforce tasks must use max_attempts=1; uncertain side effects require manual review")
 
@@ -129,6 +148,7 @@ class WorkforceTaskRouter:
                 "max_autonomy_tier": max_autonomy_tier,
                 "execution_authorized": False,
                 "review_required": review_required,
+                "knowledge_context": normalized_knowledge,
             },
             idempotency_key=idempotency_key,
             dependencies=dependency_ids,
