@@ -107,6 +107,17 @@ class DurableTaskEngine:
               ON workforce_knowledge(state,updated_at);
             CREATE INDEX IF NOT EXISTS workforce_knowledge_events_idx
               ON workforce_knowledge_events(knowledge_id,id);
+            CREATE TABLE IF NOT EXISTS workforce_knowledge_revisions(
+              revision_id TEXT PRIMARY KEY,
+              knowledge_id TEXT NOT NULL REFERENCES workforce_knowledge(knowledge_id),
+              version INTEGER NOT NULL,
+              knowledge_json TEXT NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('proposed','approved','rejected')),
+              created_at REAL NOT NULL,
+              reviewed_at REAL,
+              reviewed_by TEXT,
+              review_note TEXT,
+              UNIQUE(knowledge_id,version));
             CREATE TABLE IF NOT EXISTS goal_requests(
               owner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
               request_fingerprint TEXT NOT NULL, goal_id TEXT NOT NULL REFERENCES goals(id),
@@ -447,6 +458,143 @@ class DurableTaskEngine:
                     (domain, limit),
                 ).fetchall()
         return [self.get_knowledge(row["knowledge_id"]) for row in rows]
+
+    def create_knowledge_revision(self, knowledge_id, revision_id, knowledge):
+        """Propose a bounded revision to an existing verified lesson; never activates it."""
+        if not isinstance(knowledge_id, str) or not 1 <= len(knowledge_id) <= 256:
+            raise ValueError("invalid knowledge_id")
+        if not isinstance(revision_id, str) or not 1 <= len(revision_id) <= 256:
+            raise ValueError("invalid revision_id")
+        if not isinstance(knowledge, dict) or set(knowledge) != {"title", "lesson", "domain", "tags"}:
+            raise ValueError("knowledge revision has an invalid schema")
+        for key, maximum in (("title", 200), ("lesson", 4000), ("domain", 120)):
+            value = knowledge[key]
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError(f"invalid knowledge {key}")
+        tags = knowledge["tags"]
+        if (not isinstance(tags, list) or len(tags) > 20
+                or any(not isinstance(tag, str) or not tag.strip() or len(tag) > 64 for tag in tags)
+                or len({tag.casefold() for tag in tags}) != len(tags)):
+            raise ValueError("knowledge tags must be unique bounded strings")
+        sensitive_patterns = (
+            r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+            r"(?i)\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*\S+",
+            r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}",
+            r"\bAKIA[0-9A-Z]{16}\b",
+            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+        )
+        searchable = " ".join((knowledge["title"], knowledge["lesson"], knowledge["domain"], *tags))
+        if any(re.search(pattern, searchable) for pattern in sensitive_patterns):
+            raise ValueError("knowledge contains a credential or personal contact identifier")
+        knowledge_json = self._json(knowledge)
+        if len(knowledge_json.encode("utf-8")) > 8192:
+            raise ValueError("knowledge revision exceeds 8 KB")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            current = c.execute(
+                "SELECT state FROM workforce_knowledge WHERE knowledge_id=?", (knowledge_id,)
+            ).fetchone()
+            if current is None:
+                raise TaskNotFound("knowledge record not found")
+            if current["state"] != "verified":
+                raise TaskConflict("only verified knowledge can be revised")
+            existing = c.execute(
+                "SELECT * FROM workforce_knowledge_revisions WHERE revision_id=?", (revision_id,)
+            ).fetchone()
+            if existing:
+                if existing["knowledge_id"] != knowledge_id or existing["knowledge_json"] != knowledge_json:
+                    raise TaskConflict("revision ID reused with different content")
+                c.commit()
+                return {"created": False, **self.get_knowledge_revision(revision_id)}
+            version = c.execute(
+                "SELECT COALESCE(MAX(version),0)+1 AS next_version FROM workforce_knowledge_revisions WHERE knowledge_id=?",
+                (knowledge_id,),
+            ).fetchone()["next_version"]
+            c.execute(
+                "INSERT INTO workforce_knowledge_revisions(revision_id,knowledge_id,version,knowledge_json,state,created_at) VALUES(?,?,?,?,?,?)",
+                (revision_id, knowledge_id, version, knowledge_json, "proposed", now),
+            )
+            c.execute(
+                "INSERT INTO workforce_knowledge_events(knowledge_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (knowledge_id, "knowledge.revision_proposed", "system", self._json({"revision_id": revision_id, "version": version}), now),
+            )
+            c.commit()
+        return {"created": True, **self.get_knowledge_revision(revision_id)}
+
+    def transition_knowledge_revision(self, revision_id, *, expected_state, new_state, actor_id, review_note=None):
+        if not isinstance(revision_id, str) or not 1 <= len(revision_id) <= 256:
+            raise ValueError("invalid revision_id")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 256:
+            raise ValueError("actor_id must be non-empty bounded text")
+        if not isinstance(review_note, (str, type(None))) or (review_note is not None and len(review_note) > 2000):
+            raise ValueError("review_note must be at most 2000 characters")
+        if expected_state != "proposed" or new_state not in {"approved", "rejected"}:
+            raise TaskConflict("invalid revision transition")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            revision = c.execute(
+                "SELECT * FROM workforce_knowledge_revisions WHERE revision_id=?", (revision_id,)
+            ).fetchone()
+            if revision is None:
+                raise TaskNotFound("knowledge revision not found")
+            if revision["state"] != expected_state:
+                raise TaskConflict("knowledge revision state changed")
+            if new_state == "approved":
+                current = c.execute(
+                    "SELECT state FROM workforce_knowledge WHERE knowledge_id=?", (revision["knowledge_id"],)
+                ).fetchone()
+                if current is None or current["state"] != "verified":
+                    raise TaskConflict("parent knowledge is no longer verified")
+                approved = c.execute(
+                    "SELECT 1 FROM workforce_knowledge_revisions WHERE knowledge_id=? AND state='approved'",
+                    (revision["knowledge_id"],),
+                ).fetchone()
+                if approved:
+                    # A newer revision must be proposed against the current version, never concurrently promoted.
+                    latest = c.execute(
+                        "SELECT MAX(version) AS version FROM workforce_knowledge_revisions WHERE knowledge_id=? AND state='approved'",
+                        (revision["knowledge_id"],),
+                    ).fetchone()["version"]
+                    if revision["version"] <= latest:
+                        raise TaskConflict("revision is stale")
+                content = json.loads(revision["knowledge_json"])
+                fingerprint = hashlib.sha256(revision["knowledge_json"].encode("utf-8")).hexdigest()
+                c.execute(
+                    "UPDATE workforce_knowledge SET knowledge_json=?,fingerprint=?,updated_at=? WHERE knowledge_id=?",
+                    (revision["knowledge_json"], fingerprint, now, revision["knowledge_id"]),
+                )
+            c.execute(
+                "UPDATE workforce_knowledge_revisions SET state=?,reviewed_at=?,reviewed_by=?,review_note=? WHERE revision_id=?",
+                (new_state, now, actor_id, review_note, revision_id),
+            )
+            c.execute(
+                "INSERT INTO workforce_knowledge_events(knowledge_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (revision["knowledge_id"], "knowledge.revision_" + new_state, actor_id,
+                 self._json({"revision_id": revision_id, "version": revision["version"], "review_note": review_note}), now),
+            )
+            c.commit()
+        return self.get_knowledge_revision(revision_id)
+
+    def get_knowledge_revision(self, revision_id):
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM workforce_knowledge_revisions WHERE revision_id=?", (revision_id,)
+            ).fetchone()
+        if row is None:
+            raise TaskNotFound("knowledge revision not found")
+        result = dict(row)
+        result["knowledge"] = json.loads(result.pop("knowledge_json"))
+        return result
+
+    def list_knowledge_revisions(self, knowledge_id):
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT revision_id FROM workforce_knowledge_revisions WHERE knowledge_id=? ORDER BY version",
+                (knowledge_id,),
+            ).fetchall()
+        return [self.get_knowledge_revision(row["revision_id"]) for row in rows]
 
     def create_improvement_proposal(self, proposal_id, proposal):
         """Create an immutable, idempotent CEO improvement proposal.
