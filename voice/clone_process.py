@@ -70,9 +70,9 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
             sample_audio, cancel_event=cancel_event, deadline_monotonic=deadline,
         )
         if cancel_event.is_set():
-            send_conn.send(("cancelled", None))
+            send_conn.send_bytes(b"CANCELLED")
             return
-        # Bound before IPC serialization; parent validates the exact result again.
+        # Bound before data-only IPC; parent validates the exact result again.
         from voice.clone_job import VoiceCloneOutput
         if not isinstance(result, VoiceCloneOutput):
             raise TypeError("provider result has an unsupported type")
