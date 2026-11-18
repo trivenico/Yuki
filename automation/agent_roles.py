@@ -108,6 +108,41 @@ def build_initial_role_handlers(provider_manager, *, allow_cloud: bool = False):
         allow_cloud=allow_cloud,
     )
 
+def build_initial_role_worker(
+    runtime,
+    coordinator: SpecialistAgentCoordinator,
+    provider_manager,
+    *,
+    worker_id: str,
+    service_actor_id: str,
+    allow_cloud: bool = False,
+):
+    """Construct the initial text-only worker with mandatory manifest validation.
+
+    This is the supported composition path for the starter role handlers. It
+    deliberately does not register, enable, or mark roles ready. Runtime task
+    authorization remains enforced by TaskRuntime; the coordinator validator
+    is always attached so manifest-bound tasks fail closed.
+    """
+    from automation.specialist_worker import SpecialistTaskWorker
+    from automation.task_runtime import TaskRuntime
+
+    if not isinstance(runtime, TaskRuntime):
+        raise TypeError("runtime must be a TaskRuntime.")
+    if not isinstance(coordinator, SpecialistAgentCoordinator):
+        raise TypeError("coordinator must be a SpecialistAgentCoordinator.")
+    if coordinator.runtime is not runtime:
+        raise ValueError("coordinator and worker must share the same TaskRuntime.")
+    handlers = build_initial_role_handlers(provider_manager, allow_cloud=allow_cloud)
+    return SpecialistTaskWorker(
+        runtime,
+        worker_id=worker_id,
+        service_actor_id=service_actor_id,
+        handlers=handlers,
+        manifest_validator=coordinator.validate_task_manifest,
+    )
+
+
 def build_initial_role_slots() -> tuple[SpecialistAgent, ...]:
     """Build validated role slots; none is executable or enabled by default."""
     return tuple(
