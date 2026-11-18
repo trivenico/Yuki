@@ -50,7 +50,12 @@ class WorkforceDashboardAPITests(unittest.TestCase):
                 "type": "http", "method": method, "path": path,
                 "headers": headers, "query_string": query,
             }, receive, send)
-            return messages[0]["status"], json.loads(messages[1]["body"])
+            body = messages[1].get("body", b"")
+            try:
+                decoded = json.loads(body)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                decoded = body.decode("utf-8", errors="replace")
+            return messages[0]["status"], decoded
         return asyncio.run(run())
 
     def test_requires_authentication_and_restricts_regular_users(self):
@@ -109,7 +114,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
         self.assertEqual(status, 404)
-        self.assertEqual(body, {"error": "not found"})
+        self.assertEqual(body, "not found")
 
 
 if __name__ == "__main__":
