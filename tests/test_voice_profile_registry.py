@@ -45,33 +45,35 @@ class VoiceProfileRegistryTests(unittest.TestCase):
     def test_staged_profile_must_be_approved_before_activation(self):
         self.stage()
         with self.assertRaises(VoiceProfileRegistryError):
-            self.registry.activate_profile("clone-one")
+            self.registry.activate_profile("clone-one", confirmed=True)
         self.registry.approve_profile("clone-one")
-        self.registry.activate_profile("clone-one")
+        with self.assertRaises(VoiceProfileAuthorizationError):
+            self.registry.activate_profile("clone-one", confirmed=False)
+        self.registry.activate_profile("clone-one", confirmed=True)
         self.assertEqual(self.registry.active_profile()["profile_id"], "clone-one")
 
     def test_revert_restores_previous_default(self):
         self.stage()
         self.registry.approve_profile("clone-one")
-        self.registry.activate_profile("clone-one")
+        self.registry.activate_profile("clone-one", confirmed=True)
         self.registry.stage_profile(
             "clone-two", "Second voice", "local-test", "artifact:two",
             source_owner_consent=True,
         )
         self.registry.approve_profile("clone-two")
-        self.registry.activate_profile("clone-two")
+        self.registry.activate_profile("clone-two", confirmed=True)
         self.assertEqual(self.registry.active_profile()["profile_id"], "clone-two")
-        self.assertEqual(self.registry.revert_to_previous()["profile_id"], "clone-one")
+        self.assertEqual(self.registry.revert_to_previous(confirmed=True)["profile_id"], "clone-one")
         self.assertEqual(self.registry.active_profile()["profile_id"], "clone-one")
 
     def test_cannot_disable_or_delete_active_or_previous_profile(self):
         self.stage()
         self.registry.approve_profile("clone-one")
-        self.registry.activate_profile("clone-one")
+        self.registry.activate_profile("clone-one", confirmed=True)
         with self.assertRaises(VoiceProfileRegistryError):
-            self.registry.disable_profile("clone-one")
+            self.registry.disable_profile("clone-one", confirmed=True)
         with self.assertRaises(VoiceProfileRegistryError):
-            self.registry.delete_profile("clone-one")
+            self.registry.delete_profile("clone-one", confirmed=True)
 
     def test_profile_metadata_survives_restart_without_audio_bytes(self):
         self.stage()
