@@ -72,3 +72,14 @@
 .workforce-goal-detail h3{font-size:12px;margin:18px 0 8px}
 .workforce-timeline-row,.workforce-timeline-event{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--line);font-size:11px}
 .workforce-timeline-row span,.workforce-timeline-event time{color:var(--muted);font-size:10px}
+
+.workforce-approval-center{margin-top:24px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.workforce-approval-center h3{font-size:12px;margin:18px 0 8px}
+.workforce-approval-list{display:grid;gap:8px}
+.workforce-approval-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 14px;padding:11px;border:1px solid var(--line);border-radius:8px;font-size:11px;min-width:0}
+.workforce-approval-row strong{overflow-wrap:anywhere}
+.workforce-approval-row span{color:var(--muted);text-align:right;font-size:10px}
+.workforce-approval-row small{grid-column:1/-1;color:var(--muted);overflow-wrap:anywhere}
+.workforce-audit-integrity{font-size:11px;padding:8px 10px;border-radius:7px;background:#292b30}
+.workforce-audit-integrity.valid{color:#8fd8b2;background:#1d3029}
+.workforce-audit-integrity.invalid{color:#f0a4a4;background:#342326}
