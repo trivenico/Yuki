@@ -25,8 +25,9 @@ def test_sft_export_is_jsonl_and_contains_no_raw_source_reference():
     row = json.loads(exported)
     assert row["metadata"]["approval_state"] == "human_approved"
     assert row["metadata"]["dataset_version"] == "1.2.0"
+    assert row["metadata"]["consent_recorded"] is True
+    assert len(row["metadata"]["approval_digest"]) == 64
     assert "private://conversation/123" not in exported
-    assert len(row["metadata"]["source_digest"]) == 64
 
 def test_sft_rejects_credential_material_and_deduplicates():
     generator = SFTDataGenerator()
@@ -56,6 +57,7 @@ def test_few_shot_patch_only_uses_approved_examples_and_is_bounded():
     patch = layer.build_patch("pytest Python test fixtures", task_type="coding")
     assert patch and "approved historical examples" in patch
     assert "\n<approved_examples_json>\n" in patch
+    assert len(patch) <= 2048
     assert layer.build_patch("completely unrelated astronomy", task_type="coding") is None
 
 def test_few_shot_rejects_unapproved_records():
