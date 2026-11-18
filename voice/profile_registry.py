@@ -251,14 +251,12 @@ class VoiceProfileRegistry:
 
     def list_profiles(self) -> list[dict]:
         self._require_authorized()
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             return [dict(record, profile_id=key) for key, record in sorted(self._state["profiles"].items())]
 
     def active_profile(self) -> dict | None:
         self._require_authorized()
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             key = self._state["active_id"]
             return dict(self._state["profiles"][key], profile_id=key) if key else None
 
@@ -279,8 +277,7 @@ class VoiceProfileRegistry:
             "consent_confirmed_at": datetime.now(timezone.utc).isoformat(),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             if profile_id in self._state["profiles"]:
                 raise VoiceProfileRegistryError("A voice profile with this ID already exists.")
             self._state["profiles"][profile_id] = record
@@ -293,8 +290,7 @@ class VoiceProfileRegistry:
 
     def approve_profile(self, profile_id: str) -> dict:
         self._require_authorized()
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             record = self._get(profile_id)
             if record["status"] != "staged":
                 raise VoiceProfileRegistryError("Only a staged profile can be approved.")
@@ -310,8 +306,7 @@ class VoiceProfileRegistry:
         self._require_authorized()
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to change the default voice.")
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             record = self._get(profile_id)
             if record["status"] != "approved":
                 raise VoiceProfileRegistryError("Only an approved profile can become the default voice.")
@@ -331,8 +326,7 @@ class VoiceProfileRegistry:
         self._require_authorized()
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to restore the previous voice.")
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             previous = self._state["previous_id"]
             if previous is None:
                 raise VoiceProfileRegistryError("There is no previous voice profile to restore.")
@@ -354,8 +348,7 @@ class VoiceProfileRegistry:
         self._require_authorized()
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to disable a voice profile.")
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             record = self._get(profile_id)
             if profile_id in {self._state["active_id"], self._state["previous_id"]}:
                 raise VoiceProfileRegistryError("Restore another voice before disabling the active or rollback profile.")
@@ -371,8 +364,7 @@ class VoiceProfileRegistry:
         self._require_authorized()
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to delete a voice profile.")
-        with self._lock:
-            self._require_open()
+        with self._transaction():
             record = self._get(profile_id)
             if profile_id in {self._state["active_id"], self._state["previous_id"]}:
                 raise VoiceProfileRegistryError("Restore or clear the active/previous voice before deleting it.")
