@@ -50,6 +50,29 @@ class WorkforceCEO:
         self.max_autonomy_tier = max_autonomy_tier
         self.require_independent_review = require_independent_review
 
+    def _verified_knowledge_for(self, capabilities: tuple[str, ...]) -> list[dict]:
+        """Return a small, provenance-carrying context from verified lessons only."""
+        selected: list[dict] = []
+        seen: set[str] = set()
+        for domain in (*sorted(set(capabilities)), "workforce"):
+            for record in self.task_engine.list_verified_knowledge(limit=5, domain=domain):
+                knowledge_id = record.get("knowledge_id")
+                lesson = record.get("knowledge")
+                if (not isinstance(knowledge_id, str) or knowledge_id in seen
+                        or not isinstance(lesson, dict)):
+                    continue
+                selected.append({
+                    "knowledge_id": knowledge_id,
+                    "title": lesson["title"][:200],
+                    "lesson": lesson["lesson"][:1000],
+                    "source_task_id": record["source_task_id"],
+                    "reviewed_by": record["reviewed_by"],
+                })
+                seen.add(knowledge_id)
+                if len(selected) >= 5:
+                    return selected
+        return selected
+
     def plan_and_dispatch(self, goal: str, *, goal_id: Optional[str] = None) -> CEOExecution:
         """Preflight and idempotently reconcile every step of a persisted DAG.
 
@@ -63,6 +86,10 @@ class WorkforceCEO:
         ):
             raise ValueError("goal_id must be non-empty text")
         plan = self.planner.decompose(goal)
+        knowledge_by_task = {
+            task.task_id: self._verified_knowledge_for(tuple(task.required_capabilities))
+            for task in plan
+        }
         if goal_id is not None:
             # Bind the exact normalized DAG before any assignments are written.
             # A changed planner output on retry must not silently orphan or
@@ -75,6 +102,7 @@ class WorkforceCEO:
                         "description": task.description,
                         "required_capabilities": sorted(set(task.required_capabilities)),
                         "depends_on": list(task.depends_on),
+                        "knowledge_context": knowledge_by_task[task.task_id],
                     }
                     for task in plan
                 ],
@@ -104,6 +132,7 @@ class WorkforceCEO:
                     or tuple(sorted(payload.get("required_permissions", ()))) != ()
                     or payload.get("max_autonomy_tier") != self.max_autonomy_tier
                     or payload.get("review_required") is not self.require_independent_review
+                    or payload.get("knowledge_context", []) != knowledge_by_task[task.task_id]
                 ):
                     raise NoEligibleAgent(
                         f"Persisted assignment for plan step '{task.task_id}' no longer matches current policy."
@@ -163,6 +192,7 @@ class WorkforceCEO:
                     max_autonomy_tier=self.max_autonomy_tier,
                     review_required=self.require_independent_review,
                     preferred_employee_id=planned_assignees[task.task_id],
+                    knowledge_context=knowledge_by_task[task.task_id],
                 )
             task_ids[task.task_id] = assignment.task_id
             assignments.append(assignment)
