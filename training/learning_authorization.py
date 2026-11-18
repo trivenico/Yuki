@@ -30,9 +30,12 @@ class LearningAuthorizationLedger:
             raise ValueError("actor_id must be bounded authenticated identity text.")
         self._audit = audit_log
         self._actor_id = actor_id
+        self._closed = False
 
     def record_consent(self, purpose: str, enabled: bool) -> int:
         """Persist an explicit user choice; disabling consent revokes future use."""
+        if self._closed:
+            raise LearningAuthorizationError("The authenticated learning session is closed.")
         if purpose not in self.PURPOSES:
             raise ValueError("purpose must be learning or training.")
         if type(enabled) is not bool:
@@ -49,7 +52,7 @@ class LearningAuthorizationLedger:
 
     def has_consent(self, purpose: str) -> bool:
         """Return current consent only if the complete audit chain verifies."""
-        if purpose not in self.PURPOSES:
+        if self._closed or purpose not in self.PURPOSES:
             return False
         try:
             latest = self._audit.latest_event(
@@ -68,6 +71,8 @@ class LearningAuthorizationLedger:
 
     def record_example_approval(self, proposal_id: str, approved: bool) -> int:
         """Record an explicit reviewer decision for one exact staged proposal."""
+        if self._closed:
+            raise LearningAuthorizationError("The authenticated learning session is closed.")
         self._validate_proposal_id(proposal_id)
         if type(approved) is not bool:
             raise ValueError("approved must be a boolean.")
@@ -95,6 +100,8 @@ class LearningAuthorizationLedger:
     def verify_example_approval(self, proposal_id: str, approved_by: str) -> bool:
         """Verify latest non-revoked approval by this same authenticated actor."""
         try:
+            if self._closed:
+                return False
             self._validate_proposal_id(proposal_id)
             if approved_by != self._actor_id:
                 return False
@@ -109,6 +116,8 @@ class LearningAuthorizationLedger:
 
     def authorization_snapshot(self, proposal_ids: list[str]) -> dict:
         """Verify consent and a bounded proposal set with one audit-chain scan."""
+        if self._closed:
+            raise LearningAuthorizationError("The authenticated learning session is closed.")
         if not isinstance(proposal_ids, list) or len(proposal_ids) > 10_000:
             raise ValueError("proposal_ids must be a bounded list.")
         for proposal_id in proposal_ids:
@@ -139,6 +148,14 @@ class LearningAuthorizationLedger:
             "training": training,
             "approved_proposal_ids": approved,
         }
+
+    def close(self) -> None:
+        """Invalidate this actor-bound ledger for the ended desktop session."""
+        self._closed = True
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     @property
     def actor_id(self) -> str:
