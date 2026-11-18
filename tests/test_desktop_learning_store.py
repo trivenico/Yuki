@@ -67,10 +67,16 @@ class DesktopLearningStoreTests(unittest.TestCase):
                 )
                 callbacks["on_reject"](second)
                 state = callbacks["on_refresh"]()
+                deleted = callbacks["on_delete_all"]()
+                after_delete = callbacks["on_refresh"]()
+            self.assertEqual(deleted, {"pending": 0, "approved": 1})
+            self.assertEqual(after_delete["approved_count"], 0)
+            self.assertEqual(after_delete["retained_pending_count"], 0)
             self.assertEqual(state["approved_count"], 1)
             self.assertEqual(state["pending"], [])
             self.assertTrue(ledger.verify_example_approval(first, "authenticated-owner"))
             self.assertFalse(ledger.verify_example_approval(second, "authenticated-owner"))
+            self.assertFalse(ledger.verify_example_approval(first, "authenticated-owner"))
 
     def test_factory_builds_restart_safe_actor_bound_learning_coordinator(self):
         try:
