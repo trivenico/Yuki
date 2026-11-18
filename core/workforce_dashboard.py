@@ -29,7 +29,10 @@ class WorkforceDashboard:
             raise ValueError("max_goals must be an integer between 1 and 500")
 
         employees = self.registry.list_employees()
-        goals = self.task_engine.list_goals(limit=max_goals)
+        # Fetch one extra row so an exact page is not incorrectly marked truncated.
+        goals = self.task_engine.list_goals(limit=max_goals + 1)
+        truncated_goals = len(goals) > max_goals
+        goals = goals[:max_goals]
         tasks = [
             task
             for goal in goals
@@ -119,7 +122,7 @@ class WorkforceDashboard:
             "departments": sorted(department_rows.values(), key=lambda row: row["name"]),
             "employees": employee_rows,
             "goals": goal_rows,
-            "truncated_goals": len(goals) == max_goals,
+            "truncated_goals": truncated_goals,
         }
 
 
