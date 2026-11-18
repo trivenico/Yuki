@@ -34,6 +34,25 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     store.list_pending(actor="owner", session_id="session-a", limit=limit)
 
+    def test_get_for_actor_session_only_returns_creator_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {"text": "private"},
+                {"skill_id": "notes.write", "arguments": {"text": "private"}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertEqual(
+                store.get_for_actor_session(item.pending_id, actor="owner", session_id="session-a"),
+                item,
+            )
+            self.assertIsNone(
+                store.get_for_actor_session(item.pending_id, actor="owner", session_id="session-b")
+            )
+            self.assertIsNone(
+                store.get_for_actor_session(item.pending_id, actor="other", session_id="session-a")
+            )
+
     def test_consume_is_bound_to_actor_and_session(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
