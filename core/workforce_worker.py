@@ -162,6 +162,24 @@ class WorkforceWorker:
             rejected = self.engine.reject(task_id, self.worker_id, "invalid_payload")
             return {"task_id": task_id, "state": rejected["state"], "status": "invalid_payload"}
 
+        # The task payload is not itself proof that a lesson is verified.
+        # Re-read every referenced record from durable storage before execution.
+        for item in knowledge_context:
+            try:
+                stored = self.engine.get_knowledge(item["knowledge_id"])
+            except Exception:
+                stored = None
+            if (
+                not isinstance(stored, dict)
+                or stored.get("state") != "verified"
+                or stored.get("source_task_id") != item["source_task_id"]
+                or stored.get("reviewed_by") != item["reviewed_by"]
+                or stored.get("knowledge", {}).get("title") != item["title"]
+                or stored.get("knowledge", {}).get("lesson") != item["lesson"]
+            ):
+                rejected = self.engine.reject(task_id, self.worker_id, "unverified_knowledge_context")
+                return {"task_id": task_id, "state": rejected["state"], "status": "unverified_knowledge_context"}
+
         employee = self.registry.get(payload["assigned_employee_id"])
         required_capabilities = frozenset(payload["required_capabilities"])
         required_permissions = frozenset(payload["required_permissions"])
