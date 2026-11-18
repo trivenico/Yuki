@@ -64,7 +64,7 @@ class AuthenticatedWorkforceDashboardAPI:
                 if set(query) - _GOAL_QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
                 goal_id = path.rsplit("/", 1)[-1]
-                after_event_id = self._integer(query.get("after_event_id", "0"), "after_event_id")
+                after_event_id = self._integer(query.get("after_event_id", "0"), "after_event_id", max_digits=18)
                 event_limit = self._integer(query.get("event_limit", "100"), "event_limit")
                 result = await asyncio.to_thread(
                     self.dashboard.goal_detail, goal_id,
@@ -104,8 +104,8 @@ class AuthenticatedWorkforceDashboardAPI:
         return {key: values[0] for key, values in parsed.items()}
 
     @staticmethod
-    def _integer(value, name):
-        if not re.fullmatch(r"[0-9]{1,4}", value):
+    def _integer(value, name, *, max_digits=4):
+        if not re.fullmatch(rf"[0-9]{{1,{max_digits}}}", value):
             raise ValueError(f"{name} must be an integer")
         return int(value)
 
