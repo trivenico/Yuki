@@ -33,6 +33,7 @@ class LearningCenterPanel:
         on_review: Callable[[str], dict | None],
         on_approve: Callable[[str], None],
         on_reject: Callable[[str], None],
+        on_delete_all: Callable[[], dict[str, int]],
     ):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import (
@@ -40,7 +41,7 @@ class LearningCenterPanel:
             QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
         )
 
-        callbacks = (on_consent, on_refresh, on_review, on_approve, on_reject)
+        callbacks = (on_consent, on_refresh, on_review, on_approve, on_reject, on_delete_all)
         if not all(callable(callback) for callback in callbacks):
             raise TypeError("Learning Center callbacks must be callable.")
 
@@ -58,9 +59,9 @@ class LearningCenterPanel:
             "are separate: learning consent controls few-shot personalization, while "
             "training consent controls SFT dataset export. Approved examples never "
             "change model weights automatically. Turning consent off stops its "
-            "corresponding use; "
-            "it does not delete samples already saved in encrypted storage. Data-deletion "
-            "controls are not included in this panel yet."
+            "corresponding use. Use the deletion control below to permanently remove "
+            "all saved pending and approved learning samples. Audit records retain only "
+            "hashed identifiers and revocation events, not sample text."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -105,6 +106,9 @@ class LearningCenterPanel:
         actions.addWidget(approve)
         actions.addWidget(reject)
         layout.addLayout(actions)
+
+        delete_all = QPushButton("Delete all saved learning data")
+        layout.addWidget(delete_all)
 
         selected_id = {"value": None}
         state_cache = {"learning": False, "training": False}
@@ -318,6 +322,38 @@ class LearningCenterPanel:
             except Exception:
                 presenter.set_status("The correction could not be removed from encrypted storage.")
 
+        def delete_all_data(_checked=False):
+            answer = QMessageBox.question(
+                page,
+                "Delete all saved learning data",
+                "Permanently delete every pending correction and approved example "
+                "from this profile? This cannot be undone. Minimal hashed audit "
+                "metadata and approval-revocation events will remain.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                counts = on_delete_all()
+                if (
+                    not isinstance(counts, dict)
+                    or type(counts.get("pending")) is not int
+                    or type(counts.get("approved")) is not int
+                    or not 0 <= counts["pending"] <= 100
+                    or not 0 <= counts["approved"] <= 10_000
+                ):
+                    raise ValueError("Deletion result is invalid.")
+                refresh_state()
+                presenter.set_status(
+                    f"Deleted {counts['pending']} pending corrections and "
+                    f"{counts['approved']} approved examples."
+                )
+            except Exception:
+                presenter.set_status(
+                    "Deletion could not be completed safely. Stored learning data was retained."
+                )
+
         learning_consent.toggled.connect(
             lambda enabled: consent_changed("learning", enabled, learning_consent)
         )
@@ -328,6 +364,7 @@ class LearningCenterPanel:
         pending.currentItemChanged.connect(selection_changed)
         approve.clicked.connect(approve_selected)
         reject.clicked.connect(reject_selected)
+        delete_all.clicked.connect(delete_all_data)
 
         page.learning_presenter = presenter
         page.learning_controls = {
@@ -340,6 +377,7 @@ class LearningCenterPanel:
             "preview": preview,
             "approve": approve,
             "reject": reject,
+            "delete_all": delete_all,
         }
         refresh_state()
         return page
