@@ -44,6 +44,77 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(completed["state"], "succeeded")
         self.assertEqual(engine.get_task(task["id"])["result"], {"done": True})
 
+    def _create_reviewed_source_task(self, key="knowledge-source"):
+        task = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key=key, max_attempts=1)
+        claimed = self.engine.claim("knowledge-test-worker")
+        self.engine.complete(task["id"], "knowledge-test-worker", {
+            "ok": True,
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "independent-reviewer",
+                "status": "approved",
+                "approved": True,
+            },
+        })
+        return task
+
+    def test_knowledge_candidate_requires_independently_reviewed_success(self):
+        unreviewed = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="unreviewed-source", max_attempts=1)
+        self.engine.claim("knowledge-test-worker")
+        self.engine.complete(unreviewed["id"], "knowledge-test-worker", {
+            "ok": True, "review_required": False, "review_evidence": None,
+        })
+        lesson = {"title": "Prefer bounded retries", "lesson": "Use a single attempt for side-effecting tasks.", "domain": "workforce", "tags": ["reliability"]}
+        with self.assertRaises(TaskConflict):
+            self.engine.create_knowledge_candidate("lesson-unreviewed", unreviewed["id"], lesson)
+
+        failed = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="failed-source", max_attempts=1)
+        self.engine.claim("knowledge-test-worker")
+        self.engine.fail(failed["id"], "knowledge-test-worker", "redacted failure")
+        with self.assertRaises(TaskConflict):
+            self.engine.create_knowledge_candidate("lesson-failed", failed["id"], lesson)
+
+    def test_knowledge_candidate_is_durable_idempotent_and_requires_human_verification(self):
+        task = self._create_reviewed_source_task()
+        lesson = {
+            "title": "Preserve task idempotency",
+            "lesson": "Use stable idempotency keys when retrying a planned task graph.",
+            "domain": "workforce",
+            "tags": ["reliability", "recovery"],
+        }
+        first = self.engine.create_knowledge_candidate("lesson-idempotency", task["id"], lesson)
+        self.assertTrue(first["created"])
+        self.assertEqual(first["state"], "candidate")
+        self.assertEqual(first["events"][0]["event_type"], "knowledge.proposed")
+        replay = self.engine.create_knowledge_candidate("another-id", task["id"], lesson)
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["knowledge_id"], "lesson-idempotency")
+        self.assertEqual(self.engine.list_verified_knowledge(), [])
+        verified = self.engine.transition_knowledge(
+            "lesson-idempotency", expected_state="candidate", new_state="verified",
+            actor_id="human-reviewer", review_note="Checked against source task and confirmed.",
+        )
+        self.assertEqual(verified["state"], "verified")
+        self.assertEqual(verified["reviewed_by"], "human-reviewer")
+        self.assertEqual(len(self.engine.list_verified_knowledge(domain="workforce")), 1)
+        with self.assertRaises(TaskConflict):
+            self.engine.transition_knowledge(
+                "lesson-idempotency", expected_state="candidate", new_state="verified",
+                actor_id="second-reviewer",
+            )
+        reopened = DurableTaskEngine(self.db)
+        self.assertEqual(reopened.get_knowledge("lesson-idempotency")["state"], "verified")
+
+    def test_knowledge_candidate_rejects_unbounded_or_extra_fields(self):
+        task = self._create_reviewed_source_task("knowledge-validation")
+        lesson = {"title": "Valid title", "lesson": "Valid lesson", "domain": "workforce", "tags": []}
+        with self.assertRaises(ValueError):
+            self.engine.create_knowledge_candidate("bad-extra", task["id"], {**lesson, "raw_chat": "private"})
+        with self.assertRaises(ValueError):
+            self.engine.create_knowledge_candidate("bad-title", task["id"], {**lesson, "title": " "})
+        with self.assertRaises(ValueError):
+            self.engine.create_knowledge_candidate("bad-tags", task["id"], {**lesson, "tags": ["duplicate", "DUPLICATE"]})
+
     def test_improvement_proposal_lifecycle_is_durable_and_actor_attributed(self):
         proposal = {
             "category": "department_backlog",
