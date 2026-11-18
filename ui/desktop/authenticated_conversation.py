@@ -158,7 +158,7 @@ class AuthenticatedDesktopConversation:
         except Exception as exc:
             errors.append(exc)
         try:
-            self._conversation.clear_selection()
+            self._conversation.close()
         except Exception as exc:
             errors.append(exc)
         if errors:
