@@ -100,6 +100,7 @@ class ContinuousLearningCoordinator:
             except Exception:
                 # A broken/tampered audit log must disable personalization, not
                 # silently fall back to stale in-memory approvals.
+                self._last_learning_error = "Learning authorization audit is unavailable; personalization is paused."
                 authorization = {
                     "learning": False, "training": False,
                     "approved_proposal_ids": [],
@@ -145,6 +146,8 @@ class ContinuousLearningCoordinator:
                     ) from exc
         self._pending = pending
         self.generator = generator
+        if self._authorization_snapshot is None or authorization["learning"] or authorization["training"]:
+            self._last_learning_error = None
         return authorization
 
     def remember(self, text: str, *, category: str = "note") -> dict:
