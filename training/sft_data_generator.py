@@ -12,10 +12,10 @@ MAX_MESSAGE_CHARS = 16_000
 MAX_EXAMPLE_CHARS = 48_000
 _ALLOWED_ROLES = {"system", "user", "assistant"}
 _SECRET_PATTERNS = (
-    re.compile(r"\\bsk-[A-Za-z0-9_-]{12,}\\b"),
-    re.compile(r"\\bgh[pousr]_[A-Za-z0-9]{20,}\\b"),
-    re.compile(r"(?i)\\b(?:api[_ -]?key|password|client[_ -]?secret|access[_ -]?token)\\s*[:=]\\s*\\S+"),
-    re.compile(r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{12,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"(?i)\b(?:api[_ -]?key|password|client[_ -]?secret|access[_ -]?token)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 )
 
@@ -58,7 +58,7 @@ def _canonical_messages(messages: Iterable[dict[str, Any]]) -> tuple[dict[str, s
 class SFTDataGenerator:
     """Curate approved examples and produce deterministic JSONL exports."""
     def __init__(self, *, dataset_version: str = "1.0.0"):
-        if not isinstance(dataset_version, str) or not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", dataset_version):
+        if not isinstance(dataset_version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", dataset_version):
             raise ValueError("dataset_version must use semantic version format")
         self.dataset_version = dataset_version
         self._examples: dict[str, SFTExample] = {}
@@ -75,14 +75,14 @@ class SFTDataGenerator:
         if not isinstance(task_type, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", task_type):
             raise SFTDataError("task_type must be a short stable identifier")
         normalized = _canonical_messages(messages)
-        canonical = json.dumps({"task_type": task_type, "messages": normalized}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        canonical = json.dumps({"task_type": task_type, "messages": normalized}, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        for key, existing in self._examples.items():
-            if existing.example_id == digest[:24]:
-                return key
+        example_id = digest[:24]
+        if example_id in self._examples:
+            return example_id
         if len(self._examples) >= MAX_EXAMPLES:
             raise SFTDataError("dataset example limit reached")
-        example_id = digest[:24]
         source_digest = hashlib.sha256(source_reference.encode("utf-8")).hexdigest()
         self._examples[example_id] = SFTExample(example_id, normalized, source_digest, task_type)
         return example_id
@@ -96,7 +96,7 @@ class SFTDataGenerator:
                              "task_type": example.task_type, "source_digest": example.source_digest,
                              "approval_state": "human_approved"},
             }, ensure_ascii=False, separators=(",", ":")))
-        return "\\n".join(rows) + ("\\n" if rows else "")
+        return "\n".join(rows) + ("\n" if rows else "")
 
     def __len__(self) -> int:
         return len(self._examples)
