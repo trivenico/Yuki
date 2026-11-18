@@ -483,11 +483,18 @@ class SpecialistAgentCoordinator:
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
         assignments = {item.subtask_id: self._route(item) for item in items}
+        approval_requirements = {
+            item.subtask_id: (
+                item.requires_approval
+                or assignments[item.subtask_id].approval_class in {"review_required", "human_approval"}
+            )
+            for item in items
+        }
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
              "required_permissions": sorted(i.required_permissions),
-             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval,
+             "depends_on": sorted(i.depends_on), "requires_approval": approval_requirements[i.subtask_id],
              "agent_id": assignments[i.subtask_id].agent_id,
              "agent_role_version": assignments[i.subtask_id].role_version,
              "handler_id": assignments[i.subtask_id].handler_id,
@@ -520,7 +527,7 @@ class SpecialistAgentCoordinator:
                 """, (plan_id, item.subtask_id, agent.agent_id, item.description.strip(),
                       json.dumps(sorted(item.required_capabilities)),
                       json.dumps(sorted(item.required_permissions)),
-                      json.dumps(list(item.depends_on)), int(item.requires_approval),
+                      json.dumps(list(item.depends_on)), int(approval_requirements[item.subtask_id]),
                       agent.role_version, agent.handler_id, agent.action))
             return self._read_plan(db, plan_id)
 
