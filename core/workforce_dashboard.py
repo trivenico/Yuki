@@ -278,6 +278,24 @@ class WorkforceDashboard:
                     "automatic_action_taken": False,
                 })
 
+        for lesson in knowledge_outcomes.values():
+            if lesson["exposures"] >= 3 and lesson["failed_tasks"] >= 2:
+                improvement_recommendations.append({
+                    "id": f"knowledge-review:{lesson['knowledge_id']}",
+                    "category": "knowledge_applicability_review",
+                    "priority": "medium",
+                    "evidence": {
+                        "knowledge_id": lesson["knowledge_id"],
+                        "exposures": lesson["exposures"],
+                        "succeeded_tasks": lesson["succeeded_tasks"],
+                        "failed_tasks": lesson["failed_tasks"],
+                        "independently_verified_successes": lesson["independently_verified_successes"],
+                    },
+                    "recommendation": "Review whether this lesson is still applicable to the task contexts where it was used; inspect individual task evidence before proposing a revision or retirement.",
+                    "requires_human_approval": True,
+                    "automatic_action_taken": False,
+                })
+
         goal_rows = []
         for goal in goals:
             goal_tasks = [task for task in tasks if task["goal_id"] == goal["id"]]
