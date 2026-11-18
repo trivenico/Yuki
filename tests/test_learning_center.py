@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 if importlib.util.find_spec("PySide6"):
     from PySide6.QtCore import QEventLoop, QTimer
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QMessageBox, QPlainTextEdit
     from PySide6.QtTest import QTest
     from ui.desktop.learning_center import LearningCenterPanel
 else:
@@ -37,6 +37,7 @@ class LearningCenterPanelTests(unittest.TestCase):
         }
         self.reviewed = []
         self.deleted = []
+        self.submitted = []
         self.callback_thread_ids = []
         self.main_thread_id = threading.get_ident()
 
@@ -55,6 +56,11 @@ class LearningCenterPanelTests(unittest.TestCase):
                 ],
             }
 
+        def on_submit(messages, source_reference, task_type):
+            self.callback_thread_ids.append(threading.get_ident())
+            self.submitted.append((messages, source_reference, task_type))
+            return "b" * 24
+
         self.page = LearningCenterPanel.create(
             on_consent=lambda purpose, enabled: None,
             on_refresh=on_refresh,
@@ -62,7 +68,7 @@ class LearningCenterPanelTests(unittest.TestCase):
             on_approve=lambda proposal_id: None,
             on_reject=lambda proposal_id: None,
             on_delete_all=lambda: self.deleted.append(True) or {"pending": 2, "approved": 3},
-            on_submit=lambda messages, source, task: "b" * 24,
+            on_submit=on_submit,
         )
         self.wait_for_learning_idle()
 
@@ -78,6 +84,35 @@ class LearningCenterPanelTests(unittest.TestCase):
         self.page.close()
         self.page.deleteLater()
         self.app.processEvents()
+
+    def test_manual_correction_dialog_submits_only_entered_messages_off_gui_thread(self):
+        def accept_dialog(dialog):
+            edits = dialog.findChildren(QPlainTextEdit)
+            self.assertEqual(len(edits), 2)
+            edits[0].setPlainText("Explain this Python test.")
+            edits[1].setPlainText("Use unittest and assert the expected result.")
+            task = dialog.findChild(QLineEdit)
+            task.setText("coding")
+            return QDialog.Accepted
+
+        with patch.object(QDialog, "exec", accept_dialog), patch.object(
+            QMessageBox, "question", return_value=QMessageBox.Yes,
+        ):
+            self.page.learning_controls["submit"].click()
+            self.wait_for_learning_idle()
+
+        self.assertEqual(len(self.submitted), 1)
+        messages, source_reference, task_type = self.submitted[0]
+        self.assertEqual(source_reference, "desktop-learning-center")
+        self.assertEqual(task_type, "coding")
+        self.assertEqual(
+            messages,
+            [
+                {"role": "user", "content": "Explain this Python test."},
+                {"role": "assistant", "content": "Use unittest and assert the expected result."},
+            ],
+        )
+        self.assertNotEqual(self.callback_thread_ids[-1], self.main_thread_id)
 
     def test_manual_submission_is_disabled_without_learning_consent(self):
         controls = self.page.learning_controls
