@@ -6,6 +6,8 @@ from .base import Skill, SkillResult
 class FileSkill(Skill):
     name = "files"
     description = "List entries in the configured workspace; never reads or modifies file contents."
+    capabilities = ("workspace_list",)
+    permissions = ("read_workspace",)
 
     def __init__(self, workspace: str | Path = "."):
         self.workspace = Path(workspace).expanduser().resolve()
