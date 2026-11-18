@@ -78,22 +78,28 @@ class EncryptedLearningStore:
         self._key = self._load_or_create_key()
 
     def _load_or_create_key(self) -> bytes:
+        # Serialize first-key creation across processes. Otherwise two fresh
+        # instances could race and one could encrypt with a key overwritten by
+        # the other process in the OS keyring.
         try:
-            encoded = self._keyring.get_password(_SERVICE, self._account)
-            if encoded is None and self.path.exists():
-                raise ValueError("existing encrypted learning data has no key")
-            if encoded is None:
-                key = os.urandom(32)
-                candidate = base64.b64encode(key).decode("ascii")
-                self._keyring.set_password(_SERVICE, self._account, candidate)
+            with self._lock, self._process_lock():
                 encoded = self._keyring.get_password(_SERVICE, self._account)
-                if encoded != candidate:
-                    raise ValueError("keyring did not persist learning key")
-            key = base64.b64decode(encoded, validate=True)
-            if len(key) != 32:
-                raise ValueError("invalid AES-256 key")
-            return key
+                if encoded is None and self.path.exists():
+                    raise ValueError("existing encrypted learning data has no key")
+                if encoded is None:
+                    key = os.urandom(32)
+                    candidate = base64.b64encode(key).decode("ascii")
+                    self._keyring.set_password(_SERVICE, self._account, candidate)
+                    encoded = self._keyring.get_password(_SERVICE, self._account)
+                    if encoded != candidate:
+                        raise ValueError("keyring did not persist learning key")
+                key = base64.b64decode(encoded, validate=True)
+                if len(key) != 32:
+                    raise ValueError("invalid AES-256 key")
+                return key
         except Exception as exc:
+            if isinstance(exc, SecureLearningStoreError):
+                raise
             raise SecureLearningStoreError("Could not safely access the learning encryption key.") from exc
 
     @contextmanager
@@ -159,11 +165,18 @@ class EncryptedLearningStore:
             if not isinstance(proposal_id, str) or len(proposal_id) != 24 or any(c not in "0123456789abcdef" for c in proposal_id) or proposal_id in seen_pending:
                 raise SecureLearningStoreError("Pending correction identifier is invalid or duplicated.")
             seen_pending.add(proposal_id)
-            _canonical_messages(item["messages"])
+            normalized = _canonical_messages(item["messages"])
             if not isinstance(item["source_reference"], str) or not item["source_reference"].strip() or len(item["source_reference"]) > 512:
                 raise SecureLearningStoreError("Pending correction source reference is invalid.")
-            if not isinstance(item["task_type"], str) or not item["task_type"] or len(item["task_type"]) > 64:
+            if not isinstance(item["task_type"], str) or not __import__("re").fullmatch(r"[a-z][a-z0-9_.-]{0,63}", item["task_type"]):
                 raise SecureLearningStoreError("Pending correction task type is invalid.")
+            import hashlib
+            expected = hashlib.sha256(
+                (item["source_reference"] + "\\0" + item["task_type"] + "\\0" +
+                 "\\0".join(message["role"] + "\\0" + message["content"] for message in normalized)).encode("utf-8")
+            ).hexdigest()[:24]
+            if proposal_id != expected:
+                raise SecureLearningStoreError("Pending correction digest does not match its contents.")
             if not isinstance(item["created_at"], str) or len(item["created_at"]) > 64:
                 raise SecureLearningStoreError("Pending correction timestamp is invalid.")
         for item in approved:
@@ -179,11 +192,24 @@ class EncryptedLearningStore:
             if example_id in seen_approved:
                 raise SecureLearningStoreError("Approved learning example is duplicated.")
             seen_approved.add(example_id)
-            _canonical_messages(item["messages"])
+            normalized = _canonical_messages(item["messages"])
             if not isinstance(item["source_reference"], str) or not item["source_reference"].strip() or len(item["source_reference"]) > 512:
                 raise SecureLearningStoreError("Approved learning source reference is invalid.")
-            if not isinstance(item["task_type"], str) or not item["task_type"] or len(item["task_type"]) > 64:
+            if not isinstance(item["task_type"], str) or not __import__("re").fullmatch(r"[a-z][a-z0-9_.-]{0,63}", item["task_type"]):
                 raise SecureLearningStoreError("Approved learning task type is invalid.")
+            import hashlib
+            canonical = json.dumps(
+                {"task_type": item["task_type"], "messages": normalized},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            )
+            if example_id != hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]:
+                raise SecureLearningStoreError("Approved example digest does not match its contents.")
+            expected_proposal = hashlib.sha256(
+                (item["source_reference"] + "\\0" + item["task_type"] + "\\0" +
+                 "\\0".join(message["role"] + "\\0" + message["content"] for message in normalized)).encode("utf-8")
+            ).hexdigest()[:24]
+            if proposal_id != expected_proposal:
+                raise SecureLearningStoreError("Approved proposal digest does not match its source contents.")
             if not isinstance(item["approved_by"], str) or not item["approved_by"].strip() or len(item["approved_by"]) > 160:
                 raise SecureLearningStoreError("Approved learning reviewer is invalid.")
             if not isinstance(item["approved_at"], str) or len(item["approved_at"]) > 64:
