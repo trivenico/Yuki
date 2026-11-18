@@ -154,7 +154,7 @@ class SecurityDashboardPanel:
         def confirm_start():
             answer = QMessageBox.question(
                 page,
-                "Start read-only monitoring",
+                "Start read-only security session",
                 "Yuki will inspect one bounded local process snapshot now and "
                 "whenever you choose Refresh during this sign-in session. It will "
                 "not continuously monitor, capture network traffic, terminate "
