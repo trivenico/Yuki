@@ -40,10 +40,11 @@ class FakeDurableLearningStore:
 
 
 def _learning(memory=None, *, consent=True, approval=True, store=None):
+    consent_verifier = consent if callable(consent) else (lambda purpose: consent)
     return ContinuousLearningCoordinator(
         memory=memory,
         store=store,
-        consent_verifier=lambda purpose: consent,
+        consent_verifier=consent_verifier,
         approval_verifier=lambda proposal_id, actor: approval and actor == "owner",
     )
 
@@ -184,6 +185,30 @@ class ContinuousLearningTests(unittest.TestCase):
         with self.assertRaises(ContinuousLearningError):
             revoked.export_sft_jsonl()
         self.assertEqual(len(store.read()["approved"]), 1)
+
+    def test_personalization_and_training_consent_control_separate_paths(self):
+        store = FakeDurableLearningStore()
+        enabled = _learning(store=store)
+        proposal = enabled.propose_correction(
+            messages=_messages(), source_reference="task:separate-consent",
+            task_type="coding", learning_consent=True,
+        )
+        enabled.approve_correction(proposal, training_consent=True, approved_by="owner")
+
+        personalization_only = _learning(
+            store=store,
+            consent=lambda purpose: purpose == "learning",
+        )
+        self.assertIsNotNone(personalization_only.build_few_shot_patch("Python unit test"))
+        with self.assertRaises(ContinuousLearningError):
+            personalization_only.export_sft_jsonl()
+
+        training_only = _learning(
+            store=store,
+            consent=lambda purpose: purpose == "training",
+        )
+        self.assertIsNone(training_only.build_few_shot_patch("Python unit test"))
+        self.assertIn("human_approved", training_only.export_sft_jsonl())
 
     def test_revoked_reviewer_approval_hides_persisted_examples(self):
         store = FakeDurableLearningStore()
