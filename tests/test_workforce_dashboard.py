@@ -48,6 +48,35 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["tasks"]["total"], 0)
         self.assertEqual(len(snapshot["employees"]), 100)
 
+    def test_goal_detail_projects_tasks_and_paginates_event_envelopes(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Run tests"},
+            idempotency_key="goal-detail", max_attempts=1,
+        )
+        detail = self.dashboard.goal_detail(goal_id, event_limit=1)
+        self.assertEqual(detail["goal"]["goal_id"], goal_id)
+        self.assertEqual(detail["tasks"][0]["employee_id"], employee.employee_id)
+        self.assertEqual(len(detail["events"]), 1)
+        self.assertTrue(detail["has_more_events"])
+        self.assertNotIn("detail", detail["events"][0])
+        next_page = self.dashboard.goal_detail(
+            goal_id, after_event_id=detail["next_event_id"], event_limit=10,
+        )
+        self.assertGreater(len(next_page["events"]), 0)
+
+    def test_goal_detail_validates_bounds_and_unknown_goal(self):
+        for kwargs in (
+            {"after_event_id": True}, {"after_event_id": -1},
+            {"event_limit": 0}, {"event_limit": 201},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.dashboard.goal_detail("missing", **kwargs)
+        with self.assertRaises(Exception):
+            self.dashboard.goal_detail("missing")
+
     def test_employee_directory_filters_and_paginates(self):
         first = self.dashboard.employee_directory(department="Engineering", page=1, page_size=3)
         second = self.dashboard.employee_directory(department="Engineering", page=2, page_size=3)
