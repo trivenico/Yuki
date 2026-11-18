@@ -46,12 +46,17 @@ class LearningCenterPanel:
             raise TypeError("Learning Center callbacks must be callable.")
 
         class _LearningSignals(QObject):
-            finished = Signal(object, object, object)
+            finished = Signal(object, object)
 
         class _LearningReceiver(QObject):
-            @Slot(object, object, object)
-            def dispatch(self, worker, result, error):
-                completion = getattr(worker, "completion", None)
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.completion = None
+
+            @Slot(object, object)
+            def dispatch(self, result, error):
+                completion = self.completion
+                self.completion = None
                 if callable(completion):
                     completion(result, error)
 
@@ -69,9 +74,9 @@ class LearningCenterPanel:
             def run(self):
                 try:
                     result = self.callback(*self.args)
-                    self.signals.finished.emit(self, result, None)
+                    self.signals.finished.emit(result, None)
                 except Exception as exc:
-                    self.signals.finished.emit(self, None, exc)
+                    self.signals.finished.emit(None, exc)
 
         page = QWidget(parent)
         page.setObjectName("yukiLearningCenter")
@@ -298,7 +303,7 @@ class LearningCenterPanel:
                 if on_success is not None:
                     on_success(result)
 
-            worker.completion = completed
+            receiver.completion = completed
             worker.signals.finished.connect(receiver.dispatch)
             pool.start(worker)
             return True
