@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
+import stat
 import tempfile
 import threading
 import uuid
@@ -68,8 +70,27 @@ class EncryptedVoiceArtifactStore:
             raise VoiceArtifactStoreError("Voice artifact directory is not a safe directory.")
         try:
             os.chmod(self._directory, 0o700)
+            self._directory_fd = None
+            self._dir_fd_supported = (
+                os.name == "posix"
+                and os.open in os.supports_dir_fd
+                and os.unlink in os.supports_dir_fd
+                and os.link in os.supports_dir_fd
+            )
+            if self._dir_fd_supported:
+                flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+                self._directory_fd = os.open(self._directory, flags)
+                directory_stat = os.fstat(self._directory_fd)
+                if not stat.S_ISDIR(directory_stat.st_mode):
+                    raise VoiceArtifactStoreError("Voice artifact directory is not a directory.")
+                if hasattr(os, "getuid") and directory_stat.st_uid != os.getuid():
+                    raise VoiceArtifactStoreError("Voice artifact directory is not owned by this user.")
+                if directory_stat.st_mode & 0o077:
+                    raise VoiceArtifactStoreError("Voice artifact directory must be private (mode 0700).")
+        except VoiceArtifactStoreError:
+            raise
         except OSError as exc:
-            raise VoiceArtifactStoreError("Could not secure voice artifact directory permissions.") from exc
+            raise VoiceArtifactStoreError("Could not securely open voice artifact directory.") from exc
 
     def _require_authorized(self) -> None:
         try:
@@ -101,49 +122,91 @@ class EncryptedVoiceArtifactStore:
         encrypted = _MAGIC + nonce + self._cipher.encrypt(nonce, data, self._aad(artifact_id))
         destination = self._path_for(artifact_id)
         with self._lock:
-            fd, temporary = tempfile.mkstemp(prefix=".voice-", suffix=".tmp", dir=self._directory)
-            try:
+            if self._dir_fd_supported:
+                temporary_name = ".voice-" + secrets.token_hex(16) + ".tmp"
+                temporary_fd = None
                 try:
-                    os.fchmod(fd, 0o600)
-                except (AttributeError, OSError):
-                    pass
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(encrypted)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                if destination.exists() or destination.is_symlink():
-                    raise VoiceArtifactStoreError("Voice artifact identifier collision.")
-                os.replace(temporary, destination)
-            except Exception:
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                    temporary_fd = os.open(temporary_name, flags, 0o600, dir_fd=self._directory_fd)
+                    with os.fdopen(temporary_fd, "wb") as handle:
+                        temporary_fd = None
+                        handle.write(encrypted)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    try:
+                        os.link(
+                            temporary_name, artifact_id + ".ykv",
+                            src_dir_fd=self._directory_fd, dst_dir_fd=self._directory_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileExistsError as exc:
+                        raise VoiceArtifactStoreError("Voice artifact identifier collision.") from exc
+                    os.unlink(temporary_name, dir_fd=self._directory_fd)
+                    os.fsync(self._directory_fd)
+                except VoiceArtifactStoreError:
+                    raise
+                except OSError as exc:
+                    raise VoiceArtifactStoreError("Voice artifact could not be stored safely.") from exc
+                finally:
+                    if temporary_fd is not None:
+                        os.close(temporary_fd)
+                    try:
+                        os.unlink(temporary_name, dir_fd=self._directory_fd)
+                    except OSError:
+                        pass
+            else:
+                fd, temporary = tempfile.mkstemp(prefix=".voice-", suffix=".tmp", dir=self._directory)
                 try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                raise
-            finally:
-                try:
-                    if os.path.exists(temporary):
-                        os.unlink(temporary)
-                except OSError:
-                    pass
+                    try:
+                        os.fchmod(fd, 0o600)
+                    except (AttributeError, OSError):
+                        pass
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(encrypted)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    if destination.exists() or destination.is_symlink():
+                        raise VoiceArtifactStoreError("Voice artifact identifier collision.")
+                    os.replace(temporary, destination)
+                except Exception:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
+                finally:
+                    try:
+                        if os.path.exists(temporary):
+                            os.unlink(temporary)
+                    except OSError:
+                        pass
         return artifact_id
 
     def get(self, artifact_id: str) -> bytes:
         self._require_authorized()
         path = self._path_for(artifact_id)
         with self._lock:
-            if path.is_symlink():
-                raise VoiceArtifactStoreError("Voice artifact must not be a symlink.")
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
             try:
-                fd = os.open(path, flags)
-            except OSError as exc:
-                raise VoiceArtifactStoreError("Voice artifact is unavailable.") from exc
-            try:
+                if self._dir_fd_supported:
+                    fd = os.open(artifact_id + ".ykv", flags, dir_fd=self._directory_fd)
+                else:
+                    if path.is_symlink():
+                        raise VoiceArtifactStoreError("Voice artifact must not be a symlink.")
+                    fd = os.open(path, flags)
+                file_stat = os.fstat(fd)
+                if not stat.S_ISREG(file_stat.st_mode):
+                    os.close(fd)
+                    raise VoiceArtifactStoreError("Voice artifact is not a regular file.")
+                if file_stat.st_size > self._max_bytes + len(_MAGIC) + _NONCE_BYTES + 16:
+                    os.close(fd)
+                    raise VoiceArtifactStoreError("Voice artifact exceeds its size limit.")
                 with os.fdopen(fd, "rb") as handle:
                     payload = handle.read(self._max_bytes + len(_MAGIC) + _NONCE_BYTES + 17)
+            except VoiceArtifactStoreError:
+                raise
             except OSError as exc:
-                raise VoiceArtifactStoreError("Voice artifact could not be read.") from exc
+                raise VoiceArtifactStoreError("Voice artifact is unavailable or could not be read.") from exc
         minimum = len(_MAGIC) + _NONCE_BYTES + 16
         if len(payload) < minimum or len(payload) > self._max_bytes + minimum or not payload.startswith(_MAGIC):
             raise VoiceArtifactStoreError("Voice artifact has an invalid format or size.")
@@ -160,9 +223,15 @@ class EncryptedVoiceArtifactStore:
             raise VoiceArtifactAuthorizationError("Explicit confirmation is required to delete voice audio.")
         path = self._path_for(artifact_id)
         with self._lock:
-            if path.is_symlink():
-                raise VoiceArtifactStoreError("Voice artifact must not be a symlink.")
             try:
-                path.unlink()
+                if self._dir_fd_supported:
+                    os.unlink(artifact_id + ".ykv", dir_fd=self._directory_fd)
+                    os.fsync(self._directory_fd)
+                else:
+                    if path.is_symlink():
+                        raise VoiceArtifactStoreError("Voice artifact must not be a symlink.")
+                    path.unlink()
+            except VoiceArtifactStoreError:
+                raise
             except OSError as exc:
-                raise VoiceArtifactStoreError("Voice artifact could not be deleted.") from exc
+                raise VoiceArtifactStoreError("Voice artifact could not be deleted safely.") from exc
