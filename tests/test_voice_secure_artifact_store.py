@@ -116,6 +116,15 @@ class EncryptedVoiceArtifactStoreTests(unittest.TestCase):
         with self.assertRaises(VoiceArtifactStoreError):
             self.store.put(b"closed", source_owner_consent=True)
 
+    def test_rejects_world_readable_artifact_file(self):
+        if os.name != "posix":
+            self.skipTest("POSIX permission test.")
+        artifact_id = self.store.put(b"private", source_owner_consent=True)
+        path = self.directory / (artifact_id + ".ykv")
+        path.chmod(0o644)
+        with self.assertRaises(VoiceArtifactStoreError):
+            self.store.get(artifact_id)
+
     def test_rejects_invalid_artifact_identifier(self):
         with self.assertRaises(ValueError):
             self.store.get("../outside")
