@@ -50,6 +50,7 @@ class WorkforceTaskRouter:
         max_autonomy_tier: int = 1,
         dependencies: Iterable[str] = (),
         max_attempts: int = 1,
+        review_required: bool = False,
     ) -> WorkforceAssignment:
         if not isinstance(description, str) or not description.strip() or len(description) > 20_000:
             raise ValueError("description must be non-empty and at most 20000 characters")
@@ -61,6 +62,8 @@ class WorkforceTaskRouter:
             raise ValueError("required_permissions must contain non-empty strings")
         if max_autonomy_tier not in range(4):
             raise ValueError("max_autonomy_tier must be between 0 and 3")
+        if type(review_required) is not bool:
+            raise ValueError("review_required must be a boolean")
         if max_attempts != 1:
             raise ValueError("workforce tasks must use max_attempts=1; uncertain side effects require manual review")
 
@@ -86,6 +89,7 @@ class WorkforceTaskRouter:
                 "required_permissions": list(permissions),
                 "max_autonomy_tier": max_autonomy_tier,
                 "execution_authorized": False,
+                "review_required": review_required,
             },
             idempotency_key=idempotency_key,
             dependencies=tuple(dependencies),
