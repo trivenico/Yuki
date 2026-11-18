@@ -32,6 +32,44 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(sum(row["employees"] for row in snapshot["departments"]), 100)
         self.assertEqual(snapshot["goals"][0]["goal_id"], goal_id)
 
+    def test_performance_counts_require_persisted_independent_review_evidence(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        reviewed = self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Reviewed task"},
+            idempotency_key="reviewed-performance", max_attempts=1,
+        )
+        self.engine.claim("performance-worker", task_type="workforce.task")
+        self.engine.complete(reviewed["id"], "performance-worker", {
+            "ok": True,
+            "status": "completed:reviewed",
+            "employee_id": employee.employee_id,
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "INDEPENDENT-QA",
+                "status": "approved",
+                "approved": True,
+            },
+        })
+        unreviewed = self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Unreviewed task"},
+            idempotency_key="unreviewed-performance", max_attempts=1,
+        )
+        self.engine.claim("performance-worker", task_type="workforce.task")
+        self.engine.complete(unreviewed["id"], "performance-worker", {
+            "ok": True, "status": "completed", "employee_id": employee.employee_id,
+            "review_required": False, "review_evidence": None,
+        })
+
+        snapshot = self.dashboard.snapshot()
+        row = next(row for row in snapshot["employees"] if row["employee_id"] == employee.employee_id)
+        self.assertEqual(row["independently_verified_successes"], 1)
+        self.assertEqual(row["successful_without_independent_review"], 1)
+        self.assertEqual(snapshot["performance"]["independently_verified_successes"], 1)
+        self.assertIn("no quality score", snapshot["performance"]["scoring"])
+
     def test_snapshot_reports_truncation_only_when_more_goals_exist(self):
         first_goal = self.engine.create_goal()
         exact_page = self.dashboard.snapshot(max_goals=1)
