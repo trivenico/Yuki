@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from ui.desktop.security_runtime import create_desktop_security_service
+from ui.desktop.security_service import SecuritySessionError
 
 
 class FakeSessions:
@@ -26,7 +27,7 @@ class DesktopSecurityRuntimeTests(unittest.TestCase):
         service.start(consent=True)
         self.assertTrue(service.active)
         sessions.identity = SimpleNamespace(session_id="session-b")
-        with self.assertRaises(Exception):
+        with self.assertRaises(SecuritySessionError):
             service.snapshot()
         self.assertFalse(service.active)
         service.close()
@@ -35,7 +36,7 @@ class DesktopSecurityRuntimeTests(unittest.TestCase):
         sessions = FakeSessions()
         service = create_desktop_security_service(sessions, "session-a")
         sessions.identity = None
-        with self.assertRaises(Exception):
+        with self.assertRaises(SecuritySessionError):
             service.start(consent=True)
         self.assertFalse(service.configured)
         service.close()
