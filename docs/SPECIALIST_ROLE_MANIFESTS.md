@@ -26,7 +26,7 @@ They are created disabled, with no permissions, no handler, and `handler_ready=F
 
 ## Important limits
 
-This is registry and governance groundwork, not six functioning agents. The current specialist worker only supports the bounded `emit` action; it does not yet invoke role-specific models or tool adapters. Resource ceilings are recorded as metadata but are **not yet enforced as token/compute budgets** by the worker. Approval class is descriptive metadata and does not replace the existing per-task approval/session authorization flow. A role must remain disabled until a concrete handler, enforcement path, tests, and review are implemented.
+This is registry and governance groundwork, not six functioning agents. The current specialist worker only supports the bounded `emit` action and the existing text-provider adapters; it does not execute arbitrary tools or generated code. `max_steps` is enforced as the maximum number of subtasks assigned to one specialist in a single plan. It is not a reasoning-step, concurrency, or wall-clock limit. `max_tokens` remains metadata because the current provider adapter contract does not expose a verifiable per-request token ceiling. Approval class is enforced during planning: `review_required` and `human_approval` force task approval, while `read_only` preserves the caller's explicit choice. The existing task runtime still owns authenticated approval and session checks. A role must remain disabled until a concrete deployment binding, enforcement path, tests, and review are implemented.
 
 Do not set `handler_ready=True` merely to make a role routable. Handler readiness is a release gate, not an administrative convenience.
 
@@ -55,3 +55,7 @@ Approval class is also stored in the plan snapshot and compared at dispatch. Thi
 Coordinator-created tasks are marked as manifest-bound. The worker requires an injected validator for these tasks and fails them closed if the validator is missing, raises, or reports a mismatch. The coordinator validator joins the queued task back to its plan snapshot and current role registry, checking role version, handler ID, action, approval class, enabled state, and handler readiness. Tests cover both an unchanged role and a role revision changed after enqueue but before worker claim.
 
 This is an execution-integrity guard, not an OS sandbox or a provider-code identity attestation. Deployment must inject the coordinator's validator into every specialist worker; legacy unmarked task names remain compatible and do not receive this new guard. The initial role slots remain disabled until reviewed deployment wiring and the remaining permissions/budget/lifecycle controls are complete.
+
+## Deployment contract
+
+Every worker that can claim coordinator-created tasks must be constructed with `manifest_validator=coordinator.validate_task_manifest`. New task names include a manifest marker; the worker fails these tasks if the validator is absent or fails. This validator confirms the task-to-plan association and that the snapshotted role version, handler ID, action, and approval class still match an enabled, handler-ready registry row. The `handler_id` currently identifies the permitted `emit` execution contract, not a cryptographic identity for provider code. Provider implementation provenance and per-role token enforcement are separate future controls.
