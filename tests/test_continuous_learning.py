@@ -222,6 +222,29 @@ class ContinuousLearningTests(unittest.TestCase):
         self.assertIsNone(revoked.build_few_shot_patch("Python unit test"))
         self.assertEqual(revoked.approved_example_count, 0)
 
+    def test_delete_all_learning_data_revokes_before_atomic_clear(self):
+        store = FakeDurableLearningStore()
+        learning = _learning(store=store)
+        proposal = learning.propose_correction(
+            messages=_messages(), source_reference="task:delete",
+            task_type="coding", learning_consent=True,
+        )
+        learning.approve_correction(proposal, training_consent=True, approved_by="owner")
+
+        def fail_revoke(_proposal_id):
+            raise OSError("audit unavailable")
+
+        with self.assertRaises(ContinuousLearningError):
+            learning.delete_all_learning_data(revoke_approval=fail_revoke)
+        self.assertEqual(len(store.read()["approved"]), 1)
+
+        revoked = []
+        counts = learning.delete_all_learning_data(revoke_approval=revoked.append)
+        self.assertEqual(counts, {"pending": 0, "approved": 1})
+        self.assertEqual(revoked, [proposal])
+        self.assertEqual(store.read()["approved"], [])
+        self.assertEqual(store.read()["pending"], [])
+
     def test_rejected_correction_never_enters_dataset(self):
         learning = _learning()
         proposal = learning.propose_correction(messages=_messages(), source_reference="task:43",
