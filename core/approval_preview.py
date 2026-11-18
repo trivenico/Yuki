@@ -1,6 +1,8 @@
 """Bounded, conservative redaction for human-readable approval previews."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -12,6 +14,16 @@ _SENSITIVE_KEY = re.compile(
 _MAX_DEPTH = 6
 _MAX_ITEMS = 50
 _MAX_STRING = 1000
+
+
+def confirmation_digest(action: dict[str, Any]) -> str:
+    """Return a stable SHA-256 binding to the exact stored JSON action snapshot."""
+    if not isinstance(action, dict):
+        raise ValueError("action must be a JSON object")
+    encoded = json.dumps(
+        action, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def redact_preview(value: Any, *, _depth: int = 0) -> Any:
