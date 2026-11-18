@@ -52,6 +52,7 @@ def create_desktop_learning_coordinator(
         store=store,
         consent_verifier=ledger.has_consent,
         approval_verifier=ledger.verify_example_approval,
+        authorization_snapshot=ledger.authorization_snapshot,
     )
     return coordinator, ledger
 
