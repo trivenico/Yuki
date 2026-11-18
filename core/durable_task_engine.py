@@ -390,7 +390,8 @@ class DurableTaskEngine:
             ).fetchall()
         result = dict(row)
         result["proposal"] = json.loads(result.pop("proposal_json"))
-        result["outcome"] = json.loads(result.pop("outcome_json")) if result.get("outcome_json") else None
+        outcome_json = result.pop("outcome_json")
+        result["outcome"] = json.loads(outcome_json) if outcome_json is not None else None
         result.pop("proposal_fingerprint")
         result["events"] = [
             {"id": item["id"], "event_type": item["event_type"], "actor_id": item["actor_id"],
