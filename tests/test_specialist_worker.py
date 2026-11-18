@@ -353,6 +353,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.task_id, task.task_id)
         self.assertEqual(result.state, "succeeded")
         self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        # A delayed coordinator response must not overwrite the worker's terminal state.
+        self.coordinator._set_subtask(
+            plan.plan_id, "implement", task_id=task.task_id, status="queued",
+        )
         with self.coordinator._connect() as db:
             row = db.execute(
                 "SELECT task_id, status FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
