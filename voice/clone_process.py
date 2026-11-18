@@ -2,9 +2,11 @@
 
 This is process isolation and hard termination, not a security sandbox: child
 code runs as the same OS user and may inherit network/filesystem permissions.
-POSIX resource limits or Windows Job Object process/memory/CPU limits are
-applied before provider execution. Neither platform currently denies network
-access or provides a filesystem sandbox.
+Linux POSIX resource limits or Windows Job Object process/memory/CPU limits
+are applied before provider execution. macOS cloning is deliberately disabled:
+Darwin's available limits do not currently provide a reliable total-memory
+bound for this worker. No supported platform currently denies network access
+or provides a filesystem sandbox.
 """
 from __future__ import annotations
 
@@ -98,21 +100,17 @@ def _set_bounded_limit(resource_module: Any, limit_id: int, requested_soft: int,
 def _apply_posix_limits(limits: VoiceCloneWorkerLimits) -> None:
     if os.name != "posix":
         raise RuntimeError("Voice-clone resource limits are not implemented on this platform.")
+    if sys.platform == "darwin":
+        raise RuntimeError(
+            "Voice cloning is disabled on macOS until a reliable total-memory "
+            "limit is available for the worker."
+        )
     import resource
 
-    # macOS exposes RLIMIT_AS but does not reliably permit changing it.
-    # RLIMIT_DATA is only a heap/data-segment bound (not total RSS or mmap),
-    # and Darwin commonly caps it below our cross-platform default. Keep the
-    # requested cap conservative so setrlimit does not exceed Darwin's limit.
-    # Linux uses RLIMIT_AS for a stricter total virtual-address-space cap.
-    memory_bytes = limits.memory_bytes
-    if sys.platform == "darwin":
-        memory_limit = getattr(resource, "RLIMIT_DATA", None)
-        if memory_limit is None:
-            raise RuntimeError("macOS does not expose a supported worker memory limit")
-        memory_bytes = min(memory_bytes, 3 * 1024 * 1024 * 1024)
-    else:
-        memory_limit = resource.RLIMIT_AS
+    # Linux RLIMIT_AS bounds the worker's virtual address space. Darwin's
+    # RLIMIT_DATA is not a total-memory bound and cannot be safely lowered on
+    # supported runners, so macOS is rejected before a worker is spawned.
+    memory_limit = resource.RLIMIT_AS
     _set_bounded_limit(
         resource, memory_limit, memory_bytes, memory_bytes,
         name="RLIMIT_DATA" if sys.platform == "darwin" else "RLIMIT_AS",
@@ -309,6 +307,11 @@ class ProcessIsolatedVoiceCloneExecutor:
 
     def run(self, provider: Any, sample_audio: bytes, *,
             cancel_event: Any, deadline_monotonic: float):
+        if sys.platform == "darwin":
+            raise VoiceCloneWorkerError(
+                "Voice cloning is disabled on macOS until a reliable total-memory "
+                "limit is available for the worker."
+            )
         if os.name not in {"posix", "nt"}:
             raise VoiceCloneWorkerError(
                 "Voice cloning is disabled: enforceable worker limits are not available on this OS."
