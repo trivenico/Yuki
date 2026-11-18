@@ -1,9 +1,12 @@
 import threading
 import unittest
 
+from unittest.mock import patch
+
 from ui.desktop.security_service import (
     DesktopSecurityService,
     SecuritySessionError,
+    create_authenticated_desktop_security_service,
 )
 
 
@@ -162,6 +165,56 @@ class DesktopSecurityServiceTests(unittest.TestCase):
         self.assertEqual(self.factory_calls, 0)
         with self.assertRaises(SecuritySessionError):
             self.service.start(consent=True)
+
+    def test_authenticated_factory_is_lazy_and_bound_to_exact_identity(self):
+        identity = object()
+
+        class Sessions:
+            current = identity
+
+            def current_identity(self):
+                return self.current
+
+        sessions = Sessions()
+        service = create_authenticated_desktop_security_service(sessions, identity)
+        self.assertFalse(service.configured)
+        with self.assertRaises(SecuritySessionError):
+            service.start(consent=False)
+        self.assertFalse(service.configured)
+
+        class ProcessMonitor:
+            def snapshot(self):
+                return {
+                    "processes": [{"pid": 7, "name": "editor", "status": "running"}],
+                    "process_count": 1,
+                    "truncated": False,
+                    "alerts": [],
+                    "read_only": True,
+                    "persisted": False,
+                }
+
+        with patch("defense.process_monitor.ReadOnlyProcessMonitor",
+                   return_value=ProcessMonitor()) as factory:
+            service.start(consent=True)
+            self.assertEqual(factory.call_count, 1)
+            self.assertTrue(service.snapshot()["read_only"])
+            sessions.current = object()
+            with self.assertRaises(SecuritySessionError):
+                service.snapshot()
+            self.assertFalse(service.active)
+            service.close()
+
+    def test_authenticated_factory_rejects_expired_identity_before_sensor_creation(self):
+        identity = object()
+
+        class Sessions:
+            def current_identity(self):
+                return None
+
+        service = create_authenticated_desktop_security_service(Sessions(), identity)
+        with self.assertRaises(SecuritySessionError):
+            service.start(consent=True)
+        self.assertFalse(service.configured)
 
 
 if __name__ == "__main__":
