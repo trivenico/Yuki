@@ -146,14 +146,21 @@ class VoiceEncryptionKeyProviderTests(unittest.TestCase):
             context.Process(target=_create_key_in_process, args=(str(self.lock_directory), str(backend_path), result_queue))
             for _ in range(2)
         ]
-        for process in processes:
-            process.start()
-        results = [result_queue.get(timeout=15) for _ in processes]
-        for process in processes:
-            process.join(timeout=15)
-        self.assertTrue(all(process.exitcode == 0 for process in processes))
-        self.assertTrue(all(status == "ok" for status, _ in results), results)
-        self.assertEqual(results[0][1], results[1][1])
+        try:
+            for process in processes:
+                process.start()
+            results = [result_queue.get(timeout=30) for _ in processes]
+            for process in processes:
+                process.join(timeout=10)
+            self.assertTrue(all(process.exitcode == 0 for process in processes))
+            self.assertTrue(all(status == "ok" for status, _ in results), results)
+            self.assertEqual(results[0][1], results[1][1])
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            result_queue.close()
 
     def test_scopes_keys_per_user_without_storing_raw_identity(self):
         backend = _FakeKeyring()
