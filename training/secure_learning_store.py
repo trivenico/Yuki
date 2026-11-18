@@ -70,8 +70,17 @@ class EncryptedLearningStore:
         try:
             backend = keyring_module.get_keyring()
             priority = getattr(backend, "priority", 0)
-            if not isinstance(priority, (int, float)) or priority <= 0:
-                raise ValueError("no secure OS keyring")
+            backend_module = type(backend).__module__.casefold()
+            backend_name = type(backend).__name__.casefold()
+            known_insecure = (
+                "keyrings.alt" in backend_module
+                or "plaintext" in backend_name
+                or "nullkeyring" in backend_name
+                or "fail.keyring" in backend_module
+                or "chainer" in backend_module
+            )
+            if not isinstance(priority, (int, float)) or priority <= 0 or known_insecure:
+                raise ValueError("no trusted OS keyring backend")
         except Exception as exc:
             raise SecureLearningStoreError("A secure operating-system keyring is required.") from exc
         self._keyring = keyring_module
