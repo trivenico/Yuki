@@ -53,7 +53,7 @@ class VoiceProfileRegistry:
             self._dir_fd_supported = (
                 os.name == "posix"
                 and os.open in os.supports_dir_fd
-                and os.replace in os.supports_dir_fd
+                and os.rename in os.supports_dir_fd
             )
             if self._dir_fd_supported:
                 flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -158,7 +158,7 @@ class VoiceProfileRegistry:
                     handle.write(payload)
                     handle.flush()
                     os.fsync(handle.fileno())
-                os.replace(
+                os.rename(
                     temporary, "profiles.json",
                     src_dir_fd=self._directory_fd, dst_dir_fd=self._directory_fd,
                 )
