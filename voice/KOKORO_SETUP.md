@@ -46,7 +46,6 @@ Set the following values in the user's private Yuki configuration. These are
 local filesystem paths, not URLs:
 
 ```yaml
-voice_enabled: false
 tts_backend: kokoro
 kokoro_model_dir: /absolute/path/to/kokoro-en-v0_19
 kokoro_lexicon_path: /absolute/path/to/lexicon-us-en.txt
@@ -75,10 +74,12 @@ product preference; it is not yet a verified acoustic property of any preset.
 
 ## 4. Enable and audition safely
 
-Keep spoken replies off until the user explicitly enables them in the desktop
-session. Test short, non-sensitive sample sentences first, compare the
-available presets, and adjust speed between 0.5 and 2.0. Stop speaking must
-remain available during playback.
+Keep the desktop **Enable spoken replies** control off until the user is ready
+to audition. The YAML above configures the backend; it does not enable speech
+by itself. Enable spoken replies explicitly in the desktop session, then test
+short, non-sensitive sample sentences, compare the available presets, and
+adjust speed between 0.5 and 2.0. **Stop speaking** must remain available
+during playback.
 
 Choose the final voice only after listening on the target computer and checking
 pronunciation, latency, intelligibility, and audio-device compatibility.
