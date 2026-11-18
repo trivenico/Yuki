@@ -179,23 +179,28 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
                       sample_audio: bytes, deadline: float,
                       limits: VoiceCloneWorkerLimits,
                       start_gate: Any) -> None:
+    stage = "resource-limits"
     try:
         if os.name == "posix":
             _apply_posix_limits(limits)
+        stage = "environment"
         _sanitize_worker_environment()
+        stage = "startup-gate"
         if not start_gate.wait(max(0.0, deadline - time.monotonic())):
             send_conn.send_bytes(b"ERROR:WorkerStartupGateTimeout")
             return
         if cancel_event.is_set():
             send_conn.send_bytes(b"CANCELLED")
             return
+        stage = "provider"
         result = provider.create_clone(
             sample_audio, cancel_event=cancel_event, deadline_monotonic=deadline,
         )
         if cancel_event.is_set():
             send_conn.send_bytes(b"CANCELLED")
             return
-        # Bound before data-only IPC; parent validates the exact result again.
+        stage = "output-validation"
+        # Bound and validate in the child before data-only IPC; parent validates again.
         from voice.clone_job import VoiceCloneOutput
         if not isinstance(result, VoiceCloneOutput):
             raise TypeError("provider result has an unsupported type")
@@ -213,9 +218,10 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
         )
         send_conn.send_bytes(payload)
     except BaseException as exc:
-        # Data-only IPC: never unpickle provider-controlled objects in the parent.
+        # Report only a fixed stage and exception class; never forward provider text or tracebacks.
         try:
-            send_conn.send_bytes(("ERROR:" + type(exc).__name__).encode("ascii", "replace")[:128])
+            message = f"ERROR:{stage}:{type(exc).__name__}".encode("ascii", "replace")[:128]
+            send_conn.send_bytes(message)
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
