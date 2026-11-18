@@ -28,6 +28,7 @@ class DesktopConversationAdapter:
         *,
         owner_id: str,
         memory: Any = None,
+        learning: Any = None,
     ) -> None:
         if not isinstance(application, ConversationApplicationRuntime):
             raise TypeError("application must be a ConversationApplicationRuntime.")
@@ -42,7 +43,10 @@ class DesktopConversationAdapter:
             raise RuntimeError("conversation runtime is closed.")
         self._application = application
         self._owner_id = owner_id.strip()
+        if learning is not None and not callable(getattr(learning, "build_few_shot_patch", None)):
+            raise TypeError("learning must provide build_few_shot_patch().")
         self._memory = memory
+        self._learning = learning
         self._conversation_id: str | None = None
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
@@ -144,7 +148,21 @@ class DesktopConversationAdapter:
 
             # Keep the selected conversation and version stable for this turn,
             # but do not hold the UI state lock during potentially slow inference.
-            system_text = build_memory_context_system_text(self._memory, message.strip())
+            system_parts = []
+            memory_text = build_memory_context_system_text(self._memory, message.strip())
+            if memory_text:
+                system_parts.append(memory_text)
+            if self._learning is not None:
+                # Only the coordinator's verified, approved dataset is eligible.
+                # The patch layer marks examples as untrusted historical data.
+                learning_text = self._learning.build_few_shot_patch(
+                    message.strip(), max_examples=3, max_chars=4_000,
+                )
+                if learning_text is not None:
+                    if not isinstance(learning_text, str) or len(learning_text) > 4_000:
+                        raise RuntimeError("The learning coordinator returned an invalid context block.")
+                    system_parts.append(learning_text)
+            system_text = "\\n\\n".join(system_parts) if system_parts else None
             return self._application.conversations.reply(
                 owner_id=self._owner_id,
                 conversation_id=conversation_id,
