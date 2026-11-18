@@ -62,6 +62,8 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._submit_goal(scope, receive, send)
         if method == "POST" and path == "/v1/workforce/improvement-proposals":
             return await self._create_improvement_proposal(scope, receive, send)
+        if method == "POST" and re.fullmatch(r"/v1/workforce/knowledge/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
+            return await self._transition_knowledge(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/improvement-proposals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
             return await self._transition_improvement_proposal(path, scope, receive, send)
         if method == "GET" and re.fullmatch(r"/v1/workforce/improvement-proposals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/comparison", path):
@@ -108,6 +110,22 @@ class AuthenticatedWorkforceDashboardAPI:
                     self.dashboard.goal_detail, goal_id,
                     after_event_id=after_event_id, event_limit=event_limit,
                 )
+            elif path == "/v1/workforce/knowledge":
+                if set(query) - {"limit", "domain"}:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                limit = self._integer(query.get("limit", "100"), "limit")
+                if not 1 <= limit <= 500:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                records = await asyncio.to_thread(
+                    self.dashboard.task_engine.list_verified_knowledge,
+                    limit=limit, domain=query.get("domain"),
+                )
+                result = {"knowledge": records, "count": len(records), "visibility": "verified_only"}
+            elif re.fullmatch(r"/v1/workforce/knowledge/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", path):
+                if query:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                knowledge_id = path.rsplit("/", 1)[-1]
+                result = await asyncio.to_thread(self.dashboard.task_engine.get_knowledge, knowledge_id)
             elif path == "/v1/workforce/improvement-proposals":
                 if set(query) - _IMPROVEMENT_QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
@@ -343,6 +361,62 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._respond(send, 400, {"error": "invalid_transition_request"})
         except Exception:
             return await self._respond(send, 503, {"error": "improvement_proposal_unavailable"})
+        return await self._respond(send, 200, result)
+
+    async def _transition_knowledge(self, path, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _session_token = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        headers = {key.lower(): value for key, value in scope.get("headers", []) if isinstance(key, bytes) and isinstance(value, bytes)}
+        content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+        if content_type != b"application/json":
+            return await self._respond(send, 415, {"error": "application_json_required"})
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message.get("type") != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if not isinstance(chunk, bytes):
+                return await self._respond(send, 400, {"error": "invalid_request_body"})
+            body.extend(chunk)
+            if len(body) > 4096:
+                return await self._respond(send, 413, {"error": "request_body_too_large"})
+            more_body = bool(message.get("more_body", False))
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return await self._respond(send, 400, {"error": "invalid_json"})
+        allowed = {"expected_state", "new_state", "review_note"}
+        if (not isinstance(payload, dict)
+                or not {"expected_state", "new_state"}.issubset(payload)
+                or set(payload) - allowed
+                or not isinstance(payload["expected_state"], str)
+                or not isinstance(payload["new_state"], str)
+                or (payload.get("review_note") is not None and not isinstance(payload["review_note"], str))):
+            return await self._respond(send, 400, {"error": "invalid_knowledge_transition"})
+        knowledge_id = path.split("/")[-2]
+        try:
+            result = await asyncio.to_thread(
+                self.dashboard.task_engine.transition_knowledge,
+                knowledge_id,
+                expected_state=payload["expected_state"],
+                new_state=payload["new_state"],
+                actor_id=user.user_id,
+                review_note=payload.get("review_note"),
+            )
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "knowledge_state_conflict"})
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "knowledge_not_found"})
+        except (TypeError, ValueError):
+            return await self._respond(send, 400, {"error": "invalid_knowledge_transition"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "knowledge_store_unavailable"})
         return await self._respond(send, 200, result)
 
     async def _submit_goal(self, scope, receive, send):
