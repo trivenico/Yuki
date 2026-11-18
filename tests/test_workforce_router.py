@@ -36,6 +36,29 @@ class WorkforceTaskRouterTests(unittest.TestCase):
         self.assertEqual(queued["payload"]["assigned_employee_id"], self.employee.employee_id)
         self.assertEqual(queued["payload"]["required_permissions"], ["repo:read"])
         self.assertIs(queued["payload"]["execution_authorized"], False)
+        self.assertIs(queued["payload"]["review_required"], False)
+
+
+    def test_can_require_independent_review(self):
+        assignment = self.router.submit(
+            goal_id=self.goal_id,
+            description="Implement a feature and verify it",
+            required_capabilities={"python"},
+            idempotency_key="review-required",
+            review_required=True,
+        )
+        queued = self.engine.get_task(assignment.task_id)
+        self.assertIs(queued["payload"]["review_required"], True)
+
+    def test_review_required_must_be_boolean(self):
+        with self.assertRaises(ValueError):
+            self.router.submit(
+                goal_id=self.goal_id,
+                description="Review output",
+                required_capabilities={"python"},
+                idempotency_key="bad-review-flag",
+                review_required="yes",
+            )
 
     def test_rejects_task_when_employee_lacks_required_permission(self):
         with self.assertRaises(NoEligibleAgent):
