@@ -27,6 +27,47 @@ class YukiAgentWorkforceExecutor:
         if not callable(getattr(registry, "get", None)) or not callable(getattr(registry, "names", None)):
             raise TypeError("agent registry must provide get() and names()")
         self.agent = agent
+        self._registry = registry
+        self._skill_snapshot = self._snapshot_registry(registry)
+
+    @classmethod
+    def _snapshot_registry(cls, registry):
+        snapshot = {}
+        for name in registry.names():
+            skill = registry.get(name)
+            if skill is None or getattr(skill, "name", None) != name:
+                raise ValueError("Skill registry returned an inconsistent entry.")
+            capabilities = cls._declared_set(skill, "capabilities")
+            permissions = cls._declared_set(skill, "permissions")
+            risk = getattr(skill, "risk", None)
+            if capabilities is None or permissions is None or risk not in {"low", "medium", "high"}:
+                # Skills without explicit policy metadata are not eligible for
+                # workforce dispatch; preserve them in the snapshot as ineligible.
+                snapshot[name] = (skill, capabilities, permissions, risk)
+            else:
+                snapshot[name] = (skill, capabilities, permissions, risk)
+        return snapshot
+
+    def _registry_is_unchanged(self) -> bool:
+        registry = getattr(self.agent, "registry", None)
+        if registry is not self._registry:
+            return False
+        try:
+            if tuple(registry.names()) != tuple(sorted(self._skill_snapshot)):
+                return False
+            for name, (expected, capabilities, permissions, risk) in self._skill_snapshot.items():
+                current = registry.get(name)
+                if current is not expected:
+                    return False
+                if self._declared_set(current, "capabilities") != capabilities:
+                    return False
+                if self._declared_set(current, "permissions") != permissions:
+                    return False
+                if getattr(current, "risk", None) != risk:
+                    return False
+        except Exception:
+            return False
+        return True
 
     @staticmethod
     def _declared_set(skill: Any, field: str) -> frozenset[str] | None:
@@ -78,28 +119,33 @@ class YukiAgentWorkforceExecutor:
         if getattr(employee, "autonomy_tier", 4) > max_autonomy_tier:
             return WorkforceExecutionOutcome(False, "autonomy_denied", "Employee exceeds task autonomy limit.")
 
-        registry = self.agent.registry
-        selected = None
-        for name in registry.names():
-            skill = registry.get(name)
-            if skill is None:
-                continue
-            capabilities = self._declared_set(skill, "capabilities")
-            permissions = self._declared_set(skill, "permissions")
+        if not self._registry_is_unchanged():
+            return WorkforceExecutionOutcome(
+                False, "skill_registry_changed",
+                "Registered skill inventory or policy metadata changed; rebuild the workforce executor.",
+            )
+
+        candidates = []
+        for name, (skill, capabilities, permissions, _risk) in self._skill_snapshot.items():
             # Missing metadata is not interpreted as an empty requirement:
             # unknown skill scope fails closed for workforce execution.
             if capabilities is None or permissions is None:
                 continue
             if set(required_capabilities).issubset(capabilities) and set(required_permissions).issubset(permissions):
-                selected = skill
-                break
+                candidates.append(skill)
 
-        if selected is None:
+        if not candidates:
             return WorkforceExecutionOutcome(
                 False,
                 "no_scope_compatible_skill",
                 "No registered skill explicitly declares the required capabilities and permission scopes.",
             )
+        if len(candidates) != 1:
+            return WorkforceExecutionOutcome(
+                False, "ambiguous_skill_scope",
+                "Multiple registered skills match this workforce task; an explicit skill selection is required.",
+            )
+        selected = candidates[0]
 
         # run_skill is the existing human approval + guarded invocation path.
         # It does not accept an approval token from the workforce queue.
