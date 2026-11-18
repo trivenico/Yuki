@@ -137,7 +137,7 @@ class SQLiteApprovalAuditLog:
         """Return latest events for a bounded set after verifying the full chain once."""
         if not isinstance(actor, str) or not actor.strip() or len(actor) > 256:
             raise ValueError("actor must be a non-empty bounded string.")
-        if not isinstance(pending_ids, list) or len(pending_ids) > 10001:
+        if not isinstance(pending_ids, list) or len(pending_ids) > 10002:
             raise ValueError("pending_ids must be a bounded list.")
         if not isinstance(skill_ids, list) or not 1 <= len(skill_ids) <= 16:
             raise ValueError("skill_ids must be a bounded non-empty list.")
