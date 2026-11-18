@@ -204,9 +204,26 @@ The orchestrator should dispatch **capabilities**, not arbitrary natural-languag
 | Delete user data, rotate keys, change retention | Prepare plan | No; explicit confirmation and recovery plan |
 | Create agents, grant permissions, alter policies | Propose specification | No |
 
+## 8. Existing implementation audit (main branch, 2026-11-18)
+
+The repository already contains substantial pieces of Phase A. The implementation plan must extend these components rather than build a second agent framework.
+
+| Existing component | Verified responsibility | Remaining gap for this operating model |
+|---|---|---|
+| `automation/agent_coordinator.py` | SQLite-backed specialist registry; stable IDs; capability and permission routing; enabled/disabled state; bounded dependency plans; idempotency; authorization checks; dispatch through TaskRuntime | Add reviewed role metadata and owner/version/handler readiness; define role-to-capability mappings; improve manifest lifecycle and acceptance coverage |
+| `automation/task_runtime.py` + `automation/workflow_store.py` | Durable task records, authenticated authorization callbacks, approval/session binding, versioned transitions, event journal, cancellation and task summaries | Ensure budgets and task envelopes are consistently enforced across every worker path; document one canonical task runtime |
+| `automation/workflow_engine.py` | Small declarative action allow-list, bounded step/argument/output sizes, explicit approval callback | Specialist action handlers remain deliberately narrow; add no action until a concrete handler and security tests exist |
+| `yuki_agent_runtime.py` + `yuki_agent_worker.py` | Separate SQLite metadata queue and explicit handler map with leases, cancellation checks and budgets | This is a second runtime surface; do not make it the default company orchestrator or duplicate automation runtime policy without a migration decision |
+| `skills/registry.py` + `skills/catalog.py` | Existing skill discovery/catalog and guarded invocation path | Define how a specialist requests an approved skill capability without receiving unrestricted access to the entire registry |
+| `tests/test_agent_coordinator.py`, task-runtime and skill-catalog suites | Existing authorization, routing, idempotency, dependency, cancellation, worker and skill invocation coverage | Add organization-role contract tests and cross-layer tests proving agent permissions cannot exceed the registered manifest |
+
+**Important implementation distinction:** a registered specialist in the coordinator is currently a routing manifest, not an autonomous employee or a self-contained model. The coordinator does not itself invoke an LLM. The workflow engine's supported specialist action is deliberately limited to `emit`; task execution still depends on the reviewed runtime/worker integration. A role must not be reported as active merely because it appears in the 100-role catalogue or can be inserted into SQLite.
+
+**Current maturity:** the durable coordinator, task lifecycle, approval and skill-catalog foundations exist in code. The full 100-role workforce, CEO-level autonomous delegation, role-specific model prompts, independent review workflow, production-grade cross-agent budget accounting and integrated desktop company dashboard are not established by this audit.
+
 ## 8. Phased implementation
 
-**Phase A — foundation (first):** formal agent contract, role catalogue, task envelope, capability registry, audit events, approval policy and deterministic orchestration tests. Reuse the existing bounded planner and skill registry; do not create a parallel framework.
+**Phase A — close the existing foundation gaps (first):** define a versioned role manifest that extends SpecialistAgent rather than replacing it; bind role owner, department, handler readiness, input/output schema, data classification, resource budgets and approval class to the existing coordinator; prove the task runtime is the canonical execution journal; and add cross-layer tests for manifest-to-capability enforcement, cancellation, budget exhaustion and approval revalidation. Keep unimplemented role slots disabled and non-dispatchable. Do not add a second registry, queue or permission system.
 
 **Phase B — first useful team:** Chief of Staff, Research Analyst, Software Engineer, QA/Evals, Security Reviewer and Technical Writer. These roles support the desktop core and can be evaluated without financial or external side effects.
 
@@ -218,7 +235,7 @@ The orchestrator should dispatch **capabilities**, not arbitrary natural-languag
 
 **Phase F — scale-out:** expand toward all 100 roles only when role-specific evaluation demonstrates quality, safety, reliability and a real workload. Parallelism is bounded; more agents must not mean more uncontrolled tool access.
 
-## 9. Initial success criteria
+## 10. Initial success criteria
 
 - One canonical registry and one orchestrator; no duplicated agent/skill permission systems.
 - Every dispatch is traceable to a user goal, policy decision and bounded task.
