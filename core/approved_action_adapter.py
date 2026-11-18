@@ -70,6 +70,10 @@ class ApprovedActionAdapter:
             raise ValueError("Approved action ID is not explicitly configured.")
 
         binding, expected_skill = configured
+        # The agent's registry attribute is mutable even though individual registry
+        # entries cannot be replaced. Refuse a swapped registry before run_skill().
+        if getattr(self._agent, "registry", None) is not self._registry:
+            raise RuntimeError("Agent skill registry changed; execution was blocked.")
         current_skill = self._registry.get(binding.skill_name)
         if current_skill is not expected_skill:
             raise RuntimeError("Registered skill identity changed; execution was blocked.")
