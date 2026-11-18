@@ -1964,10 +1964,13 @@ Version: {version}",
                 # cleanup hooks are retryable; do not exit with revocation
                 # incomplete or silently discard the only retry handle.
                 self._shutdown_started = False
-                self.setEnabled(True)
+                # Re-enable only the dedicated retry-sign-out path. The helper
+                # disables authenticated tabs and every session action so a
+                # failed shutdown cannot leave a live controller usable.
+                self._restrict_to_logout_retry()
                 self.login_status.setText(
-                    "Shutdown cleanup incomplete. Session actions remain blocked. "
-                    "Close Yuki again to retry cleanup."
+                    "Shutdown cleanup incomplete. Only retry sign out or close "
+                    "Yuki to retry cleanup."
                 )
                 QMessageBox.warning(
                     self, "Yuki shutdown",
