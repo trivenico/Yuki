@@ -199,6 +199,7 @@ def build_conversation_runtime(
             app = AuthenticatedWorkforceDashboardAPI(
                 app, auth_service, workforce_dashboard,
                 pending_approvals=pending_approvals, approval_audit=approval_audit,
+                workforce_ceo=workforce_application.ceo if workforce_application is not None else None,
             )
         return ConversationRuntime(app, application, workforce_application)
     except Exception:
