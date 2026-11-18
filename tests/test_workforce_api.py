@@ -96,6 +96,37 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
+    def test_goal_detail_returns_bounded_task_timeline(self):
+        goal_id = self.engine.create_goal()
+        employee = self.dashboard.registry.recommend({"python"}, limit=1)[0]
+        task = self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Run tests"},
+            idempotency_key="timeline-task", max_attempts=1,
+        )
+        claimed = self.engine.claim("timeline-worker", task_type="workforce.task")
+        self.engine.complete(claimed["id"], "timeline-worker", {"ok": True})
+        status, body = self.request(
+            "/v1/workforce/goals/" + goal_id, token=self.admin_session.token,
+            query=b"event_limit=2",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["goal"]["goal_id"], goal_id)
+        self.assertEqual(body["tasks"][0]["task_id"], task["id"])
+        self.assertEqual(body["tasks"][0]["employee_id"], employee.employee_id)
+        self.assertEqual(len(body["events"]), 2)
+        self.assertTrue(body["has_more_events"])
+        self.assertNotIn("detail", body["events"][0])
+
+    def test_goal_detail_rejects_invalid_query_and_unknown_goal(self):
+        status, _ = self.request("/v1/workforce/goals/unknown", token=self.admin_session.token)
+        self.assertEqual(status, 404)
+        status, _ = self.request(
+            "/v1/workforce/goals/unknown", token=self.admin_session.token,
+            query=b"event_limit=999",
+        )
+        self.assertEqual(status, 400)
+
     def test_rejects_bad_methods_queries_and_pagination(self):
         status, _ = self.request(
             "/v1/workforce/dashboard", method="POST", token=self.admin_session.token
