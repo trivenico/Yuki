@@ -118,10 +118,14 @@ class SQLitePendingApprovalStore:
             raise ValueError("limit must be between 1 and 200")
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
-            db.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now,))
+            db.execute(
+                "DELETE FROM pending_approvals WHERE expires_at <= ? OR actor_hash IS NULL OR session_hash IS NULL",
+                (now,),
+            )
             rows = db.execute(
                 """SELECT pending_id, skill_id, expires_at
                    FROM pending_approvals
+                   WHERE actor_hash IS NOT NULL AND session_hash IS NOT NULL
                    ORDER BY expires_at ASC, pending_id ASC LIMIT ?""",
                 (limit,),
             ).fetchall()
