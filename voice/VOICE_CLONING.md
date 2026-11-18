@@ -115,3 +115,29 @@ Run a controlled benchmark in an isolated environment (Kaggle GPU is suitable fo
 6. Do not activate the model for ordinary desktop speech until the quality, performance, license, privacy, and packaging gates pass.
 
 The application must not download these multi-gigabyte assets during startup. Model installation is a separate user-initiated action with displayed size, source, license, checksum/revision pin, destination, and cancellation support.
+
+## Encrypted artifact storage foundation
+
+The desktop voice-cloning path now has an optional local encrypted artifact store
+in `voice/secure_artifact_store.py`. It uses AES-256-GCM with a fresh random
+nonce per artifact, authenticated artifact identifiers, a 20 MiB hard upper
+bound (configurable downward), restrictive directory/file permissions, and
+explicit consent before storing source audio. Reads and deletion require an
+authenticated session; deletion requires confirmation. Authentication failures
+and tampering fail closed.
+
+The encryption key is injected by the caller and is never written by this
+module. A production desktop integration MUST obtain and rotate that key via
+the operating system credential store (Windows Credential Manager, macOS
+Keychain, or Linux Secret Service/keyring). Do not use a hard-coded key,
+configuration-file key, environment variable, or key derived from the sample.
+The key-store adapter and lifecycle are not implemented by this storage
+foundation yet. No artifact is uploaded or automatically retained by a provider.
+
+Deleting an encrypted file is not a guarantee of physical erasure from SSD
+wear-leveling, filesystem journals, snapshots, or backups. Production deletion
+must also remove associated model/provider artifacts and revoke/delete the
+per-user encryption key when appropriate, with a clear warning about backup
+copies. Audio format validation, duration limits, malware-safe media decoding,
+and provider-specific temporary-file cleanup remain mandatory before a sample
+is passed to a model.
