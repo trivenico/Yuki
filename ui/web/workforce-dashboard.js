@@ -124,7 +124,7 @@
       inbox.pending.forEach((item) => {
         const row = el("div", "workforce-approval-row");
         row.append(el("strong", "", item.skill_id), el("span", "", "Expires " + new Date(item.expires_at).toLocaleString()));
-        row.append(el("small", "", "Approval reference: " + item.pending_id));
+        row.append(el("small", "", "Your approval reference: " + item.pending_id));
         pending.append(row);
       });
       if (!inbox.pending.length) pending.append(el("p", "workforce-empty", "No pending approvals."));
