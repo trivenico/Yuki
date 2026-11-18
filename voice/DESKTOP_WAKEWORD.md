@@ -1,4 +1,4 @@
-# Desktop Hey Yuki wake-word controls
+# Desktop Yuki wake-word controls
 
 The desktop chat screen exposes an optional local wake-word session when the
 user has explicitly enabled the microphone for the current authenticated
@@ -10,7 +10,7 @@ session and selected a local ONNX model.
 2. Enable the existing microphone permission toggle. This is still separate
    from spoken-reply permission.
 3. Choose a local `.onnx` wake-word model supplied by the user.
-4. Select **Start Hey Yuki listening** and confirm the dedicated consent
+4. Select **Start Yuki listening** and confirm the dedicated consent
    dialog.
 5. Yuki processes bounded 16 kHz mono PCM frames locally. The audio source
    keeps at most one volatile frame; it does not write idle audio to disk,
@@ -46,7 +46,7 @@ commercial training and redistribution rights.
 - The desktop controls are an integration foundation, not a hardware-verified
   release. Microphone behavior must be tested on supported Windows, macOS,
   and Linux devices.
-- The first custom Hey Yuki model has not yet been trained or acoustically
+- The first custom Yuki model has not yet been trained or acoustically
   evaluated.
 - Device permission prompts and format support are operating-system and
   driver dependent. If the exact 16 kHz mono PCM16 input cannot be opened,
