@@ -111,11 +111,48 @@
     $("workforce-events-more").hidden = !data.has_more_events;
   };
 
+  const loadApprovalCenter = async () => {
+    const status = $("workforce-approval-status");
+    status.textContent = "Loading approval inbox and audit…";
+    try {
+      const [inbox, audit] = await Promise.all([
+        request("/v1/workforce/approvals?limit=100"),
+        request("/v1/workforce/approvals/audit?limit=50"),
+      ]);
+      const pending = $("workforce-approval-pending");
+      pending.replaceChildren();
+      inbox.pending.forEach((item) => {
+        const row = el("div", "workforce-approval-row");
+        row.append(el("strong", "", item.skill_id), el("span", "", "Expires " + new Date(item.expires_at).toLocaleString()));
+        row.append(el("small", "", "Approval reference: " + item.pending_id));
+        pending.append(row);
+      });
+      if (!inbox.pending.length) pending.append(el("p", "workforce-empty", "No pending approvals."));
+      const events = $("workforce-approval-audit");
+      events.replaceChildren();
+      audit.events.forEach((item) => {
+        const row = el("div", "workforce-approval-row");
+        row.append(el("strong", "", item.event_type + " · " + item.skill_id), el("span", "", new Date(item.created_at).toLocaleString()));
+        row.append(el("small", "", "Event #" + item.event_id + " · actor " + item.actor_hash.slice(0, 12) + "…"));
+        events.append(row);
+      });
+      if (!audit.events.length) events.append(el("p", "workforce-empty", "No approval audit events yet."));
+      $("workforce-audit-integrity").textContent = audit.chain_valid ? "Audit chain verified" : "WARNING: audit chain verification failed";
+      $("workforce-audit-integrity").className = "workforce-audit-integrity " + (audit.chain_valid ? "valid" : "invalid");
+      $("workforce-approval-center").hidden = false;
+      status.textContent = inbox.count + " pending approval(s) · " + audit.count + " recent audit event(s). Inspection only; no action has been approved or executed here.";
+    } catch (error) {
+      status.textContent = "Approval center unavailable: " + error.message;
+      $("workforce-approval-center").hidden = false;
+    }
+  };
+
   const refresh = async () => {
     $("workforce-status").textContent = "Refreshing workforce data…";
     try {
       renderSnapshot(await request("/v1/workforce/dashboard?max_goals=100"));
       await loadDirectory();
+      await loadApprovalCenter();
       $("workforce-status").textContent = "Data refreshed. This view is read-only; task execution and approvals remain in Yuki’s guarded runtime.";
     } catch (error) { $("workforce-status").textContent = "Unable to load workforce data: " + error.message; }
   };
@@ -129,6 +166,7 @@
       $("workforce-nav").hidden = false;
       $("workforce-nav").addEventListener("click", () => { showDashboard(true); refresh(); });
       $("workforce-refresh").addEventListener("click", refresh);
+      $("workforce-approval-refresh").addEventListener("click", loadApprovalCenter);
       $("workforce-goal-close").addEventListener("click", () => { $("workforce-goal-detail").hidden = true; state.goalId = ""; });
       $("workforce-events-more").addEventListener("click", () => {
         if (state.goalId) loadGoalDetail(state.goalId, state.nextEventId, true).catch((e) => $("workforce-status").textContent = e.message);
