@@ -341,7 +341,7 @@ def run() -> int:
                 self.signals.finished.emit(None, exc)
 
     class SecurityWorkerSignals(QObject):
-        finished = Signal(str, object, object, object, object)
+        finished = Signal(str, object, object, object, object, bool)
 
     class SecurityWorker(QRunnable):
         """Run one bounded security lifecycle operation away from the GUI thread."""
@@ -369,8 +369,9 @@ def run() -> int:
                     raise ValueError("Unsupported security operation.")
             except Exception as exc:
                 error = exc
+            authorized = self.service.authorized
             self.signals.finished.emit(
-                self.action, result, error, self.service, self,
+                self.action, result, error, self.service, self, authorized,
             )
 
 
@@ -1173,8 +1174,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.security_worker = worker
             self.pool.start(worker)
 
-        @Slot(str, object, object, object, object)
-        def _security_finished(self, action, result, error, captured_service, worker):
+        @Slot(str, object, object, object, object, bool)
+        def _security_finished(self, action, result, error, captured_service, worker, authorized):
             if self.security_worker is worker:
                 self.security_worker = None
             # The service/controller revalidates the token around every
@@ -1192,6 +1193,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
             ):
                 if not self._logout_started and not self._shutdown_started:
                     self._return_to_login()
+                return
+            if not authorized:
+                self._return_to_login()
                 return
             presenter = self.security_panel.security_presenter
             if error is not None:
