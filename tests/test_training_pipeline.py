@@ -29,6 +29,14 @@ def test_sft_export_is_jsonl_and_contains_no_raw_source_reference():
     assert len(row["metadata"]["approval_digest"]) == 64
     assert "private://conversation/123" not in exported
 
+def test_sft_rejects_unhashable_message_roles():
+    generator = SFTDataGenerator()
+    with pytest.raises(SFTDataError):
+        generator.add_example(messages=[{"role": [], "content": "hello"},
+                                        {"role": "assistant", "content": "answer"}],
+                              source_reference="x", task_type="coding", training_consent=True,
+                              human_approved=True, approved_by="owner")
+
 def test_sft_rejects_credential_material_and_deduplicates():
     generator = SFTDataGenerator()
     with pytest.raises(SFTDataError):
