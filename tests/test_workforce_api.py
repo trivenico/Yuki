@@ -157,8 +157,11 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             token=self.admin_session.token,
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["count"], 1)
-        self.assertEqual(body["revisions"][0]["state"], "proposed")
+        self.assertEqual(body["count"], 2)
+        self.assertEqual(body["revisions"][0]["version"], 1)
+        self.assertEqual(body["revisions"][0]["state"], "approved")
+        self.assertEqual(body["revisions"][1]["version"], 2)
+        self.assertEqual(body["revisions"][1]["state"], "proposed")
         status, current = self.request(
             "/v1/workforce/knowledge/api-knowledge-1",
             token=self.admin_session.token,
