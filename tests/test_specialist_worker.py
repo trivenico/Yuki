@@ -289,5 +289,38 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.worker({"not valid": lambda _: "no"})
 
 
+    def test_claim_fails_closed_when_role_manifest_changes_after_enqueue(self):
+        task_id = self.create_task()
+        invoked = []
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE specialist_agents SET role_version=role_version+1 WHERE agent_id='code-review'"
+            )
+        result = self.worker({
+            "code-review": lambda _text: invoked.append(True) or "must not run",
+        }).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+        self.assertEqual(invoked, [])
+
+    def test_manifest_bound_task_requires_worker_validator(self):
+        task_id = self.create_task()
+        result = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-without-manifest-guard",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda _text: "must not run"},
+        ).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+
+    def test_manifest_validator_accepts_unchanged_active_role(self):
+        task_id = self.create_task()
+        self.assertTrue(self.coordinator.validate_task_manifest(
+            task_id=task_id, agent_id="code-review",
+        ))
+
+
 if __name__ == "__main__":
     unittest.main()
