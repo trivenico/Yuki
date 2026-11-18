@@ -119,7 +119,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         )
         outcome = coordinator.approve(
             self.planner, pending.pending_id, actor="owner", session_id="session-a",
-            confirm=lambda _action: True,
+            confirmation_digest=action_digest(), confirm=lambda _action: True,
         )
         self.assertEqual(outcome.status, "recovery_required")
         self.assertEqual(len(self.planner.executed), 1)
