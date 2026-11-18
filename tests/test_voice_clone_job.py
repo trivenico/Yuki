@@ -1,13 +1,15 @@
 import io
+import os
 import tempfile
 import threading
-import unittest
-import os
 import time
+import unittest
 import wave
 from pathlib import Path
 
+from voice.audio_validation import VoiceSampleValidationError
 from voice.clone_job import (
+    VoiceCloneJobError,
     VoiceCloneJobCancelled,
     VoiceCloneJobController,
     VoiceCloneJobState,
@@ -15,7 +17,11 @@ from voice.clone_job import (
 )
 from voice.profile_registry import VoiceProfileRegistry
 from voice.secure_artifact_store import EncryptedVoiceArtifactStore
-from voice.clone_process import ProcessIsolatedVoiceCloneExecutor, VoiceCloneWorkerTimeout
+from voice.clone_process import (
+    ProcessIsolatedVoiceCloneExecutor,
+    VoiceCloneWorkerCancelled,
+    VoiceCloneWorkerTimeout,
+)
 
 
 def wav_sample(seconds=3):
@@ -99,7 +105,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         controller = self.controller()
         with self.assertRaises(ValueError):
             controller.run(b"not audio", profile_id="new-voice", display_name="New voice", source_owner_consent=True)
-        with self.assertRaises(Exception):
+        with self.assertRaises(VoiceSampleValidationError):
             controller.run(wav_sample(), profile_id="new-voice", display_name="New voice", source_owner_consent=False)
         self.assertEqual(self.registry.list_profiles(), [])
 
@@ -118,7 +124,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_provider_failure_preserves_registry(self):
         controller = self.controller(FakeLocalProvider(fail=True))
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(VoiceCloneJobError):
             controller.run(wav_sample(), profile_id="new-voice", display_name="New voice", source_owner_consent=True)
         self.assertEqual(controller.state, VoiceCloneJobState.FAILED)
         self.assertEqual(self.registry.list_profiles(), [])
@@ -155,8 +161,6 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(self.registry.list_profiles(), [])
 
     @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
-
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
     def test_isolated_worker_is_killed_at_wall_clock_deadline(self):
         executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
         with self.assertRaises(VoiceCloneWorkerTimeout):
@@ -164,6 +168,30 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
                 BlockingProvider(), wav_sample(), cancel_event=threading.Event(),
                 deadline_monotonic=time.monotonic() + 1,
             )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    def test_isolated_worker_is_killed_when_parent_cancels(self):
+        executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
+        cancel = threading.Event()
+        errors = []
+
+        def run():
+            try:
+                executor.run(
+                    BlockingProvider(), wav_sample(), cancel_event=cancel,
+                    deadline_monotonic=time.monotonic() + 10,
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        time.sleep(0.4)
+        cancel.set()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], VoiceCloneWorkerCancelled)
 
     def test_worker_limits_reject_unsafe_values(self):
         from voice.clone_process import VoiceCloneWorkerLimits
