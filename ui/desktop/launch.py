@@ -1167,7 +1167,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 "refresh": "refreshing…",
             }.get(action, "working…")
             controls["status"].setText("Security session: " + operation_state)
-            self.security_global_status.setText("Security monitoring: " + operation_state)
+            self.security_global_status.setText("Security session: " + operation_state)
             worker = SecurityWorker(action, service, identity)
             worker.signals.finished.connect(self._security_finished)
             self.security_worker = worker
