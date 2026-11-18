@@ -222,10 +222,12 @@ class ContinuousLearningCoordinator:
         with self._lock:
             if self.store is not None:
                 try:
-                    self._refresh_persisted_state()
+                    authorization = self._refresh_persisted_state()
                 except Exception as exc:
                     raise ContinuousLearningError("Pending learning data could not be read safely.") from exc
-            if not self._has_consent("learning"):
+                if not authorization["learning"]:
+                    return []
+            elif not self._has_consent("learning"):
                 return []
             return [
                 {"proposal_id": proposal_id, "task_type": item["task_type"],
@@ -342,15 +344,15 @@ class ContinuousLearningCoordinator:
         max_chars: int = 6000,
     ) -> str | None:
         """Build a patch only while durable training consent and approvals remain valid."""
-        if not self._has_consent("training"):
-            return None
         with self._lock:
             if self.store is not None:
                 try:
-                    self._refresh_persisted_state()
+                    authorization = self._refresh_persisted_state()
                 except Exception as exc:
                     raise ContinuousLearningError("Approved learning data could not be read safely.") from exc
-            if not self._has_consent("training"):
+                if not authorization["training"]:
+                    return None
+            elif not self._has_consent("training"):
                 return None
             dataset = self.generator.export_jsonl()
         layer = FewShotPatchLayer(dataset, max_examples=max_examples, max_chars=max_chars)
@@ -358,16 +360,16 @@ class ContinuousLearningCoordinator:
 
     def export_sft_jsonl(self) -> str:
         """Return approved examples only while durable training consent is active."""
-        if not self._has_consent("training"):
-            raise ContinuousLearningError("Verified training consent is required to export this dataset.")
         with self._lock:
             if self.store is not None:
                 try:
-                    self._refresh_persisted_state()
+                    authorization = self._refresh_persisted_state()
                 except Exception as exc:
                     raise ContinuousLearningError("Approved learning data could not be read safely.") from exc
-            if not self._has_consent("training"):
-                raise ContinuousLearningError("Training consent was revoked before export.")
+                if not authorization["training"]:
+                    raise ContinuousLearningError("Verified training consent is required to export this dataset.")
+            elif not self._has_consent("training"):
+                raise ContinuousLearningError("Verified training consent is required to export this dataset.")
             return self.generator.export_jsonl()
 
     @property
