@@ -457,7 +457,9 @@ def run() -> int:
             self.pool = QThreadPool(self)
             self.pool.setMaxThreadCount(1)
             self.security_pool = QThreadPool(self)
-            self.security_pool.setMaxThreadCount(2)
+            # One security worker preserves Start/Stop ordering; collection is a
+            # single bounded snapshot, never a continuous capture loop.
+            self.security_pool.setMaxThreadCount(1)
             self.security_service = None
             self._security_generation = 0
             self.auth = None
@@ -1121,12 +1123,6 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.speech_stop_button.setEnabled(False)
             self.voice_status.setText("Microphone off. Spoken replies off. No background listening.")
             self.logout_button.setText("Sign out")
-            from ui.desktop.security_runtime import create_desktop_security_service
-            self.security_service = create_desktop_security_service(
-                self.sessions, identity.session_id,
-            )
-            self._security_generation += 1
-            self.security_presenter.set_state("off", enabled=False)
             config = load_config()
             memory = create_desktop_memory(self.sessions.keyring)
             context = build_desktop_context(
@@ -1155,6 +1151,12 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
             )
+            from ui.desktop.security_runtime import create_desktop_security_service
+            self.security_service = create_desktop_security_service(
+                self.sessions, identity.session_id,
+            )
+            self._security_generation += 1
+            self.security_presenter.set_state("off", enabled=False)
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
@@ -1175,10 +1177,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
             generation = self._security_generation
             controls = self.security_page.security_controls
             if action == "start":
+                self.security_presenter.set_state("starting", enabled=True)
                 controls["start"].setEnabled(False)
                 controls["stop"].setEnabled(True)
                 controls["refresh"].setEnabled(False)
-                self.security_presenter.set_state("starting", enabled=True)
             elif action == "stop":
                 controls["start"].setEnabled(False)
                 controls["stop"].setEnabled(False)
