@@ -333,6 +333,96 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             return messages
         self.assertEqual(asyncio.run(run())[0]["status"], 503)
 
+
+    def test_improvement_proposals_are_authenticated_and_read_only_on_get(self):
+        self.engine.create_improvement_proposal("capacity-review", {
+            "category": "department_backlog", "recommendation": "Review queue priorities",
+        })
+        status, body = self.request("/v1/workforce/improvement-proposals")
+        self.assertEqual(status, 401)
+        status, body = self.request("/v1/workforce/improvement-proposals", token=self.user_session.token)
+        self.assertEqual(status, 403)
+        status, body = self.request("/v1/workforce/improvement-proposals", token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["proposals"][0]["state"], "proposed")
+        status, detail = self.request(
+            "/v1/workforce/improvement-proposals/capacity-review",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["proposal"]["category"], "department_backlog")
+        self.assertEqual(detail["events"][0]["actor_id"], "system")
+
+    def test_improvement_proposal_transition_derives_actor_and_never_executes(self):
+        self.engine.create_improvement_proposal("review-queue", {
+            "category": "department_backlog", "recommendation": "Review queue priorities",
+        })
+        path = "/v1/workforce/improvement-proposals/review-queue/transition"
+        headers = [(b"content-type", b"application/json")]
+        status, denied = self.request(
+            path, method="POST", token=self.user_session.token,
+            body=b'{"expected_state":"proposed","new_state":"approved"}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 403)
+        status, approved = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=json.dumps({
+                "expected_state": "proposed", "new_state": "approved",
+                "decision_note": "Reviewed by an authorized operator",
+                "actor_id": "forged-actor",
+            }).encode(),
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 400)
+        status, approved = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=json.dumps({
+                "expected_state": "proposed", "new_state": "approved",
+                "decision_note": "Reviewed by an authorized operator",
+            }).encode(),
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(approved["state"], "approved")
+        self.assertEqual(approved["decided_by"], self.admin_session.user.user_id)
+        self.assertEqual(approved["events"][-1]["actor_id"], self.admin_session.user.user_id)
+        self.assertEqual(approved["events"][-1]["event_type"], "proposal.approved")
+        self.assertIsNone(approved["outcome"])
+        self.assertNotIn("execution", approved)
+
+    def test_improvement_proposal_transition_checks_expected_state_and_completion_outcome(self):
+        self.engine.create_improvement_proposal("outcome-review", {"recommendation": "Review"})
+        path = "/v1/workforce/improvement-proposals/outcome-review/transition"
+        headers = [(b"content-type", b"application/json")]
+        status, body = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=b'{"expected_state":"approved","new_state":"completed","outcome":{"observed":true}}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 409)
+        status, body = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=b'{"expected_state":"proposed","new_state":"approved"}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 200)
+        status, body = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=b'{"expected_state":"approved","new_state":"completed"}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 400)
+        status, body = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=b'{"expected_state":"approved","new_state":"completed","outcome":{"observed":true}}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["state"], "completed")
+        self.assertEqual(body["outcome"], {"observed": True})
+
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
         self.assertEqual(status, 404)
