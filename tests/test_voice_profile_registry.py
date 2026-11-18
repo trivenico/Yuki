@@ -103,5 +103,5 @@ class VoiceProfileRegistryTests(unittest.TestCase):
             self.stage()
 
 
-if __.name__ == "__main__":
+if __name__ == "__main__":
     unittest.main()
