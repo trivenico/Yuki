@@ -113,7 +113,7 @@ class VoiceEncryptionKeyProvider:
             raise VoiceKeyStoreError("Explicit confirmation is required to delete the voice encryption key.")
         keyring_module = self._load_keyring()
         self._validate_backend(keyring_module)
-        with self._lock, _cross_process_key_lock(self._account, self._lock_directory):
+        with self._lock, cross_process_lock(self._account, self._lock_directory, namespace="VoiceKey", error_type=VoiceKeyStoreError):
             try:
                 encoded = keyring_module.get_password(_SERVICE, self._account)
                 if encoded is None:
