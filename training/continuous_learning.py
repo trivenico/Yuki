@@ -75,7 +75,11 @@ class ContinuousLearningCoordinator:
             self._pending.clear()
             self.generator = SFTDataGenerator(dataset_version=self.generator.dataset_version)
             self.memory = None
+            store = self.store
             self.store = None
+            close_store = getattr(store, "close", None)
+            if callable(close_store):
+                close_store()
             self._consent_verifier = None
             self._approval_verifier = None
             self._authorization_snapshot = None
