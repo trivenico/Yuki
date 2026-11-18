@@ -16,6 +16,7 @@ from typing import Protocol
 from voice.audio_validation import VoiceSampleMetadata, validate_pcm_audio, validate_voice_sample
 from voice.profile_registry import VoiceProfileRegistry
 from voice.secure_artifact_store import EncryptedVoiceArtifactStore
+from voice.clone_process import ProcessIsolatedVoiceCloneExecutor, VoiceCloneWorkerCancelled, VoiceCloneWorkerError, VoiceCloneWorkerTimeout
 
 
 class VoiceCloneJobError(RuntimeError):
@@ -85,6 +86,7 @@ class VoiceCloneJobController:
         profile_registry: VoiceProfileRegistry,
         *,
         timeout_seconds: int = 180,
+        executor: ProcessIsolatedVoiceCloneExecutor | None = None,
     ):
         if getattr(provider, "is_local", None) is not True:
             raise ValueError("Only an explicitly local voice-cloning provider is supported.")
@@ -97,6 +99,7 @@ class VoiceCloneJobController:
         self._store = artifact_store
         self._registry = profile_registry
         self._timeout = timeout_seconds
+        self._executor = executor or ProcessIsolatedVoiceCloneExecutor()
         self._lock = threading.RLock()
         self._cancel = threading.Event()
         self._state = VoiceCloneJobState.IDLE
@@ -154,9 +157,17 @@ class VoiceCloneJobController:
             self._check_cancelled(deadline)
             with self._lock:
                 self._state = VoiceCloneJobState.GENERATING
-            output = self._provider.create_clone(
-                sample_audio, cancel_event=self._cancel, deadline_monotonic=deadline,
-            )
+            try:
+                output = self._executor.run(
+                    self._provider, sample_audio,
+                    cancel_event=self._cancel, deadline_monotonic=deadline,
+                )
+            except VoiceCloneWorkerCancelled as exc:
+                raise VoiceCloneJobCancelled("Voice-cloning job was cancelled.") from exc
+            except VoiceCloneWorkerTimeout as exc:
+                raise VoiceCloneJobTimeout("Voice-cloning worker exceeded its time budget.") from exc
+            except VoiceCloneWorkerError as exc:
+                raise VoiceCloneJobError("Isolated voice-cloning worker failed.") from exc
             self._check_cancelled(deadline)
             if not isinstance(output, VoiceCloneOutput):
                 raise VoiceCloneJobError("Local provider returned an invalid result.")
