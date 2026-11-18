@@ -76,6 +76,24 @@ class LearningCenterPanelTests(unittest.TestCase):
         self.assertFalse(controls["approve"].isEnabled())
         self.assertTrue(controls["reject"].isEnabled())
 
+    def test_learning_consent_off_disables_approval_even_if_training_consent_is_on(self):
+        state = dict(self.state)
+        state["learning_consent"] = False
+        state["pending"] = []
+        state["retained_pending_count"] = 1
+        self.page.learning_presenter.render_state(state)
+        self.page.learning_presenter.render_review(
+            "a" * 24,
+            {
+                "proposal_id": "a" * 24,
+                "messages": [
+                    {"role": "user", "content": "Review this code."},
+                    {"role": "assistant", "content": "Add a focused unit test."},
+                ],
+            },
+        )
+        self.assertFalse(self.page.learning_controls["approve"].isEnabled())
+
     def test_pending_samples_are_hidden_when_learning_consent_is_off(self):
         state = dict(self.state)
         state["learning_consent"] = False
