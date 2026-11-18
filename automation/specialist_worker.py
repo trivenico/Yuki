@@ -271,6 +271,21 @@ class SpecialistTaskWorker:
                 return self.runtime._record(current)
             if current.state != "running" or current.lease_owner != self.worker_id:
                 raise RuntimeError("task is no longer owned by this worker.")
+            if "--manifest-v1--" in claimed.workflow_name:
+                valid_manifest = False
+                if self.manifest_validator is not None:
+                    try:
+                        valid_manifest = (
+                            self.manifest_validator(task_id=claimed.run_id, agent_id=agent_id) is True
+                        )
+                    except Exception:
+                        valid_manifest = False
+                if not valid_manifest:
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=current.version, worker_id=self.worker_id,
+                        error_code="specialist_manifest_invalid",
+                    )
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
