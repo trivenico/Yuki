@@ -25,3 +25,12 @@ A graphical dashboard and Textual TUI are not implemented yet. Future UI work sh
 The authenticated web shell includes an optional read-only Executive Command Center for admin/operator sessions when the workforce dashboard API is mounted. It displays workforce and task metrics, department summaries, a searchable/filterable paginated employee directory, and recent persisted goals. It reuses the existing same-origin bearer session, calls only the read-only `/v1/workforce/*` endpoints, and renders API values with DOM text nodes. No execution, approval, or permission-management controls are exposed. Data refresh is manual; this is not a push/live-update stream.
 
 Goal cards open a bounded execution timeline with task assignments and paginated event envelopes. Arbitrary low-level event detail is deliberately omitted from the API projection to avoid exposing sensitive executor messages.
+
+## CEO approval center (read-only increment)
+
+Deployments may optionally pass `pending_approvals` and `approval_audit` to `build_conversation_runtime` alongside `workforce_dashboard`. The authenticated admin/operator API then exposes:
+
+- `GET /v1/workforce/approvals?limit=100` — safe pending metadata only (reference, skill identifier, expiry); action arguments and action snapshots are never returned.
+- `GET /v1/workforce/approvals/audit?limit=50` — metadata-only audit events with hashed actor/pending identifiers and a hash-chain integrity result.
+
+The web command center displays this inbox and audit history. This increment deliberately has no approve/deny buttons and cannot execute actions. Approval actions must continue through the existing `ApprovalCoordinator`, trusted actor/session binding, explicit confirmation, one-time consumption, and audited execution/recovery path. These services are optional and must be the same persistent stores used by the guarded runtime; the API does not create duplicate stores.
