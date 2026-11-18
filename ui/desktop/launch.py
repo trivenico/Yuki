@@ -6,6 +6,7 @@ single background worker; widgets never access provider clients or stores.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -285,6 +286,34 @@ def run() -> int:
                 self.signals.finished.emit("", exc, self.session)
 
 
+    class WakeWordUiSignals(QObject):
+        state = Signal(object, str)
+        wake = Signal(object)
+        error = Signal(object, object)
+
+    class WakeWordWorkerSignals(QObject):
+        finished = Signal(object, object)
+
+    class WakeWordWorker(QRunnable):
+        def __init__(self, session, operation: str):
+            super().__init__()
+            self.session = session
+            self.operation = operation
+            self.signals = WakeWordWorkerSignals()
+
+        @Slot()
+        def run(self):
+            try:
+                if self.operation == "start":
+                    result = self.session.start()
+                elif self.operation == "close":
+                    result = self.session.close()
+                else:
+                    result = self.session.stop()
+                self.signals.finished.emit(result, None)
+            except Exception as exc:
+                self.signals.finished.emit(None, exc)
+
     class SpeechWorkerSignals(QObject):
         finished = Signal(object, object, object, object)
 
@@ -401,6 +430,14 @@ def run() -> int:
             self.lifecycle = None
             self.controller = None
             self.voice_session = None
+            self.wakeword_session = None
+            self.wakeword_worker = None
+            self.wakeword_signals = WakeWordUiSignals()
+            self.wakeword_model_path = None
+            self._wake_capture_after_stop = False
+            self._wake_stop_requested = False
+            self._wakeword_operation = None
+            self._wakeword_close_failed = False
             self.speech_session = None
             self.speech_worker = None
             self.busy = False
@@ -412,6 +449,9 @@ def run() -> int:
             self.current_plan = None
             self.migration_preview = None
             self._build_ui()
+            self.wakeword_signals.state.connect(self._wakeword_state_changed)
+            self.wakeword_signals.wake.connect(self._wakeword_detected)
+            self.wakeword_signals.error.connect(self._wakeword_error)
             self._initialize()
 
         def _build_ui(self):
@@ -497,6 +537,22 @@ def run() -> int:
             voice_controls.addWidget(self.spoken_replies_checkbox)
             voice_controls.addWidget(self.speech_stop_button)
             chat_layout.addLayout(voice_controls)
+            wake_controls = QHBoxLayout()
+            self.wakeword_model_button = QPushButton("Choose Yuki model…")
+            self.wakeword_model_button.clicked.connect(self._choose_wakeword_model)
+            self.wakeword_start_button = QPushButton("Start Yuki listening")
+            self.wakeword_start_button.setEnabled(False)
+            self.wakeword_start_button.clicked.connect(self._start_wakeword_listener)
+            self.wakeword_stop_button = QPushButton("Stop listening")
+            self.wakeword_stop_button.setEnabled(False)
+            self.wakeword_stop_button.clicked.connect(lambda: self._stop_wakeword_listener(capture=False))
+            wake_controls.addWidget(self.wakeword_model_button)
+            wake_controls.addWidget(self.wakeword_start_button)
+            wake_controls.addWidget(self.wakeword_stop_button)
+            chat_layout.addLayout(wake_controls)
+            self.wakeword_status = QLabel("Yuki listening is off. No background audio is captured.")
+            self.wakeword_status.setWordWrap(True)
+            chat_layout.addWidget(self.wakeword_status)
             self.voice_status = QLabel("Microphone off. Spoken replies off. No background listening.")
             self.voice_status.setWordWrap(True)
             chat_layout.addWidget(self.voice_status)
@@ -1020,6 +1076,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.spoken_replies_checkbox, self.speech_stop_button,
             ):
                 widget.setEnabled(True)
+            self._close_wakeword_session()
             if self.voice_session is not None:
                 self.voice_session.close()
             self.voice_session = None
@@ -1375,8 +1432,248 @@ Version: {version}",
                     "The task changed or could not be cancelled (" + type(exc).__name__ + "). Refresh and review it again."
                 )
 
+        def _choose_wakeword_model(self):
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Choose local Yuki ONNX model", "", "ONNX models (*.onnx)"
+            )
+            if not path:
+                return
+            self.wakeword_model_path = path
+            self.wakeword_model_button.setText("Model: " + Path(path).name)
+            self.wakeword_start_button.setEnabled(
+                self.controller is not None and self.voice_session is not None
+                and self.voice_session.enabled and self.wakeword_session is None
+            )
+            self.wakeword_status.setText(
+                "A local ONNX model is selected. It will be loaded only after you explicitly start listening."
+            )
+
+        def _start_wakeword_listener(self):
+            if self.controller is None or self.busy or self.wakeword_session is not None:
+                return
+            if self.voice_session is None or not self.voice_session.enabled:
+                self.wakeword_status.setText(
+                    "Enable the microphone for this session first. Wake-word listening requires separate consent."
+                )
+                return
+            if not self.wakeword_model_path:
+                self._choose_wakeword_model()
+                if not self.wakeword_model_path:
+                    return
+            answer = QMessageBox.question(
+                self, "Start local Yuki listening",
+                "Yuki will continuously process short microphone frames locally to detect the wake phrase. "
+                "No idle audio is saved, transcribed, or uploaded. After detection, Yuki records one "
+                "five-second local speech capture and places the transcript in the composer for your review. "
+                "You can stop listening at any time. This does not authorize computer actions. Continue?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                from voice.openwakeword_session import create_openwakeword_session
+                session_ref = {}
+                session = create_openwakeword_session(
+                    model_path=self.wakeword_model_path,
+                    on_wake=lambda: self.wakeword_signals.wake.emit(session_ref.get("session")),
+                    on_state=lambda state: self.wakeword_signals.state.emit(session_ref.get("session"), state),
+                    on_error=lambda error: self.wakeword_signals.error.emit(session_ref.get("session"), error),
+                )
+                session_ref["session"] = session
+                self.wakeword_session = session
+                self.wakeword_start_button.setEnabled(False)
+                self.wakeword_model_button.setEnabled(False)
+                self.wakeword_stop_button.setEnabled(True)
+                self.wakeword_status.setText("Starting local wake-word model and microphone…")
+                self._run_wakeword_operation("start")
+            except Exception as exc:
+                self.wakeword_session = None
+                self.wakeword_status.setText(
+                    "Wake-word setup unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _run_wakeword_operation(self, operation: str):
+            session = self.wakeword_session
+            if session is None:
+                return
+            worker = WakeWordWorker(session, operation)
+            worker.signals.finished.connect(
+                lambda result, error, captured=session, action=operation:
+                    self._wakeword_operation_finished(result, error, captured, action)
+            )
+            self.wakeword_worker = worker
+            self._wakeword_operation = operation
+            self.pool.start(worker)
+
+        def _wakeword_operation_finished(self, result, error, captured_session, operation):
+            if (
+                captured_session is not self.wakeword_session
+                or operation != self._wakeword_operation
+            ):
+                return
+            self.wakeword_worker = None
+            self._wakeword_operation = None
+            if operation == "close":
+                if error is None and result is True:
+                    capture_after_close = self._wake_capture_after_stop
+                    self._wake_capture_after_stop = False
+                    self.wakeword_session = None
+                    self._wakeword_close_failed = False
+                    self.wakeword_model_button.setEnabled(True)
+                    self.wakeword_start_button.setEnabled(False)
+                    self.wakeword_stop_button.setEnabled(False)
+                    self.wakeword_status.setText(
+                        "Yuki listening is off. Microphone released."
+                    )
+                    if capture_after_close:
+                        self._start_voice_capture()
+                else:
+                    self._wakeword_close_failed = True
+                    self.wakeword_model_button.setEnabled(False)
+                    self.wakeword_start_button.setEnabled(False)
+                    self.wakeword_stop_button.setEnabled(True)
+                    reason = type(error).__name__ if error is not None else "timeout"
+                    self.wakeword_status.setText(
+                        "Wake-word shutdown is still releasing the microphone ("
+                        + reason + "). Press Stop listening to retry cleanup."
+                    )
+                return
+            if error is not None:
+                self.wakeword_status.setText(
+                    "Wake-word " + operation + " failed (" + type(error).__name__ + ")."
+                )
+                if operation == "start":
+                    # Close on the worker pool rather than blocking the UI
+                    # while an audio driver/model unwinds.
+                    self._close_wakeword_session()
+                return
+            if operation == "start":
+                self.wakeword_status.setText(
+                    "Listening locally for Yuki. Say the wake phrase to begin a five-second capture."
+                )
+                if self._wake_stop_requested:
+                    self._wake_stop_requested = False
+                    self._stop_wakeword_listener(capture=self._wake_capture_after_stop)
+            else:
+                if result is False:
+                    self.wakeword_status.setText(
+                        "Wake-word microphone has not fully stopped. Press Stop listening to retry."
+                    )
+                    self.wakeword_stop_button.setEnabled(True)
+                    return
+                self.wakeword_session = None
+                self.wakeword_model_button.setEnabled(True)
+                self.wakeword_start_button.setEnabled(
+                    self.controller is not None and self.voice_session is not None
+                    and self.voice_session.enabled
+                )
+                self.wakeword_stop_button.setEnabled(False)
+                self.wakeword_status.setText("Yuki listening is off. Microphone released.")
+                if self._wake_capture_after_stop:
+                    self._wake_capture_after_stop = False
+                    self._start_voice_capture()
+
+        @Slot(object, str)
+        def _wakeword_state_changed(self, captured_session, state: str):
+            if captured_session is not self.wakeword_session:
+                return
+            if self._wakeword_operation == "close" and state not in {"stopping", "closed", "failed"}:
+                return
+            labels = {
+                "starting": "Loading local wake-word model and opening microphone…",
+                "listening": "Listening locally for Yuki. No audio is saved or uploaded.",
+                "stopping": "Stopping wake-word listener and releasing microphone…",
+                "triggered": "Yuki detected. Preparing a short capture…",
+                "disabled": "Yuki listening is off. Microphone released.",
+                "failed": "Wake-word listener stopped after an error.",
+                "closed": "Wake-word listener closed.",
+            }
+            self.wakeword_status.setText(labels.get(state, "Wake-word state: " + state))
+            if state == "triggered":
+                self._stop_wakeword_listener(capture=True)
+            elif state in {"disabled", "failed"} and self._wakeword_operation is None:
+                # The input stream ended or inference failed independently of
+                # a user stop. Reconcile the UI and release the session handle.
+                self._stop_wakeword_listener(capture=False)
+
+        @Slot(object)
+        def _wakeword_detected(self, captured_session):
+            # The audio worker only emits this queued UI event; capture begins
+            # after the wake-word device has been stopped and released.
+            if captured_session is self.wakeword_session and self.wakeword_session is not None:
+                self._stop_wakeword_listener(capture=True)
+
+        @Slot(object, object)
+        def _wakeword_error(self, captured_session, error):
+            if captured_session is not self.wakeword_session:
+                return
+            self.wakeword_status.setText(
+                "Wake-word detection failed (" + type(error).__name__ + ")."
+            )
+
+        def _stop_wakeword_listener(self, *, capture: bool = False):
+            if self._wakeword_close_failed:
+                self._close_wakeword_session()
+                return
+            if capture:
+                self._wake_capture_after_stop = True
+            else:
+                self._wake_capture_after_stop = False
+            session = self.wakeword_session
+            if session is None:
+                self.wakeword_stop_button.setEnabled(False)
+                return
+            if self._wakeword_operation == "stop":
+                return
+            if self._wakeword_operation == "start":
+                self._wake_stop_requested = True
+                session.request_stop()
+                return
+            session.request_stop()
+            self.wakeword_stop_button.setEnabled(False)
+            self.wakeword_start_button.setEnabled(False)
+            self.wakeword_status.setText("Stopping wake-word listener…")
+            self._run_wakeword_operation("stop")
+
+        def _close_wakeword_session(self):
+            session = self.wakeword_session
+            self._wake_capture_after_stop = False
+            self._wake_stop_requested = False
+            if session is None:
+                self._wakeword_close_failed = False
+                self.wakeword_model_button.setEnabled(True)
+                self.wakeword_stop_button.setEnabled(False)
+                self.wakeword_start_button.setEnabled(False)
+                self.wakeword_status.setText("Yuki listening is off. Microphone released.")
+                return
+            if self._wakeword_operation == "close":
+                return
+            # Signal the capture to stop immediately, then queue the blocking
+            # join/release behind any in-flight operation on the single worker
+            # pool. The UI thread never waits for an audio worker.
+            try:
+                session.request_stop()
+            except Exception:
+                pass
+            self.wakeword_model_button.setEnabled(False)
+            self.wakeword_start_button.setEnabled(False)
+            self.wakeword_stop_button.setEnabled(False)
+            self.wakeword_status.setText("Closing wake-word listener and releasing microphone…")
+            self._run_wakeword_operation("close")
+
         def _set_voice_enabled(self, enabled: bool):
+            if enabled and self.wakeword_session is not None:
+                QMessageBox.warning(
+                    self, "Microphone still releasing",
+                    "Yuki has not confirmed that the previous wake-word microphone session is fully closed. "
+                    "Use Stop listening to retry cleanup before enabling microphone capture."
+                )
+                self.voice_checkbox.blockSignals(True)
+                self.voice_checkbox.setChecked(False)
+                self.voice_checkbox.blockSignals(False)
+                return
             if not enabled:
+                self._close_wakeword_session()
                 session = self.voice_session
                 self.voice_session = None
                 if session is not None:
@@ -1384,6 +1681,7 @@ Version: {version}",
                 self.voice_button.setEnabled(False)
                 self.voice_stop_button.setEnabled(False)
                 self.voice_status.setText("Microphone off. No background listening.")
+                self.wakeword_start_button.setEnabled(False)
                 return
             answer = QMessageBox.question(
                 self, "Enable microphone for this session",
@@ -1404,8 +1702,9 @@ Version: {version}",
                 self.voice_session = VoiceSession(enabled=True)
                 self.voice_button.setEnabled(self.controller is not None and not self.busy)
                 self.voice_status.setText(
-                    "Microphone permission enabled for this session. Press Speak to start a five-second capture."
+                    "Microphone permission enabled for this session. Press Speak or explicitly start Yuki listening."
                 )
+                self.wakeword_start_button.setEnabled(bool(self.wakeword_model_path))
             except Exception as exc:
                 self.voice_session = None
                 self.voice_checkbox.blockSignals(True)
@@ -1530,6 +1829,11 @@ Version: {version}",
         def _start_voice_capture(self):
             if self.controller is None or self.busy or self.voice_session is None:
                 return
+            if self.wakeword_session is not None:
+                # Avoid opening a second microphone stream. Stop the local
+                # detector first, then continue the bounded capture.
+                self._stop_wakeword_listener(capture=True)
+                return
             if not self.voice_session.enabled:
                 self.voice_status.setText("Enable microphone permission before starting a capture.")
                 return
@@ -1631,6 +1935,7 @@ Version: {version}",
                 self._start_spoken_reply(reply)
 
         def _clear_authenticated_session_ui(self):
+            self._close_wakeword_session()
             if self.voice_session is not None:
                 self.voice_session.close()
             self.voice_session = None
@@ -1751,6 +2056,7 @@ Version: {version}",
             if self._logout_started or self._shutdown_started:
                 return
             self._logout_started = True
+            self._close_wakeword_session()
             if self.voice_session is not None:
                 self.voice_session.close()
             if self.speech_session is not None:
@@ -1805,6 +2111,7 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            self._close_wakeword_session()
             if self.voice_session is not None:
                 self.voice_session.close()
             if self.speech_session is not None:
