@@ -56,6 +56,7 @@ def build_authenticated_desktop_conversation(
     identity: Any,
     sessions: Any,
     memory: Any = None,
+    learning: Any = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
 ) -> DesktopConversationSession:
     """Compose a live-session-checked durable chat for one authenticated owner.
@@ -82,6 +83,7 @@ def build_authenticated_desktop_conversation(
     try:
         facade = AuthenticatedDesktopConversation(
             runtime, identity=identity, sessions=sessions, memory=memory,
+            learning=learning,
         )
         return DesktopConversationSession(runtime, facade)
     except Exception:
