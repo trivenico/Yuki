@@ -138,6 +138,19 @@ def build_conversation_runtime(
         raise TypeError("approval_audit must be a SQLiteApprovalAuditLog")
     if workforce_application is not None and not isinstance(workforce_application, WorkforceApplicationRuntime):
         raise TypeError("workforce_application must be a WorkforceApplicationRuntime")
+    if workforce_application is not None:
+        if workforce_dashboard is None:
+            workforce_dashboard = WorkforceDashboard(
+                registry=workforce_application.registry,
+                task_engine=workforce_application.engine,
+            )
+        elif (
+            workforce_dashboard.registry is not workforce_application.registry
+            or workforce_dashboard.task_engine is not workforce_application.engine
+        ):
+            raise ValueError(
+                "workforce_dashboard must use the workforce application's registry and task engine"
+            )
     if (pending_approvals is not None or approval_audit is not None) and workforce_dashboard is None:
         raise ValueError("approval inbox services require workforce_dashboard")
     if mcp_runtime is not None and oauth_connections is None:
