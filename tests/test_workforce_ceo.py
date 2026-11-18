@@ -223,6 +223,21 @@ class WorkforceCEOTests(unittest.TestCase):
         self.assertEqual(len(self.engine.list_tasks(goal_id)), 1)
         self.assertEqual(self.engine.list_tasks(goal_id)[0]["id"], first.assignments[0].task_id)
 
+    def test_invalid_goal_id_is_rejected_before_planner_or_storage(self):
+        class MustNotPlan(Planner):
+            def decompose(self, goal):
+                raise AssertionError("planner must not run for invalid goal ID")
+
+        ceo = WorkforceCEO(
+            planner=MustNotPlan(),
+            registry=self.registry,
+            task_engine=self.engine,
+        )
+        for invalid in ("", "   ", 123):
+            with self.subTest(goal_id=invalid):
+                with self.assertRaisesRegex(ValueError, "goal_id must be non-empty text"):
+                    ceo.plan_and_dispatch("A valid goal", goal_id=invalid)
+
     def test_invalid_autonomy_tier_rejected(self):
         with self.assertRaises(ValueError):
             WorkforceCEO(
