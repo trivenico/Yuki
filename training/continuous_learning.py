@@ -133,7 +133,7 @@ class ContinuousLearningCoordinator:
                     "created_at": item["created_at"],
                 }
         generator = SFTDataGenerator(dataset_version=self.generator.dataset_version)
-        if authorization["training"]:
+        if authorization["learning"] or authorization["training"]:
             for item in state["approved"]:
                 if item["proposal_id"] not in approved_ids:
                     continue
@@ -433,9 +433,9 @@ class ContinuousLearningCoordinator:
                     self._last_learning_error = "Encrypted learning data is unavailable; few-shot personalization is paused."
                     return None
                 self._last_learning_error = None
-                if not authorization["training"]:
+                if not authorization["learning"]:
                     return None
-            elif not self._has_consent("training"):
+            elif not self._has_consent("learning"):
                 return None
             dataset = self.generator.export_jsonl()
         layer = FewShotPatchLayer(dataset, max_examples=max_examples, max_chars=max_chars)
