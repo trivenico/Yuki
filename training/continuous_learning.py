@@ -481,7 +481,11 @@ class ContinuousLearningCoordinator:
                     if proposal_id not in revoked_ids:
                         # Also revoke pending IDs: a prior interrupted approval
                         # may have left an audit event before its store commit.
-                        revoke_approval(proposal_id)
+                        revocation_record = revoke_approval(proposal_id)
+                        if type(revocation_record) is not int or revocation_record <= 0:
+                            raise ContinuousLearningError(
+                                "Approval revocation was not durably acknowledged; deletion was stopped."
+                            )
                         revoked_ids.add(proposal_id)
                 counts["pending"] = len(pending)
                 counts["approved"] = len(approved)
