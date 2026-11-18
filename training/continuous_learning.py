@@ -66,6 +66,26 @@ class ContinuousLearningCoordinator:
         if self.store is not None:
             self._refresh_persisted_state()
 
+    def close(self) -> None:
+        """Invalidate this session-scoped coordinator without deleting durable data."""
+        with self._lock:
+            if getattr(self, "_closed", False):
+                return
+            self._closed = True
+            self._pending.clear()
+            self.generator = SFTDataGenerator(dataset_version=self.generator.dataset_version)
+            self.memory = None
+            self.store = None
+            self._consent_verifier = None
+            self._approval_verifier = None
+            self._authorization_snapshot = None
+            self._stored_pending_count = 0
+            self._stored_approved_count = 0
+
+    @property
+    def closed(self) -> bool:
+        return getattr(self, "_closed", False)
+
     def _has_consent(self, purpose: str) -> bool:
         if self._consent_verifier is None:
             return False
