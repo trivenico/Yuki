@@ -1068,6 +1068,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.login_button.setEnabled(True)
 
         def _open_session(self, identity):
+            if self.security_service is not None:
+                raise DesktopStartupError("Previous security-session cleanup is incomplete.")
             # A fresh authenticated session restores the chat controls and tabs
             # after any prior fail-closed cleanup-retry state.
             for index in range(self.authenticated_tabs.count()):
@@ -1132,8 +1134,6 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
             )
-            if self.security_service is not None:
-                raise DesktopStartupError("Previous security-session cleanup is incomplete.")
             from ui.desktop.security_service import create_authenticated_desktop_security_service
             self.security_identity = identity
             self.security_service = create_authenticated_desktop_security_service(
