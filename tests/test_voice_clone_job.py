@@ -92,7 +92,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
     def controller(self, provider=None):
         return VoiceCloneJobController(provider or FakeLocalProvider(), self.store, self.registry)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_success_stages_profile_but_never_activates_it(self):
         controller = self.controller()
         result = controller.run(
@@ -120,7 +120,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller(FakeRemoteProvider())
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_cancellation_after_provider_returns_does_not_stage_profile(self):
         controller = self.controller(FakeLocalProvider(cancel_during=True))
         with self.assertRaises(VoiceCloneJobCancelled):
@@ -128,7 +128,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(controller.state, VoiceCloneJobState.CANCELLED)
         self.assertEqual(self.registry.list_profiles(), [])
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_provider_failure_preserves_registry(self):
         controller = self.controller(FakeLocalProvider(fail=True))
         with self.assertRaises(VoiceCloneJobError):
@@ -136,7 +136,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(controller.state, VoiceCloneJobState.FAILED)
         self.assertEqual(self.registry.list_profiles(), [])
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_rejects_concurrent_job(self):
         controller = self.controller(BlockingProvider())
         errors = []
@@ -160,14 +160,14 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_rejects_invalid_preview_before_storing_artifact(self):
         controller = self.controller(InvalidPreviewProvider())
         with self.assertRaisesRegex(RuntimeError, "valid bounded PCM WAV"):
             controller.run(wav_sample(), profile_id="bad-preview", display_name="Bad preview", source_owner_consent=True)
         self.assertEqual(self.registry.list_profiles(), [])
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_isolated_worker_is_killed_at_wall_clock_deadline(self):
         executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
         started = multiprocessing.get_context("spawn").Event()
@@ -190,7 +190,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], VoiceCloneWorkerTimeout)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_isolated_worker_is_killed_when_parent_cancels(self):
         executor = ProcessIsolatedVoiceCloneExecutor(poll_interval=0.02, terminate_grace_seconds=0.1)
         cancel = threading.Event()
@@ -222,7 +222,7 @@ class VoiceCloneJobControllerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             VoiceCloneWorkerLimits(cpu_seconds=0)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX worker limits are not implemented on Windows")
+    @unittest.skipUnless(os.name in {"posix", "nt"}, "OS worker limits are unavailable on this platform")
     def test_rejects_oversized_provider_output(self):
         controller = self.controller(LargeProvider())
         with self.assertRaises(RuntimeError):
