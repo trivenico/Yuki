@@ -43,6 +43,11 @@ class WorkforceCEOTests(unittest.TestCase):
         execution = self.ceo.plan_and_dispatch("Research the market and report findings")
         report = self.ceo.report(execution)
         self.assertEqual(report["counts"], {"queued": 2})
+        self.assertEqual(sum(value["total"] for value in report["departments"].values()), 2)
+        self.assertEqual(
+            sum(value.get("queued", 0) for value in report["departments"].values()),
+            2,
+        )
         self.assertFalse(report["complete"])
 
     def test_can_require_independent_review_for_every_dispatched_task(self):
