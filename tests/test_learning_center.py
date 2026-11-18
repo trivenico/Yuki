@@ -52,6 +52,7 @@ class LearningCenterPanelTests(unittest.TestCase):
             on_reject=lambda proposal_id: None,
             on_delete_all=lambda: self.deleted.append(True) or {"pending": 2, "approved": 3},
         )
+        self.wait_for_learning_idle()
 
     def wait_for_learning_idle(self, timeout_ms=5000):
         elapsed = 0
