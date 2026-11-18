@@ -216,6 +216,12 @@ class EncryptedVoiceArtifactStore:
                 if not stat.S_ISREG(file_stat.st_mode):
                     os.close(fd)
                     raise VoiceArtifactStoreError("Voice artifact is not a regular file.")
+                if hasattr(os, "getuid") and file_stat.st_uid != os.getuid():
+                    os.close(fd)
+                    raise VoiceArtifactStoreError("Voice artifact is not owned by this user.")
+                if file_stat.st_mode & 0o077:
+                    os.close(fd)
+                    raise VoiceArtifactStoreError("Voice artifact permissions are not private.")
                 if file_stat.st_size > self._max_bytes + len(_MAGIC) + _NONCE_BYTES + 16:
                     os.close(fd)
                     raise VoiceArtifactStoreError("Voice artifact exceeds its size limit.")
