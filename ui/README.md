@@ -19,3 +19,7 @@ The dashboard dependency is deliberately injected. Deployments must pass the sam
 The executive command-center frontend is not implemented yet. The current web shell remains the chat interface. Future UI work should integrate with the authenticated endpoints above and display workforce status, employee/department views, task progress, and approval state. Any action controls must continue to use the existing permission and approval gates.
 
 A graphical dashboard and Textual TUI are not implemented yet. Future UI work should display the exact action, target/workspace, risk, and one-time approval decision; provide cancellation and an audit view; and never bypass `core.permissions.PermissionGate`.
+
+## Executive workforce command center
+
+The authenticated web shell includes an optional read-only Executive Command Center for admin/operator sessions when the workforce dashboard API is mounted. It displays workforce and task metrics, department summaries, a searchable/filterable paginated employee directory, and recent persisted goals. It reuses the existing same-origin bearer session, calls only the read-only `/v1/workforce/*` endpoints, and renders API values with DOM text nodes. No execution, approval, or permission-management controls are exposed. Data refresh is manual; this is not a push/live-update stream.
