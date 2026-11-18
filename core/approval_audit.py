@@ -131,13 +131,24 @@ class SQLiteApprovalAuditLog:
             previous_hash = stored_hash
         return True
 
-    def latest_event(self, *, pending_id: str, actor: str, skill_id: str) -> str | None:
-        """Return the latest matching event only when the complete audit chain verifies."""
-        for name, value, limit in (("pending_id", pending_id, 128), ("actor", actor, 256), ("skill_id", skill_id, 120)):
-            if not isinstance(value, str) or not value.strip() or len(value) > limit:
-                raise ValueError(f"{name} must be a non-empty bounded string.")
-        pending_hash, actor_hash = self._digest(pending_id), self._digest(actor)
-        latest = None
+    def latest_events(
+        self, *, actor: str, pending_ids: list[str], skill_ids: list[str],
+    ) -> dict[tuple[str, str], str]:
+        """Return latest events for a bounded set after verifying the full chain once."""
+        if not isinstance(actor, str) or not actor.strip() or len(actor) > 256:
+            raise ValueError("actor must be a non-empty bounded string.")
+        if not isinstance(pending_ids, list) or len(pending_ids) > 10001:
+            raise ValueError("pending_ids must be a bounded list.")
+        if not isinstance(skill_ids, list) or not 1 <= len(skill_ids) <= 16:
+            raise ValueError("skill_ids must be a bounded non-empty list.")
+        if any(not isinstance(value, str) or not value.strip() or len(value) > 128 for value in pending_ids):
+            raise ValueError("pending_ids must contain bounded non-empty strings.")
+        if any(not isinstance(value, str) or not value.strip() or len(value) > 120 for value in skill_ids):
+            raise ValueError("skill_ids must contain bounded non-empty strings.")
+        pending_by_hash = {self._digest(value): value for value in pending_ids}
+        skill_set = set(skill_ids)
+        actor_hash = self._digest(actor)
+        latest: dict[tuple[str, str], str] = {}
         previous_hash = _ZERO_HASH
         with self._connect() as db:
             rows = db.execute("""SELECT event_type,pending_id_hash,actor_hash,skill_id,created_at,
@@ -156,14 +167,22 @@ class SQLiteApprovalAuditLog:
                 )
                 if not hmac.compare_digest(expected, stored_hash):
                     raise RuntimeError("Approval audit chain verification failed.")
+                pending_id = pending_by_hash.get(stored_pending)
                 if (
-                    hmac.compare_digest(stored_pending, pending_hash)
+                    pending_id is not None
                     and hmac.compare_digest(stored_actor, actor_hash)
-                    and stored_skill == skill_id
+                    and stored_skill in skill_set
                 ):
-                    latest = event_type
+                    latest[(pending_id, stored_skill)] = event_type
                 previous_hash = stored_hash
         return latest
+
+    def latest_event(self, *, pending_id: str, actor: str, skill_id: str) -> str | None:
+        """Return the latest matching event only when the complete audit chain verifies."""
+        events = self.latest_events(
+            actor=actor, pending_ids=[pending_id], skill_ids=[skill_id],
+        )
+        return events.get((pending_id, skill_id))
 
 
 class MCPExecutionAudit:
