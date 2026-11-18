@@ -141,6 +141,11 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             "/v1/workforce/employees", token=self.admin_session.token, query=b"page=0"
         )
         self.assertEqual(status, 400)
+        status, _ = self.request(
+            "/v1/workforce/goals/unknown", token=self.admin_session.token,
+            query=b"after_event_id=10000",
+        )
+        self.assertEqual(status, 404)
 
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
