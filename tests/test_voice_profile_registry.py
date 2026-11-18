@@ -75,6 +75,20 @@ class VoiceProfileRegistryTests(unittest.TestCase):
         with self.assertRaises(VoiceProfileRegistryError):
             self.registry.delete_profile("clone-one", confirmed=True)
 
+    def test_previous_voice_cannot_be_disabled_before_rollback(self):
+        self.stage()
+        self.registry.approve_profile("clone-one")
+        self.registry.activate_profile("clone-one", confirmed=True)
+        self.registry.stage_profile(
+            "clone-two", "Second voice", "local-test", "artifact:two",
+            source_owner_consent=True,
+        )
+        self.registry.approve_profile("clone-two")
+        self.registry.activate_profile("clone-two", confirmed=True)
+        with self.assertRaises(VoiceProfileRegistryError):
+            self.registry.disable_profile("clone-one", confirmed=True)
+        self.assertEqual(self.registry.revert_to_previous(confirmed=True)["profile_id"], "clone-one")
+
     def test_profile_metadata_survives_restart_without_audio_bytes(self):
         self.stage()
         restarted = VoiceProfileRegistry(
@@ -94,6 +108,18 @@ class VoiceProfileRegistryTests(unittest.TestCase):
         link.symlink_to(target, target_is_directory=True)
         with self.assertRaises(VoiceProfileRegistryError):
             VoiceProfileRegistry(link, authorize=lambda: True)
+
+    def test_rejects_disabled_active_or_previous_profiles_on_load(self):
+        self.stage()
+        self.registry.approve_profile("clone-one")
+        self.registry.activate_profile("clone-one", confirmed=True)
+        registry_file = Path(self.temp.name) / "voices" / "profiles.json"
+        import json
+        state = json.loads(registry_file.read_text(encoding="utf-8"))
+        state["profiles"]["clone-one"]["status"] = "disabled"
+        registry_file.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaises(VoiceProfileRegistryError):
+            VoiceProfileRegistry(Path(self.temp.name) / "voices", authorize=lambda: True)
 
     def test_rejects_invalid_profile_ids_and_duplicate_profiles(self):
         with self.assertRaises(ValueError):
