@@ -183,3 +183,9 @@ This is a safe initial interchange format, not a general audio decoder. Other
 formats must be converted through a separately reviewed, sandboxed decoder
 with CPU, memory, duration, and timeout limits; do not broaden accepted input
 by trusting file extensions or MIME types.
+
+## Staged clone-job orchestration foundation
+
+voice/clone_job.py now defines a provider-neutral local-clone contract and a single-job controller. It validates consented PCM input, rejects providers that do not explicitly declare themselves local, applies bounded input/output sizes and a configurable 1–300 second deadline, supports cooperative cancellation, stores the opaque reusable profile artifact through the encrypted artifact store, and creates a metadata-only staged profile. The preview audio is returned to the caller in memory for an explicit audition. The controller never approves or activates the new profile.
+
+The caller must execute the synchronous job away from the UI thread. Important release limitation: the controller cannot forcibly stop a non-cooperative provider or enforce OS-level CPU/RAM limits. Its deadline and cancellation contract are cooperative checks, not a sandbox. Do not connect an untrusted provider or ship this as production cloning until provider inference runs in a separate restricted process with enforceable resource limits, timeout/kill, temporary-file cleanup, and clean-shutdown handling. No Qwen/OpenVoice model is loaded or downloaded by this foundation.
