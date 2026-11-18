@@ -38,7 +38,7 @@ def _canonical_messages(messages: Iterable[dict[str, Any]]) -> tuple[dict[str, s
         if not isinstance(item, dict) or set(item) != {"role", "content"}:
             raise SFTDataError("each message must contain only role and content")
         role, content = item["role"], item["content"]
-        if role not in _ALLOWED_ROLES or not isinstance(content, str) or not content.strip():
+        if not isinstance(role, str) or role not in _ALLOWED_ROLES or not isinstance(content, str) or not content.strip():
             raise SFTDataError("messages require a supported role and non-empty text")
         if len(content) > MAX_MESSAGE_CHARS:
             raise SFTDataError("a message exceeds the 16,000-character limit")
