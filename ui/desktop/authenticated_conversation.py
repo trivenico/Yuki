@@ -105,6 +105,17 @@ class AuthenticatedDesktopConversation:
                 self._active_sends -= 1
                 self._lifecycle.notify_all()
 
+    def submit_correction(
+        self, *, messages: list[dict[str, str]], source_reference: str, task_type: str,
+    ) -> str:
+        """Stage one exact turn selected by the authenticated desktop user."""
+        self._require_live_session()
+        return self._conversation.submit_correction(
+            messages=messages,
+            source_reference=source_reference,
+            task_type=task_type,
+        )
+
     def set_memory_context_enabled(self, enabled: bool) -> None:
         """Apply explicit, session-scoped consent to memory retrieval."""
         self._require_live_session()
