@@ -100,7 +100,10 @@ class DesktopSecurityService:
 
     def snapshot(self) -> dict:
         with self._lock:
-            if self._closed or self._controller is None:
+            if (
+                self._closed or self._controller is None
+                or not self._controller.active
+            ):
                 raise SecuritySessionError("Desktop security monitoring is not active.")
             controller = self._controller
             generation = self._generation
