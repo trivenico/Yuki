@@ -107,6 +107,11 @@ class ApprovalCoordinator:
 
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict], bool]) -> ApprovalOutcome:
+        if not callable(confirm):
+            return ApprovalOutcome(
+                False, "confirmation_unavailable",
+                pending_id=pending_id if isinstance(pending_id, str) else None,
+            )
         executor = self._resolve_executor(planner)
         if executor is None:
             # Keep the request pending: missing runtime wiring is not a user denial.
