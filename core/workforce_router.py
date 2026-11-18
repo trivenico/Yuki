@@ -49,7 +49,7 @@ class WorkforceTaskRouter:
         required_permissions: Iterable[str] = (),
         max_autonomy_tier: int = 1,
         dependencies: Iterable[str] = (),
-        max_attempts: int = 3,
+        max_attempts: int = 1,
     ) -> WorkforceAssignment:
         if not isinstance(description, str) or not description.strip() or len(description) > 20_000:
             raise ValueError("description must be non-empty and at most 20000 characters")
