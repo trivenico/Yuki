@@ -44,8 +44,26 @@ class WorkforceDashboard:
         employee_tasks: dict[str, Counter] = defaultdict(Counter)
         for task in tasks:
             assigned = task.get("payload", {}).get("assigned_employee_id")
-            if isinstance(assigned, str):
-                employee_tasks[assigned][task["state"]] += 1
+            if not isinstance(assigned, str):
+                continue
+            employee_tasks[assigned][task["state"]] += 1
+            if task["state"] == "succeeded":
+                result = task.get("result")
+                if isinstance(result, dict) and result.get("ok") is True:
+                    if result.get("review_required") is False:
+                        employee_tasks[assigned]["successful_without_review"] += 1
+                    else:
+                        evidence = result.get("review_evidence")
+                        if (
+                            isinstance(evidence, dict)
+                            and evidence.get("approved") is True
+                            and isinstance(evidence.get("reviewer_id"), str)
+                            and evidence["reviewer_id"].strip()
+                            and evidence["reviewer_id"] != assigned
+                            and isinstance(evidence.get("status"), str)
+                            and evidence["status"].strip()
+                        ):
+                            employee_tasks[assigned]["independently_verified"] += 1
 
         department_rows: dict[str, dict[str, Any]] = {}
         employee_rows = []
@@ -66,6 +84,8 @@ class WorkforceDashboard:
                 "running_tasks": counts["running"],
                 "succeeded_tasks": counts["succeeded"],
                 "failed_tasks": counts["failed"],
+                "successful_without_independent_review": counts["successful_without_review"],
+                "independently_verified_successes": counts["independently_verified"],
                 "capacity": employee.max_concurrent_tasks,
                 "available_slots": max(0, employee.max_concurrent_tasks - active),
             })
@@ -81,11 +101,15 @@ class WorkforceDashboard:
                 "running_tasks": 0,
                 "succeeded_tasks": 0,
                 "failed_tasks": 0,
+                "successful_without_independent_review": 0,
+                "independently_verified_successes": 0,
             })
             department["employees"] += 1
             department[employee.status] += 1
             for state in ("queued", "running", "succeeded", "failed"):
                 department[f"{state}_tasks"] += counts[state]
+            department["successful_without_independent_review"] += counts["successful_without_review"]
+            department["independently_verified_successes"] += counts["independently_verified"]
             department["active_tasks"] += active
 
         goal_rows = []
@@ -118,6 +142,13 @@ class WorkforceDashboard:
                 "succeeded": task_counts["succeeded"],
                 "failed": task_counts["failed"],
                 "cancelled": task_counts["cancelled"],
+            },
+            "performance": {
+                "scope": "workforce tasks in the dashboard's bounded goal window",
+                "independently_verified_successes": sum(row["independently_verified_successes"] for row in employee_rows),
+                "successful_without_independent_review": sum(row["successful_without_independent_review"] for row in employee_rows),
+                "failed_tasks": sum(row["failed_tasks"] for row in employee_rows),
+                "scoring": "descriptive evidence counts only; no quality score or ranking is inferred",
             },
             "departments": sorted(department_rows.values(), key=lambda row: row["name"]),
             "employees": employee_rows,
