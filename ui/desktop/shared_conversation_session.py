@@ -64,7 +64,8 @@ def build_authenticated_desktop_conversation(
     The owner is taken only from identity.actor_id and verified by the session
     manager before the runtime is created. Provider shutdown remains with the
     outer desktop lifecycle, so callers must register this returned session and
-    provider as separate, uniquely owned resources.
+    provider as separate, uniquely owned resources. An optional learning session
+    is owned by the authenticated facade and invalidated during this session's close.
     """
     actor_id = getattr(identity, "actor_id", None)
     if not isinstance(actor_id, str) or not actor_id.strip():
