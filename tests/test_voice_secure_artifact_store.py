@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,7 +32,8 @@ class EncryptedVoiceArtifactStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get(artifact_id), sample)
         self.assertNotIn(sample, stored)
         self.assertTrue(stored.startswith(b"YKV1"))
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_rejects_missing_consent_empty_and_oversized_audio(self):
         with self.assertRaises(VoiceArtifactAuthorizationError):
