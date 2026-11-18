@@ -185,7 +185,13 @@ class WorkforceWorkerTests(unittest.TestCase):
         self.assertEqual(result["state"], "succeeded")
         self.assertEqual(result["status"], "completed:reviewed")
         self.assertEqual(len(reviewer.calls), 1)
-        self.assertTrue(self.engine.get_task(task["id"])["result"]["review_required"])
+        persisted = self.engine.get_task(task["id"])["result"]
+        self.assertTrue(persisted["review_required"])
+        self.assertEqual(persisted["review_evidence"], {
+            "reviewer_id": "QA-001",
+            "status": "reviewed",
+            "approved": True,
+        })
 
     def test_review_rejection_prevents_task_success(self):
         reviewer = Reviewer(ReviewDecision(False, "quality_failed"))
