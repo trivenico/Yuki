@@ -81,6 +81,33 @@ class WorkforceWorker:
             raise RuntimeError("workforce task lease heartbeat failed") from errors[0]
         return outcome
 
+    def _review_with_heartbeat(self, **kwargs):
+        stop = threading.Event()
+        errors = []
+
+        def renew():
+            while not stop.wait(self.heartbeat_interval_seconds):
+                try:
+                    self.engine.heartbeat(
+                        kwargs["task_id"], self.worker_id,
+                        lease_seconds=self.lease_seconds,
+                    )
+                except Exception as error:
+                    errors.append(error)
+                    stop.set()
+                    return
+
+        thread = threading.Thread(target=renew, name="yuki-workforce-review-lease", daemon=True)
+        thread.start()
+        try:
+            decision = self.reviewer.review(**kwargs["review_context"])
+        finally:
+            stop.set()
+            thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
+        if errors:
+            raise RuntimeError("workforce review lease heartbeat failed") from errors[0]
+        return decision
+
     def run_once(self) -> dict[str, Any]:
         task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds, task_type="workforce.task")
         if task is None:
@@ -155,7 +182,7 @@ class WorkforceWorker:
                 if self.reviewer is None:
                     failed = self.engine.fail(task_id, self.worker_id, "independent review unavailable")
                     return {"task_id": task_id, "state": failed["state"], "status": "reviewer_unavailable"}
-                review = self._execute_with_heartbeat(
+                review = self._review_with_heartbeat(
                     task_id=task_id,
                     review_context={
                         "description": payload["description"],
@@ -163,12 +190,6 @@ class WorkforceWorker:
                         "execution_status": status,
                         "execution_message": str(getattr(outcome, "message", ""))[:2000],
                     },
-                    reviewer_call=True,
-                ) if False else self.reviewer.review(
-                    description=payload["description"],
-                    employee_id=employee.employee_id,
-                    execution_status=status,
-                    execution_message=str(getattr(outcome, "message", ""))[:2000],
                 )
                 approved = getattr(review, "approved", None)
                 review_status = getattr(review, "status", None)
