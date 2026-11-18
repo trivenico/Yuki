@@ -1093,18 +1093,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.speech_session = None
             if self.security_service is not None:
                 raise DesktopStartupError("Previous security-session cleanup is incomplete.")
-            from ui.desktop.security_service import DesktopSecurityService
-            from defense.security_monitor import DesktopSecurityMonitor
-            from defense.process_monitor import ReadOnlyProcessMonitor
+            from ui.desktop.security_service import create_authenticated_desktop_security_service
             self.security_identity = identity
-            self.security_service = DesktopSecurityService(
-                authorize=lambda captured=identity: (
-                    self.sessions is not None
-                    and self.sessions.current_identity() == captured
-                ),
-                monitor_factory=lambda: DesktopSecurityMonitor(
-                    process_monitor=ReadOnlyProcessMonitor(max_processes=2048),
-                ),
+            self.security_service = create_authenticated_desktop_security_service(
+                self.sessions, identity,
             )
             self.security_panel.security_presenter.set_state("off", enabled=False)
             self.spoken_replies_checkbox.blockSignals(True)
@@ -1179,23 +1171,38 @@ MIGRATION COMPLETE — verified manifest written to destination."
         def _security_finished(self, action, result, error, captured_service, worker):
             if self.security_worker is worker:
                 self.security_worker = None
+            try:
+                identity_current = (
+                    self.security_identity is not None
+                    and self.sessions is not None
+                    and self.sessions.current_identity() == self.security_identity
+                )
+            except Exception:
+                identity_current = False
             if (
                 captured_service is not self.security_service
-                or self.security_identity is None
-                or self.sessions is None
-                or self.sessions.current_identity() != self.security_identity
+                or not identity_current
                 or self._logout_started or self._shutdown_started
             ):
+                if not self._logout_started and not self._shutdown_started:
+                    self._return_to_login()
                 return
             presenter = self.security_panel.security_presenter
             if error is not None:
+                try:
+                    still_active = captured_service.active
+                except Exception:
+                    still_active = False
                 presenter.set_state(
                     "cleanup required" if action == "stop" else "unavailable",
-                    enabled=(action == "stop"),
+                    enabled=(action == "stop" or still_active),
                 )
                 controls = self.security_panel.security_controls
+                detail = type(error).__name__
+                if "ProcessMonitorError" in detail or "ImportError" in detail:
+                    detail += "; install the optional dependency with pip install '.[security-monitoring]'"
                 controls["status"].setText(
-                    "Monitoring: operation failed (" + type(error).__name__ + "). "
+                    "Monitoring: operation failed (" + detail + "). "
                     "Sign out to revoke the security session and retry cleanup."
                 )
                 return
@@ -1203,7 +1210,14 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 presenter.set_state("off", enabled=False)
                 return
             if isinstance(result, dict):
-                presenter.render(result)
+                try:
+                    presenter.render(result)
+                except Exception as exc:
+                    presenter.set_state("unavailable", enabled=False)
+                    self.security_panel.security_controls["status"].setText(
+                        "Monitoring: snapshot rejected (" + type(exc).__name__ + ")."
+                    )
+                    return
             presenter.set_state("active", enabled=True)
 
         def _set_memory_context(self, enabled: bool):
@@ -1768,6 +1782,8 @@ Version: {version}",
                     )
             self.speech_session = None
             self.speech_worker = None
+            self.security_worker = None
+            self.security_panel.security_presenter.set_state("off", enabled=False)
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
