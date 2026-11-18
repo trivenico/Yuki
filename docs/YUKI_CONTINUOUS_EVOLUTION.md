@@ -78,4 +78,4 @@ Measure improvements rather than claiming that Yuki is learning:
 
 ## Implementation status
 
-This document is the target architecture. The SFT generator, few-shot patch layer, and template consistency checker are being introduced in PR #1049. This does not yet mean desktop memory capture, automatic correction capture, runtime retrieval integration, background queues, or continuous evolution are implemented. Those must be delivered and tested as separate integrations.
+This document is the target architecture. PR #1049 now includes an approval-gated `ContinuousLearningCoordinator` that composes the existing consent-based memory facade with staged correction review, explicit separate training approval, few-shot patch generation, and deterministic SFT export. Its pending review queue is in-memory only. It does not inspect conversations, persist transcripts, connect to the desktop send path, run background jobs, train weights, or promote models. Desktop wiring, durable review/audit storage, and end-to-end runtime evaluation remain separate integration gates.
