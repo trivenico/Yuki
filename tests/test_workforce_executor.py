@@ -74,6 +74,14 @@ class WorkforceExecutorTests(unittest.TestCase):
         self.assertEqual(result.status, "ambiguous_skill_scope")
         self.assertEqual(self.agent.calls, [])
 
+    def test_unsupported_skill_risk_is_not_dispatched(self):
+        self.skill.risk = "critical"
+        self.executor = YukiAgentWorkforceExecutor(self.agent)
+        result = self.execute()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "no_scope_compatible_skill")
+        self.assertEqual(self.agent.calls, [])
+
     def test_registry_replacement_after_executor_configuration_fails_closed(self):
         self.agent.registry = Registry([self.skill])
         result = self.execute()
