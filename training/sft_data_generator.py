@@ -27,6 +27,7 @@ class SFTExample:
     example_id: str
     messages: tuple[dict[str, str], ...]
     source_digest: str
+    approval_digest: str
     task_type: str
 
 def _canonical_messages(messages: Iterable[dict[str, Any]]) -> tuple[dict[str, str], ...]:
@@ -84,7 +85,8 @@ class SFTDataGenerator:
         if len(self._examples) >= MAX_EXAMPLES:
             raise SFTDataError("dataset example limit reached")
         source_digest = hashlib.sha256(source_reference.encode("utf-8")).hexdigest()
-        self._examples[example_id] = SFTExample(example_id, normalized, source_digest, task_type)
+        approval_digest = hashlib.sha256(approved_by.strip().encode("utf-8")).hexdigest()
+        self._examples[example_id] = SFTExample(example_id, normalized, source_digest, approval_digest, task_type)
         return example_id
 
     def export_jsonl(self) -> str:
@@ -94,6 +96,7 @@ class SFTDataGenerator:
                 "schema_version": 1, "messages": list(example.messages),
                 "metadata": {"example_id": example.example_id, "dataset_version": self.dataset_version,
                              "task_type": example.task_type, "source_digest": example.source_digest,
+                             "approval_digest": example.approval_digest, "consent_recorded": True,
                              "approval_state": "human_approved"},
             }, ensure_ascii=False, separators=(",", ":")))
         return "\n".join(rows) + ("\n" if rows else "")
