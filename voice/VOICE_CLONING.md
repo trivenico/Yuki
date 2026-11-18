@@ -142,3 +142,28 @@ per-user encryption key when appropriate, with a clear warning about backup
 copies. Audio format validation, duration limits, malware-safe media decoding,
 and provider-specific temporary-file cleanup remain mandatory before a sample
 is passed to a model.
+
+## Native OS credential-store integration
+
+The branch now includes `voice/key_store.py` and
+`voice/artifact_factory.py`. The key provider creates a random 256-bit
+per-user key and stores it through Python Keyring only when the active backend
+is one of the recognized native providers: Windows Credential Manager,
+macOS Keychain, or Linux SecretService. Fail, plaintext, file-based, and
+unrecognized backends are rejected. User identity is reduced to a SHA-256
+account key before it is passed to the credential store. Key creation is
+verified with a read-after-write check, and key deletion requires confirmation
+and read-after-delete verification.
+
+The composition factory obtains the key from the OS store and injects it into
+the encrypted artifact store; it does not write key material to Yuki
+configuration, profile metadata, or logs. The authenticated session callback
+is still checked on each artifact operation.
+
+Platform caveat: availability and unlock behavior depend on the host OS and
+desktop session. Linux SecretService commonly requires a running, unlocked
+D-Bus secret service. Yuki must show a clear setup error and keep cloning
+disabled when the native store is unavailable; it must never downgrade to a
+plaintext key file. The key provider is not yet wired into the desktop UI or
+voice-cloning job lifecycle, and platform-specific clean-machine acceptance
+remains outstanding.
