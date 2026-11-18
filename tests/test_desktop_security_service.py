@@ -160,6 +160,7 @@ class DesktopSecurityServiceTests(unittest.TestCase):
         self.service.close()
         self.assertTrue(controller.closed)
         self.assertEqual(len(calls), 2)
+
     def test_close_before_start_never_constructs_monitor(self):
         self.service.close()
         self.assertEqual(self.factory_calls, 0)
