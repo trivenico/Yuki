@@ -480,5 +480,21 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertFalse(plan.subtasks[0].requires_approval)
 
 
+    def test_per_specialist_step_budget_is_enforced_before_plan_persistence(self):
+        specialist = SpecialistAgent(
+            "single-step", "Single step specialist", frozenset({"single_step"}), "emit",
+            max_steps=1, approval_class="read_only",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        with self.assertRaisesRegex(AgentPlanError, "step budget"):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="step-budget-exceeded",
+                subtasks=[
+                    SubtaskSpec("one", "First item", ("single_step",), requires_approval=False),
+                    SubtaskSpec("two", "Second item", ("single_step",), requires_approval=False),
+                ],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
