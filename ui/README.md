@@ -23,3 +23,5 @@ A graphical dashboard and Textual TUI are not implemented yet. Future UI work sh
 ## Executive workforce command center
 
 The authenticated web shell includes an optional read-only Executive Command Center for admin/operator sessions when the workforce dashboard API is mounted. It displays workforce and task metrics, department summaries, a searchable/filterable paginated employee directory, and recent persisted goals. It reuses the existing same-origin bearer session, calls only the read-only `/v1/workforce/*` endpoints, and renders API values with DOM text nodes. No execution, approval, or permission-management controls are exposed. Data refresh is manual; this is not a push/live-update stream.
+
+Goal cards open a bounded execution timeline with task assignments and paginated event envelopes. Arbitrary low-level event detail is deliberately omitted from the API projection to avoid exposing sensitive executor messages.
