@@ -448,6 +448,13 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(first["proposal"]["recommendation_id"], recommendation["id"])
         self.assertTrue(first["proposal"]["requires_human_approval"])
         self.assertFalse(first["proposal"]["automatic_action_taken"])
+        baseline = first["proposal"]["baseline"]
+        self.assertEqual(baseline["scope"], "bounded_workforce_dashboard_snapshot")
+        self.assertEqual(baseline["goal_window"]["max_goals"], 100)
+        self.assertGreaterEqual(baseline["goal_window"]["included_goal_count"], 1)
+        self.assertIsInstance(baseline["captured_at"], (int, float))
+        self.assertIn("queued", baseline["tasks"])
+        self.assertIn("independently_verified_successes", baseline["performance"])
         status, replay = self.request(path, method="POST", token=self.admin_session.token, body=body, extra_headers=headers)
         self.assertEqual(status, 200)
         self.assertFalse(replay["created"])
