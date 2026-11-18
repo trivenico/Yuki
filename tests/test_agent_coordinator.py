@@ -430,7 +430,6 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             max_steps=original.max_steps, max_tokens=original.max_tokens,
             approval_class=original.approval_class,
         )
-        self.coordinator.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
         # Re-registering is intentionally not an update API; simulate an authorized
         # manifest revision written by the registry's administrative migration.
         with self.coordinator._connect() as db:
