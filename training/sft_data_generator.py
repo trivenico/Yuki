@@ -75,7 +75,7 @@ class SFTDataGenerator:
         if not isinstance(task_type, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", task_type):
             raise SFTDataError("task_type must be a short stable identifier")
         normalized = _canonical_messages(messages)
-        canonical = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        canonical = json.dumps({"task_type": task_type, "messages": normalized}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         for key, existing in self._examples.items():
             if existing.example_id == digest[:24]:
