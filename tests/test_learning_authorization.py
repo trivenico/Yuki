@@ -34,6 +34,8 @@ class LearningAuthorizationLedgerTests(unittest.TestCase):
 
     def test_example_approval_is_bound_to_exact_actor_and_proposal(self):
         proposal = "a" * 24
+        self.ledger.record_consent("learning", True)
+        self.ledger.record_consent("training", True)
         self.ledger.record_example_approval(proposal, True)
         self.assertTrue(self.ledger.verify_example_approval(proposal, "authenticated-owner"))
         self.assertFalse(self.ledger.verify_example_approval(proposal, "other-user"))
