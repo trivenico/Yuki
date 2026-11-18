@@ -65,6 +65,25 @@ class DurableTaskEngine:
               goal_id TEXT PRIMARY KEY REFERENCES goals(id),
               plan_fingerprint TEXT NOT NULL, plan_json TEXT NOT NULL,
               created_at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS workforce_improvement_proposals(
+              proposal_id TEXT PRIMARY KEY,
+              proposal_fingerprint TEXT NOT NULL,
+              proposal_json TEXT NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('proposed','approved','rejected','completed')),
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              decided_by TEXT,
+              decision_note TEXT,
+              outcome_json TEXT);
+            CREATE TABLE IF NOT EXISTS workforce_improvement_events(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              proposal_id TEXT NOT NULL REFERENCES workforce_improvement_proposals(proposal_id),
+              event_type TEXT NOT NULL,
+              actor_id TEXT NOT NULL,
+              detail_json TEXT NOT NULL,
+              created_at REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS workforce_improvement_events_idx
+              ON workforce_improvement_events(proposal_id,id);
             CREATE TABLE IF NOT EXISTS goal_requests(
               owner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
               request_fingerprint TEXT NOT NULL, goal_id TEXT NOT NULL REFERENCES goals(id),
@@ -269,6 +288,126 @@ class DurableTaskEngine:
             })
             c.commit()
         return {"created": True, "plan": json.loads(plan_json)}
+
+    def create_improvement_proposal(self, proposal_id, proposal):
+        """Create an immutable, idempotent CEO improvement proposal.
+
+        This is storage, not authorization: callers must enforce actor permissions
+        before invoking decision transitions.
+        """
+        if not isinstance(proposal_id, str) or not 1 <= len(proposal_id) <= 256:
+            raise ValueError("proposal_id must contain 1..256 characters")
+        if not isinstance(proposal, dict) or not proposal:
+            raise ValueError("proposal must be a non-empty object")
+        proposal_json = self._json(proposal)
+        if len(proposal_json.encode("utf-8")) > 65_536:
+            raise ValueError("proposal exceeds 64 KB limit")
+        fingerprint = hashlib.sha256(proposal_json.encode("utf-8")).hexdigest()
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            existing = c.execute(
+                "SELECT proposal_fingerprint,proposal_json FROM workforce_improvement_proposals WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["proposal_fingerprint"] != fingerprint or existing["proposal_json"] != proposal_json:
+                    raise TaskConflict("proposal ID reused with different proposal content")
+                c.commit()
+                return {"created": False, **self.get_improvement_proposal(proposal_id)}
+            c.execute(
+                "INSERT INTO workforce_improvement_proposals(proposal_id,proposal_fingerprint,proposal_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (proposal_id, fingerprint, proposal_json, "proposed", now, now),
+            )
+            c.execute(
+                "INSERT INTO workforce_improvement_events(proposal_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (proposal_id, "proposal.created", "system", self._json({"fingerprint": fingerprint}), now),
+            )
+            c.commit()
+        return {"created": True, **self.get_improvement_proposal(proposal_id)}
+
+    def transition_improvement_proposal(
+        self, proposal_id, *, expected_state, new_state, actor_id,
+        decision_note=None, outcome=None,
+    ):
+        """Apply a guarded proposal transition and append actor-attributed history."""
+        if not isinstance(proposal_id, str) or not 1 <= len(proposal_id) <= 256:
+            raise ValueError("invalid proposal_id")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 256:
+            raise ValueError("actor_id must be non-empty text of at most 256 characters")
+        if not isinstance(decision_note, (str, type(None))) or (decision_note is not None and len(decision_note) > 2000):
+            raise ValueError("decision_note must be at most 2000 characters")
+        if new_state not in {"approved", "rejected", "completed"}:
+            raise ValueError("invalid proposal transition target")
+        if outcome is not None and not isinstance(outcome, dict):
+            raise ValueError("outcome must be an object")
+        outcome_json = self._json(outcome) if outcome is not None else None
+        if outcome_json is not None and len(outcome_json.encode("utf-8")) > 16_384:
+            raise ValueError("outcome exceeds 16 KB limit")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT * FROM workforce_improvement_proposals WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+            if row is None:
+                raise TaskNotFound("improvement proposal not found")
+            if row["state"] != expected_state:
+                raise TaskConflict("improvement proposal state changed")
+            allowed = {"proposed": {"approved", "rejected"}, "approved": {"completed"}}
+            if new_state not in allowed.get(expected_state, set()):
+                raise TaskConflict("invalid improvement proposal state transition")
+            if new_state == "completed" and outcome_json is None:
+                raise ValueError("completed proposals require an outcome object")
+            if new_state != "completed" and outcome_json is not None:
+                raise ValueError("outcome is only accepted when completing a proposal")
+            c.execute(
+                "UPDATE workforce_improvement_proposals SET state=?,updated_at=?,decided_by=?,decision_note=?,outcome_json=? WHERE proposal_id=?",
+                (new_state, now, actor_id, decision_note, outcome_json, proposal_id),
+            )
+            detail = {"from_state": expected_state, "to_state": new_state, "decision_note": decision_note}
+            if outcome_json is not None:
+                detail["outcome"] = json.loads(outcome_json)
+            c.execute(
+                "INSERT INTO workforce_improvement_events(proposal_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (proposal_id, "proposal." + new_state, actor_id, self._json(detail), now),
+            )
+            c.commit()
+        return self.get_improvement_proposal(proposal_id)
+
+    def get_improvement_proposal(self, proposal_id):
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM workforce_improvement_proposals WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+            if row is None:
+                raise TaskNotFound("improvement proposal not found")
+            events = c.execute(
+                "SELECT * FROM workforce_improvement_events WHERE proposal_id=? ORDER BY id",
+                (proposal_id,),
+            ).fetchall()
+        result = dict(row)
+        result["proposal"] = json.loads(result.pop("proposal_json"))
+        result["outcome"] = json.loads(result.pop("outcome_json")) if result.get("outcome_json") else None
+        result.pop("proposal_fingerprint")
+        result["events"] = [
+            {"id": item["id"], "event_type": item["event_type"], "actor_id": item["actor_id"],
+             "detail": json.loads(item["detail_json"]), "created_at": item["created_at"]}
+            for item in events
+        ]
+        return result
+
+    def list_improvement_proposals(self, *, limit=100):
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT proposal_id FROM workforce_improvement_proposals ORDER BY updated_at DESC,proposal_id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self.get_improvement_proposal(row["proposal_id"]) for row in rows]
 
     def get_task_by_idempotency(self, goal_id, idempotency_key):
         """Return a task and its persisted dependency IDs for safe DAG recovery."""
