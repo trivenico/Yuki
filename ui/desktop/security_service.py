@@ -111,14 +111,12 @@ class DesktopSecurityService:
                 controller.stop()
 
     def close(self) -> None:
+        # Keep close serialized with stop/start. If controller cleanup fails,
+        # _closed remains true and a later close() can retry the same handle.
         with self._lock:
-            if self._closed:
-                controller = self._controller
-                if controller is None:
-                    return
-            else:
+            if not self._closed:
                 self._closed = True
                 self._generation += 1
-                controller = self._controller
-        if controller is not None:
-            controller.close()
+            controller = self._controller
+            if controller is not None:
+                controller.close()
