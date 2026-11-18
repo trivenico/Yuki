@@ -180,6 +180,16 @@ class DesktopConversationAdapter:
         with self._lock:
             self._conversation_id = None
 
+    def close(self) -> None:
+        """Drop session-scoped learning references and prevent later reuse."""
+        with self._lock:
+            self._conversation_id = None
+            learning = self._learning
+            self._learning = None
+        close = getattr(learning, "close", None)
+        if callable(close):
+            close()
+
     def _require_conversation(self) -> str:
         if self._conversation_id is None:
             raise RuntimeError("no desktop conversation is selected.")
