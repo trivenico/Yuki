@@ -236,6 +236,41 @@ class ContinuousLearningCoordinator:
                 for proposal_id, item in sorted(self._pending.items())
             ]
 
+    def learning_center_state(self) -> dict[str, Any]:
+        """Return bounded dashboard metadata; never expose message bodies here."""
+        with self._lock:
+            if self.store is not None:
+                try:
+                    authorization = self._refresh_persisted_state()
+                except Exception:
+                    return {
+                        "learning_consent": False,
+                        "training_consent": False,
+                        "pending": [],
+                        "approved_count": 0,
+                        "status": "Encrypted learning data is unavailable; personalization is paused.",
+                    }
+                learning = authorization["learning"]
+                training = authorization["training"]
+            else:
+                learning = self._has_consent("learning")
+                training = self._has_consent("training")
+            pending = [
+                {
+                    "proposal_id": proposal_id,
+                    "task_type": item["task_type"],
+                    "message_count": str(len(item["messages"])),
+                }
+                for proposal_id, item in sorted(self._pending.items())
+            ] if learning else []
+            return {
+                "learning_consent": learning,
+                "training_consent": training,
+                "pending": pending,
+                "approved_count": len(self.generator) if training else 0,
+                "status": self._last_learning_error,
+            }
+
     def correction_for_review(self, proposal_id: str) -> dict[str, Any] | None:
         """Return one explicitly staged sample for owner review, excluding source metadata."""
         if not isinstance(proposal_id, str):
