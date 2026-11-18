@@ -279,6 +279,7 @@ class VoiceProfileRegistry:
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to change the default voice.")
         with self._lock:
+            self._require_open()
             record = self._get(profile_id)
             if record["status"] != "approved":
                 raise VoiceProfileRegistryError("Only an approved profile can become the default voice.")
@@ -322,6 +323,7 @@ class VoiceProfileRegistry:
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to disable a voice profile.")
         with self._lock:
+            self._require_open()
             record = self._get(profile_id)
             if profile_id in {self._state["active_id"], self._state["previous_id"]}:
                 raise VoiceProfileRegistryError("Restore another voice before disabling the active or rollback profile.")
@@ -338,6 +340,7 @@ class VoiceProfileRegistry:
         if confirmed is not True:
             raise VoiceProfileAuthorizationError("Explicit confirmation is required to delete a voice profile.")
         with self._lock:
+            self._require_open()
             record = self._get(profile_id)
             if profile_id in {self._state["active_id"], self._state["previous_id"]}:
                 raise VoiceProfileRegistryError("Restore or clear the active/previous voice before deleting it.")
