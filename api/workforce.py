@@ -10,13 +10,15 @@ from core.auth import BuiltInAuthService
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.approval_preview import confirmation_digest, redact_preview
-from core.durable_task_engine import TaskNotFound
+from core.durable_task_engine import TaskConflict, TaskNotFound
+from core.workforce_ceo import WorkforceCEO
 from core.workforce_dashboard import WorkforceDashboard
 
 _QUERY_KEYS = {"max_goals"}
 _EMPLOYEE_QUERY_KEYS = {"department", "status", "search", "page", "page_size"}
 _GOAL_QUERY_KEYS = {"after_event_id", "event_limit"}
 _APPROVAL_QUERY_KEYS = {"limit"}
+_MAX_GOAL_BODY_BYTES = 16_384
 
 
 class AuthenticatedWorkforceDashboardAPI:
@@ -26,6 +28,7 @@ class AuthenticatedWorkforceDashboardAPI:
         self, app, auth_service: BuiltInAuthService, dashboard: WorkforceDashboard,
         *, pending_approvals: SQLitePendingApprovalStore | None = None,
         approval_audit: SQLiteApprovalAuditLog | None = None,
+        workforce_ceo: WorkforceCEO | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService")
@@ -34,6 +37,11 @@ class AuthenticatedWorkforceDashboardAPI:
         self.app = app
         self.auth = auth_service
         self.dashboard = dashboard
+        if workforce_ceo is not None and not isinstance(workforce_ceo, WorkforceCEO):
+            raise TypeError("workforce_ceo must be a WorkforceCEO")
+        if workforce_ceo is not None and workforce_ceo.task_engine is not dashboard.task_engine:
+            raise ValueError("workforce_ceo must use the dashboard task engine")
+        self.workforce_ceo = workforce_ceo
         if pending_approvals is not None and not isinstance(pending_approvals, SQLitePendingApprovalStore):
             raise TypeError("pending_approvals must be a SQLitePendingApprovalStore")
         if approval_audit is not None and not isinstance(approval_audit, SQLiteApprovalAuditLog):
@@ -46,6 +54,9 @@ class AuthenticatedWorkforceDashboardAPI:
             await self.app(scope, receive, send)
             return
         method = scope.get("method", "GET").upper()
+        path = scope.get("path", "")
+        if method == "POST" and path == "/v1/workforce/goals":
+            return await self._submit_goal(scope, receive, send)
         if method != "GET":
             return await self._respond(send, 405, {"error": "method_not_allowed"})
         principal = await self._principal(scope)
@@ -55,7 +66,6 @@ class AuthenticatedWorkforceDashboardAPI:
         if user.role not in {"admin", "operator"}:
             return await self._respond(send, 403, {"error": "workforce_access_denied"})
 
-        path = scope.get("path", "")
         try:
             query = self._query(scope)
             if path == "/v1/workforce/dashboard":
@@ -80,6 +90,9 @@ class AuthenticatedWorkforceDashboardAPI:
                 if set(query) - _GOAL_QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
                 goal_id = path.rsplit("/", 1)[-1]
+                goal = await asyncio.to_thread(self.dashboard.task_engine.get_goal, goal_id)
+                if goal.get("owner_id") != user.user_id and user.role != "admin":
+                    return await self._respond(send, 404, {"error": "resource_not_found"})
                 after_event_id = self._integer(query.get("after_event_id", "0"), "after_event_id", max_digits=18)
                 event_limit = self._integer(query.get("event_limit", "100"), "event_limit")
                 result = await asyncio.to_thread(
