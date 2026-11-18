@@ -2,8 +2,9 @@
 
 This is process isolation and hard termination, not a security sandbox: child
 code runs as the same OS user and may inherit network/filesystem permissions.
-POSIX resource limits are applied in the child. Windows is fail-closed until a
-Job Object memory/CPU limiter is implemented.
+POSIX resource limits or Windows Job Object process/memory/CPU limits are
+applied before provider execution. Neither platform currently denies network
+access or provides a filesystem sandbox.
 """
 from __future__ import annotations
 
@@ -82,12 +83,97 @@ def _sanitize_worker_environment() -> None:
     os.umask(0o077)
 
 
+
+
+def _create_windows_job(process: Any, limits: VoiceCloneWorkerLimits):
+    """Assign the suspended-at-provider-gate child to a kill-on-close Job Object."""
+    if os.name != "nt":
+        raise RuntimeError("Windows Job Objects are available only on Windows.")
+    import ctypes
+    from ctypes import wintypes
+
+    class BasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class ExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", BasicLimitInformation),
+            ("IoInfo", IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    # PROCESS_TIME | ACTIVE_PROCESS | PROCESS_MEMORY | JOB_MEMORY | KILL_ON_JOB_CLOSE
+    limit_flags = 0x00000002 | 0x00000008 | 0x00000100 | 0x00000200 | 0x00002000
+    info = ExtendedLimitInformation()
+    info.BasicLimitInformation.LimitFlags = limit_flags
+    info.BasicLimitInformation.PerProcessUserTimeLimit = limits.cpu_seconds * 10_000_000
+    info.BasicLimitInformation.ActiveProcessLimit = 1
+    info.ProcessMemoryLimit = limits.memory_bytes
+    info.JobMemoryLimit = limits.memory_bytes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError(ctypes.get_last_error(), "Could not create voice-clone Job Object.")
+    try:
+        if not kernel32.SetInformationJobObject(
+            job, 9, ctypes.byref(info), ctypes.sizeof(info),
+        ):
+            raise OSError(ctypes.get_last_error(), "Could not configure voice-clone Job Object.")
+        process_handle = wintypes.HANDLE(int(process._handle))
+        if not kernel32.AssignProcessToJobObject(job, process_handle):
+            raise OSError(ctypes.get_last_error(), "Could not assign voice-clone worker to Job Object.")
+        return job, kernel32
+    except Exception:
+        kernel32.CloseHandle(job)
+        raise
+
+
 def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
                       sample_audio: bytes, deadline: float,
-                      limits: VoiceCloneWorkerLimits) -> None:
+                      limits: VoiceCloneWorkerLimits,
+                      start_gate: Any) -> None:
     try:
-        _apply_posix_limits(limits)
+        if os.name == "posix":
+            _apply_posix_limits(limits)
         _sanitize_worker_environment()
+        if not start_gate.wait(max(0.0, deadline - time.monotonic())):
+            send_conn.send_bytes(b"ERROR:WorkerStartupGateTimeout")
+            return
         if cancel_event.is_set():
             send_conn.send_bytes(b"CANCELLED")
             return
@@ -125,7 +211,7 @@ def _provider_process(send_conn: Any, cancel_event: Any, provider: Any,
 
 
 class ProcessIsolatedVoiceCloneExecutor:
-    """Run one provider invocation in a killable child process with POSIX limits."""
+    """Run one provider invocation with POSIX limits or Windows Job Object limits."""
 
     def __init__(self, *, limits: VoiceCloneWorkerLimits | None = None,
                  poll_interval: float = 0.05, terminate_grace_seconds: float = 1.0):
@@ -139,9 +225,9 @@ class ProcessIsolatedVoiceCloneExecutor:
 
     def run(self, provider: Any, sample_audio: bytes, *,
             cancel_event: Any, deadline_monotonic: float):
-        if os.name != "posix":
+        if os.name not in {"posix", "nt"}:
             raise VoiceCloneWorkerError(
-                "Voice cloning is disabled: enforceable worker resource limits are not available on this OS."
+                "Voice cloning is disabled: enforceable worker limits are not available on this OS."
             )
         if not isinstance(sample_audio, bytes) or not 1 <= len(sample_audio) <= 10 * 1024 * 1024:
             raise ValueError("sample_audio must be bounded bytes")
@@ -152,18 +238,24 @@ class ProcessIsolatedVoiceCloneExecutor:
         context = multiprocessing.get_context("spawn")
         receive_conn, send_conn = context.Pipe(duplex=False)
         child_cancel = context.Event()
+        start_gate = context.Event()
         process = context.Process(
             target=_provider_process,
             args=(send_conn, child_cancel, provider, sample_audio,
-                  deadline_monotonic, self.limits),
+                  deadline_monotonic, self.limits, start_gate),
             name="yuki-voice-clone-worker",
             daemon=True,
         )
         started = False
+        job_handle = None
+        job_kernel32 = None
         try:
             process.start()
             started = True
             send_conn.close()
+            if os.name == "nt":
+                job_handle, job_kernel32 = _create_windows_job(process, self.limits)
+            start_gate.set()
             while True:
                 if cancel_event.is_set():
                     child_cancel.set()
@@ -205,6 +297,8 @@ class ProcessIsolatedVoiceCloneExecutor:
                 process.close()
             else:
                 send_conn.close()
+            if job_handle is not None:
+                job_kernel32.CloseHandle(job_handle)
 
     def _stop(self, process: Any) -> None:
         if process.is_alive():
