@@ -121,6 +121,22 @@ class VoiceProfileRegistryTests(unittest.TestCase):
         with self.assertRaises(VoiceProfileRegistryError):
             VoiceProfileRegistry(Path(self.temp.name) / "voices", authorize=lambda: True)
 
+    def test_posix_directory_handle_prevents_registry_path_swap(self):
+        import os
+        if os.name != "posix" or os.open not in os.supports_dir_fd or os.rename not in os.supports_dir_fd:
+            self.skipTest("POSIX directory-relative operations are unavailable.")
+        original = Path(self.temp.name) / "voices"
+        moved = Path(self.temp.name) / "moved-voices"
+        attacker = Path(self.temp.name) / "attacker-voices"
+        attacker.mkdir(mode=0o700)
+        original.rename(moved)
+        original.symlink_to(attacker, target_is_directory=True)
+        self.stage("after-swap")
+        self.assertTrue((moved / "profiles.json").is_file())
+        self.assertFalse((attacker / "profiles.json").exists())
+        persisted = VoiceProfileRegistry(moved, authorize=lambda: True)
+        self.assertEqual(persisted.list_profiles()[0]["profile_id"], "after-swap")
+
     def test_rejects_invalid_profile_ids_and_duplicate_profiles(self):
         with self.assertRaises(ValueError):
             self.registry.stage_profile(
