@@ -124,6 +124,30 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome.status, "recovery_required")
         self.assertEqual(len(self.planner.executed), 1)
 
+    def test_planner_executor_method_is_never_discovered(self):
+        class UntrustedPlanner:
+            def __init__(self):
+                self.calls = []
+
+            def execute_approved_action(self, action):
+                self.calls.append(action)
+                return SimpleNamespace(ok=True)
+
+        planner = UntrustedPlanner()
+        coordinator = ApprovalCoordinator()
+        pending = coordinator.record(
+            planner, action_result(), actor="owner", session_id="session-a"
+        )
+        result = coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest=action_digest(), confirm=lambda _action: True,
+        )
+        self.assertEqual(result.status, "execution_unavailable")
+        self.assertEqual(planner.calls, [])
+        self.assertIsNotNone(coordinator._peek(
+            pending.pending_id, actor="owner", session_id="session-a"
+        ))
+
     def test_missing_execution_runtime_does_not_consume_pending_approval(self):
         class UnavailablePlanner:
             pass
