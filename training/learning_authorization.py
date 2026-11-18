@@ -71,12 +71,17 @@ class LearningAuthorizationLedger:
         self._validate_proposal_id(proposal_id)
         if type(approved) is not bool:
             raise ValueError("approved must be a boolean.")
-        if approved and (
-            not self.has_consent("learning") or not self.has_consent("training")
-        ):
-            raise LearningAuthorizationError(
-                "Both learning and separate training consent must be active before approval."
-            )
+        if approved:
+            try:
+                consent = self.authorization_snapshot([])
+            except Exception as exc:
+                raise LearningAuthorizationError(
+                    "Learning authorization audit could not be verified."
+                ) from exc
+            if not consent["learning"] or not consent["training"]:
+                raise LearningAuthorizationError(
+                    "Both learning and separate training consent must be active before approval."
+                )
         try:
             return self._audit.append(
                 event_type="approved" if approved else "denied",
