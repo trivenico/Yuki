@@ -287,6 +287,7 @@ class LearningCenterPanel:
             ):
                 control.setEnabled(enabled)
             if enabled:
+                submit.setEnabled(state_cache["learning"] and on_submit is not None)
                 approve.setEnabled(
                     selected_id["value"] is not None
                     and state_cache["learning"] and state_cache["training"]
