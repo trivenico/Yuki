@@ -370,8 +370,8 @@ class DurableTaskEngine:
 
     def list_goals(self, *, limit=100):
         """List the most recently updated goals for bounded dashboard reads."""
-        if type(limit) is not int or not 1 <= limit <= 500:
-            raise ValueError("limit must be an integer between 1 and 500")
+        if type(limit) is not int or not 1 <= limit <= 501:
+            raise ValueError("limit must be an integer between 1 and 501")
         with closing(self._connect()) as c:
             rows = c.execute(
                 "SELECT * FROM goals ORDER BY updated_at DESC,id LIMIT ?",
