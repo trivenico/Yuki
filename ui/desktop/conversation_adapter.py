@@ -162,7 +162,7 @@ class DesktopConversationAdapter:
                     if not isinstance(learning_text, str) or len(learning_text) > 4_000:
                         raise RuntimeError("The learning coordinator returned an invalid context block.")
                     system_parts.append(learning_text)
-            system_text = "\\n\\n".join(system_parts) if system_parts else None
+            system_text = "\n\n".join(system_parts) if system_parts else None
             return self._application.conversations.reply(
                 owner_id=self._owner_id,
                 conversation_id=conversation_id,
