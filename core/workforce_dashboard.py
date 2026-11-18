@@ -41,6 +41,49 @@ class WorkforceDashboard:
         ]
 
         task_counts = Counter(task["state"] for task in tasks)
+        knowledge_outcomes: dict[str, dict[str, Any]] = {}
+        for task in tasks:
+            payload = task.get("payload")
+            context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
+            if not isinstance(context, list):
+                continue
+            for lesson in context[:5]:
+                if not isinstance(lesson, dict) or not isinstance(lesson.get("knowledge_id"), str):
+                    continue
+                knowledge_id = lesson["knowledge_id"]
+                metrics = knowledge_outcomes.setdefault(knowledge_id, {
+                    "knowledge_id": knowledge_id,
+                    "exposures": 0,
+                    "succeeded_tasks": 0,
+                    "failed_tasks": 0,
+                    "independently_verified_successes": 0,
+                })
+                metrics["exposures"] += 1
+                if task["state"] == "succeeded":
+                    metrics["succeeded_tasks"] += 1
+                    result = task.get("result")
+                    evidence = result.get("review_evidence") if isinstance(result, dict) else None
+                    if (
+                        isinstance(payload, dict)
+                        and payload.get("review_required") is True
+                        and isinstance(result, dict)
+                        and result.get("ok") is True
+                        and result.get("review_required") is True
+                        and isinstance(result.get("status"), str)
+                        and result["status"].endswith(":reviewed")
+                        and isinstance(evidence, dict)
+                        and set(evidence) == {"reviewer_id", "status", "approved"}
+                        and evidence.get("approved") is True
+                        and isinstance(evidence.get("reviewer_id"), str)
+                        and evidence["reviewer_id"].strip()
+                        and evidence["reviewer_id"] != payload.get("assigned_employee_id")
+                        and isinstance(evidence.get("status"), str)
+                        and evidence["status"].strip()
+                    ):
+                        metrics["independently_verified_successes"] += 1
+                elif task["state"] == "failed":
+                    metrics["failed_tasks"] += 1
+
         employee_tasks: dict[str, Counter] = defaultdict(Counter)
         for task in tasks:
             assigned = task.get("payload", {}).get("assigned_employee_id")
@@ -279,6 +322,16 @@ class WorkforceDashboard:
                 "succeeded": task_counts["succeeded"],
                 "failed": task_counts["failed"],
                 "cancelled": task_counts["cancelled"],
+            },
+            "knowledge_effectiveness": {
+                "scope": "descriptive outcomes for tasks carrying each verified lesson in the bounded dashboard goal window",
+                "lessons": sorted(knowledge_outcomes.values(), key=lambda row: row["knowledge_id"]),
+                "limitations": [
+                    "exposure counts show association, not that a lesson caused an outcome",
+                    "tasks may use multiple lessons and differ in difficulty, staffing, and context",
+                    "only independently reviewed successes with consistent persisted evidence count as verified successes",
+                    "this is observational reporting, not an automatic quality score or lesson retirement decision",
+                ],
             },
             "performance": {
                 "scope": "workforce tasks in the dashboard's bounded goal window",
