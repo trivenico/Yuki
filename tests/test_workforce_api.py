@@ -181,6 +181,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         status, body = self.request(path, token=self.admin_session.token)
         self.assertEqual(status, 200)
         self.assertEqual(body["execution"], "not_executed")
+        self.assertRegex(body["confirmation_digest"], r"^[0-9a-f]{64}$")
         self.assertEqual(body["risk"], "explicit_confirmation_required")
         self.assertEqual(body["action"]["arguments"]["api_token"], "[REDACTED]")
         self.assertEqual(body["action"]["arguments"]["nested"]["password"], "[REDACTED]")
