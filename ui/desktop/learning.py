@@ -195,10 +195,47 @@ def create_desktop_learning_session(
     return DesktopLearningSession(coordinator, ledger)
 
 
+def create_authenticated_learning_center(
+    parent: Any,
+    keyring_module: Any,
+    *,
+    identity: Any,
+    sessions: Any,
+    memory: Any = None,
+):
+    """Create a panel and session only for the currently authenticated desktop identity.
+
+    The caller owns the returned session and must pass that same object to the
+    shared desktop conversation composition as its learning dependency.
+    Close it from the authenticated logout/shutdown worker. The panel itself
+    owns no provider, keyring, or database lifecycle.
+    """
+    actor_id = getattr(identity, "actor_id", None)
+    if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 128:
+        raise ValueError("identity must contain a valid authenticated actor_id.")
+    if not callable(getattr(sessions, "current_identity", None)):
+        raise TypeError("sessions must provide current_identity().")
+    if sessions.current_identity() != identity:
+        raise PermissionError("The desktop session is no longer authenticated.")
+
+    session = create_desktop_learning_session(
+        keyring_module, actor_id=actor_id, memory=memory,
+    )
+    try:
+        from ui.desktop.learning_center import LearningCenterPanel
+        panel = LearningCenterPanel.create(parent, **session.callbacks)
+        panel.learning_session = session
+        return panel, session
+    except Exception:
+        session.close()
+        raise
+
+
 __all__ = [
     "DesktopLearningSession",
     "build_learning_center_callbacks",
     "create_desktop_learning_session",
+    "create_authenticated_learning_center",
     "create_desktop_learning_coordinator",
     "create_desktop_learning_store",
 ]
