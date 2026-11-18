@@ -505,7 +505,7 @@ class ContinuousLearningCoordinator:
         max_examples: int = 3,
         max_chars: int = 6000,
     ) -> str | None:
-        """Build a patch only while durable training consent and approvals remain valid."""
+        """Build a patch only while durable learning consent and approvals remain valid."""
         with self._lock:
             if self.store is not None:
                 try:
