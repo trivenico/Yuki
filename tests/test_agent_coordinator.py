@@ -449,5 +449,36 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(plan.subtasks[0].agent_action, "emit")
 
 
+    def test_review_required_role_cannot_be_planned_without_approval(self):
+        specialist = SpecialistAgent(
+            "review-gated", "Review gated specialist", frozenset({"review_gated"}), "emit",
+            approval_class="review_required",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="enforced-review-policy",
+            subtasks=[SubtaskSpec(
+                "draft", "Draft a proposed change", ("review_gated",),
+                requires_approval=False,
+            )],
+        )
+        self.assertTrue(plan.subtasks[0].requires_approval)
+
+    def test_read_only_role_can_use_explicit_no_approval_policy(self):
+        specialist = SpecialistAgent(
+            "read-only-agent", "Read only specialist", frozenset({"read_only_task"}), "emit",
+            approval_class="read_only",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="read-only-no-approval",
+            subtasks=[SubtaskSpec(
+                "summarize", "Summarize supplied content", ("read_only_task",),
+                requires_approval=False,
+            )],
+        )
+        self.assertFalse(plan.subtasks[0].requires_approval)
+
+
 if __name__ == "__main__":
     unittest.main()
