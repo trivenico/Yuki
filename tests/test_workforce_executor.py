@@ -75,6 +75,48 @@ class WorkforceExecutorTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.status, "permission_denied")
 
+    def test_real_yuki_core_agent_uses_fresh_permission_gate(self):
+        from core.agent import YukiCoreAgent
+        from core.permissions import PermissionGate
+        from skills.time_skill import TimeSkill
+
+        agent = YukiCoreAgent(
+            skills=[TimeSkill()],
+            permission_gate=PermissionGate(approver=lambda request: True),
+        )
+        executor = YukiAgentWorkforceExecutor(agent)
+        result = executor.authorize_and_execute(
+            employee=self.employee,
+            description="Get the current time",
+            required_capabilities=("time_read",),
+            required_permissions=(),
+            max_autonomy_tier=1,
+            task_id="integration-1",
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "report")
+
+    def test_real_yuki_core_agent_denies_without_approver(self):
+        from core.agent import YukiCoreAgent
+        from core.permissions import PermissionGate
+        from skills.time_skill import TimeSkill
+
+        agent = YukiCoreAgent(
+            skills=[TimeSkill()],
+            permission_gate=PermissionGate(),
+        )
+        executor = YukiAgentWorkforceExecutor(agent)
+        result = executor.authorize_and_execute(
+            employee=self.employee,
+            description="Get the current time",
+            required_capabilities=("time_read",),
+            required_permissions=(),
+            max_autonomy_tier=1,
+            task_id="integration-2",
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "permission_denied")
+
     def test_autonomy_limit_is_rechecked(self):
         result = self.execute(max_autonomy_tier=0)
         self.assertFalse(result.ok)
