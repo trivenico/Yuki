@@ -121,18 +121,23 @@ class ApprovalCoordinator:
                 False, "execution_unavailable",
                 pending_id=pending_id if isinstance(pending_id, str) else None,
             )
+        # Ask for explicit consent while the request is still pending. A UI
+        # timeout or callback exception is not a user denial and must be retryable.
+        import json
+        display_action = json.loads(json.dumps(preview["action"]))
+        try:
+            confirmed = confirm(display_action) is True
+        except Exception:
+            return ApprovalOutcome(False, "confirmation_unavailable", pending_id=pending_id)
+
+        # Consume only after a definitive user decision. The atomic consume
+        # prevents concurrent approvals from executing the same request twice.
         pending = self._consume(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
         action = pending["action"]
         if not verify_confirmation_digest(action, confirmation_digest):
             return ApprovalOutcome(False, "confirmation_mismatch", pending_id=pending_id)
-        import json
-        display_action = json.loads(json.dumps(action))
-        try:
-            confirmed = confirm(display_action) is True
-        except Exception:
-            confirmed = False
         if not confirmed:
             try:
                 self._audit("denied", pending_id, actor, pending["skill_id"])
