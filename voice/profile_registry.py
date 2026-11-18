@@ -92,7 +92,12 @@ class VoiceProfileRegistry:
         """Refresh and operate on registry state under a process-wide lock."""
         with self._lock:
             self._require_open()
-            account = hashlib.sha256(str(self._directory.resolve()).encode("utf-8")).hexdigest()
+            if self._directory_fd is not None:
+                directory_stat = os.fstat(self._directory_fd)
+                identity = f"{directory_stat.st_dev}:{directory_stat.st_ino}"
+            else:
+                identity = os.path.normcase(str(self._directory.absolute()))
+            account = hashlib.sha256(identity.encode("utf-8")).hexdigest()
             try:
                 with cross_process_lock(
                     account, self._directory, namespace="VoiceProfile",
