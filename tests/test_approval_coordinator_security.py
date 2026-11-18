@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
+from core.approval_preview import confirmation_digest
 from core.pending_approvals import SQLitePendingApprovalStore
 
 
@@ -40,7 +41,8 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
 
         result = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=mutate_for_display,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=mutate_for_display,
         )
         self.assertTrue(result.ok)
         self.assertEqual(self.planner.executed[0]["arguments"]["text"], "safe")
@@ -51,13 +53,15 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
 
         result = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=broken,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=broken,
         )
         self.assertEqual(result.status, "approval_denied")
         self.assertEqual(self.planner.executed, [])
         replay = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=lambda _: True,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
         )
         self.assertEqual(replay.status, "pending_not_found")
         self.assertEqual(self.planner.executed, [])
@@ -84,7 +88,8 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
             barrier.wait()
             result = self.coordinator.approve(
                 self.planner, self.outcome.pending_id, actor="owner",
-                session_id="session-1", confirm=lambda _: True,
+                session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+                confirm=lambda _: True,
             )
             with lock:
                 outcomes.append(result.status)
