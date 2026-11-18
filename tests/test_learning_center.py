@@ -4,6 +4,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
+from PySide6.QtCore import QEventLoop, QTimer
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 if importlib.util.find_spec("PySide6"):
