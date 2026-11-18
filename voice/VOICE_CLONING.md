@@ -197,3 +197,34 @@ The job controller also validates provider-generated preview audio as bounded PC
 `voice/clone_process.py` runs a trusted, explicitly local provider invocation in a one-shot spawned process. The parent enforces a wall-clock deadline, polls for cancellation, and terminates then kills a non-cooperative child. On Linux the child clamps address-space, CPU-time, file-size, and open-file limits to inherited hard limits, disables core dumps where supported, scrubs its environment to a runtime allowlist, and applies a restrictive umask. On Windows, the parent assigns the child to a Job Object before releasing the provider-start gate; the job enforces process/job memory and CPU-time limits, a single active process, and kill-on-job-close. Provider outputs are size-checked in the child and transferred over bounded data-only IPC, then validated again by the parent before storage or preview.
 
 This is **not an OS security sandbox**: the child still runs as the same user and inherits filesystem and network permissions. The provider must remain trusted and reviewed; this worker does not yet deny network access or restrict file paths. Windows Job Object enforcement is implemented but clean-machine acceptance and file/network isolation remain release gates. Windows does not enforce the POSIX file-size/open-file limits. Linux uses `RLIMIT_AS` as a process address-space cap; it does not constrain GPU VRAM. macOS cloning is rejected before spawning a worker until a reliable total-memory isolation mechanism is available. The provider must be picklable for the spawn start method. No cloning backend is installed or invoked by this foundation.
+
+## Security review gates before enabling a cloning provider
+
+The current storage and key-store foundations are not yet approved for production
+use with voice samples. In particular:
+
+- Key creation is protected only by an in-process lock. Two Yuki processes for
+  the same OS account can race while creating the first key in the native
+  credential store. A cross-process coordination mechanism or an atomic
+  credential-store primitive must be implemented and tested before concurrent
+  desktop instances are supported.
+- Artifact and profile paths perform symlink checks, but those checks are not
+  anchored to an already-open directory handle. A local process able to modify
+  the parent directory may race path validation and file operations. Harden
+  directory traversal and file replacement against symlink/rename races, and
+  add Windows ACL validation, before storing real user voice data.
+- The profile registry and artifact store currently use process-local locks.
+  Multi-process updates are not transactional; do not run multiple writers
+  against the same per-user profile directory.
+- The isolated worker is not a security sandbox. It inherits the user's
+  filesystem and network permissions. Do not load third-party or remote
+  providers in it until OS-enforced filesystem and network restrictions,
+  private temporary storage, and platform acceptance tests are in place.
+- Key deletion is not transactionally coordinated with profile/artifact
+  deletion. Never delete a user's encryption key as a side effect of deleting
+  one profile; key rotation and account-wide cryptographic erasure need a
+  separate reviewed lifecycle.
+
+These are explicit release blockers, not claims that the current foundation
+already provides those guarantees. Keep cloning disabled in the desktop
+product until the relevant controls and clean-machine tests are complete.
