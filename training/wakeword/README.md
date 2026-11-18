@@ -1,4 +1,4 @@
-# Hey Yuki wake-word training
+# Yuki wake-word training
 
 This is a reproducible **training runbook and preflight gate**, not a claim that a
 wake-word model has already been trained. Training runs on a managed Linux GPU
@@ -6,7 +6,7 @@ runtime such as Kaggle; it does not require the user's Android phone or local PC
 
 ## Design
 
-- Phrase: `Hey Yuki`, English.
+- Phrase: `Yuki`, English.
 - Training framework: upstream [openWakeWord](https://github.com/dscripka/openWakeWord)
   custom-model trainer, pinned to release `v0.6.0` for the initial reproducible
   experiment. Review upstream changes before upgrading.
@@ -76,17 +76,17 @@ python training/wakeword/validate_assets.py /path/to/dataset/assets.manifest.jso
    upgrade or downgrade packages; record the exact installed versions.
 5. Place the vetted Piper sample-generator checkout and approved TTS checkpoint
    at the paths declared in the YAML. Verify their licenses independently.
-6. Copy `hey_yuki.template.yaml` to `hey_yuki.yaml`, adjust paths to the
+6. Copy `yuki.template.yaml` to `yuki.yaml`, adjust paths to the
    attached dataset, and run the asset manifest validator before training.
 7. Run the three upstream phases separately so Kaggle output can be checkpointed:
 
 ```bash
-python openwakeword/train.py --training_config hey_yuki.yaml --generate_clips
-python openwakeword/train.py --training_config hey_yuki.yaml --augment_clips
-python openwakeword/train.py --training_config hey_yuki.yaml --train_model
+python openwakeword/train.py --training_config yuki.yaml --generate_clips
+python openwakeword/train.py --training_config yuki.yaml --augment_clips
+python openwakeword/train.py --training_config yuki.yaml --train_model
 ```
 
-8. Save `artifacts/hey_yuki/hey_yuki.onnx`, the training YAML, manifest,
+8. Save `artifacts/yuki/yuki.onnx`, the training YAML, manifest,
    source commit SHAs, dependency lock/export, logs and evaluation outputs to a
    **private** Kaggle Dataset version. Do not publish a model until all
    training-data and model-asset rights have been reviewed.
