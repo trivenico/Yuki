@@ -37,7 +37,7 @@ class WorkforceWorker:
         self.executor = executor
 
     def run_once(self) -> dict[str, Any]:
-        task = self.engine.claim(self.worker_id)
+        task = self.engine.claim(self.worker_id, task_type="workforce.task")
         if task is None:
             return {"state": "idle", "status": "no_task"}
         task_id = task["id"]
