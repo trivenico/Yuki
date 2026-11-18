@@ -9,6 +9,7 @@ from urllib.parse import parse_qs
 from core.auth import BuiltInAuthService
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.pending_approvals import SQLitePendingApprovalStore
+from core.approval_preview import redact_preview
 from core.durable_task_engine import TaskNotFound
 from core.workforce_dashboard import WorkforceDashboard
 
@@ -93,6 +94,26 @@ class AuthenticatedWorkforceDashboardAPI:
                 limit = self._integer(query.get("limit", "100"), "limit")
                 pending = await asyncio.to_thread(self.pending_approvals.list_pending, actor=user.user_id, session_id=session_token, limit=limit)
                 result = {"pending": pending, "count": len(pending)}
+            elif re.fullmatch(r"/v1/workforce/approvals/[A-Za-z0-9_-]{16,128}", path):
+                if query:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                if self.pending_approvals is None:
+                    return await self._respond(send, 503, {"error": "approval_inbox_unavailable"})
+                pending_id = path.rsplit("/", 1)[-1]
+                item = await asyncio.to_thread(
+                    self.pending_approvals.get_for_actor_session,
+                    pending_id, actor=user.user_id, session_id=session_token,
+                )
+                if item is None:
+                    return await self._respond(send, 404, {"error": "approval_not_found"})
+                result = {
+                    "pending_id": item.pending_id,
+                    "skill_id": item.skill_id,
+                    "expires_at": item.expires_at,
+                    "action": redact_preview(item.action),
+                    "risk": "explicit_confirmation_required",
+                    "execution": "not_executed",
+                }
             elif path == "/v1/workforce/approvals/audit":
                 if set(query) - _APPROVAL_QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
