@@ -240,7 +240,7 @@ class SpecialistTaskWorker:
         # New coordinator-created tasks carry an explicit manifest marker. Legacy
         # task names remain compatible, but marked tasks require a live registry
         # check at claim time; a missing or failing validator never runs the handler.
-        if "--manifest-v1--" in claimed.workflow_name:
+        if claimed.workflow_name.endswith("--manifest-v1"):
             valid_manifest = False
             if self.manifest_validator is not None:
                 try:
@@ -271,7 +271,7 @@ class SpecialistTaskWorker:
                 return self.runtime._record(current)
             if current.state != "running" or current.lease_owner != self.worker_id:
                 raise RuntimeError("task is no longer owned by this worker.")
-            if "--manifest-v1--" in claimed.workflow_name:
+            if claimed.workflow_name.endswith("--manifest-v1"):
                 valid_manifest = False
                 if self.manifest_validator is not None:
                     try:
