@@ -18,6 +18,8 @@ _QUERY_KEYS = {"max_goals"}
 _EMPLOYEE_QUERY_KEYS = {"department", "status", "search", "page", "page_size"}
 _GOAL_QUERY_KEYS = {"after_event_id", "event_limit"}
 _APPROVAL_QUERY_KEYS = {"limit"}
+_IMPROVEMENT_QUERY_KEYS = {"limit"}
+_MAX_IMPROVEMENT_BODY_BYTES = 16_384
 _MAX_GOAL_BODY_BYTES = 16_384
 
 
@@ -57,6 +59,8 @@ class AuthenticatedWorkforceDashboardAPI:
         path = scope.get("path", "")
         if method == "POST" and path == "/v1/workforce/goals":
             return await self._submit_goal(scope, receive, send)
+        if method == "POST" and re.fullmatch(r"/v1/workforce/improvement-proposals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
+            return await self._transition_improvement_proposal(path, scope, receive, send)
         if method != "GET":
             return await self._respond(send, 405, {"error": "method_not_allowed"})
         principal = await self._principal(scope)
@@ -99,6 +103,19 @@ class AuthenticatedWorkforceDashboardAPI:
                     self.dashboard.goal_detail, goal_id,
                     after_event_id=after_event_id, event_limit=event_limit,
                 )
+            elif path == "/v1/workforce/improvement-proposals":
+                if set(query) - _IMPROVEMENT_QUERY_KEYS:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                limit = self._integer(query.get("limit", "100"), "limit")
+                if not 1 <= limit <= 500:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                proposals = await asyncio.to_thread(self.dashboard.task_engine.list_improvement_proposals, limit=limit)
+                result = {"proposals": proposals, "count": len(proposals)}
+            elif re.fullmatch(r"/v1/workforce/improvement-proposals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", path):
+                if query:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                proposal_id = path.rsplit("/", 1)[-1]
+                result = await asyncio.to_thread(self.dashboard.task_engine.get_improvement_proposal, proposal_id)
             elif path == "/v1/workforce/approvals":
                 if set(query) - _APPROVAL_QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
@@ -151,6 +168,54 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._respond(send, 400, {"error": "invalid_query"})
         except Exception:
             return await self._respond(send, 503, {"error": "workforce_dashboard_unavailable"})
+        return await self._respond(send, 200, result)
+
+    async def _transition_improvement_proposal(self, path, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _session_token = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        headers = {key.lower(): value for key, value in scope.get("headers", []) if isinstance(key, bytes) and isinstance(value, bytes)}
+        content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+        if content_type != b"application/json":
+            return await self._respond(send, 415, {"error": "application_json_required"})
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message.get("type") != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if not isinstance(chunk, bytes):
+                return await self._respond(send, 400, {"error": "invalid_request_body"})
+            body.extend(chunk)
+            if len(body) > _MAX_IMPROVEMENT_BODY_BYTES:
+                return await self._respond(send, 413, {"error": "request_body_too_large"})
+            more_body = bool(message.get("more_body", False))
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return await self._respond(send, 400, {"error": "invalid_json"})
+        allowed = {"expected_state", "new_state", "decision_note", "outcome"}
+        if not isinstance(payload, dict) or not {"expected_state", "new_state"}.issubset(payload) or set(payload) - allowed:
+            return await self._respond(send, 400, {"error": "invalid_transition_request"})
+        expected_state, new_state = payload["expected_state"], payload["new_state"]
+        decision_note, outcome = payload.get("decision_note"), payload.get("outcome")
+        if not isinstance(expected_state, str) or not isinstance(new_state, str) or (decision_note is not None and not isinstance(decision_note, str)) or (outcome is not None and not isinstance(outcome, dict)):
+            return await self._respond(send, 400, {"error": "invalid_transition_request"})
+        proposal_id = path.split("/")[-2]
+        try:
+            result = await asyncio.to_thread(self.dashboard.task_engine.transition_improvement_proposal, proposal_id, expected_state=expected_state, new_state=new_state, actor_id=user.user_id, decision_note=decision_note, outcome=outcome)
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "proposal_state_conflict"})
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "proposal_not_found"})
+        except (TypeError, ValueError):
+            return await self._respond(send, 400, {"error": "invalid_transition_request"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "improvement_proposal_unavailable"})
         return await self._respond(send, 200, result)
 
     async def _submit_goal(self, scope, receive, send):
