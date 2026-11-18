@@ -319,6 +319,8 @@ class SpecialistWorkerTests(unittest.TestCase):
 
     def test_manifest_validator_accepts_unchanged_active_role(self):
         task_id = self.create_task()
+        claimed = self.store.claim_next(worker_id="manifest-validation-test")
+        self.assertEqual(claimed.run_id, task_id)
         self.assertTrue(self.coordinator.validate_task_manifest(
             task_id=task_id, agent_id="code-review",
         ))
@@ -404,9 +406,8 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         dispatched = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         task = self.store.get(dispatched.subtasks[0].task_id)
-        self.assertEqual(len(task.name), 99)
-        run = self.store.get(task.task_id)
-        self.assertLessEqual(len(run.idempotency_key), 200)
+        self.assertEqual(len(task.workflow_name), 99)
+        self.assertLessEqual(len(task.idempotency_key), 200)
 
 
 if __name__ == "__main__":
