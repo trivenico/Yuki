@@ -59,6 +59,8 @@ class ContinuousLearningCoordinator:
         self._approval_verifier = approval_verifier
         self._authorization_snapshot = authorization_snapshot
         self._pending: dict[str, dict[str, Any]] = {}
+        self._stored_pending_count = 0
+        self._stored_approved_count = 0
         self._last_learning_error: str | None = None
         self._lock = RLock()
         if self.store is not None:
@@ -83,6 +85,8 @@ class ContinuousLearningCoordinator:
     def _refresh_persisted_state(self) -> dict:
         """Reload encrypted state and verify all authorizations in one bounded audit scan."""
         state = self.store.read()
+        self._stored_pending_count = len(state["pending"])
+        self._stored_approved_count = len(state["approved"])
         proposal_ids = [item["proposal_id"] for item in state["approved"]]
         authorization_valid = True
         if self._authorization_snapshot is not None:
@@ -252,6 +256,7 @@ class ContinuousLearningCoordinator:
                         "learning_consent": False,
                         "training_consent": False,
                         "pending": [],
+                        "retained_pending_count": 0,
                         "approved_count": 0,
                         "status": "Encrypted learning data is unavailable; personalization is paused.",
                     }
@@ -272,7 +277,12 @@ class ContinuousLearningCoordinator:
                 "learning_consent": learning,
                 "training_consent": training,
                 "pending": pending,
-                "approved_count": len(self.generator) if training else 0,
+                "retained_pending_count": (
+                    self._stored_pending_count if self.store is not None else len(self._pending)
+                ),
+                "approved_count": (
+                    self._stored_approved_count if self.store is not None else len(self.generator)
+                ),
                 "status": self._last_learning_error,
             }
 
