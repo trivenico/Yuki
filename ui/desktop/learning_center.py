@@ -77,7 +77,7 @@ class LearningCenterPanel:
                     self.signals.finished.emit(None, exc)
 
         page = QWidget(parent)
-        receiver = _LearningReceiver(page)
+        receiver = _LearningReceiver()
         page.setObjectName("yukiLearningCenter")
         layout = QVBoxLayout(page)
 
@@ -266,7 +266,8 @@ class LearningCenterPanel:
 
         def mark_disposed(_object=None):
             disposed["value"] = True
-            busy["worker"] = None
+            if not busy["value"]:
+                receiver.deleteLater()
 
         page.destroyed.connect(mark_disposed)
 
@@ -292,12 +293,15 @@ class LearningCenterPanel:
             set_controls_enabled(False)
             presenter.set_status("Working securely…")
             worker = _LearningWorker(action, callback, args)
+            worker.receiver = receiver
             busy["worker"] = worker
 
             def completed(result, error):
                 busy["value"] = False
                 busy["worker"] = None
                 if disposed["value"]:
+                    worker.receiver = None
+                    receiver.deleteLater()
                     return
                 set_controls_enabled(True)
                 if error is not None:
