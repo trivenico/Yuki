@@ -121,7 +121,7 @@ The application must not download these multi-gigabyte assets during startup. Mo
 The desktop voice-cloning path now has an optional local encrypted artifact store
 in `voice/secure_artifact_store.py`. It uses AES-256-GCM with a fresh random
 nonce per artifact, authenticated artifact identifiers, a 20 MiB hard upper
-bound (configurable downward), restrictive directory/file permissions, and
+bound (configurable downward), restrictive POSIX directory/file mode bits, and
 explicit consent before storing source audio. Reads and deletion require an
 authenticated session; deletion requires confirmation. Authentication failures
 and tampering fail closed.
@@ -132,7 +132,8 @@ the operating system credential store (Windows Credential Manager, macOS
 Keychain, or Linux Secret Service/keyring). Do not use a hard-coded key,
 configuration-file key, environment variable, or key derived from the sample.
 The key-store adapter and lifecycle are not implemented by this storage
-foundation yet. No artifact is uploaded or automatically retained by a provider.
+foundation yet. Windows ACL hardening is also not implemented; POSIX mode bits
+are not a substitute for Windows DACLs. No artifact is uploaded or automatically retained by a provider.
 
 Deleting an encrypted file is not a guarantee of physical erasure from SSD
 wear-leveling, filesystem journals, snapshots, or backups. Production deletion
