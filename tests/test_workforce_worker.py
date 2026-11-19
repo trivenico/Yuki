@@ -73,6 +73,46 @@ class WorkforceWorkerTests(unittest.TestCase):
             max_attempts=max_attempts,
         )
 
+    def test_worker_emits_execution_telemetry_for_experiment_assigned_tasks(self):
+        self.engine.create_improvement_proposal(
+            "worker-telemetry-proposal", {"recommendation": "Measure worker execution"},
+        )
+        self.engine.transition_improvement_proposal(
+            "worker-telemetry-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {
+                "description": "Workforce tasks", "task_types": ["workforce.task"],
+            },
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment(
+            "worker-telemetry-exp", "worker-telemetry-proposal", design,
+        )
+        self.engine.transition_workforce_experiment(
+            "worker-telemetry-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        task = self.submit()
+        self.engine.assign_workforce_experiment_task("worker-telemetry-exp", task["id"])
+        result = self.worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        events = self.engine.list_workforce_experiment_execution_events("worker-telemetry-exp")
+        self.assertEqual([event["event_type"] for event in events],
+                         ["execution_started", "execution_succeeded"])
+        self.assertTrue(all(event["worker_id"] == "workforce-worker" for event in events))
+        report = self.engine.get_workforce_experiment_integrity("worker-telemetry-exp")
+        self.assertEqual(report["worker_execution_events"]["execution_started"], 1)
+        self.assertEqual(report["worker_execution_events"]["execution_succeeded"], 1)
+
     def test_worker_leaves_other_task_types_queued(self):
         unrelated = self.engine.submit(
             self.goal, "skill.invoke", {"skill_name": "safe", "argument": ""},
