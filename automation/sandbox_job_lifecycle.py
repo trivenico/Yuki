@@ -1,10 +1,4 @@
-"""Host-owned lifecycle for isolated sandbox jobs.
-
-This manager owns private staging directories and enforces state transitions. It
-does not implement a container runtime: launch and freeze callbacks must bind the
-job directory as the container's only writable output mount and must stop the
-container plus revoke all writers before returning success from freeze.
-"""
+"""Host-owned lifecycle for isolated sandbox jobs with mandatory audit events."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -58,12 +52,21 @@ class SandboxJobSnapshot:
 
 
 class SandboxJobLifecycle:
-    """Own job staging, execution transitions, validation, promotion, and cleanup."""
+    """Own staging, execution transitions, validation, promotion, and cleanup.
 
-    def __init__(self, jobs_root: str | Path, *,
-                 launcher: Callable[[str, str], object],
-                 freezer: Callable[[object], bool],
-                 promotion: ApprovedArtifactPromotion,\n                 audit: Callable[[dict], None]):
+    The audit callback is mandatory. If an event cannot be recorded, the
+    corresponding transition is denied or the job is moved to FAILED.
+    """
+
+    def __init__(
+        self,
+        jobs_root: str | Path,
+        *,
+        launcher: Callable[[str, str], object],
+        freezer: Callable[[object], bool],
+        promotion: ApprovedArtifactPromotion,
+        audit: Callable[[dict], None],
+    ):
         root = Path(jobs_root).expanduser()
         if root.is_symlink():
             raise ValueError("jobs root cannot be a symlink")
@@ -74,12 +77,28 @@ class SandboxJobLifecycle:
             raise TypeError("launcher and freezer callbacks are required")
         if not isinstance(promotion, ApprovedArtifactPromotion):
             raise TypeError("an approved artifact promotion service is required")
+        if not callable(audit):
+            raise TypeError("a mandatory lifecycle audit callback is required")
         self._root = root
         self._launcher = launcher
         self._freezer = freezer
         self._promotion = promotion
+        self._audit = audit
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.RLock()
+
+    def _record(self, job: _Job, action: str, outcome: str, **details) -> None:
+        event = {
+            "action": "sandbox.job." + action,
+            "job_id": job.job_id,
+            "outcome": outcome,
+            "state": job.state.value,
+        }
+        event.update(details)
+        try:
+            self._audit(event)
+        except Exception as exc:
+            raise SandboxJobError("lifecycle audit unavailable; operation denied") from exc
 
     def create_job(self) -> SandboxJobSnapshot:
         """Create a unique host-owned staging directory with owner-only access."""
@@ -101,15 +120,16 @@ class SandboxJobLifecycle:
                 info = directory.lstat()
                 if directory.is_symlink() or not directory.is_dir() or info.st_uid != os.getuid():
                     raise SandboxJobError("staging directory ownership or type check failed")
+                job = _Job(job_id=job_id, staging_directory=directory)
+                self._record(job, "create", "succeeded")
             except Exception:
                 shutil.rmtree(directory, ignore_errors=True)
                 raise
-            job = _Job(job_id=job_id, staging_directory=directory)
             self._jobs[job_id] = job
             return self._snapshot(job)
 
     def start_job(self, job_id: str) -> SandboxJobSnapshot:
-        """Launch the job against only the manager-created staging directory."""
+        """Launch against only the manager-created staging directory."""
         with self._lock:
             job = self._get(job_id)
             if job.state is not JobState.CREATED:
@@ -120,9 +140,25 @@ class SandboxJobLifecycle:
                     raise SandboxJobError("sandbox launcher returned no runtime handle")
             except Exception as exc:
                 job.state = JobState.FAILED
+                try:
+                    self._record(job, "start", "failed")
+                except SandboxJobError:
+                    pass
                 raise SandboxJobError("sandbox job could not be started") from exc
             job.runtime_handle = handle
             job.state = JobState.RUNNING
+            try:
+                self._record(job, "start", "succeeded")
+            except SandboxJobError:
+                # Never report a clean failure if the launched workload may still run.
+                try:
+                    frozen = self._freezer(handle) is True
+                except Exception:
+                    frozen = False
+                if frozen:
+                    job.runtime_handle = None
+                    job.state = JobState.FAILED
+                raise
             return self._snapshot(job)
 
     def freeze_job(self, job_id: str) -> SandboxJobSnapshot:
@@ -138,12 +174,18 @@ class SandboxJobLifecycle:
             if not frozen:
                 raise SandboxJobError("sandbox freeze was not confirmed; staging remains untrusted")
             job.runtime_handle = None
+            try:
+                self._record(job, "freeze", "succeeded")
+            except SandboxJobError:
+                job.state = JobState.FAILED
+                raise
             job.state = JobState.FROZEN
             return self._snapshot(job)
 
-    def validate_job(self, job_id: str, *,
-                     allowed_extensions: Sequence[str]) -> ArtifactManifest:
-        """Validate output only after the runtime confirms all writers are stopped."""
+    def validate_job(
+        self, job_id: str, *, allowed_extensions: Sequence[str]
+    ) -> ArtifactManifest:
+        """Validate output only after all runtime writers have stopped."""
         with self._lock:
             job = self._get(job_id)
             if job.state is not JobState.FROZEN:
@@ -156,11 +198,17 @@ class SandboxJobLifecycle:
                 job.state = JobState.FAILED
                 raise
             job.manifest = manifest
+            try:
+                self._record(job, "validate", "succeeded", manifest_digest=manifest.digest)
+            except SandboxJobError:
+                job.state = JobState.FAILED
+                raise
             job.state = JobState.VALIDATED
             return manifest
 
-    def promote_artifact(self, job_id: str, *, principal,
-                         artifact_path: str, destination_path: str) -> str:
+    def promote_artifact(
+        self, job_id: str, *, principal, artifact_path: str, destination_path: str
+    ) -> str:
         """Promote one manifest entry; each entry requires its own exact approval."""
         with self._lock:
             job = self._get(job_id)
@@ -195,6 +243,11 @@ class SandboxJobLifecycle:
                 job.runtime_handle = None
             if job.state is JobState.CLEANED:
                 return self._snapshot(job)
+            try:
+                self._record(job, "discard", "succeeded")
+            except SandboxJobError:
+                job.state = JobState.FAILED
+                raise
             job.state = JobState.CANCELLED
             return self._snapshot(job)
 
@@ -209,11 +262,12 @@ class SandboxJobLifecycle:
                 raise SandboxJobError("job staging path no longer matches its ownership record")
             if directory.is_symlink():
                 raise SandboxJobError("job staging directory was replaced by a symlink")
+            self._record(job, "cleanup", "requested")
             shutil.rmtree(directory)
             job.state = JobState.CLEANED
             return self._snapshot(job)
 
-    def _record(self, job: _Job, action: str, outcome: str, **details) -> None:\n        event = {\n            "action": "sandbox.job." + action,\n            "job_id": job.job_id,\n            "outcome": outcome,\n            "state": job.state.value,\n        }\n        event.update(details)\n        try:\n            self._audit(event)\n        except Exception as exc:\n            raise SandboxJobError("lifecycle audit unavailable; operation denied") from exc\n\n    def get_job(self, job_id: str) -> SandboxJobSnapshot:
+    def get_job(self, job_id: str) -> SandboxJobSnapshot:
         with self._lock:
             return self._snapshot(self._get(job_id))
 
