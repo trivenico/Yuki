@@ -65,6 +65,61 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(self.engine.get_workforce_experiment("assignment-exp")["events"][-1]["event_type"],
                          "experiment.task_assigned")
 
+    def test_experiment_outcomes_are_derived_from_task_lifecycle(self):
+        self.engine.create_improvement_proposal("outcome-proposal", {"recommendation": "Measure outcomes"})
+        self.engine.transition_improvement_proposal(
+            "outcome-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed triage checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": "Workforce tasks",
+            "guardrails": [],
+            "evaluation_window_days": 14,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("outcome-exp", "outcome-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "outcome-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        assigned = []
+        for index in range(40):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"outcome-{index}",
+                max_attempts=1,
+            )
+            arm = self.engine.assign_workforce_experiment_task("outcome-exp", task["id"])["assignment"]
+            assigned.append((task, arm))
+        selected = {}
+        for task, arm in assigned:
+            selected.setdefault(arm, []).append(task)
+        self.assertEqual(set(selected), {"control", "treatment"})
+        for arm, tasks in selected.items():
+            succeeded, failed, cancelled, pending = tasks[:4]
+            self.engine.claim(f"{arm}-success")
+            self.engine.complete(succeeded["id"], f"{arm}-success", {"ok": True})
+            self.engine.claim(f"{arm}-failure")
+            self.engine.fail(failed["id"], f"{arm}-failure", "redacted")
+            self.engine.cancel_task(cancelled["id"])
+            # pending remains queued and is not falsely counted as an outcome
+        report = self.engine.get_workforce_experiment_outcomes("outcome-exp")
+        self.assertEqual(report["total_assigned"], 40)
+        self.assertEqual(report["total_evaluable"], 4)
+        self.assertEqual(report["status"], "descriptive_outcomes_available")
+        for arm in ("control", "treatment"):
+            self.assertEqual(report["arms"][arm]["succeeded"], 1)
+            self.assertEqual(report["arms"][arm]["failed"], 1)
+            self.assertEqual(report["arms"][arm]["cancelled"], 1)
+            self.assertGreater(report["arms"][arm]["pending"], 0)
+            self.assertEqual(report["arms"][arm]["success_rate"], 0.5)
+        self.assertFalse(report["automatic_action"])
+        self.assertIn("no causal effect", report["interpretation"])
+
     def test_pre_post_experiment_cannot_assign_randomized_arms(self):
         self.engine.create_improvement_proposal("descriptive-proposal", {"recommendation": "Observe"})
         self.engine.transition_improvement_proposal(
