@@ -235,6 +235,17 @@ class WorkforceDashboardTests(unittest.TestCase):
             self.engine.claim("improvement-worker", task_type="workforce.task")
             self.engine.fail(task["id"], "improvement-worker", "redacted failure")
 
+        success = self.engine.submit(
+            goal_id, "workforce.task",
+            {"assigned_employee_id": employee.employee_id, "description": "Successful comparison sample"},
+            idempotency_key="improvement-success-sample", max_attempts=1,
+        )
+        self.engine.claim("improvement-worker", task_type="workforce.task")
+        self.engine.complete(success["id"], "improvement-worker", {
+            "ok": True, "status": "completed", "employee_id": employee.employee_id,
+            "review_required": False, "review_evidence": None,
+        })
+
         snapshot = self.dashboard.snapshot()
         recommendations = snapshot["decision_intelligence"]["improvement_recommendations"]
         failure_review = next(
@@ -246,6 +257,19 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(failure_review["evidence"]["failure_rate_denominator"], 2)
         self.assertTrue(failure_review["requires_human_approval"])
         self.assertFalse(failure_review["automatic_action_taken"])
+        patterns = snapshot["decision_intelligence"]["failure_patterns"]
+        pattern = next(
+            row for row in patterns
+            if row["department"] == employee.department
+            and row["task_type"] == "workforce.task"
+        )
+        self.assertEqual(pattern["failed_tasks"], 2)
+        self.assertEqual(pattern["succeeded_tasks"], 1)
+        self.assertEqual(pattern["completed_tasks"], 3)
+        self.assertAlmostEqual(pattern["failure_rate"], 2 / 3)
+        self.assertFalse(pattern["employee_attribution"])
+        self.assertFalse(pattern["raw_failure_details_included"])
+        self.assertNotIn("redacted failure", str(pattern))
         self.assertIn("do not assign blame", " ".join(
             snapshot["decision_intelligence"]["limitations"]
         ))
