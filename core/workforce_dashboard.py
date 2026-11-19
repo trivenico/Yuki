@@ -47,10 +47,16 @@ class WorkforceDashboard:
             context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
             if not isinstance(context, list):
                 continue
+            seen_knowledge_ids: set[str] = set()
             for lesson in context[:5]:
                 if not isinstance(lesson, dict) or not isinstance(lesson.get("knowledge_id"), str):
                     continue
-                knowledge_id = lesson["knowledge_id"]
+                knowledge_id = lesson["knowledge_id"].strip()
+                if not knowledge_id or len(knowledge_id) > 128 or knowledge_id in seen_knowledge_ids:
+                    continue
+                # One task contributes at most one exposure per lesson, even if
+                # malformed/replayed context repeats the same knowledge reference.
+                seen_knowledge_ids.add(knowledge_id)
                 metrics = knowledge_outcomes.setdefault(knowledge_id, {
                     "knowledge_id": knowledge_id,
                     "exposures": 0,
