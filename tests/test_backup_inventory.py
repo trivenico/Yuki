@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,8 +12,9 @@ class BackupInventoryTests(unittest.TestCase):
         workspace = root / "workspace"
         workspace.mkdir()
         for name in names:
-            with sqlite3.connect(workspace / name) as db:
+            with closing(sqlite3.connect(workspace / name)) as db:
                 db.execute("CREATE TABLE records(value TEXT)")
+                db.commit()
         return workspace
 
     def test_lists_only_explicit_web_runtime_databases(self):
@@ -54,8 +56,9 @@ class BackupInventoryTests(unittest.TestCase):
                 "conversations.sqlite3",
             ])
             external = root / "workforce.sqlite3"
-            with sqlite3.connect(external) as db:
+            with closing(sqlite3.connect(external)) as db:
                 db.execute("CREATE TABLE tasks(value TEXT)")
+                db.commit()
             entries = build_web_sqlite_inventory(
                 {"workspace": str(workspace)},
                 additional_databases={"workforce": external},
