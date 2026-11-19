@@ -1197,7 +1197,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.authenticated_tabs.setTabEnabled(index, True)
             for widget in (
                 self.memory_toggle, self.transcript, self.message, self.send_button,
-                self.voice_checkbox, self.voice_status,
+                self.conversation_selector, self.new_conversation_button,
+                self.refresh_conversations_button, self.voice_checkbox, self.voice_status,
                 self.spoken_replies_checkbox, self.speech_stop_button,
             ):
                 widget.setEnabled(True)
@@ -1275,6 +1276,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
+            self.conversation_selector.clear()
             # Restore only the newest conversation owned by this authenticated
             # account. The controller delegates to the live-session-checked
             # facade, which enforces owner scope again at every operation.
@@ -1291,6 +1293,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                             if role in ("user", "assistant") and isinstance(content, str):
                                 speaker = "You" if role == "user" else "Yuki"
                                 self.transcript.appendPlainText(speaker + ": " + content)
+                        self._refresh_conversation_list(select_id=conversation_id)
                         self.chat_status.setText("Restored your most recent conversation.")
             except Exception as exc:
                 # History failure must not grant access or block chat startup;
@@ -2490,6 +2493,12 @@ Version: {version}",
             self.memory_toggle.setChecked(False)
             self.memory_toggle.blockSignals(False)
             self.transcript.clear()
+            self.conversation_selector.blockSignals(True)
+            self.conversation_selector.clear()
+            self.conversation_selector.blockSignals(False)
+            self.conversation_selector.setEnabled(False)
+            self.new_conversation_button.setEnabled(False)
+            self.refresh_conversations_button.setEnabled(False)
             self.specialist_list.clear()
             self.task_list.clear()
             self.task_progress_view.clear()
