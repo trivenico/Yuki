@@ -41,6 +41,16 @@ class WorkforceDashboard:
         ]
 
         task_counts = Counter(task["state"] for task in tasks)
+        # Validate lesson references against the bounded, current verified registry.
+        # This cannot prove the lesson was verified at the historical execution time.
+        verified_knowledge = self.task_engine.list_verified_knowledge(limit=500)
+        currently_verified_knowledge_ids = {
+            record.get("knowledge_id")
+            for record in verified_knowledge
+            if isinstance(record, dict)
+            and isinstance(record.get("knowledge_id"), str)
+            and record.get("state") == "verified"
+        }
         knowledge_outcomes: dict[str, dict[str, Any]] = {}
         for task in tasks:
             payload = task.get("payload")
@@ -63,10 +73,21 @@ class WorkforceDashboard:
                     "succeeded_tasks": 0,
                     "failed_tasks": 0,
                     "independently_verified_successes": 0,
+                    "currently_verified_exposures": 0,
+                    "currently_verified_succeeded_tasks": 0,
+                    "currently_verified_failed_tasks": 0,
+                    "unverified_reference_exposures": 0,
                 })
                 metrics["exposures"] += 1
+                is_currently_verified = knowledge_id in currently_verified_knowledge_ids
+                if is_currently_verified:
+                    metrics["currently_verified_exposures"] += 1
+                else:
+                    metrics["unverified_reference_exposures"] += 1
                 if task["state"] == "succeeded":
                     metrics["succeeded_tasks"] += 1
+                    if is_currently_verified:
+                        metrics["currently_verified_succeeded_tasks"] += 1
                     result = task.get("result")
                     evidence = result.get("review_evidence") if isinstance(result, dict) else None
                     if (
@@ -92,6 +113,8 @@ class WorkforceDashboard:
                         metrics["independently_verified_successes"] += 1
                 elif task["state"] == "failed":
                     metrics["failed_tasks"] += 1
+                    if is_currently_verified:
+                        metrics["currently_verified_failed_tasks"] += 1
 
         employee_tasks: dict[str, Counter] = defaultdict(Counter)
         for task in tasks:
@@ -161,7 +184,6 @@ class WorkforceDashboard:
         # Only the durable store's verified records are eligible for coverage.
         # Capability matching is deliberately exact against curated knowledge tags;
         # free-text lesson/domain similarity would create unsupported associations.
-        verified_knowledge = self.task_engine.list_verified_knowledge(limit=500)
         knowledge_by_capability: dict[str, list[str]] = defaultdict(list)
         for record in verified_knowledge:
             knowledge = record.get("knowledge") if isinstance(record, dict) else None
@@ -338,7 +360,7 @@ class WorkforceDashboard:
             lesson_evidence = []
             for knowledge_id in signal["verified_knowledge_ids"]:
                 outcome = knowledge_outcomes.get(knowledge_id, {})
-                exposures = outcome.get("exposures", 0)
+                exposures = outcome.get("currently_verified_exposures", 0)
                 verified_successes = outcome.get("independently_verified_successes", 0)
                 if exposures >= 3 and verified_successes >= 1:
                     evidence_level = "reviewed_success_observation_available"
@@ -349,9 +371,11 @@ class WorkforceDashboard:
                 lesson_evidence.append({
                     "knowledge_id": knowledge_id,
                     "exposures": exposures,
-                    "succeeded_tasks": outcome.get("succeeded_tasks", 0),
-                    "failed_tasks": outcome.get("failed_tasks", 0),
-                    "independently_verified_successes": verified_successes,
+                    "succeeded_tasks": outcome.get("currently_verified_succeeded_tasks", 0),
+                    "failed_tasks": outcome.get("currently_verified_failed_tasks", 0),
+                    "independently_verified_successes": verified_successes if knowledge_id in currently_verified_knowledge_ids else 0,
+                    "unverified_reference_exposures": outcome.get("unverified_reference_exposures", 0),
+                    "provenance": "currently_verified_record_match" if knowledge_id in currently_verified_knowledge_ids else "not_found_in_bounded_verified_registry",
                     "evidence_level": evidence_level,
                 })
             if not lesson_evidence:
@@ -591,6 +615,9 @@ class WorkforceDashboard:
                 "limitations": [
                     "exposure counts show association, not that a lesson caused an outcome",
                     "tasks may use multiple lessons and differ in difficulty, staffing, and context",
+                    "raw exposure counts include caller-provided lesson references; currently verified registry matches are reported separately",
+                    "current verified status does not prove a lesson was verified at the historical task execution time",
+                    "verified-registry lookup is bounded to the newest 500 records; missing references are not proof that a lesson never existed",
                     "only independently reviewed successes with consistent persisted evidence count as verified successes",
                     "this is observational reporting, not an automatic quality score or lesson retirement decision",
                 ],
