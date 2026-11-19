@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 from typing import Any
@@ -108,12 +109,18 @@ def build_sandbox_job_recovery(config: dict[str, Any]) -> SandboxJobRecovery | N
             if not isinstance(event, dict) or event.get("action") != "sandbox.job.recovery":
                 raise SandboxJobCompositionError("unexpected sandbox recovery audit event")
             job_id = event.get("job_id")
+            previous_state = event.get("previous_state")
             outcome = event.get("outcome")
-            if not isinstance(job_id, str) or len(job_id) != 36 or outcome not in {"missing", "removed"}:
+            if (not isinstance(job_id, str) or not re.fullmatch(r"job_[0-9a-f]{32}", job_id)
+                    or previous_state not in {"launching", "running"}
+                    or outcome not in {"missing", "removed"}):
                 raise SandboxJobCompositionError("malformed sandbox recovery audit event")
-            # RecoveryAuditLog has a fixed schema; bind the job identity into
-            # the bounded action field rather than dropping it.
-            audit_log.record("sandbox.recovery." + job_id, "completed")
+            # RecoveryAuditLog has a fixed schema; bind job identity, prior
+            # state, and reconciliation result into its bounded action field.
+            audit_log.record(
+                f"sandbox.recovery.{job_id}.{previous_state}.{outcome}",
+                "completed",
+            )
 
         return SandboxJobRecovery(
             store=store,
