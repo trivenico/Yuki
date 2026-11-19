@@ -180,10 +180,16 @@ class WakeWordSessionTests(unittest.TestCase):
         source = FakeAudioSource([object()])
         detector = FakeDetector()
         errors = []
-        session = self.make_session(source, detector, on_error=errors.append)
+        error_reported = threading.Event()
+        def on_error(error):
+            errors.append(error)
+            error_reported.set()
+        session = self.make_session(source, detector, on_error=on_error)
         session.start()
+        self.assertTrue(error_reported.wait(2))
         worker = session._thread
-        worker.join(2)
+        if worker is not None:
+            worker.join(2)
         self.assertEqual(session.state, "failed")
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], WakeWordError)
