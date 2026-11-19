@@ -1099,6 +1099,100 @@ class DurableTaskEngine:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_workforce_experiment_integrity(self, experiment_id):
+        """Audit persisted assignment/delivery consistency without inferring exposure."""
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        with closing(self._connect()) as c:
+            experiment = c.execute(
+                "SELECT design_json,state FROM workforce_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if experiment is None:
+                raise TaskNotFound("experiment not found")
+            rows = c.execute(
+                """SELECT a.task_id,a.assignment,a.assignment_key,a.assigned_at,
+                          t.task_type,d.delivery_state,d.intervention_version
+                   FROM workforce_experiment_assignments a
+                   JOIN tasks t ON t.id=a.task_id
+                   LEFT JOIN workforce_experiment_deliveries d
+                     ON d.experiment_id=a.experiment_id AND d.task_id=a.task_id
+                   WHERE a.experiment_id=? ORDER BY a.task_id""",
+                (experiment_id,),
+            ).fetchall()
+            duplicate_rows = c.execute(
+                """SELECT task_id,COUNT(*) AS assignment_count
+                   FROM workforce_experiment_assignments
+                   WHERE task_id IN (
+                     SELECT task_id FROM workforce_experiment_assignments WHERE experiment_id=?
+                   )
+                   GROUP BY task_id HAVING COUNT(*)>1""",
+                (experiment_id,),
+            ).fetchall()
+            control_delivery_count = c.execute(
+                """SELECT COUNT(*) AS n FROM workforce_experiment_deliveries d
+                   JOIN workforce_experiment_assignments a
+                     ON a.experiment_id=d.experiment_id AND a.task_id=d.task_id
+                   WHERE d.experiment_id=? AND a.assignment!='treatment'""",
+                (experiment_id,),
+            ).fetchone()["n"]
+        design = json.loads(experiment["design_json"])
+        population = design.get("eligible_population")
+        allowed_types = (
+            {item.casefold() for item in population.get("task_types", [])}
+            if isinstance(population, dict) and isinstance(population.get("task_types"), list)
+            else None
+        )
+        issues = []
+        delivery_counts = {"delivered": 0, "not_delivered": 0, "unknown": 0, "unrecorded": 0}
+        for row in rows:
+            expected_key = hashlib.sha256(
+                (experiment_id + "\\0" + row["task_id"]).encode("utf-8")
+            ).hexdigest()
+            expected_arm = "treatment" if int(expected_key[:8], 16) % 2 else "control"
+            if row["assignment_key"] != expected_key or row["assignment"] != expected_arm:
+                issues.append({"code": "assignment_integrity_mismatch", "task_id": row["task_id"]})
+            if allowed_types is not None and row["task_type"].casefold() not in allowed_types:
+                issues.append({"code": "eligibility_drift", "task_id": row["task_id"]})
+            if row["assignment"] == "treatment":
+                state = row["delivery_state"] or "unrecorded"
+                delivery_counts[state] = delivery_counts.get(state, 0) + 1
+            elif row["delivery_state"] is not None:
+                issues.append({"code": "control_arm_has_treatment_delivery", "task_id": row["task_id"]})
+            if row["delivery_state"] == "delivered" and not row["intervention_version"]:
+                issues.append({"code": "delivered_without_intervention_version", "task_id": row["task_id"]})
+        for row in duplicate_rows:
+            issues.append({"code": "multiple_experiment_assignments", "task_id": row["task_id"],
+                           "assignment_count": row["assignment_count"]})
+        if control_delivery_count:
+            issues.append({"code": "control_arm_delivery_records_present",
+                           "count": control_delivery_count})
+        if delivery_counts["unrecorded"]:
+            issues.append({"code": "treatment_delivery_unrecorded",
+                           "count": delivery_counts["unrecorded"]})
+        return {
+            "experiment_id": experiment_id,
+            "experiment_state": experiment["state"],
+            "assignments_checked": len(rows),
+            "treatment_delivery_attestations": delivery_counts,
+            "issues": issues,
+            "issue_count": len(issues),
+            "status": "integrity_warnings" if issues else "no_detected_integrity_issues",
+            "scope": [
+                "Persisted assignment keys and deterministic arm consistency",
+                "Current task-type eligibility against the stored design",
+                "Treatment delivery attestation coverage and arm consistency",
+                "Duplicate task assignment rows visible to this database query",
+            ],
+            "limitations": [
+                "Database uniqueness prevents normal cross-experiment task reassignment; rejected attempts are not retained as contamination events.",
+                "No independent runtime exposure telemetry exists, so repeated real-world exposure or unrecorded treatment execution cannot be detected.",
+                "Operator delivery attestations are not proof of execution.",
+                "A clean report is not proof that no contamination occurred.",
+            ],
+            "automatic_action": False,
+        }
+
     def get_workforce_experiment_outcomes(self, experiment_id):
         """Return read-only lifecycle outcomes for assigned tasks, grouped by arm.
 
