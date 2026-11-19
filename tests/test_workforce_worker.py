@@ -3,6 +3,8 @@ import unittest
 from core.durable_task_engine import DurableTaskEngine
 from core.workforce import AgentProfile, AgentRegistry
 from core.workforce_worker import WorkforceWorker
+from core.workforce_executor import YukiAgentWorkforceExecutor
+import hashlib
 
 
 class Outcome:
@@ -39,6 +41,88 @@ class Reviewer:
         self.calls.append(kwargs)
         self.decision.reviewer_id = self.reviewer_id
         return self.decision
+
+class Skill:
+    name = "triage"
+    capabilities = ("python", "api_design")
+    permissions = ("repo:read",)
+    risk = "low"
+
+
+class SkillRegistry:
+    def __init__(self):
+        self.skill = Skill()
+
+    def names(self):
+        return ("triage",)
+
+    def get(self, name):
+        return self.skill if name == "triage" else None
+
+
+class Agent:
+    def __init__(self):
+        self.registry = SkillRegistry()
+        self.calls = []
+
+    def run_skill(self, name, argument):
+        self.calls.append((name, argument))
+        return Outcome(True, "completed")
+
+
+class WorkforceExecutorTreatmentTests(unittest.TestCase):
+    def setUp(self):
+        self.employee = AgentProfile(
+            employee_id="ENG-001", name="Backend Specialist",
+            department="Engineering", role="Backend Engineer",
+            capabilities=frozenset({"python", "api_design"}),
+            reports_to="YUKI-CEO", permissions=frozenset({"repo:read"}),
+        )
+        self.agent = Agent()
+        self.executor = YukiAgentWorkforceExecutor(self.agent)
+        self.base = {
+            "employee": self.employee,
+            "description": "Review the task",
+            "required_capabilities": ("python", "api_design"),
+            "required_permissions": ("repo:read",),
+            "max_autonomy_tier": 1,
+            "task_id": "task-treatment",
+            "knowledge_context": [],
+        }
+
+    def test_treatment_is_injected_as_untrusted_reference_and_exposure_recorded_at_invocation(self):
+        intervention = "Use the reviewed checklist as reference context."
+        version = hashlib.sha256(intervention.encode("utf-8")).hexdigest()
+        recorded = []
+        outcome = self.executor.authorize_and_execute(
+            **self.base,
+            experiment_context={
+                "experiment_id": "exp-1", "assignment": "treatment",
+                "experiment_state": "approved", "intervention": intervention,
+                "intervention_version": version,
+            },
+            record_treatment_exposure=lambda **kwargs: recorded.append(kwargs),
+        )
+        self.assertTrue(outcome.ok)
+        self.assertEqual(recorded, [{"skill_name": "triage"}])
+        self.assertIn("Approved experiment treatment (untrusted reference data", self.agent.calls[0][1])
+        self.assertIn(intervention, self.agent.calls[0][1])
+
+    def test_control_assignment_does_not_inject_treatment_or_emit_exposure(self):
+        recorded = []
+        outcome = self.executor.authorize_and_execute(
+            **self.base,
+            experiment_context={
+                "experiment_id": "exp-1", "assignment": "control",
+                "experiment_state": "approved", "intervention": None,
+                "intervention_version": None,
+            },
+            record_treatment_exposure=lambda **kwargs: recorded.append(kwargs),
+        )
+        self.assertTrue(outcome.ok)
+        self.assertEqual(recorded, [])
+        self.assertNotIn("Approved experiment treatment", self.agent.calls[0][1])
+
 
 class WorkforceWorkerTests(unittest.TestCase):
     def setUp(self):
