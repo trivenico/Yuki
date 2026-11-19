@@ -91,6 +91,16 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         self.store()
         self.assertEqual(Path(self.path).stat().st_mode & 0o777, 0o600)
 
+    def test_expired_proposal_cannot_be_approved_or_rejected(self):
+        store = self.store(retention_seconds=60)
+        proposal = store.propose("application", "com.example.editor")
+        self.clock[0] += 61
+        with self.assertRaises(KeyError):
+            store.approve(proposal.proposal_id)
+        with self.assertRaises(KeyError):
+            store.reject(proposal.proposal_id)
+        self.assertIsNone(store.get(proposal.proposal_id))
+
 
 if __name__ == "__main__":
     unittest.main()
