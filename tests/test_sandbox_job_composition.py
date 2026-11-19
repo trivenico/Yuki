@@ -78,7 +78,7 @@ class SandboxJobCompositionTests(unittest.TestCase):
     def test_config_parses_separate_disabled_by_default_setting(self):
         with tempfile.TemporaryDirectory() as temp:
             config_path = Path(temp) / "config.yaml"
-            config_path.write_text("workspace: " + temp + "\\nsandbox_jobs_enabled: false\\n", encoding="utf-8")
+            config_path.write_text("workspace: " + temp + "\nsandbox_jobs_enabled: false\n", encoding="utf-8")
             config = load_config(config_path)
         self.assertFalse(config["sandbox_jobs_enabled"])
         self.assertEqual(config["sandbox_jobs_command"], [])
@@ -87,11 +87,11 @@ class SandboxJobCompositionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             config_path = Path(temp) / "config.yaml"
             config_path.write_text(
-                "workspace: " + temp + "\\n"
-                "sandbox_jobs_enabled: true\\n"
-                "sandbox_jobs_root: jobs\\n"
-                "sandbox_jobs_image: latest\\n"
-                "sandbox_jobs_command: [/bin/true]\\n",
+                "workspace: " + temp + "\n"
+                "sandbox_jobs_enabled: true\n"
+                "sandbox_jobs_root: jobs\n"
+                "sandbox_jobs_image: latest\n"
+                "sandbox_jobs_command: [/bin/true]\n",
                 encoding="utf-8",
             )
             with self.assertRaises(RuntimeError):
