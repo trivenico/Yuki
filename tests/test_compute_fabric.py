@@ -65,7 +65,7 @@ class ComputeFabricTests(unittest.TestCase):
             self.scheduler.execute(ComputeRequest(memory_bytes=30), fail)
         self.assertEqual(
             self.scheduler.stats()["cpu"],
-            {"reserved_memory_bytes": 0, "active_operations": 0},
+            {"reserved_memory_bytes": 0, "resident_memory_bytes": 0, "transient_memory_bytes": 0, "resident_models": 0, "active_operations": 0},
         )
 
     def test_rejects_invalid_resource_values(self):
@@ -221,6 +221,90 @@ class ComputeFabricTests(unittest.TestCase):
             scheduler.stats()["cuda"],
             {"reserved_memory_bytes": 0, "active_operations": 0},
         )
+
+
+    def test_model_residency_persists_across_transient_inference_reservations(self):
+        lease = self.scheduler.reserve_model(
+            ComputeRequest(memory_bytes=70), model_id="model-a",
+        )
+        try:
+            self.assertEqual(lease.state, "active")
+            with self.scheduler.reserve(ComputeRequest(memory_bytes=30)):
+                stats = self.scheduler.stats()["cpu"]
+                self.assertEqual(stats["resident_memory_bytes"], 70)
+                self.assertEqual(stats["transient_memory_bytes"], 30)
+                self.assertEqual(stats["reserved_memory_bytes"], 100)
+            stats = self.scheduler.stats()["cpu"]
+            self.assertEqual(stats["resident_memory_bytes"], 70)
+            self.assertEqual(stats["transient_memory_bytes"], 0)
+            with self.assertRaises(ComputeCapacityError):
+                self.scheduler.reserve_model(
+                    ComputeRequest(memory_bytes=31), model_id="model-b",
+                )
+        finally:
+            lease.release()
+        self.assertEqual(lease.state, "released")
+        lease.release()
+        self.assertEqual(self.scheduler.stats()["cpu"]["reserved_memory_bytes"], 0)
+
+    def test_concurrent_model_residency_admission_is_bounded(self):
+        barrier = threading.Barrier(3)
+        admitted = []
+        failures = []
+
+        def acquire(model_id):
+            barrier.wait()
+            try:
+                admitted.append(self.scheduler.reserve_model(
+                    ComputeRequest(memory_bytes=60), model_id=model_id,
+                ))
+            except ComputeCapacityError as exc:
+                failures.append(exc)
+
+        workers = [threading.Thread(target=acquire, args=(f"m-{i}",)) for i in range(2)]
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join(timeout=2)
+        try:
+            self.assertEqual(len(admitted), 1)
+            self.assertEqual(len(failures), 1)
+        finally:
+            for lease in admitted:
+                lease.release()
+
+    def test_poisoned_residency_is_retained_until_explicit_reconciliation(self):
+        lease = self.scheduler.reserve_model(
+            ComputeRequest(memory_bytes=80), model_id="model-uncertain",
+        )
+        lease.mark_unload_failed()
+        with self.assertRaises(ComputeFabricError):
+            lease.release()
+        self.assertEqual(lease.state, "poisoned")
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 80)
+        with self.assertRaises(ComputeCapacityError):
+            with self.scheduler.reserve(ComputeRequest(memory_bytes=21)):
+                pass
+        self.scheduler.confirm_model_unloaded(lease)
+        self.assertEqual(lease.state, "released")
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 0)
+
+    def test_residency_lease_rejects_foreign_scheduler_reconciliation(self):
+        lease = self.scheduler.reserve_model(
+            ComputeRequest(memory_bytes=10), model_id="model-a",
+        )
+        other = ComputeScheduler((CPUBackend(memory_capacity_bytes=100),))
+        with self.assertRaises(TypeError):
+            other.confirm_model_unloaded(lease)
+        lease.release()
+
+    def test_residency_load_failure_can_release_admission(self):
+        lease = self.scheduler.reserve_model(
+            ComputeRequest(memory_bytes=50), model_id="model-load-failure",
+        )
+        lease.release()
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 0)
 
     def test_duplicate_backend_registration_is_rejected(self):
         with self.assertRaises(ValueError):
