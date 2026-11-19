@@ -918,6 +918,44 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
 
+    def test_knowledge_delivery_integrity_api_is_role_gated_and_read_only(self):
+        goal = self.engine.create_goal()
+        task = self.engine.submit(
+            goal, "workforce.task",
+            {"assigned_employee_id": "engineering-backend-01", "knowledge_context": [
+                {"knowledge_id": "lesson-not-present", "title": "Example",
+                 "lesson": "Example lesson", "source_task_id": "source-1",
+                 "reviewed_by": "reviewer-1"},
+            ]},
+            idempotency_key="delivery-integrity-api",
+            max_attempts=1,
+        )
+        path = f"/v1/workforce/tasks/{task['id']}/knowledge-delivery-integrity"
+        status, _ = self.request(path)
+        self.assertEqual(status, 401)
+        status, _ = self.request(path, token=self.user_session.token)
+        self.assertEqual(status, 403)
+        status, report = self.request(path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["task_id"], task["id"])
+        self.assertEqual(report["expected_lessons"], 1)
+        self.assertEqual(report["findings"][0]["status"], "not_attested")
+        self.assertEqual(
+            report["findings"][0]["coverage"],
+            "unknown_pre_instrumentation_or_missing",
+        )
+        self.assertEqual(report["remediation"], "none_automatic_human_review_only")
+        status, _ = self.request(
+            path, token=self.admin_session.token, query=b"unexpected=true",
+        )
+        self.assertEqual(status, 400)
+        status, missing = self.request(
+            "/v1/workforce/tasks/unknown-task/knowledge-delivery-integrity",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(missing["error"], "task_not_found")
+
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
         self.assertEqual(status, 404)
