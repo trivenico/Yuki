@@ -69,7 +69,8 @@ def evaluate_improvement_snapshots(baseline, current, *, minimum_completed_obser
         if name == "success_rate":
             before_den = _number(baseline, denominator_path)
             after_den = _number(current, denominator_path)
-            if before is None or after is None or before_den is None or after_den is None:
+            counts = (before, after, before_den, after_den)
+            if (any(value is None or not float(value).is_integer() for value in counts)):
                 before = after = None
             else:
                 before_total, after_total = before + before_den, after + after_den
