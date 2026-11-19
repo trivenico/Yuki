@@ -39,6 +39,18 @@ class ObservationKnowledgeReviewService:
             raise PermissionError("observation review operation is not authorized")
         return actor_id
 
+    def can_review(self, *, actor_id: str, decisions: bool = False) -> bool:
+        """Check whether this actor may inspect proposals and optionally decide them."""
+        if not isinstance(decisions, bool):
+            return False
+        try:
+            self._require(actor_id, "observation:review:read")
+            if decisions:
+                self._require(actor_id, "observation:review:decide")
+            return True
+        except (TypeError, ValueError, PermissionError):
+            return False
+
     def list_pending(self, *, actor_id: str, limit: int = 100):
         self._require(actor_id, "observation:review:read")
         return self._store.list_pending(limit=limit)
