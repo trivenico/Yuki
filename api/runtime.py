@@ -37,11 +37,14 @@ class ConversationRuntime:
     def __init__(
         self, app: Any, application: ConversationApplicationRuntime,
         workforce_application: WorkforceApplicationRuntime | None = None,
+        sandbox_job_recovery: Any | None = None,
     ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
         self.workforce_application = workforce_application
+        self.sandbox_job_recovery = sandbox_job_recovery
+        self._startup_complete = False
         self.store = application.store
         self._closed = False
 
@@ -54,7 +57,26 @@ class ConversationRuntime:
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
-                await send({"type": "lifespan.startup.complete"})
+                try:
+                    if self.sandbox_job_recovery is not None:
+                        outcomes = self.sandbox_job_recovery.recover_nonterminal()
+                        blocked = [
+                            item for item in outcomes
+                            if item.get("outcome") == "recovery_required"
+                        ]
+                        if blocked:
+                            raise RuntimeError(
+                                f"{len(blocked)} durable sandbox job(s) require manual recovery"
+                            )
+                    self._startup_complete = True
+                    await send({"type": "lifespan.startup.complete"})
+                except Exception as exc:
+                    self.close()
+                    await send({
+                        "type": "lifespan.startup.failed",
+                        "message": f"Yuki startup recovery failed: {type(exc).__name__}",
+                    })
+                    return
             elif message["type"] == "lifespan.shutdown":
                 self.close()
                 await send({"type": "lifespan.shutdown.complete"})
@@ -95,6 +117,7 @@ def build_conversation_runtime(
     pending_approvals: SQLitePendingApprovalStore | None = None,
     approval_audit: SQLiteApprovalAuditLog | None = None,
     workforce_application: WorkforceApplicationRuntime | None = None,
+    sandbox_job_recovery: Any | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -136,6 +159,10 @@ def build_conversation_runtime(
         raise TypeError("pending_approvals must be a SQLitePendingApprovalStore")
     if approval_audit is not None and not isinstance(approval_audit, SQLiteApprovalAuditLog):
         raise TypeError("approval_audit must be a SQLiteApprovalAuditLog")
+    if sandbox_job_recovery is not None and not callable(
+        getattr(sandbox_job_recovery, "recover_nonterminal", None)
+    ):
+        raise TypeError("sandbox_job_recovery must provide recover_nonterminal()")
     if workforce_application is not None and not isinstance(workforce_application, WorkforceApplicationRuntime):
         raise TypeError("workforce_application must be a WorkforceApplicationRuntime")
     if workforce_application is not None:
@@ -201,7 +228,10 @@ def build_conversation_runtime(
                 pending_approvals=pending_approvals, approval_audit=approval_audit,
                 workforce_ceo=workforce_application.ceo if workforce_application is not None else None,
             )
-        return ConversationRuntime(app, application, workforce_application)
+        return ConversationRuntime(
+            app, application, workforce_application,
+            sandbox_job_recovery=sandbox_job_recovery,
+        )
     except Exception:
         if workforce_application is not None:
             workforce_application.close()
