@@ -130,6 +130,26 @@ class DurableTaskEngine:
             );
             CREATE INDEX IF NOT EXISTS workforce_experiment_deliveries_idx
               ON workforce_experiment_deliveries(experiment_id,delivery_state);
+            CREATE TABLE IF NOT EXISTS workforce_experiment_execution_events(
+              event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              experiment_id TEXT NOT NULL,
+              task_id TEXT NOT NULL,
+              event_type TEXT NOT NULL CHECK(event_type IN ('execution_started','execution_succeeded','execution_failed')),
+              attempt INTEGER NOT NULL CHECK(attempt >= 1),
+              worker_id TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              FOREIGN KEY(experiment_id,task_id)
+                REFERENCES workforce_experiment_assignments(experiment_id,task_id),
+              UNIQUE(experiment_id,task_id,event_type,attempt)
+            );
+            CREATE INDEX IF NOT EXISTS workforce_experiment_execution_events_idx
+              ON workforce_experiment_execution_events(experiment_id,event_type,created_at);
+            CREATE TRIGGER IF NOT EXISTS workforce_experiment_execution_events_no_update
+            BEFORE UPDATE ON workforce_experiment_execution_events
+            BEGIN SELECT RAISE(ABORT,'experiment execution events are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS workforce_experiment_execution_events_no_delete
+            BEFORE DELETE ON workforce_experiment_execution_events
+            BEGIN SELECT RAISE(ABORT,'experiment execution events are immutable'); END;
             CREATE TRIGGER IF NOT EXISTS workforce_experiment_deliveries_no_update
             BEFORE UPDATE ON workforce_experiment_deliveries
             BEGIN SELECT RAISE(ABORT,'experiment delivery attestations are immutable'); END;
@@ -1095,6 +1115,95 @@ class DurableTaskEngine:
                           actor_id,created_at AS attested_at
                    FROM workforce_experiment_deliveries WHERE experiment_id=?
                    ORDER BY created_at,task_id LIMIT ?""",
+                (experiment_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_workforce_experiment_execution_event(
+        self, experiment_id, task_id, event_type, *, worker_id, attempt,
+    ):
+        """Append trusted worker lifecycle telemetry for an assigned task."""
+        for name, value in (("experiment_id", experiment_id), ("task_id", task_id),
+                            ("worker_id", worker_id)):
+            if not isinstance(value, str) or not 1 <= len(value) <= 256 or value.strip() != value:
+                raise ValueError("invalid " + name)
+        if event_type not in {"execution_started", "execution_succeeded", "execution_failed"}:
+            raise ValueError("invalid execution event type")
+        if type(attempt) is not int or attempt < 1:
+            raise ValueError("attempt must be a positive integer")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                """SELECT a.assignment,t.state,t.lease_owner,t.lease_until,t.attempts,e.state AS experiment_state
+                   FROM workforce_experiment_assignments a
+                   JOIN tasks t ON t.id=a.task_id
+                   JOIN workforce_experiments e ON e.experiment_id=a.experiment_id
+                   WHERE a.experiment_id=? AND a.task_id=?""",
+                (experiment_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise TaskNotFound("experiment assignment not found")
+            if row["experiment_state"] != "approved":
+                raise TaskConflict("experiment must remain approved during execution")
+            if (row["state"] != "running" or row["lease_owner"] != worker_id
+                    or row["lease_until"] is None or row["lease_until"] <= now
+                    or row["attempts"] != attempt):
+                raise TaskConflict("worker does not hold the matching live task lease")
+            if event_type == "execution_started":
+                prior = c.execute(
+                    """SELECT 1 FROM workforce_experiment_execution_events
+                       WHERE experiment_id=? AND task_id=? AND attempt=?
+                         AND event_type='execution_started'""",
+                    (experiment_id, task_id, attempt),
+                ).fetchone()
+                if prior:
+                    c.commit()
+                    return {"created": False, "experiment_id": experiment_id,
+                            "task_id": task_id, "event_type": event_type,
+                            "attempt": attempt, "worker_id": worker_id}
+            else:
+                started = c.execute(
+                    """SELECT 1 FROM workforce_experiment_execution_events
+                       WHERE experiment_id=? AND task_id=? AND attempt=?
+                         AND event_type='execution_started'""",
+                    (experiment_id, task_id, attempt),
+                ).fetchone()
+                if not started:
+                    raise TaskConflict("execution terminal event requires a recorded start")
+            try:
+                c.execute(
+                    """INSERT INTO workforce_experiment_execution_events
+                       (experiment_id,task_id,event_type,attempt,worker_id,created_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (experiment_id, task_id, event_type, attempt, worker_id, now),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise TaskConflict("execution event already recorded") from exc
+            c.execute(
+                """INSERT INTO workforce_experiment_events
+                   (experiment_id,event_type,actor_id,detail_json,created_at)
+                   VALUES(?,?,?,?,?)""",
+                (experiment_id, "experiment." + event_type, worker_id,
+                 self._json({"task_id": task_id, "attempt": attempt}), now),
+            )
+            c.commit()
+        return {"created": True, "experiment_id": experiment_id, "task_id": task_id,
+                "event_type": event_type, "attempt": attempt, "worker_id": worker_id}
+
+    def list_workforce_experiment_execution_events(self, experiment_id, *, limit=500):
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        with closing(self._connect()) as c:
+            if c.execute("SELECT 1 FROM workforce_experiments WHERE experiment_id=?",
+                         (experiment_id,)).fetchone() is None:
+                raise TaskNotFound("experiment not found")
+            rows = c.execute(
+                """SELECT task_id,event_type,attempt,worker_id,created_at
+                   FROM workforce_experiment_execution_events
+                   WHERE experiment_id=? ORDER BY event_id LIMIT ?""",
                 (experiment_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]
