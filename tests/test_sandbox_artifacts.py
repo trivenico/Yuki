@@ -151,7 +151,7 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
         self.approved = False
         with self.assertRaises(Exception):
             self.service.promote(
-                principal=self.principal, staging_directory=self.staging,
+                principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
                 manifest=self.manifest, artifact_path="report.txt",
                 destination_path="report.txt",
             )
@@ -162,20 +162,20 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
         target.write_text("keep", encoding="utf-8")
         with self.assertRaises(ArtifactValidationError):
             self.service.promote(
-                principal=self.principal, staging_directory=self.staging,
+                principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
                 manifest=self.manifest, artifact_path="report.txt",
                 destination_path="existing.txt",
             )
         with self.assertRaises(ArtifactValidationError):
             self.service.promote(
-                principal=self.principal, staging_directory=self.staging,
+                principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
                 manifest=self.manifest, artifact_path="../report.txt",
                 destination_path="new.txt",
             )
         self.payload.write_text("tampered", encoding="utf-8")
         with self.assertRaises(ArtifactValidationError):
             self.service.promote(
-                principal=self.principal, staging_directory=self.staging,
+                principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
                 manifest=self.manifest, artifact_path="report.txt",
                 destination_path="new.txt",
             )
@@ -187,7 +187,7 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
             with self.subTest(path=unsafe_path):
                 with self.assertRaises(ArtifactValidationError):
                     self.service.promote(
-                        principal=self.principal, staging_directory=self.staging,
+                        principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
                         manifest=self.manifest, artifact_path=unsafe_path,
                         destination_path="report.txt",
                     )
@@ -197,7 +197,7 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
         forged = replace(self.manifest, digest="0" * 64)
         with self.assertRaises(ArtifactValidationError):
             self.service.promote(
-                principal=self.principal, staging_directory=self.staging,
+                principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
                 manifest=forged, artifact_path="report.txt",
                 destination_path="report.txt",
             )
@@ -228,7 +228,7 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError):
             failing.promote(
-                principal=self.principal, staging_directory=self.staging,
+                principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
                 manifest=self.manifest, artifact_path="report.txt",
                 destination_path="report.txt",
             )
