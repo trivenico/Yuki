@@ -167,8 +167,8 @@ class ApprovedTestRunnerTests(unittest.TestCase):
 
     def test_output_capture_is_bounded(self):
         (self.root / "test_sample.py").write_text(
-            "import unittest\\nclass T(unittest.TestCase):\\n"
-            " def test_output(self): print('x' * 200000)\\n",
+            "import unittest\nclass T(unittest.TestCase):\n"
+            " def test_output(self): print('x' * 200000)\n",
             encoding="utf-8",
         )
         result = self.runner().run(principal=self.principal, test_module="test_sample")
