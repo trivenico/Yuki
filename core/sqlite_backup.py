@@ -49,7 +49,8 @@ def backup_sqlite_database(source: str | Path, destination: str | Path) -> Path:
             prefix=f".{destination_path.name}.", suffix=".tmp", dir=str(parent)
         )
         temporary_path = Path(temp_name)
-        os.fchmod(fd, 0o600)
+        if os.name == "posix":
+            os.fchmod(fd, 0o600)
         os.close(fd)
 
         source_uri = "file:" + quote(str(source_path.resolve())) + "?mode=ro"
@@ -61,16 +62,18 @@ def backup_sqlite_database(source: str | Path, destination: str | Path) -> Path:
                     raise SQLiteBackupError("backup_integrity_check_failed")
                 target_db.commit()
 
-        os.chmod(temporary_path, 0o600)
+        if os.name == "posix":
+            os.chmod(temporary_path, 0o600)
         with temporary_path.open("rb") as snapshot:
             os.fsync(snapshot.fileno())
         os.replace(temporary_path, destination_path)
         temporary_path = None
-        directory_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if os.name == "posix":
+            directory_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         return destination_path
     except SQLiteBackupError:
         raise
