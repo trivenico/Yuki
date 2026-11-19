@@ -117,6 +117,90 @@ class DockerJobRuntime:
         self._run(argv)
         return handle
 
+
+    def _inspect_running_state(self, container_name: str) -> str:
+        """Return running/stopped/missing; daemon and transport errors stay errors."""
+        try:
+            result = self._runner(
+                [self.docker_binary, "inspect", "--format={{.State.Running}}", container_name],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.command_timeout_seconds,
+                check=False,
+                shell=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise DockerJobRuntimeError("Docker inspection could not be completed safely") from exc
+
+        returncode = getattr(result, "returncode", 1)
+        stdout = getattr(result, "stdout", b"")
+        stderr = getattr(result, "stderr", b"")
+        if isinstance(stdout, bytes):
+            output = stdout.decode("ascii", errors="strict").strip()
+        elif isinstance(stdout, str):
+            output = stdout.strip()
+        else:
+            raise DockerJobRuntimeError("Docker inspect returned invalid output")
+
+        if returncode != 0:
+            if isinstance(stderr, bytes):
+                error_text = stderr.decode("utf-8", errors="replace").strip()
+            elif isinstance(stderr, str):
+                error_text = stderr.strip()
+            else:
+                error_text = ""
+            if error_text in {
+                f"Error: No such object: {container_name}",
+                f"Error: No such container: {container_name}",
+            }:
+                return "missing"
+            raise DockerJobRuntimeError("Docker could not establish container state")
+
+        if output == "true":
+            return "running"
+        if output == "false":
+            return "stopped"
+        raise DockerJobRuntimeError("Docker inspect returned an unknown container state")
+
+    def reconcile(self, handle: object) -> str:
+        """Reconcile a deterministic job container after a host restart.
+
+        Returns missing only for Docker's exact no-such-object response, or
+        removed after a stopped container has been removed. Ambiguous failures
+        raise and must leave durable job data intact.
+        """
+        if not isinstance(handle, DockerJobHandle) or not _JOB_ID_RE.fullmatch(handle.job_id):
+            raise DockerJobRuntimeError("invalid Docker job handle")
+        expected_name = "yuki-job-" + handle.job_id[4:]
+        if handle.container_name != expected_name:
+            raise DockerJobRuntimeError("Docker container name does not match job identity")
+
+        state = self._inspect_running_state(expected_name)
+        if state == "missing":
+            return "missing"
+        if state == "running":
+            try:
+                self._runner(
+                    [self.docker_binary, "stop", "--time", "2", expected_name],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=self.command_timeout_seconds,
+                    check=False,
+                    shell=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+            state = self._inspect_running_state(expected_name)
+            if state != "stopped":
+                raise DockerJobRuntimeError("Docker did not confirm the job container stopped")
+        elif state != "stopped":
+            raise DockerJobRuntimeError("Docker container state could not be reconciled")
+
+        self._run([self.docker_binary, "rm", expected_name])
+        return "removed"
+
     def freeze(self, handle: object) -> bool:
         if not isinstance(handle, DockerJobHandle) or not _JOB_ID_RE.fullmatch(handle.job_id):
             raise DockerJobRuntimeError("invalid Docker job handle")
