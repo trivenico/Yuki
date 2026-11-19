@@ -669,7 +669,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             "primary_metric": "failed_tasks",
             "preferred_direction": "decrease",
             "design_type": "randomized_controlled",
-            "eligible_population": "Workforce tasks",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
             "guardrails": [],
             "evaluation_window_days": 7,
             "minimum_sample_size": 5,
