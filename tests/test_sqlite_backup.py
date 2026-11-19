@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,7 +24,7 @@ class SQLiteBackupTests(unittest.TestCase):
 
                 backup_sqlite_database(source, destination)
 
-                with sqlite3.connect(destination) as snapshot:
+                with closing(sqlite3.connect(destination)) as snapshot:
                     self.assertEqual(
                         snapshot.execute("SELECT value FROM records").fetchone()[0],
                         "committed-in-wal",
@@ -53,8 +54,9 @@ class SQLiteBackupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             actual = root / "actual.sqlite3"
-            with sqlite3.connect(actual) as db:
+            with closing(sqlite3.connect(actual)) as db:
                 db.execute("CREATE TABLE records(value TEXT)")
+                db.commit()
             link = root / "linked.sqlite3"
             try:
                 link.symlink_to(actual)
