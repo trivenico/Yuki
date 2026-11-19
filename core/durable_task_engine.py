@@ -709,6 +709,13 @@ class DurableTaskEngine:
                 context_errors.append("knowledge_context_exceeds_delivery_limit")
                 context = context[:5]
         deliveries = self.list_workforce_knowledge_deliveries(task_id, limit=100)
+        with closing(self._connect()) as c:
+            delivery_count_row = c.execute(
+                "SELECT COUNT(*) AS record_count FROM workforce_knowledge_deliveries WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        total_delivery_records = int(delivery_count_row["record_count"])
+        records_truncated = total_delivery_records > len(deliveries)
         expected = {}
         duplicate_ids = []
         for index, item in enumerate(context):
@@ -733,6 +740,8 @@ class DurableTaskEngine:
         findings = []
         for knowledge_id, lesson in expected.items():
             records = by_id.get(knowledge_id, [])
+            if records_truncated:
+                context_errors.append("delivery_records_truncated")
             if not records:
                 findings.append({
                     "knowledge_id": knowledge_id,
@@ -815,6 +824,9 @@ class DurableTaskEngine:
             "attempt_coverage": attempt_coverage,
             "expected_lessons": len(expected),
             "attestation_records": len(deliveries),
+            "total_attestation_records": total_delivery_records,
+            "records_truncated": records_truncated,
+            "audit_completeness": "incomplete" if records_truncated else "complete",
             "findings": findings,
             "duplicate_context_knowledge_ids": sorted(set(duplicate_ids)),
             "invalid_context_reasons": context_errors,
