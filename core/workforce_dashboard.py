@@ -80,9 +80,12 @@ class WorkforceDashboard:
                         and isinstance(evidence, dict)
                         and set(evidence) == {"reviewer_id", "status", "approved"}
                         and evidence.get("approved") is True
+                        and isinstance(payload.get("assigned_employee_id"), str)
+                        and payload["assigned_employee_id"].strip()
+                        and result.get("employee_id") == payload["assigned_employee_id"]
                         and isinstance(evidence.get("reviewer_id"), str)
                         and evidence["reviewer_id"].strip()
-                        and evidence["reviewer_id"] != payload.get("assigned_employee_id")
+                        and evidence["reviewer_id"].strip() != payload["assigned_employee_id"].strip()
                         and isinstance(evidence.get("status"), str)
                         and evidence["status"].strip()
                     ):
@@ -127,7 +130,7 @@ class WorkforceDashboard:
                             and evidence.get("approved") is True
                             and isinstance(evidence.get("reviewer_id"), str)
                             and evidence["reviewer_id"].strip()
-                            and evidence["reviewer_id"] != assigned
+                            and evidence["reviewer_id"].strip() != assigned.strip()
                             and isinstance(evidence.get("status"), str)
                             and evidence["status"].strip()
                         ):
