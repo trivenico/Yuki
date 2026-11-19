@@ -190,7 +190,7 @@ class GoogleTPUBackend(ComputeBackend):
         available = False
         if self._jax is not None:
             try:
-                devices = self._jax.devices(" TPU")
+                devices = self._jax.devices("tpu")
                 # JAX platform spelling is "tpu"; tolerate runtime normalization.
                 if not devices:
                     devices = [device for device in self._jax.devices()
