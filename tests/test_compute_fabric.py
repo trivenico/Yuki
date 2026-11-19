@@ -306,6 +306,146 @@ class ComputeFabricTests(unittest.TestCase):
         lease.release()
         self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 0)
 
+
+    def test_model_lifecycle_load_infer_and_unload(self):
+        from core.compute_fabric import ModelLifecycleManager
+
+        manager = ModelLifecycleManager(self.scheduler)
+        events = []
+        session = manager.load(
+            ComputeRequest(memory_bytes=60), model_id="model-lifecycle",
+            loader=lambda backend: events.append("load") or {"weights": "opaque"},
+        )
+        self.assertEqual(session.state, "ready")
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 60)
+        result = manager.infer(
+            session, ComputeRequest(memory_bytes=20),
+            lambda handle: (events.append("infer"), handle["weights"])[1],
+        )
+        self.assertEqual(result, "opaque")
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 60)
+        self.assertEqual(self.scheduler.stats()["cpu"]["transient_memory_bytes"], 0)
+        manager.unload(session, lambda backend, handle: events.append("unload"))
+        self.assertEqual(session.state, "unloaded")
+        self.assertEqual(events, ["load", "infer", "unload"])
+        self.assertEqual(self.scheduler.stats()["cpu"]["reserved_memory_bytes"], 0)
+        manager.unload(session, lambda backend, handle: self.fail("unload must be idempotent"))
+
+    def test_model_load_failure_releases_only_after_cleanup_confirmation(self):
+        from core.compute_fabric import ModelLifecycleManager
+
+        manager = ModelLifecycleManager(self.scheduler)
+
+        def fail_load(backend):
+            raise RuntimeError("load failed")
+
+        with self.assertRaisesRegex(RuntimeError, "load failed"):
+            manager.load(
+                ComputeRequest(memory_bytes=40), model_id="failed-model",
+                loader=fail_load,
+                cleanup_failed_load=lambda backend, model_id: None,
+            )
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 0)
+
+    def test_model_load_failure_without_confirmed_cleanup_poison_reservation(self):
+        from core.compute_fabric import ModelLifecycleManager
+
+        manager = ModelLifecycleManager(self.scheduler)
+
+        def fail_load(backend):
+            raise RuntimeError("partial allocation uncertain")
+
+        with self.assertRaisesRegex(RuntimeError, "partial allocation uncertain"):
+            manager.load(
+                ComputeRequest(memory_bytes=40), model_id="uncertain-model",
+                loader=fail_load,
+            )
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 40)
+
+    def test_model_unload_failure_blocks_inference_until_reconciliation(self):
+        from core.compute_fabric import ModelLifecycleManager, ModelSessionError
+
+        manager = ModelLifecycleManager(self.scheduler)
+        session = manager.load(
+            ComputeRequest(memory_bytes=60), model_id="unload-failure",
+            loader=lambda backend: object(),
+        )
+
+        def fail_unload(backend, handle):
+            raise RuntimeError("unload uncertain")
+
+        with self.assertRaisesRegex(RuntimeError, "unload uncertain"):
+            manager.unload(session, fail_unload)
+        self.assertEqual(session.state, "unhealthy")
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 60)
+        with self.assertRaises(ModelSessionError):
+            manager.infer(session, ComputeRequest(), lambda handle: None)
+        manager.reconcile_unloaded(session)
+        self.assertEqual(session.state, "unloaded")
+        self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 0)
+
+    def test_model_lifecycle_rejects_foreign_session_and_backend_mismatch(self):
+        from core.compute_fabric import ModelLifecycleManager, ModelSessionError
+
+        manager = ModelLifecycleManager(self.scheduler)
+        other = ModelLifecycleManager(self.scheduler)
+        session = manager.load(
+            ComputeRequest(memory_bytes=10), model_id="owned-model",
+            loader=lambda backend: "handle",
+        )
+        try:
+            with self.assertRaises(TypeError):
+                other.infer(session, ComputeRequest(), lambda handle: handle)
+            with self.assertRaises(ModelSessionError):
+                manager.infer(
+                    session, ComputeRequest(backend="cuda"),
+                    lambda handle: handle,
+                )
+        finally:
+            manager.unload(session, lambda backend, handle: None)
+
+    def test_unload_waits_for_inflight_inference_before_releasing_residency(self):
+        from core.compute_fabric import ModelLifecycleManager
+
+        manager = ModelLifecycleManager(self.scheduler)
+        session = manager.load(
+            ComputeRequest(memory_bytes=60), model_id="concurrent-model",
+            loader=lambda backend: "handle",
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        events = []
+
+        def infer_worker():
+            manager.infer(
+                session, ComputeRequest(memory_bytes=10),
+                lambda handle: (entered.set(), release.wait(timeout=2), events.append("infer")),
+            )
+
+        worker = threading.Thread(target=infer_worker)
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        unload_done = threading.Event()
+
+        def unload_worker():
+            manager.unload(session, lambda backend, handle: events.append("unload"))
+            unload_done.set()
+
+        unloader = threading.Thread(target=unload_worker)
+        unloader.start()
+        try:
+            self.assertFalse(unload_done.wait(timeout=0.05))
+            self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 60)
+        finally:
+            release.set()
+            worker.join(timeout=2)
+            unloader.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(unloader.is_alive())
+        self.assertTrue(unload_done.is_set())
+        self.assertEqual(events, ["infer", "unload"])
+        self.assertEqual(self.scheduler.stats()["cpu"]["reserved_memory_bytes"], 0)
+
     def test_duplicate_backend_registration_is_rejected(self):
         with self.assertRaises(ValueError):
             self.scheduler.register(CPUBackend())
