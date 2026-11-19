@@ -80,6 +80,25 @@ class WorkforceImprovementEvaluatorTests(unittest.TestCase):
         self.assertFalse(result["metrics"]["success_rate"]["available"])
         self.assertFalse(result["metrics"]["failed_tasks"]["available"])
 
+    def test_fractional_failed_count_cannot_enter_success_rate(self):
+        baseline = {
+            "tasks": {"succeeded": 8, "failed": 1.5, "queued": 0},
+            "performance": {"independently_verified_successes": 4},
+        }
+        current = {
+            "tasks": {"succeeded": 9, "failed": 1, "queued": 0},
+            "performance": {"independently_verified_successes": 5},
+        }
+        result = evaluate_improvement_snapshots(
+            baseline, current, minimum_completed_observations=1,
+        )
+        self.assertFalse(result["metrics"]["success_rate"]["available"])
+        self.assertEqual(result["status"], "insufficient_observations")
+        self.assertIn(
+            {"snapshot": "baseline", "metric": "failed", "code": "non_integer_task_count"},
+            result["data_quality"]["issues"],
+        )
+
     def test_rejects_invalid_threshold_and_snapshot(self):
         with self.assertRaises(ValueError):
             evaluate_improvement_snapshots([], {})
