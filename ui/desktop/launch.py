@@ -226,7 +226,7 @@ def run() -> int:
             raise
 
     try:
-        from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+        from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
         from PySide6.QtWidgets import (
             QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
             QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
@@ -248,6 +248,22 @@ def run() -> int:
     class WorkerSignals(QObject):
         finished = Signal(str, object)
         phase = Signal(str)
+
+    class ObservationBatchSignals(QObject):
+        finished = Signal(object, object)
+
+    class ObservationBatchWorker(QRunnable):
+        def __init__(self, worker):
+            super().__init__()
+            self.worker = worker
+            self.signals = ObservationBatchSignals()
+
+        @Slot()
+        def run(self):
+            try:
+                self.signals.finished.emit(self.worker.process_batch(limit=16), None)
+            except Exception as exc:
+                self.signals.finished.emit(None, exc)
 
     class ChatWorker(QRunnable):
         def __init__(self, controller: DesktopCompanionController, message: str):
@@ -395,12 +411,18 @@ def run() -> int:
             self.setMinimumSize(820, 620)
             self.pool = QThreadPool(self)
             self.pool.setMaxThreadCount(1)
+            self._observation_controller = None
+            self._observation_buffer = None
+            self._observation_worker = None
+            self._observation_writer = None
+            self._observation_worker_busy = False
             self.auth = None
             self.sessions = None
             self.provider = None
             self.lifecycle = None
             self.observation_review_database = None
             self.observation_review_service = None
+            self._revoke_observation()
             self.controller = None
             self.voice_session = None
             self.speech_session = None
@@ -414,6 +436,9 @@ def run() -> int:
             self.current_plan = None
             self.migration_preview = None
             self._build_ui()
+            self.observation_timer = QTimer(self)
+            self.observation_timer.setInterval(1500)
+            self.observation_timer.timeout.connect(self._poll_observation)
             self._initialize()
 
         def _build_ui(self):
@@ -578,6 +603,44 @@ def run() -> int:
             self.observation_status = QLabel("No observation capture is running.")
             self.observation_status.setWordWrap(True)
             observation_layout.addWidget(self.observation_status)
+            observation_layout.addWidget(QLabel(
+                "Application allowlist (one executable.exe=application-id per line). "
+                "Only foreground executable identifiers are sampled; no titles, screenshots, "
+                "page text, clipboard or keystrokes are collected."
+            ))
+            self.observation_allowlist = QPlainTextEdit()
+            self.observation_allowlist.setPlaceholderText(
+                "code.exe=developer-ide\nnotepad.exe=text-editor"
+            )
+            self.observation_allowlist.setMaximumHeight(88)
+            observation_layout.addWidget(self.observation_allowlist)
+            observation_budget_row = QHBoxLayout()
+            observation_budget_row.addWidget(QLabel("Maximum events this session"))
+            self.observation_event_limit = QLineEdit("500")
+            self.observation_event_limit.setMaximumWidth(100)
+            observation_budget_row.addWidget(self.observation_event_limit)
+            observation_budget_row.addStretch(1)
+            observation_layout.addLayout(observation_budget_row)
+            observation_controls = QHBoxLayout()
+            self.observation_start_button = QPushButton("Enable observation…")
+            self.observation_start_button.clicked.connect(self._start_observation)
+            self.observation_pause_button = QPushButton("Pause")
+            self.observation_pause_button.clicked.connect(self._pause_observation)
+            self.observation_resume_button = QPushButton("Resume")
+            self.observation_resume_button.clicked.connect(self._resume_observation)
+            self.observation_revoke_button = QPushButton("Revoke")
+            self.observation_revoke_button.clicked.connect(self._revoke_observation)
+            for control in (
+                self.observation_start_button, self.observation_pause_button,
+                self.observation_resume_button, self.observation_revoke_button,
+            ):
+                observation_controls.addWidget(control)
+            observation_layout.addLayout(observation_controls)
+            if sys.platform != "win32":
+                self.observation_start_button.setEnabled(False)
+                self.observation_status.setText(
+                    "Desktop metadata collection is currently implemented for Windows only."
+                )
             self.observation_proposal_list = QListWidget()
             self.observation_proposal_list.currentItemChanged.connect(
                 self._show_observation_proposal
@@ -1253,6 +1316,214 @@ MIGRATION COMPLETE — verified manifest written to destination."
             except Exception as exc:
                 QMessageBox.warning(self, "Cancellation failed", "The plan could not be cancelled (" + type(exc).__name__ + ").")
 
+
+
+        def _parse_observation_allowlist(self):
+            mapping = {}
+            for raw_line in self.observation_allowlist.toPlainText().splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.count("=") != 1:
+                    raise ValueError("Each allowlist line must be executable.exe=application-id.")
+                executable, app_id = (part.strip().lower() for part in line.split("=", 1))
+                if executable in mapping:
+                    raise ValueError("Duplicate executable in observation allowlist.")
+                mapping[executable] = app_id
+            if not mapping:
+                raise ValueError("Add at least one explicitly allowlisted executable.")
+            return mapping
+
+        def _set_observation_indicator(self, active):
+            self.observation_status.setText(
+                "● OBSERVATION ACTIVE — allowlisted foreground app metadata only."
+                if active else "Observation indicator off."
+            )
+
+        def _start_observation(self):
+            if self.sessions is None or self.observation_review_service is None:
+                self.observation_status.setText("Sign in before enabling observation.")
+                return
+            if self._observation_controller is not None:
+                self.observation_status.setText("Revoke the current session before starting another.")
+                return
+            try:
+                mapping = self._parse_observation_allowlist()
+                event_limit = int(self.observation_event_limit.text().strip())
+                if not 1 <= event_limit <= 10000:
+                    raise ValueError("Event limit must be between 1 and 10000.")
+            except (TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Observation settings", str(exc))
+                return
+            answer = QMessageBox.question(
+                self, "Enable desktop observation",
+                "Yuki will sample the foreground Windows application every 1.5 seconds. "
+                "Only executable basenames mapped in your allowlist will produce metadata events. "
+                "No window titles, screenshots, browser page text, clipboard, keystrokes, "
+                "credentials or private message content are collected. Events stay local and "
+                "become review proposals; they are not automatically promoted to memory. "
+                f"The session stops after {event_limit} authorized events. "
+                "You can pause or revoke at any time. Enable now?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                from core.desktop_observation_controller import DesktopObservationController
+                from core.observation_policy import ObservationPolicy
+                from core.observation_event_buffer import ObservationEventBuffer
+                from core.observation_learning import ObservationLearningWorker
+                from core.observation_knowledge_store import SQLiteObservationKnowledgeReview
+                identity = self.sessions.current_identity()
+                if identity is None:
+                    raise PermissionError("An active desktop session is required.")
+                policy = ObservationPolicy(
+                    enabled=True, allowed_sources=("desktop:metadata",),
+                )
+                buffer = ObservationEventBuffer(capacity=128)
+                writer = SQLiteObservationKnowledgeReview(
+                    str(self.observation_review_database), owner_id=identity.actor_id,
+                )
+                learner = ObservationLearningWorker(buffer, writer)
+                controller = DesktopObservationController(
+                    policy, mapping, indicator=self._set_observation_indicator,
+                    event_limit=event_limit,
+                )
+                controller.start(consent_granted=True)
+                self._observation_buffer = buffer
+                self._observation_writer = writer
+                self._observation_worker = learner
+                self._observation_controller = controller
+                self.observation_allowlist.setEnabled(False)
+                self.observation_event_limit.setEnabled(False)
+                self.observation_start_button.setEnabled(False)
+                self.observation_pause_button.setEnabled(True)
+                self.observation_resume_button.setEnabled(False)
+                self.observation_revoke_button.setEnabled(True)
+                self.observation_timer.start()
+                self.observation_status.setText(
+                    "Observation active. Local metadata only; event budget: "
+                    + str(event_limit) + "."
+                )
+            except Exception as exc:
+                self._set_observation_indicator(False)
+                self.observation_status.setText(
+                    "Observation could not start (" + type(exc).__name__ + ")."
+                )
+
+        def _poll_observation(self):
+            controller = self._observation_controller
+            buffer = self._observation_buffer
+            if controller is None or buffer is None:
+                return
+            try:
+                controller.poll_once(buffer)
+                status = controller.status
+                if (
+                    not self._observation_worker_busy
+                    and len(buffer) > 0
+                    and self._observation_worker is not None
+                ):
+                    self._observation_worker_busy = True
+                    worker = ObservationBatchWorker(self._observation_worker)
+                    worker.signals.finished.connect(self._observation_batch_finished)
+                    self.pool.start(worker)
+                if status is not None:
+                    self.observation_status.setText(
+                        f"Observation {status.state}; processed {status.processed_events}/"
+                        f"{status.event_limit}; delivered {status.delivered_events}; "
+                        f"delivery failures {status.delivery_failures}; queued {len(buffer)}."
+                    )
+                if controller.state == "limit_reached":
+                    self.observation_timer.stop()
+                    self.observation_pause_button.setEnabled(False)
+                    self.observation_resume_button.setEnabled(False)
+                    self.observation_revoke_button.setEnabled(True)
+                    self.observation_start_button.setEnabled(False)
+            except Exception as exc:
+                self.observation_timer.stop()
+                try:
+                    controller.revoke()
+                except Exception:
+                    pass
+                self.observation_status.setText(
+                    "Observation stopped fail-closed (" + type(exc).__name__ + "). Revoke before restarting."
+                )
+                self.observation_pause_button.setEnabled(False)
+                self.observation_resume_button.setEnabled(False)
+
+        @Slot(object, object)
+        def _observation_batch_finished(self, proposals, error):
+            self._observation_worker_busy = False
+            if error is not None:
+                self.observation_status.setText(
+                    "Learning handoff failed (" + type(error).__name__ + "). Observation has been paused."
+                )
+                self._pause_observation()
+                return
+            if proposals:
+                self._refresh_observation_proposals()
+
+        def _pause_observation(self):
+            controller = self._observation_controller
+            if controller is None:
+                return
+            try:
+                controller.pause()
+                self.observation_timer.stop()
+                self.observation_pause_button.setEnabled(False)
+                self.observation_resume_button.setEnabled(True)
+                self.observation_status.setText("Observation paused. No foreground sampling is occurring.")
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Pause failed (" + type(exc).__name__ + "); revoke this session."
+                )
+
+        def _resume_observation(self):
+            controller = self._observation_controller
+            if controller is None:
+                return
+            try:
+                if controller.resume():
+                    self.observation_timer.start()
+                    self.observation_pause_button.setEnabled(True)
+                    self.observation_resume_button.setEnabled(False)
+                    self.observation_status.setText("Observation resumed.")
+            except Exception as exc:
+                self._revoke_observation()
+                self.observation_status.setText(
+                    "Resume failed; observation revoked (" + type(exc).__name__ + ")."
+                )
+
+        def _revoke_observation(self):
+            self.observation_timer.stop()
+            controller = self._observation_controller
+            buffer = self._observation_buffer
+            error = None
+            if controller is not None:
+                try:
+                    controller.revoke()
+                except Exception as exc:
+                    error = exc
+            if buffer is not None:
+                buffer.close(clear=True)
+            self._observation_controller = None
+            self._observation_buffer = None
+            self._observation_worker = None
+            self._observation_writer = None
+            self._observation_worker_busy = False
+            self.observation_allowlist.setEnabled(True)
+            self.observation_event_limit.setEnabled(True)
+            self.observation_start_button.setEnabled(sys.platform == "win32")
+            self.observation_pause_button.setEnabled(False)
+            self.observation_resume_button.setEnabled(False)
+            self.observation_revoke_button.setEnabled(False)
+            self._set_observation_indicator(False)
+            self.observation_status.setText(
+                "Observation revoked. A new explicit consent is required."
+                if error is None else
+                "Observation revocation reported an error (" + type(error).__name__ + ")."
+            )
 
         def _selected_observation_proposal_id(self):
             item = self.observation_proposal_list.currentItem()
