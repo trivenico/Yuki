@@ -695,6 +695,45 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         status, _ = self.request(path, token=self.admin_session.token, query=b"unexpected=true")
         self.assertEqual(status, 400)
 
+    def test_experiment_integrity_api_is_authenticated_and_read_only(self):
+        self.engine.create_improvement_proposal("integrity-api-proposal", {"recommendation": "Audit"})
+        self.engine.transition_improvement_proposal(
+            "integrity-api-proposal", expected_state="proposed", new_state="approved",
+            actor_id=self.admin_session.user.user_id,
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("integrity-api-exp", "integrity-api-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "integrity-api-exp", expected_state="proposed", new_state="approved",
+            actor_id=self.admin_session.user.user_id,
+        )
+        task = self.engine.submit(
+            self.engine.create_goal(), "workforce.task", {}, idempotency_key="integrity-api-task",
+        )
+        self.engine.assign_workforce_experiment_task("integrity-api-exp", task["id"])
+        path = "/v1/workforce/experiments/integrity-api-exp/integrity"
+        status, _ = self.request(path)
+        self.assertEqual(status, 401)
+        status, _ = self.request(path, token=self.user_session.token)
+        self.assertEqual(status, 403)
+        status, report = self.request(path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["assignments_checked"], 1)
+        self.assertFalse(report["automatic_action"])
+        self.assertIn(report["status"], {"integrity_warnings", "no_detected_integrity_issues"})
+        status, _ = self.request(path, token=self.admin_session.token, query=b"unexpected=true")
+        self.assertEqual(status, 400)
+
     def test_treatment_delivery_attestation_api_is_authenticated_and_idempotent(self):
         self.engine.create_improvement_proposal("delivery-api-proposal", {"recommendation": "Measure"})
         self.engine.transition_improvement_proposal(
