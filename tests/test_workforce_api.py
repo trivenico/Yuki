@@ -1117,7 +1117,8 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         )
         self.engine.claim("truncation-audit-worker")
         context_json = self.engine._json(context)
-        with sqlite3.connect(self.engine.db_path) as connection:
+        connection = sqlite3.connect(self.engine.db_path)
+        try:
             connection.executemany(
                 "INSERT INTO workforce_knowledge_deliveries "
                 "(task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
@@ -1129,6 +1130,9 @@ class WorkforceDashboardAPITests(unittest.TestCase):
                     for attempt in range(1, 102)
                 ],
             )
+            connection.commit()
+        finally:
+            connection.close()
         report = self.engine.get_workforce_knowledge_delivery_integrity(task["id"])
         self.assertEqual(report["attestation_records"], 100)
         self.assertEqual(report["total_attestation_records"], 101)
