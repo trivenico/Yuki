@@ -1261,6 +1261,18 @@ class DurableTaskEngine:
                    WHERE d.experiment_id=? AND a.assignment!='treatment'""",
                 (experiment_id,),
             ).fetchone()["n"]
+            execution_rows = c.execute(
+                """SELECT event_type,COUNT(*) AS event_count FROM workforce_experiment_execution_events
+                   WHERE experiment_id=? GROUP BY event_type""",
+                (experiment_id,),
+            ).fetchall()
+            repeated_execution_rows = c.execute(
+                """SELECT task_id,COUNT(DISTINCT attempt) AS attempts
+                   FROM workforce_experiment_execution_events
+                   WHERE experiment_id=? AND event_type='execution_started'
+                   GROUP BY task_id HAVING COUNT(DISTINCT attempt)>1""",
+                (experiment_id,),
+            ).fetchall()
         design = json.loads(experiment["design_json"])
         population = design.get("eligible_population")
         allowed_types = (
@@ -1269,6 +1281,13 @@ class DurableTaskEngine:
             else None
         )
         issues = []
+        execution_counts = {"execution_started": 0, "execution_succeeded": 0, "execution_failed": 0}
+        for row in execution_rows:
+            if row["event_type"] in execution_counts:
+                execution_counts[row["event_type"]] = row["event_count"]
+        for row in repeated_execution_rows:
+            issues.append({"code": "repeated_worker_execution", "task_id": row["task_id"],
+                           "attempts": row["attempts"]})
         delivery_counts = {"delivered": 0, "not_delivered": 0, "unknown": 0, "unrecorded": 0}
         for row in rows:
             expected_key = hashlib.sha256(
@@ -1300,6 +1319,7 @@ class DurableTaskEngine:
             "experiment_state": experiment["state"],
             "assignments_checked": len(rows),
             "treatment_delivery_attestations": delivery_counts,
+            "worker_execution_events": execution_counts,
             "issues": issues,
             "issue_count": len(issues),
             "status": "integrity_warnings" if issues else "no_detected_integrity_issues",
@@ -1307,11 +1327,14 @@ class DurableTaskEngine:
                 "Persisted assignment keys and deterministic arm consistency",
                 "Current task-type eligibility against the stored design",
                 "Treatment delivery attestation coverage and arm consistency",
+                "Worker execution lifecycle events emitted by the trusted workforce worker",
+                "Repeated execution attempts visible in the execution event stream",
                 "Duplicate task assignment rows visible to this database query",
             ],
             "limitations": [
                 "Database uniqueness prevents normal cross-experiment task reassignment; rejected attempts are not retained as contamination events.",
-                "No independent runtime exposure telemetry exists, so repeated real-world exposure or unrecorded treatment execution cannot be detected.",
+                "Worker execution events prove that the workforce worker entered or exited its executor seam, not that a specific treatment was delivered.",
+                "Executor-side intervention exposure still requires explicit, independently verifiable instrumentation.",
                 "Operator delivery attestations are not proof of execution.",
                 "A clean report is not proof that no contamination occurred.",
             ],
