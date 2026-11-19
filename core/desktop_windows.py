@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from core.desktop_metadata_adapter import DesktopMetadataAdapter
 
 
-_EXECUTABLE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,127}\\.exe\\Z")
+_EXECUTABLE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,127}\.exe\Z")
 
 
 def _read_windows_foreground_executable() -> Optional[str]:
