@@ -180,7 +180,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             extra_headers=[(b"content-type", b"application/json")],
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["reviewed_by"], "admin-user")
+        self.assertEqual(body["reviewed_by"], self.admin_session.user.user_id)
         self.assertEqual(body["state"], "approved")
         status, current = self.request(
             "/v1/workforce/knowledge/api-knowledge-1",
@@ -220,7 +220,8 @@ class WorkforceDashboardAPITests(unittest.TestCase):
     def test_knowledge_api_rejects_invalid_transition_and_query(self):
         self._seed_knowledge_candidate()
         status, body = self.request(
-            "/v1/workforce/knowledge?all=true", token=self.admin_session.token,
+            "/v1/workforce/knowledge", token=self.admin_session.token,
+            query=b"all=true",
         )
         self.assertEqual(status, 400)
         status, body = self.request(
