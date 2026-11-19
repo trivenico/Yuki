@@ -17,7 +17,10 @@ class DesktopCollectorContractTests(unittest.TestCase):
         self.assertTrue(detect_desktop_platform("linux").supported)
 
     def test_detection_does_not_claim_native_support_or_permission(self):
-        for value in ("win32", "darwin", "linux"):
+        windows = detect_desktop_platform("win32")
+        self.assertTrue(windows.native_collector_available)
+        self.assertEqual(windows.supported_signals, ("allowlisted_foreground_application_id",))
+        for value in ("darwin", "linux"):
             info = detect_desktop_platform(value)
             self.assertFalse(info.native_collector_available)
             self.assertEqual(info.permission_state, "not_requested")
@@ -38,7 +41,7 @@ class DesktopCollectorContractTests(unittest.TestCase):
         try:
             self.assertIsInstance(collector, DesktopCollector)
             with self.assertRaises(RuntimeError):
-                collector.start(sink)
+                collector.start(sink, consent_granted=True, indicator=lambda state: None)
             collector.stop()
             collector.stop()
         finally:
@@ -47,7 +50,7 @@ class DesktopCollectorContractTests(unittest.TestCase):
     def test_collector_rejects_invalid_sink(self):
         collector = UnsupportedDesktopCollector("windows")
         with self.assertRaises(TypeError):
-            collector.start(object())
+            collector.start(object(), consent_granted=True, indicator=lambda state: None)
 
 
 if __name__ == "__main__":
