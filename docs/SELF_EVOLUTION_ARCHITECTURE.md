@@ -135,6 +135,7 @@ Run offline evaluations before enabling a new memory, skill, prompt, or code ver
 ## Current implementation status
 
 - The architecture remains a proposal for the full adaptive-intelligence system.
-- A first, standalone observation authorization primitive now exists in `core/observation_policy.py`: observation is disabled by default, requires explicit consent and an exact source allowlist, applies denylist and sensitive-category overrides, supports pause/resume/revocation, and fails closed if its optional metadata audit sink fails.
-- Regression coverage is in `tests/test_observation_policy.py`.
-- This primitive does not capture screens, inspect browser content, perform OCR, persist learning records, or grant tool-execution permissions. Desktop adapters and the learning pipeline remain unimplemented and must be added incrementally behind the existing permission and audit systems.
+- A standalone observation authorization primitive exists in `core/observation_policy.py`: disabled by default, explicit consent, exact source allowlist, denylist and sensitive-category overrides, pause/resume/revocation, and fail-closed metadata audit.
+- `core/observation_sources.py` defines a bounded metadata-only source contract, an in-memory fake source, and a gateway that authorizes before forwarding events. Event metadata is bounded, scalar-only, and immutable.
+- Regression coverage is in `tests/test_observation_policy.py` and `tests/test_observation_sources.py`.
+- No OS desktop capture, OCR, browser inspection, persistent learning records, or tool-execution permissions are provided by these components. Real adapters and learning remain future work.
