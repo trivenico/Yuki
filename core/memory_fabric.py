@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import math
+import os
 import sqlite3
+import stat
 from contextlib import contextmanager
 import threading
 import time
@@ -64,7 +66,8 @@ class MemoryFabric:
             raise ValueError("MemoryFabric requires a persistent SSD database path.")
         if self.path.is_symlink():
             raise MemoryFabricError("Memory Fabric database must not be a symbolic link.")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._validate_private_storage()
         self.ram_capacity_bytes = ram_capacity_bytes
         self.disk_capacity_bytes = disk_capacity_bytes
         self._clock = clock
@@ -96,6 +99,52 @@ class MemoryFabric:
                 "CREATE INDEX IF NOT EXISTS idx_memory_fabric_lru "
                 "ON memory_fabric_entries(last_access, created_at)"
             )
+
+    def _validate_private_storage(self) -> None:
+        """Fail closed unless the cache lives in service-private storage."""
+        if os.name != "posix":
+            # Windows ACLs are not represented reliably by POSIX mode bits.
+            # Provision this directory with a service-account-only ACL.
+            return
+        try:
+            parent_info = self.path.parent.lstat()
+        except OSError as exc:
+            raise MemoryFabricError("Memory Fabric storage directory is unavailable.") from exc
+        parent_mode = stat.S_IMODE(parent_info.st_mode)
+        if (not stat.S_ISDIR(parent_info.st_mode)
+                or stat.S_ISLNK(parent_info.st_mode)
+                or parent_info.st_uid != os.geteuid()
+                or parent_mode & 0o077
+                or parent_mode & 0o700 != 0o700):
+            raise MemoryFabricError(
+                "Memory Fabric storage directory must be owned by the service user "
+                "and have private 0700 permissions."
+            )
+        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            try:
+                descriptor = os.open(self.path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                descriptor = os.open(self.path, flags)
+            try:
+                database_info = os.fstat(descriptor)
+                database_mode = stat.S_IMODE(database_info.st_mode)
+                if (not stat.S_ISREG(database_info.st_mode)
+                        or database_info.st_uid != os.geteuid()
+                        or database_mode & 0o077
+                        or database_mode & 0o600 != 0o600):
+                    raise MemoryFabricError(
+                        "Memory Fabric database must be a service-owned regular file "
+                        "with private 0600 permissions."
+                    )
+            finally:
+                os.close(descriptor)
+        except MemoryFabricError:
+            raise
+        except OSError as exc:
+            raise MemoryFabricError(
+                "Memory Fabric database must be a private regular file, not a symbolic link."
+            ) from exc
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.path), timeout=5.0)
