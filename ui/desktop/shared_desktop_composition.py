@@ -25,6 +25,7 @@ def build_shared_desktop_controller(
     specialist_controller: Any,
     memory: Any = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    knowledge_entries_for_owner: Callable[[str, str], Any] | None = None,
 ) -> SharedDesktopControllerBridge:
     """Build a desktop controller with durable chat and preserved specialist APIs.
 
@@ -43,6 +44,7 @@ def build_shared_desktop_controller(
             sessions=sessions,
             memory=memory,
             store_factory=store_factory,
+            knowledge_entries_for_owner=knowledge_entries_for_owner,
         )
         chat = SharedDesktopChatController(conversation_session)
         return SharedDesktopControllerBridge(chat, specialist_controller)
