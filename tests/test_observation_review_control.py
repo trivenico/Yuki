@@ -122,6 +122,35 @@ class ObservationKnowledgeReviewServiceTests(unittest.TestCase):
                 proposal.proposal_id, actor_id="admin-1", catalog=catalog
             )
 
+    def test_curated_reads_and_deactivation_require_separate_permissions(self):
+        from core.curated_knowledge_store import SQLiteCuratedKnowledge
+
+        proposal = self.store.propose("application", "com.example.editor")
+        self.service.approve(proposal.proposal_id, actor_id="operator-1")
+        self.grants["admin-1"] = {
+            "memory:knowledge:promote",
+            "memory:knowledge:read",
+            "memory:knowledge:deactivate",
+        }
+        catalog = SQLiteCuratedKnowledge(
+            str(Path(self.tmp.name) / "curated.sqlite3"), owner_id="owner-1"
+        )
+        entry_id = self.service.promote_approved(
+            proposal.proposal_id, actor_id="admin-1", catalog=catalog
+        )
+        with self.assertRaises(PermissionError):
+            self.service.list_curated(actor_id="operator-1", catalog=catalog)
+        self.assertEqual(
+            self.service.list_curated(actor_id="admin-1", catalog=catalog)[0]["entry_id"],
+            entry_id,
+        )
+        self.assertTrue(self.service.deactivate_curated(
+            entry_id, actor_id="admin-1", catalog=catalog
+        ))
+        self.assertEqual(self.service.list_curated(actor_id="admin-1", catalog=catalog), ())
+        events = self.service.list_curated_events(actor_id="admin-1", catalog=catalog)
+        self.assertEqual([event["action"] for event in events], ["deactivated", "promoted"])
+
     def test_capability_check_requires_read_and_decision_for_capture_review(self):
         self.grants["reader"] = {"observation:review:read"}
         self.assertTrue(self.service.can_review(actor_id="reader"))
