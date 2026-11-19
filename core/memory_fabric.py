@@ -346,25 +346,34 @@ class MemoryFabric:
         identity = (namespace, key)
         with self._lock:
             self._ensure_open()
-            self._remove_ram(identity)
             with self._connection() as connection:
                 cursor = connection.execute(
                     "DELETE FROM memory_fabric_entries WHERE namespace=? AND cache_key=?",
                     identity,
                 )
-                return cursor.rowcount > 0
+                deleted = cursor.rowcount > 0
+            # Invalidate RAM only after the SSD deletion commits successfully.
+            self._remove_ram(identity)
+            return deleted
 
     def clear(self, namespace: str | None = None) -> int:
         with self._lock:
             self._ensure_open()
             if namespace is not None:
                 self._validate_identity(namespace, "_")
+            with self._connection() as connection:
+                if namespace is None:
+                    cursor = connection.execute("DELETE FROM memory_fabric_entries")
+                else:
+                    cursor = connection.execute(
+                        "DELETE FROM memory_fabric_entries WHERE namespace=?", (namespace,)
+                    )
+                deleted = cursor.rowcount
+            # Keep both tiers intact if the SSD transaction fails.
             if namespace is None:
                 self._ram.clear()
                 self._ram_bytes = 0
                 self._pending_ram_accesses.clear()
-                with self._connection() as connection:
-                    cursor = connection.execute("DELETE FROM memory_fabric_entries")
             else:
                 for identity in tuple(self._ram):
                     if identity[0] == namespace:
@@ -372,11 +381,7 @@ class MemoryFabric:
                 for identity in tuple(self._pending_ram_accesses):
                     if identity[0] == namespace:
                         self._pending_ram_accesses.pop(identity, None)
-                with self._connection() as connection:
-                    cursor = connection.execute(
-                        "DELETE FROM memory_fabric_entries WHERE namespace=?", (namespace,)
-                    )
-            return cursor.rowcount
+            return deleted
 
     def stats(self) -> dict[str, int]:
         with self._lock:
