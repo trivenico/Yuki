@@ -580,17 +580,19 @@ class WorkforceDashboardTests(unittest.TestCase):
             {"assigned_employee_id": employee.employee_id, "description": "Success"},
             idempotency_key="outcome-success", max_attempts=1,
         )
+        claimed_success = self.engine.claim("outcome-worker", task_type="workforce.task")
+        self.assertEqual(claimed_success["id"], succeeded["id"])
+        self.engine.complete(succeeded["id"], "outcome-worker", {
+            "ok": True, "status": "completed", "employee_id": employee.employee_id,
+            "review_required": False, "review_evidence": None,
+        })
         failed = self.engine.submit(
             goal_id, "workforce.task",
             {"assigned_employee_id": employee.employee_id, "description": "Failure"},
             idempotency_key="outcome-failure", max_attempts=1,
         )
-        self.engine.claim("outcome-worker", task_type="workforce.task")
-        self.engine.complete(succeeded["id"], "outcome-worker", {
-            "ok": True, "status": "completed", "employee_id": employee.employee_id,
-            "review_required": False, "review_evidence": None,
-        })
-        self.engine.claim("outcome-worker", task_type="workforce.task")
+        claimed_failure = self.engine.claim("outcome-worker", task_type="workforce.task")
+        self.assertEqual(claimed_failure["id"], failed["id"])
         self.engine.fail(failed["id"], "outcome-worker", "redacted failure")
 
         row = next(
