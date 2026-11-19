@@ -232,10 +232,22 @@ class ModelResidencyLease:
 
     def __init__(self, scheduler, backend: str, model_id: str, memory_bytes: int):
         self._scheduler = scheduler
-        self.backend = backend
-        self.model_id = model_id
-        self.memory_bytes = memory_bytes
+        self._backend = backend
+        self._model_id = model_id
+        self._memory_bytes = memory_bytes
         self._state = "active"
+
+    @property
+    def backend(self) -> str:
+        return self._backend
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    @property
+    def memory_bytes(self) -> int:
+        return self._memory_bytes
 
     @property
     def state(self) -> str:
