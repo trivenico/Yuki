@@ -159,6 +159,16 @@ class WorkforceWorkerTests(unittest.TestCase):
             max_attempts=max_attempts,
         )
 
+    def test_stop_request_prevents_new_claims_and_leaves_queued_task_untouched(self):
+        task = self.submit()
+        self.worker.request_stop()
+
+        result = self.worker.run_once()
+
+        self.assertEqual(result, {"state": "stopping", "status": "stop_requested"})
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "queued")
+        self.assertEqual(self.executor.calls, [])
+
     def test_worker_attests_exact_verified_knowledge_before_executor_receives_it(self):
         source = self.engine.submit(
             self.goal, "workforce.task",
