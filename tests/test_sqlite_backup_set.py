@@ -40,7 +40,7 @@ class SQLiteBackupSetTests(unittest.TestCase):
                 workspace_root=workspace,
             )
 
-            self.assertEqual(published.parent, backup_root)
+            self.assertEqual(published.parent.resolve(), backup_root.resolve())
             self.assertFalse(published.name.startswith("."))
             manifest = json.loads((published / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["format_version"], 1)
