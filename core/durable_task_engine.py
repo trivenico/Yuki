@@ -130,6 +130,12 @@ class DurableTaskEngine:
             );
             CREATE INDEX IF NOT EXISTS workforce_experiment_deliveries_idx
               ON workforce_experiment_deliveries(experiment_id,delivery_state);
+            CREATE TRIGGER IF NOT EXISTS workforce_experiment_deliveries_no_update
+            BEFORE UPDATE ON workforce_experiment_deliveries
+            BEGIN SELECT RAISE(ABORT,'experiment delivery attestations are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS workforce_experiment_deliveries_no_delete
+            BEFORE DELETE ON workforce_experiment_deliveries
+            BEGIN SELECT RAISE(ABORT,'experiment delivery attestations are immutable'); END;
             CREATE TABLE IF NOT EXISTS workforce_knowledge(
               knowledge_id TEXT PRIMARY KEY,
               fingerprint TEXT NOT NULL,
