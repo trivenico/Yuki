@@ -59,6 +59,18 @@ class SandboxJobStoreTests(unittest.TestCase):
         self.assertEqual(record.manifest_digest, digest)
         self.assertEqual(record.promoted_paths, ("report.txt",))
 
+    def test_manifest_json_survives_reopen(self):
+        self.store.create(job_id=self.job_id, staging_directory="/srv/yuki/jobs/" + self.job_id)
+        self.store.transition(self.job_id, expected_states=("created",), new_state="launching",
+                              container_name="yuki-job-" + "a" * 32)
+        self.store.transition(self.job_id, expected_states=("launching",), new_state="running")
+        self.store.transition(self.job_id, expected_states=("running",), new_state="frozen")
+        payload = '{"files":[{"path":"report.txt","size_bytes":3,"sha256":"' + "b" * 64 + '"}],"total_bytes":3,"digest":"' + "c" * 64 + '","allowed_extensions":[".txt"]}'
+        record = self.store.transition(self.job_id, expected_states=("frozen",), new_state="validated",
+                                       manifest_digest="c" * 64, manifest_json=payload)
+        reopened = SandboxJobStore(self.root / "jobs.sqlite3")
+        self.assertEqual(reopened.get(self.job_id).manifest_json, payload)
+
     def test_stale_state_transition_is_rejected(self):
         self.store.create(job_id=self.job_id, staging_directory="/srv/yuki/jobs/" + self.job_id)
         self.store.transition(self.job_id, expected_states=("created",), new_state="launching")
