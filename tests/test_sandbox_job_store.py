@@ -56,7 +56,7 @@ class SandboxJobStoreTests(unittest.TestCase):
 
     def test_stale_state_transition_is_rejected(self):
         self.store.create(job_id=self.job_id, staging_directory="/srv/yuki/jobs/" + self.job_id)
-        self.store.transition(self.job_id, expected_states=("created",), new_state="running")
+        self.store.transition(self.job_id, expected_states=("created",), new_state="launching")
         with self.assertRaises(SandboxJobStoreError):
             self.store.transition(self.job_id, expected_states=("created",), new_state="frozen")
 
@@ -77,12 +77,12 @@ class SandboxJobStoreTests(unittest.TestCase):
         self.store.create(job_id=self.job_id, staging_directory="/srv/yuki/jobs/" + self.job_id)
         with self.assertRaises(SandboxJobStoreError):
             self.store.transition(
-                self.job_id, expected_states=("created",), new_state="running",
+                self.job_id, expected_states=("created",), new_state="launching",
                 container_name="arbitrary-container",
             )
         with self.assertRaises(SandboxJobStoreError):
             self.store.transition(
-                self.job_id, expected_states=("created",), new_state="running",
+                self.job_id, expected_states=("created",), new_state="launching",
                 manifest_digest="not-a-digest",
             )
 
