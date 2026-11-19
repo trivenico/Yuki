@@ -735,6 +735,12 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         status, events = self.request(events_path, token=self.admin_session.token)
         self.assertEqual(status, 200)
         self.assertEqual(events["execution_events"], [])
+        exposure_path = "/v1/workforce/experiments/integrity-api-exp/treatment-exposures"
+        status, exposures = self.request(exposure_path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(exposures["treatment_exposures"], [])
+        status, _ = self.request(exposure_path, token=self.user_session.token)
+        self.assertEqual(status, 403)
         status, _ = self.request(events_path, token=self.user_session.token)
         self.assertEqual(status, 403)
         status, _ = self.request(path, token=self.admin_session.token, query=b"unexpected=true")
