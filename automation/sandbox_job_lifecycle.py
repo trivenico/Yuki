@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import json
 import os
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ from typing import Callable, Sequence
 from automation.sandbox_job_store import SandboxJobStore
 
 from automation.sandbox_artifacts import (
+    ArtifactFile,
     ArtifactManifest,
     ApprovedArtifactPromotion,
     validate_artifact_directory,
@@ -233,6 +235,15 @@ class SandboxJobLifecycle:
                 self._store.transition(
                     job.job_id, expected_states=("frozen",), new_state="validated",
                     manifest_digest=manifest.digest,
+                    manifest_json=json.dumps({
+                        "files": [
+                            {"path": item.path, "size_bytes": item.size_bytes, "sha256": item.sha256}
+                            for item in manifest.files
+                        ],
+                        "total_bytes": manifest.total_bytes,
+                        "digest": manifest.digest,
+                        "allowed_extensions": sorted({Path(item.path).suffix.lower() for item in manifest.files}),
+                    }, sort_keys=True, separators=(",", ":")),
                 )
             except Exception as exc:
                 raise SandboxJobError("validated manifest could not be durably recorded") from exc
@@ -341,10 +352,6 @@ class SandboxJobLifecycle:
                 state = JobState(record.state)
             except ValueError as exc:
                 raise SandboxJobError("durable job state is unsupported") from exc
-            if state in {JobState.VALIDATED, JobState.PROMOTED}:
-                raise SandboxJobError(
-                    "validated jobs require manifest revalidation before lifecycle resumption"
-                )
             directory = Path(record.staging_directory)
             if directory.parent != self._root or directory.name != job_id:
                 raise SandboxJobError("durable staging path does not match manager root")
@@ -353,10 +360,30 @@ class SandboxJobLifecycle:
                 raise SandboxJobError("durable staging directory is not a real directory")
             if info.st_uid != os.getuid() or (info.st_mode & 0o777) != 0o700:
                 raise SandboxJobError("durable staging directory ownership or mode is unsafe")
+            manifest = None
+            if state in {JobState.VALIDATED, JobState.PROMOTED}:
+                if not record.manifest_json:
+                    raise SandboxJobError("durable validated job has no manifest")
+                try:
+                    payload = json.loads(record.manifest_json)
+                    expected_manifest = ArtifactManifest(
+                        files=tuple(ArtifactFile(**item) for item in payload["files"]),
+                        total_bytes=payload["total_bytes"],
+                        digest=payload["digest"],
+                    )
+                    current_manifest = validate_artifact_directory(
+                        directory, allowed_extensions=payload["allowed_extensions"]
+                    )
+                except Exception as exc:
+                    raise SandboxJobError("durable artifact manifest could not be revalidated") from exc
+                if current_manifest != expected_manifest or record.manifest_digest != expected_manifest.digest:
+                    raise SandboxJobError("staging contents no longer match the durable manifest")
+                manifest = current_manifest
             job = _Job(
                 job_id=job_id,
                 staging_directory=directory,
                 state=state,
+                manifest=manifest,
                 promoted_paths=set(record.promoted_paths),
             )
             self._jobs[job_id] = job
