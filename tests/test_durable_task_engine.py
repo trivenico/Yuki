@@ -133,6 +133,57 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(report["automatic_action"])
         self.assertIn("no causal effect", report["interpretation"])
 
+    def test_experiment_integrity_audit_detects_missing_delivery_and_eligibility_drift(self):
+        self.engine.create_improvement_proposal("integrity-proposal", {"recommendation": "Audit exposure"})
+        self.engine.transition_improvement_proposal(
+            "integrity-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("integrity-exp", "integrity-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "integrity-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        treatment_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"integrity-{index}",
+            )
+            assignment = self.engine.assign_workforce_experiment_task("integrity-exp", task["id"])
+            if assignment["assignment"] == "treatment":
+                treatment_task = task
+                break
+        self.assertIsNotNone(treatment_task)
+        report = self.engine.get_workforce_experiment_integrity("integrity-exp")
+        self.assertEqual(report["status"], "integrity_warnings")
+        self.assertTrue(any(issue["code"] == "treatment_delivery_unrecorded"
+                            for issue in report["issues"]))
+        connection = self.engine._connect()
+        try:
+            connection.execute(
+                "UPDATE tasks SET task_type='billing.refund' WHERE id=?",
+                (treatment_task["id"],),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        report = self.engine.get_workforce_experiment_integrity("integrity-exp")
+        self.assertTrue(any(issue["code"] == "eligibility_drift"
+                            for issue in report["issues"]))
+        self.assertFalse(report["automatic_action"])
+        self.assertTrue(any("not proof" in item for item in report["limitations"]))
+
     def test_treatment_delivery_attestations_are_append_only_and_reported(self):
         self.engine.create_improvement_proposal("delivery-proposal", {"recommendation": "Measure delivery"})
         self.engine.transition_improvement_proposal(
