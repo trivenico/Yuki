@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import tempfile
 from typing import Sequence
 
 
@@ -176,7 +177,7 @@ def validate_artifact_directory(
 
 
 def _safe_relative_path(value: str) -> Path:
-    if not isinstance(value, str) or not value.strip() or len(value) > 1000 or "\\x00" in value:
+    if not isinstance(value, str) or not value.strip() or len(value) > 1000 or "\x00" in value or "\\\\" in value:
         raise ArtifactValidationError("destination must be bounded relative text")
     relative = Path(value)
     if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
@@ -325,7 +326,9 @@ class ApprovedArtifactPromotion:
             source_fd = os.open(str(source), flags)
         except OSError as exc:
             raise ArtifactValidationError("artifact source could not be opened safely") from exc
-        created = False
+
+        temporary_path = None
+        promoted = False
         try:
             source_stat = os.fstat(source_fd)
             if not stat.S_ISREG(source_stat.st_mode) or source_stat.st_nlink != 1:
@@ -342,14 +345,10 @@ class ApprovedArtifactPromotion:
                 raise ArtifactValidationError("artifact content changed after approval")
             os.lseek(source_fd, 0, os.SEEK_SET)
 
-            output_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            if hasattr(os, "O_NOFOLLOW"):
-                output_flags |= os.O_NOFOLLOW
-            try:
-                output_fd = os.open(str(destination), output_flags, 0o600)
-            except FileExistsError as exc:
-                raise ArtifactValidationError("destination already exists; overwrites are forbidden") from exc
-            created = True
+            # Write to a private temporary file in the destination directory. The
+            # final name appears only after the complete file is fsynced and linked.
+            temp_fd, temp_name = tempfile.mkstemp(prefix=".yuki-promote-", dir=str(parent))
+            temporary_path = Path(temp_name)
             copied_digest = hashlib.sha256()
             copied_size = 0
             try:
@@ -361,21 +360,33 @@ class ApprovedArtifactPromotion:
                     copied_digest.update(chunk)
                     view = memoryview(chunk)
                     while view:
-                        written = os.write(output_fd, view)
+                        written = os.write(temp_fd, view)
+                        if written <= 0:
+                            raise OSError("short write during artifact promotion")
                         view = view[written:]
-                os.fsync(output_fd)
+                os.fsync(temp_fd)
             finally:
-                os.close(output_fd)
+                os.close(temp_fd)
+
             after = os.fstat(source_fd)
             if (copied_size != item.size_bytes or copied_digest.hexdigest() != item.sha256
                     or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
                     != (source_stat.st_dev, source_stat.st_ino, source_stat.st_size, source_stat.st_mtime_ns)):
                 raise ArtifactValidationError("artifact changed during promotion")
+
+            # link() is an atomic no-overwrite publication on the same filesystem.
+            try:
+                os.link(str(temporary_path), str(destination), follow_symlinks=False)
+            except FileExistsError as exc:
+                raise ArtifactValidationError("destination already exists; overwrites are forbidden") from exc
+            promoted = True
+            temporary_path.unlink()
+            temporary_path = None
             self._record(principal.actor_id, "succeeded", approval_digest,
                          source_rel.as_posix(), destination_rel.as_posix())
             return approval_digest
         except Exception:
-            if created:
+            if promoted:
                 try:
                     destination.unlink(missing_ok=True)
                 except OSError:
@@ -383,3 +394,8 @@ class ApprovedArtifactPromotion:
             raise
         finally:
             os.close(source_fd)
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
