@@ -104,6 +104,16 @@ class DurableTaskEngine:
               created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS workforce_experiment_events_idx
               ON workforce_experiment_events(experiment_id,id);
+            CREATE TABLE IF NOT EXISTS workforce_experiment_assignments(
+              experiment_id TEXT NOT NULL REFERENCES workforce_experiments(experiment_id),
+              task_id TEXT NOT NULL REFERENCES tasks(id),
+              assignment TEXT NOT NULL CHECK(assignment IN ('control','treatment')),
+              assignment_key TEXT NOT NULL,
+              assigned_at REAL NOT NULL,
+              PRIMARY KEY(experiment_id,task_id),
+              UNIQUE(task_id));
+            CREATE INDEX IF NOT EXISTS workforce_experiment_assignments_idx
+              ON workforce_experiment_assignments(experiment_id,assignment);
             CREATE TABLE IF NOT EXISTS workforce_knowledge(
               knowledge_id TEXT PRIMARY KEY,
               fingerprint TEXT NOT NULL,
@@ -892,6 +902,69 @@ class DurableTaskEngine:
                 (limit,),
             ).fetchall()
         return [self.get_workforce_experiment(row["experiment_id"]) for row in rows]
+
+    def assign_workforce_experiment_task(self, experiment_id, task_id):
+        """Persist deterministic 1:1 assignment metadata; never executes an intervention."""
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        if not isinstance(task_id, str) or not 1 <= len(task_id) <= 256:
+            raise ValueError("invalid task_id")
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            experiment = c.execute(
+                "SELECT state,design_json FROM workforce_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if experiment is None:
+                raise TaskNotFound("experiment not found")
+            if experiment["state"] != "approved":
+                raise TaskConflict("experiment must be approved before assignment")
+            design = json.loads(experiment["design_json"])
+            if design["design_type"] != "randomized_controlled":
+                raise TaskConflict("task assignment requires randomized_controlled design")
+            task = c.execute("SELECT id FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if task is None:
+                raise TaskNotFound("task not found")
+            existing = c.execute(
+                "SELECT experiment_id,assignment,assignment_key FROM workforce_experiment_assignments WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["experiment_id"] != experiment_id:
+                    raise TaskConflict("task already assigned to another experiment")
+                c.commit()
+                return {"created": False, "experiment_id": experiment_id, "task_id": task_id,
+                        "assignment": existing["assignment"], "assignment_key": existing["assignment_key"]}
+            assignment_key = hashlib.sha256((experiment_id + "\\0" + task_id).encode("utf-8")).hexdigest()
+            arm = "treatment" if int(assignment_key[:8], 16) % 2 else "control"
+            now = self.clock()
+            c.execute(
+                "INSERT INTO workforce_experiment_assignments(experiment_id,task_id,assignment,assignment_key,assigned_at) VALUES(?,?,?,?,?)",
+                (experiment_id, task_id, arm, assignment_key, now),
+            )
+            c.execute(
+                "INSERT INTO workforce_experiment_events(experiment_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (experiment_id, "experiment.task_assigned", "system",
+                 self._json({"task_id": task_id, "assignment": arm, "assignment_key": assignment_key}), now),
+            )
+            c.commit()
+        return {"created": True, "experiment_id": experiment_id, "task_id": task_id,
+                "assignment": arm, "assignment_key": assignment_key}
+
+    def list_workforce_experiment_assignments(self, experiment_id, *, limit=500):
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        with closing(self._connect()) as c:
+            exists = c.execute("SELECT 1 FROM workforce_experiments WHERE experiment_id=?", (experiment_id,)).fetchone()
+            if exists is None:
+                raise TaskNotFound("experiment not found")
+            rows = c.execute(
+                "SELECT task_id,assignment,assignment_key,assigned_at FROM workforce_experiment_assignments WHERE experiment_id=? ORDER BY assigned_at,task_id LIMIT ?",
+                (experiment_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_task_by_idempotency(self, goal_id, idempotency_key):
         """Return a task and its persisted dependency IDs for safe DAG recovery."""
