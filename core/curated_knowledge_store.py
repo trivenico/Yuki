@@ -59,6 +59,10 @@ class SQLiteCuratedKnowledge:
                 ON curated_knowledge(owner_id, active, created_at)""")
 
     @contextmanager
+    @property
+    def owner_id(self) -> str:
+        return self._owner
+
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         try:
