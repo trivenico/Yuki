@@ -14,7 +14,6 @@ from api.production_runtime import build_production_conversation_runtime
 from core.config import load_config
 
 
-@unittest.skipUnless(os.name == "posix", "sandbox job composition ownership requires POSIX UID metadata")
 class SandboxJobCompositionTests(unittest.TestCase):
     def test_disabled_mode_does_not_initialize_docker_or_storage(self):
         with patch("automation.sandbox_job_composition.shutil.which") as which:
@@ -36,6 +35,7 @@ class SandboxJobCompositionTests(unittest.TestCase):
             with self.assertRaises(SandboxJobCompositionError):
                 build_sandbox_job_recovery(config)
 
+    @unittest.skipUnless(os.name == "posix", "sandbox job composition ownership requires POSIX UID metadata")
     def test_enabled_mode_builds_recovery_and_persists_private_databases(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "jobs"
