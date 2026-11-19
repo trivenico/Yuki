@@ -62,6 +62,23 @@ jobs:
           python -c "from core.config import load_config; assert load_config()['name'] == 'Yuki'"
           yuki doctor
 
+  web-image:
+    name: Build dedicated web/API container
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build web image without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.web
+          push: false
+          tags: yuki-web:ci
+
   desktop-qt-smoke:
     name: Desktop Qt offscreen smoke / Ubuntu
     timeout-minutes: 15
