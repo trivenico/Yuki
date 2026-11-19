@@ -50,6 +50,7 @@ class DurableJobRecord:
     container_name: str | None
     manifest_digest: str | None
     promoted_paths: tuple[str, ...]
+    manifest_json: str | None
     created_at: float
     updated_at: float
 
@@ -106,6 +107,7 @@ class SandboxJobStore:
                 container_name TEXT,
                 manifest_digest TEXT,
                 promoted_paths_json TEXT NOT NULL DEFAULT '[]',
+                manifest_json TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )
@@ -144,6 +146,9 @@ class SandboxJobStore:
                     if connection.in_transaction:
                         connection.execute("ROLLBACK")
                     raise
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(sandbox_jobs)")}
+            if "manifest_json" not in columns:
+                connection.execute("ALTER TABLE sandbox_jobs ADD COLUMN manifest_json TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS sandbox_jobs_state_idx ON sandbox_jobs(state)"
             )
@@ -171,6 +176,7 @@ class SandboxJobStore:
             container_name=row["container_name"],
             manifest_digest=row["manifest_digest"],
             promoted_paths=tuple(paths),
+            manifest_json=row["manifest_json"] if "manifest_json" in row.keys() else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -219,6 +225,7 @@ class SandboxJobStore:
         container_name: str | None = None,
         manifest_digest: str | None = None,
         promoted_paths: Iterable[str] | None = None,
+        manifest_json: str | None = None,
     ) -> DurableJobRecord:
         self._validate_job_id(job_id)
         expected = tuple(expected_states)
@@ -235,6 +242,17 @@ class SandboxJobStore:
             or not re.fullmatch(r"[0-9a-f]{64}", manifest_digest)
         ):
             raise SandboxJobStoreError("invalid manifest digest")
+        if manifest_json is not None:
+            try:
+                parsed_manifest = json.loads(manifest_json)
+                if not isinstance(parsed_manifest, dict) or set(parsed_manifest) != {"files", "total_bytes", "digest", "allowed_extensions"}:
+                    raise ValueError("invalid manifest fields")
+                if not isinstance(parsed_manifest["files"], list) or not isinstance(parsed_manifest["allowed_extensions"], list):
+                    raise ValueError("invalid manifest collections")
+                if type(parsed_manifest["total_bytes"]) is not int or not re.fullmatch(r"[0-9a-f]{64}", parsed_manifest["digest"]):
+                    raise ValueError("invalid manifest metadata")
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise SandboxJobStoreError("invalid durable artifact manifest") from exc
         paths_json = None
         if promoted_paths is not None:
             paths = list(promoted_paths)
@@ -254,10 +272,11 @@ class SandboxJobStore:
                 f"""UPDATE sandbox_jobs SET state=?, updated_at=?,
                     container_name=COALESCE(?,container_name),
                     manifest_digest=COALESCE(?,manifest_digest),
-                    promoted_paths_json=COALESCE(?,promoted_paths_json)
+                    promoted_paths_json=COALESCE(?,promoted_paths_json),
+                    manifest_json=COALESCE(?,manifest_json)
                     WHERE job_id=? AND state IN ({placeholders})""",
                 (new_state, time.time(), container_name, manifest_digest,
-                 paths_json, job_id, *expected),
+                 paths_json, manifest_json, job_id, *expected),
             )
             if connection.total_changes < 1:
                 raise SandboxJobStoreError("job state transition lost a concurrency race")
