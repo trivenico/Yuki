@@ -95,6 +95,20 @@ class ObservationKnowledgeReviewServiceTests(unittest.TestCase):
             entry_id,
         )
 
+    def test_promotion_rejects_catalog_for_another_owner(self):
+        from core.curated_knowledge_store import SQLiteCuratedKnowledge
+
+        proposal = self.store.propose("application", "com.example.editor")
+        self.service.approve(proposal.proposal_id, actor_id="operator-1")
+        self.grants["admin-1"] = {"memory:knowledge:promote"}
+        foreign_catalog = SQLiteCuratedKnowledge(
+            str(Path(self.tmp.name) / "foreign.sqlite3"), owner_id="owner-2"
+        )
+        with self.assertRaises(PermissionError):
+            self.service.promote_approved(
+                proposal.proposal_id, actor_id="admin-1", catalog=foreign_catalog
+            )
+
     def test_pending_proposal_cannot_be_promoted(self):
         from core.curated_knowledge_store import SQLiteCuratedKnowledge
 
