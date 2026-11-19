@@ -107,11 +107,16 @@ class ObservationGateway:
             raise TypeError("session must be an ObservationSession")
         self._session = session
 
-    def poll(self, source: ObservationSource, consumer, *, timeout: float = 0.0) -> bool:
+    def poll(
+        self, source: ObservationSource, consumer, *, timeout: float = 0.0,
+        on_authorized=None,
+    ) -> bool:
         if not isinstance(source, ObservationSource):
             raise TypeError("source must implement ObservationSource")
         if not callable(consumer):
             raise TypeError("consumer must be callable")
+        if on_authorized is not None and not callable(on_authorized):
+            raise TypeError("on_authorized must be callable")
         event = source.read_next(timeout)
         if event is None:
             return False
@@ -119,5 +124,7 @@ class ObservationGateway:
             return False
         if not self._session.authorize(event.source, event.category):
             return False
+        if on_authorized is not None:
+            on_authorized(event)
         consumer(event)
         return True
