@@ -89,7 +89,7 @@ class ObservationSessionManager:
             if managed.state_override is not None or managed.session.state not in ("active", "paused"):
                 raise RuntimeError("observation session is not accepting sources")
             source_id = source.source_id
-            if source_id not in managed.session._policy.allowed_sources:
+            if not managed.session.is_source_allowlisted(source_id):
                 raise PermissionError("source is not in the session allowlist")
             if source_id in managed.sources:
                 raise ValueError("source is already registered")
@@ -108,6 +108,8 @@ class ObservationSessionManager:
         managed = self._get(session_id)
         if not isinstance(source_id, str) or not callable(consumer):
             raise ValueError("source_id and consumer are required")
+        if timeout != 0:
+            raise ValueError("session manager polling is non-blocking; sources should buffer events")
         with managed.lock:
             if managed.state_override is not None or managed.session.state != "active":
                 return False
