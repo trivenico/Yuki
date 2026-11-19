@@ -691,6 +691,8 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(report["total_assigned"], 1)
         self.assertEqual(report["total_evaluable"], 0)
         self.assertEqual(report["status"], "insufficient_observations")
+        self.assertEqual(report["guardrail_evaluation"]["status"], "no_measurable_guardrails")
+        self.assertFalse(report["guardrail_evaluation"]["automatic_action"])
         self.assertFalse(report["automatic_action"])
         status, _ = self.request(path, token=self.admin_session.token, query=b"unexpected=true")
         self.assertEqual(status, 400)
