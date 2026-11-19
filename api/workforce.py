@@ -69,6 +69,30 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._transition_workforce_experiment(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/deliveries", path):
             return await self._record_workforce_experiment_delivery(path, scope, receive, send)
+        if method == "GET" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/execution-events", path):
+            principal = await self._principal(scope)
+            if principal is None:
+                return await self._respond(send, 401, {"error": "authentication_required"})
+            user, _ = principal
+            if user.role not in {"admin", "operator"}:
+                return await self._respond(send, 403, {"error": "workforce_access_denied"})
+            try:
+                query = self._query(scope)
+                if set(query) - {"limit"}:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                limit = self._integer(query.get("limit", "500"), "limit")
+                experiment_id = path.split("/")[-2]
+                result = await asyncio.to_thread(
+                    self.dashboard.task_engine.list_workforce_experiment_execution_events,
+                    experiment_id, limit=limit,
+                )
+            except TaskNotFound:
+                return await self._respond(send, 404, {"error": "experiment_not_found"})
+            except (TypeError, ValueError):
+                return await self._respond(send, 400, {"error": "invalid_query"})
+            except Exception:
+                return await self._respond(send, 503, {"error": "experiment_execution_events_unavailable"})
+            return await self._respond(send, 200, {"execution_events": result})
         if method == "GET" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/integrity", path):
             principal = await self._principal(scope)
             if principal is None:
