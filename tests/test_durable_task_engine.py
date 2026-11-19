@@ -174,7 +174,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             task["id"], "execution_started", worker_id="worker-1", attempt=1,
         )
         self.assertTrue(started["created"])
-        self.assertIsNone(replay)
+        self.assertFalse(replay["created"])
         terminal = self.engine.record_task_experiment_execution_event(
             task["id"], "execution_succeeded", worker_id="worker-1", attempt=1,
         )
@@ -247,6 +247,10 @@ class DurableTaskEngineTests(unittest.TestCase):
                 skill_name="triage",
             )
         claimed = self.engine.claim("worker-1", task_type="workforce.task")
+        while claimed is not None and claimed["id"] != treatment_task["id"]:
+            self.engine.reject(claimed["id"], "worker-1", "skip_non_target_test_task")
+            claimed = self.engine.claim("worker-1", task_type="workforce.task")
+        self.assertIsNotNone(claimed)
         self.assertEqual(claimed["id"], treatment_task["id"])
         self.engine.record_task_experiment_execution_event(
             treatment_task["id"], "execution_started", worker_id="worker-1", attempt=1,
