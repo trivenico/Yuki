@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from core.observation_knowledge_store import SQLiteObservationKnowledgeReview\nfrom core.curated_knowledge_store import SQLiteCuratedKnowledge
+from core.observation_knowledge_store import SQLiteObservationKnowledgeReview
+from core.curated_knowledge_store import SQLiteCuratedKnowledge
 
 
 class ObservationKnowledgeReviewService:
