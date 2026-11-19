@@ -286,13 +286,28 @@ class ModelSession:
     def __init__(self, manager, model_id: str, request: ComputeRequest,
                  backend: ComputeBackend, lease: ModelResidencyLease, handle):
         self._manager = manager
-        self.model_id = model_id
-        self.request = request
-        self.backend = backend
+        self._model_id = model_id
+        self._request = request
+        self._backend = backend
         self._lease = lease
         self._handle = handle
         self._state = "ready"
         self._lock = threading.RLock()
+
+    @property
+    def model_id(self) -> str:
+        """Stable identity assigned when the resident model is loaded."""
+        return self._model_id
+
+    @property
+    def request(self) -> ComputeRequest:
+        """Immutable resource/backend request used for model residency."""
+        return self._request
+
+    @property
+    def backend(self) -> ComputeBackend:
+        """Backend instance that owns this model's resident allocation."""
+        return self._backend
 
     @property
     def state(self) -> str:
