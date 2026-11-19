@@ -63,6 +63,21 @@ class ObservationSessionManager:
         if type(event_limit) is not int or not 1 <= event_limit <= 1_000_000:
             raise ValueError("event_limit must be an integer in 1..1000000")
         with self._lock:
+            # Terminal sessions no longer consume active capacity. Retain their
+            # status until pressure requires eviction, keeping the registry
+            # bounded without permanently exhausting it after repeated revoke /
+            # event-budget cycles in a long-running desktop process.
+            if len(self._sessions) >= self._max_sessions:
+                for stale_id, stale in tuple(self._sessions.items()):
+                    with stale.lock:
+                        terminal = (
+                            stale.state_override in ("revoked", "limit_reached")
+                            or stale.session.state in ("revoked", "disabled")
+                        )
+                    if terminal:
+                        del self._sessions[stale_id]
+                    if len(self._sessions) < self._max_sessions:
+                        break
             if len(self._sessions) >= self._max_sessions:
                 raise RuntimeError("observation session capacity reached")
             session_id = uuid.uuid4().hex
