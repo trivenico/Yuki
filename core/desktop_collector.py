@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import sys
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 from core.desktop_metadata_adapter import DesktopMetadataAdapter
 
