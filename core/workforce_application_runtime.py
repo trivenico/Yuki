@@ -7,9 +7,12 @@ Call worker.run_once() from an explicitly managed worker process.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any
+import threading
+import time
+import math
 
 from core.durable_task_engine import DurableTaskEngine
 from core.planner import Planner
@@ -30,21 +33,69 @@ class WorkforceApplicationRuntime:
     executor: YukiAgentWorkforceExecutor
     worker: WorkforceWorker
     _closed: bool = False
+    _stopping: bool = False
+    _active_runs: int = 0
+    _lifecycle: threading.Condition = dataclass_field(default_factory=threading.Condition, repr=False)
 
     @property
     def closed(self) -> bool:
         return self._closed
 
     def run_once(self) -> dict[str, Any]:
-        if self._closed:
-            raise RuntimeError("workforce runtime is closed")
-        return self.worker.run_once()
+        with self._lifecycle:
+            if self._closed:
+                raise RuntimeError("workforce runtime is closed")
+            if self._stopping:
+                return {"state": "stopping", "status": "shutdown_requested"}
+            self._active_runs += 1
+        try:
+            return self.worker.run_once()
+        finally:
+            with self._lifecycle:
+                self._active_runs -= 1
+                self._lifecycle.notify_all()
+
+    def shutdown(self, timeout_seconds: float = 30.0) -> bool:
+        """Stop new runs and wait up to a bounded deadline for active work.
+
+        False means the deadline elapsed: the engine intentionally remains open
+        so active execution can keep heartbeating its lease.
+        """
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds < 0
+            or timeout_seconds > 3600
+        ):
+            raise ValueError("timeout_seconds must be finite and between 0 and 3600")
+        with self._lifecycle:
+            if self._closed:
+                return True
+            if not self._stopping:
+                self._stopping = True
+                self.worker.request_stop()
+            deadline = time.monotonic() + float(timeout_seconds)
+            while self._active_runs:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._lifecycle.wait(remaining)
+            return True
 
     def close(self) -> None:
         if self._closed:
             return
+        if not self.shutdown(timeout_seconds=0):
+            raise RuntimeError(
+                "cannot close workforce runtime while task execution is active; "
+                "request shutdown and wait for active work to drain"
+            )
+        with self._lifecycle:
+            if self._closed:
+                return
+            self._closed = True
         self.engine.close()
-        self._closed = True
 
 
 def build_workforce_application_runtime(
