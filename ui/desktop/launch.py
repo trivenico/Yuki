@@ -2438,6 +2438,9 @@ Version: {version}",
             self.voice_button.setEnabled(False)
             self.memory_toggle.setEnabled(False)
             self.plan_propose_button.setEnabled(False)
+            self.conversation_selector.setEnabled(False)
+            self.new_conversation_button.setEnabled(False)
+            self.refresh_conversations_button.setEnabled(False)
             self.transcript.appendPlainText("You: " + prompt)
             self.chat_status.setText("Yuki is thinking…")
             worker = ChatWorker(self.controller, prompt)
@@ -2454,6 +2457,9 @@ Version: {version}",
             )
             self.memory_toggle.setEnabled(True)
             self.plan_propose_button.setEnabled(True)
+            self.conversation_selector.setEnabled(True)
+            self.new_conversation_button.setEnabled(True)
+            self.refresh_conversations_button.setEnabled(True)
             if error is not None:
                 self.chat_status.setText("Request failed (" + type(error).__name__ + ").")
                 if isinstance(error, PermissionError):
