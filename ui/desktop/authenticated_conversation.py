@@ -47,6 +47,10 @@ class AuthenticatedDesktopConversation:
         self._require_live_session()
         return self._conversation.start_new_conversation(title=title)
 
+    def start_new_conversation(self, *, title: str = "New conversation") -> dict[str, Any]:
+        self._require_live_session()
+        return self._conversation.start_new_conversation(title=title)
+
     def select_conversation(self, conversation_id: str) -> dict[str, Any]:
         self._require_live_session()
         return self._conversation.select_conversation(conversation_id)
