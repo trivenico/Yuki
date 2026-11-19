@@ -178,6 +178,14 @@ class SandboxJobLifecycle:
                 except Exception:
                     frozen = False
                 if frozen:
+                    try:
+                        self._store.transition(
+                            job.job_id, expected_states=("running",), new_state="failed"
+                        )
+                    except Exception as exc:
+                        raise SandboxJobError(
+                            "runtime stopped after audit failure but durable state needs reconciliation"
+                        ) from exc
                     job.runtime_handle = None
                     job.state = JobState.FAILED
                 raise
@@ -280,12 +288,17 @@ class SandboxJobLifecycle:
                 job.runtime_handle = None
             if job.state is JobState.CLEANED:
                 return self._snapshot(job)
+            previous = job.state.value
+            if previous not in {"created", "running", "frozen"}:
+                raise SandboxJobError("job state cannot be discarded safely")
             try:
-                self._record(job, "discard", "succeeded")
-            except SandboxJobError:
-                job.state = JobState.FAILED
-                raise
+                self._store.transition(
+                    job.job_id, expected_states=(previous,), new_state="cancelled"
+                )
+            except Exception as exc:
+                raise SandboxJobError("discard could not be durably recorded") from exc
             job.state = JobState.CANCELLED
+            self._record(job, "discard", "succeeded")
             return self._snapshot(job)
 
     def cleanup_job(self, job_id: str) -> SandboxJobSnapshot:
@@ -301,6 +314,14 @@ class SandboxJobLifecycle:
                 raise SandboxJobError("job staging directory was replaced by a symlink")
             self._record(job, "cleanup", "requested")
             shutil.rmtree(directory)
+            try:
+                self._store.transition(
+                    job.job_id, expected_states=(job.state.value,), new_state="cleaned"
+                )
+            except Exception as exc:
+                raise SandboxJobError(
+                    "staging removed but durable cleanup state needs reconciliation"
+                ) from exc
             job.state = JobState.CLEANED
             return self._snapshot(job)
 
@@ -313,7 +334,32 @@ class SandboxJobLifecycle:
             raise SandboxJobError("invalid sandbox job ID")
         job = self._jobs.get(job_id)
         if job is None:
-            raise SandboxJobError("sandbox job is not owned by this manager")
+            record = self._store.get(job_id)
+            if record is None:
+                raise SandboxJobError("sandbox job is not owned by this manager")
+            try:
+                state = JobState(record.state)
+            except ValueError as exc:
+                raise SandboxJobError("durable job state is unsupported") from exc
+            if state in {JobState.VALIDATED, JobState.PROMOTED}:
+                raise SandboxJobError(
+                    "validated jobs require manifest revalidation before lifecycle resumption"
+                )
+            directory = Path(record.staging_directory)
+            if directory.parent != self._root or directory.name != job_id:
+                raise SandboxJobError("durable staging path does not match manager root")
+            info = directory.lstat()
+            if directory.is_symlink() or not directory.is_dir():
+                raise SandboxJobError("durable staging directory is not a real directory")
+            if info.st_uid != os.getuid() or (info.st_mode & 0o777) != 0o700:
+                raise SandboxJobError("durable staging directory ownership or mode is unsafe")
+            job = _Job(
+                job_id=job_id,
+                staging_directory=directory,
+                state=state,
+                promoted_paths=set(record.promoted_paths),
+            )
+            self._jobs[job_id] = job
         return job
 
     @staticmethod
