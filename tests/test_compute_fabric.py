@@ -88,6 +88,72 @@ class ComputeFabricTests(unittest.TestCase):
         with self.assertRaises(ComputeFabricError):
             scheduler.execute(ComputeRequest(backend="offline"), lambda: None)
 
+    def test_cuda_backend_uses_torch_device_context_and_reports_vram_snapshot(self):
+        from contextlib import nullcontext
+        from core.compute_fabric import CUDABackend
+
+        class FakeCuda:
+            def is_available(self): return True
+            def device_count(self): return 1
+            def get_device_name(self, index): return "NVIDIA Test GPU"
+            def mem_get_info(self, index): return (4096, 8192)
+            def device(self, index): return nullcontext()
+
+        class FakeTorch:
+            cuda = FakeCuda()
+
+        backend = CUDABackend(torch_module=FakeTorch())
+        self.assertTrue(backend.capabilities.available)
+        self.assertEqual(backend.capabilities.memory_capacity_bytes, 4096)
+        self.assertEqual(backend.capabilities.device, "cuda")
+        self.assertEqual(backend.execute(lambda: "cuda-result"), "cuda-result")
+
+    def test_cuda_backend_fails_closed_without_runtime(self):
+        from core.compute_fabric import CUDABackend, ComputeBackendError
+
+        class FakeCuda:
+            def is_available(self): return False
+            def device_count(self): return 0
+
+        class FakeTorch:
+            cuda = FakeCuda()
+
+        backend = CUDABackend(torch_module=FakeTorch())
+        self.assertFalse(backend.capabilities.available)
+        with self.assertRaises(ComputeBackendError):
+            backend.execute(lambda: None)
+
+    def test_google_tpu_backend_uses_jax_default_device_and_operator_budget(self):
+        from contextlib import nullcontext
+        from core.compute_fabric import GoogleTPUBackend
+
+        class Device:
+            platform = "tpu"
+
+        class FakeJax:
+            def devices(self, backend=None):
+                return [Device()] if backend == "tpu" else []
+            def default_device(self, device):
+                return nullcontext()
+
+        backend = GoogleTPUBackend(
+            memory_capacity_bytes=123456, jax_module=FakeJax(),
+        )
+        self.assertTrue(backend.capabilities.available)
+        self.assertEqual(backend.capabilities.memory_capacity_bytes, 123456)
+        self.assertEqual(backend.execute(lambda: "tpu-result"), "tpu-result")
+
+    def test_google_tpu_backend_unavailable_without_tpu_device(self):
+        from core.compute_fabric import GoogleTPUBackend, ComputeBackendError
+
+        class FakeJax:
+            def devices(self, backend=None): return []
+
+        backend = GoogleTPUBackend(memory_capacity_bytes=0, jax_module=FakeJax())
+        self.assertFalse(backend.capabilities.available)
+        with self.assertRaises(ComputeBackendError):
+            backend.execute(lambda: None)
+
     def test_duplicate_backend_registration_is_rejected(self):
         with self.assertRaises(ValueError):
             self.scheduler.register(CPUBackend())
