@@ -10,6 +10,8 @@ import shutil
 import threading
 from typing import Callable, Sequence
 
+from automation.sandbox_job_store import SandboxJobStore
+
 from automation.sandbox_artifacts import (
     ArtifactManifest,
     ApprovedArtifactPromotion,
@@ -23,6 +25,7 @@ class SandboxJobError(RuntimeError):
 
 class JobState(str, Enum):
     CREATED = "created"
+    LAUNCHING = "launching"
     RUNNING = "running"
     FROZEN = "frozen"
     VALIDATED = "validated"
@@ -66,6 +69,7 @@ class SandboxJobLifecycle:
         freezer: Callable[[object], bool],
         promotion: ApprovedArtifactPromotion,
         audit: Callable[[dict], None],
+        store: SandboxJobStore,
     ):
         root = Path(jobs_root).expanduser()
         if root.is_symlink():
@@ -79,11 +83,14 @@ class SandboxJobLifecycle:
             raise TypeError("an approved artifact promotion service is required")
         if not callable(audit):
             raise TypeError("a mandatory lifecycle audit callback is required")
+        if not isinstance(store, SandboxJobStore):
+            raise TypeError("a mandatory durable sandbox job store is required")
         self._root = root
         self._launcher = launcher
         self._freezer = freezer
         self._promotion = promotion
         self._audit = audit
+        self._store = store
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.RLock()
 
@@ -121,9 +128,12 @@ class SandboxJobLifecycle:
                 if directory.is_symlink() or not directory.is_dir() or info.st_uid != os.getuid():
                     raise SandboxJobError("staging directory ownership or type check failed")
                 job = _Job(job_id=job_id, staging_directory=directory)
+                self._store.create(job_id=job_id, staging_directory=str(directory))
                 self._record(job, "create", "succeeded")
             except Exception:
-                shutil.rmtree(directory, ignore_errors=True)
+                # Preserve the directory if durable metadata was committed.
+                if self._store.get(job_id) is None:
+                    shutil.rmtree(directory, ignore_errors=True)
                 raise
             self._jobs[job_id] = job
             return self._snapshot(job)
@@ -134,18 +144,30 @@ class SandboxJobLifecycle:
             job = self._get(job_id)
             if job.state is not JobState.CREATED:
                 raise SandboxJobError("only a newly created job can start")
+            container_name = "yuki-job-" + job.job_id[4:]
+            try:
+                self._store.transition(
+                    job.job_id, expected_states=("created",), new_state="launching",
+                    container_name=container_name,
+                )
+            except Exception as exc:
+                raise SandboxJobError("could not durably record launch intent") from exc
+            job.state = JobState.LAUNCHING
             try:
                 handle = self._launcher(job.job_id, str(job.staging_directory))
                 if handle is None:
                     raise SandboxJobError("sandbox launcher returned no runtime handle")
             except Exception as exc:
-                job.state = JobState.FAILED
-                try:
-                    self._record(job, "start", "failed")
-                except SandboxJobError:
-                    pass
-                raise SandboxJobError("sandbox job could not be started") from exc
+                # Docker may have launched before the client timed out.
+                raise SandboxJobError("sandbox launch outcome is ambiguous; recovery required") from exc
             job.runtime_handle = handle
+            try:
+                self._store.transition(
+                    job.job_id, expected_states=("launching",), new_state="running",
+                    container_name=container_name,
+                )
+            except Exception as exc:
+                raise SandboxJobError("runtime launched but durable state update failed") from exc
             job.state = JobState.RUNNING
             try:
                 self._record(job, "start", "succeeded")
@@ -173,13 +195,15 @@ class SandboxJobLifecycle:
                 raise SandboxJobError("sandbox freeze could not be confirmed") from exc
             if not frozen:
                 raise SandboxJobError("sandbox freeze was not confirmed; staging remains untrusted")
-            job.runtime_handle = None
             try:
-                self._record(job, "freeze", "succeeded")
-            except SandboxJobError:
-                job.state = JobState.FAILED
-                raise
+                self._store.transition(
+                    job.job_id, expected_states=("running",), new_state="frozen"
+                )
+            except Exception as exc:
+                raise SandboxJobError("runtime stopped but durable freeze update failed") from exc
+            job.runtime_handle = None
             job.state = JobState.FROZEN
+            self._record(job, "freeze", "succeeded")
             return self._snapshot(job)
 
     def validate_job(
@@ -197,13 +221,16 @@ class SandboxJobLifecycle:
             except Exception:
                 job.state = JobState.FAILED
                 raise
-            job.manifest = manifest
             try:
-                self._record(job, "validate", "succeeded", manifest_digest=manifest.digest)
-            except SandboxJobError:
-                job.state = JobState.FAILED
-                raise
+                self._store.transition(
+                    job.job_id, expected_states=("frozen",), new_state="validated",
+                    manifest_digest=manifest.digest,
+                )
+            except Exception as exc:
+                raise SandboxJobError("validated manifest could not be durably recorded") from exc
+            job.manifest = manifest
             job.state = JobState.VALIDATED
+            self._record(job, "validate", "succeeded", manifest_digest=manifest.digest)
             return manifest
 
     def promote_artifact(
@@ -224,8 +251,18 @@ class SandboxJobLifecycle:
                 artifact_path=artifact_path,
                 destination_path=destination_path,
             )
-            job.promoted_paths.add(artifact_path)
-            if len(job.promoted_paths) == len(job.manifest.files):
+            next_paths = set(job.promoted_paths)
+            next_paths.add(artifact_path)
+            final_state = "promoted" if len(next_paths) == len(job.manifest.files) else "validated"
+            try:
+                self._store.transition(
+                    job.job_id, expected_states=("validated",), new_state=final_state,
+                    promoted_paths=next_paths,
+                )
+            except Exception as exc:
+                raise SandboxJobError("artifact published but durable promotion record failed") from exc
+            job.promoted_paths = next_paths
+            if final_state == "promoted":
                 job.state = JobState.PROMOTED
             return digest
 
