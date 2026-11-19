@@ -1364,7 +1364,7 @@ class DurableTaskEngine:
         return [dict(row) for row in rows]
 
     def get_workforce_experiment_integrity(self, experiment_id):
-        """Audit persisted assignment/delivery consistency without inferring exposure."""
+        """Audit assignment, delivery, worker execution, and treatment invocation evidence."""
         if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
             raise ValueError("invalid experiment_id")
         with closing(self._connect()) as c:
@@ -1431,6 +1431,13 @@ class DurableTaskEngine:
                    WHERE experiment_id=? ORDER BY exposure_id""",
                 (experiment_id,),
             ).fetchall()
+            repeated_exposure_rows = c.execute(
+                """SELECT task_id,COUNT(DISTINCT attempt) AS attempts
+                   FROM workforce_experiment_treatment_exposures
+                   WHERE experiment_id=? GROUP BY task_id
+                   HAVING COUNT(DISTINCT attempt)>1""",
+                (experiment_id,),
+            ).fetchall()
             control_exposure_count = c.execute(
                 """SELECT COUNT(*) AS n FROM workforce_experiment_treatment_exposures x
                    JOIN workforce_experiment_assignments a
@@ -1472,6 +1479,9 @@ class DurableTaskEngine:
             if row["intervention_version"] != expected_version:
                 issues.append({"code": "treatment_intervention_version_mismatch",
                                "task_id": row["task_id"], "attempt": row["attempt"]})
+        for row in repeated_exposure_rows:
+            issues.append({"code": "repeated_treatment_exposure",
+                           "task_id": row["task_id"], "attempts": row["attempts"]})
         if control_exposure_count:
             issues.append({"code": "control_arm_has_treatment_exposure",
                            "count": control_exposure_count})
