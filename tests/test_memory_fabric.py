@@ -89,6 +89,26 @@ class MemoryFabricTests(unittest.TestCase):
         self.assertEqual(fabric.get("cache", "new"), b"2222")
         self.assertEqual(fabric.stats()["disk_used_bytes"], 4)
 
+    def test_failed_put_rolls_back_ssd_eviction_without_invalidating_ram(self):
+        fabric = self._make_fabric(
+            self.path, ram_capacity_bytes=8, disk_capacity_bytes=6
+        )
+        fabric.put("cache", "existing", b"1111")
+        with sqlite3.connect(self.path) as connection:
+            connection.execute(
+                "CREATE TRIGGER reject_memory_fabric_insert "
+                "BEFORE INSERT ON memory_fabric_entries "
+                "BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END"
+            )
+        before = fabric.stats()
+        with self.assertRaises(sqlite3.IntegrityError):
+            fabric.put("cache", "replacement", b"2222")
+        self.assertEqual(fabric.get("cache", "existing"), b"1111")
+        self.assertIsNone(fabric.get("cache", "replacement"))
+        after = fabric.stats()
+        self.assertEqual(after["disk_used_bytes"], before["disk_used_bytes"])
+        self.assertEqual(after["evictions"], before["evictions"])
+
     def test_ram_eviction_discards_pending_recency_metadata(self):
         fabric = self._make_fabric(
             self.path, ram_capacity_bytes=4, disk_capacity_bytes=32
