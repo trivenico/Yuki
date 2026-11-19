@@ -11,6 +11,7 @@ from automation.sandbox_job_composition import (
     build_sandbox_job_recovery,
 )
 from api.production_runtime import build_production_conversation_runtime
+from core.config import load_config
 
 
 class SandboxJobCompositionTests(unittest.TestCase):
@@ -73,6 +74,28 @@ class SandboxJobCompositionTests(unittest.TestCase):
             )
         self.assertIs(result, runtime)
         self.assertIsNone(builder.call_args.kwargs["sandbox_job_recovery"])
+
+    def test_config_parses_separate_disabled_by_default_setting(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config_path = Path(temp) / "config.yaml"
+            config_path.write_text("workspace: " + temp + "\\nsandbox_jobs_enabled: false\\n", encoding="utf-8")
+            config = load_config(config_path)
+        self.assertFalse(config["sandbox_jobs_enabled"])
+        self.assertEqual(config["sandbox_jobs_command"], [])
+
+    def test_config_rejects_enabled_jobs_without_digest_pinned_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config_path = Path(temp) / "config.yaml"
+            config_path.write_text(
+                "workspace: " + temp + "\\n"
+                "sandbox_jobs_enabled: true\\n"
+                "sandbox_jobs_root: jobs\\n"
+                "sandbox_jobs_image: latest\\n"
+                "sandbox_jobs_command: [/bin/true]\\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError):
+                load_config(config_path)
 
     def test_production_factory_rejects_caller_supplied_recovery(self):
         with self.assertRaises(ValueError):
