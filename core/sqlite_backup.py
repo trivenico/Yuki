@@ -6,6 +6,7 @@ raw-copying a live database file is intentionally not supported here.
 from __future__ import annotations
 
 import os
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import stat
@@ -54,8 +55,8 @@ def backup_sqlite_database(source: str | Path, destination: str | Path) -> Path:
         os.close(fd)
 
         source_uri = "file:" + quote(str(source_path.resolve())) + "?mode=ro"
-        with sqlite3.connect(source_uri, uri=True, timeout=10) as source_db:
-            with sqlite3.connect(str(temporary_path), timeout=10) as target_db:
+        with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as source_db:
+            with closing(sqlite3.connect(str(temporary_path), timeout=10)) as target_db:
                 source_db.backup(target_db, pages=256, sleep=0.05)
                 check = target_db.execute("PRAGMA integrity_check").fetchone()
                 if check is None or check[0] != "ok":
