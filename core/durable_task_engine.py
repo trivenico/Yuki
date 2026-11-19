@@ -85,6 +85,25 @@ class DurableTaskEngine:
               created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS workforce_improvement_events_idx
               ON workforce_improvement_events(proposal_id,id);
+            CREATE TABLE IF NOT EXISTS workforce_experiments(
+              experiment_id TEXT PRIMARY KEY,
+              proposal_id TEXT NOT NULL REFERENCES workforce_improvement_proposals(proposal_id),
+              experiment_fingerprint TEXT NOT NULL,
+              design_json TEXT NOT NULL,
+              state TEXT NOT NULL CHECK(state IN ('proposed','approved','rejected')),
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              decided_by TEXT,
+              decision_note TEXT);
+            CREATE TABLE IF NOT EXISTS workforce_experiment_events(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              experiment_id TEXT NOT NULL REFERENCES workforce_experiments(experiment_id),
+              event_type TEXT NOT NULL,
+              actor_id TEXT NOT NULL,
+              detail_json TEXT NOT NULL,
+              created_at REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS workforce_experiment_events_idx
+              ON workforce_experiment_events(experiment_id,id);
             CREATE TABLE IF NOT EXISTS workforce_knowledge(
               knowledge_id TEXT PRIMARY KEY,
               fingerprint TEXT NOT NULL,
@@ -729,6 +748,150 @@ class DurableTaskEngine:
                 (limit,),
             ).fetchall()
         return [self.get_improvement_proposal(row["proposal_id"]) for row in rows]
+
+
+    def create_workforce_experiment(self, experiment_id, proposal_id, design):
+        """Persist a bounded experiment design linked to an approved improvement proposal.
+
+        Approval records permission to proceed with later implementation planning only;
+        this method does not assign tasks, alter production behavior, or run experiments.
+        """
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        if not isinstance(proposal_id, str) or not 1 <= len(proposal_id) <= 256:
+            raise ValueError("invalid proposal_id")
+        if not isinstance(design, dict) or set(design) != {
+            "hypothesis", "intervention", "primary_metric", "preferred_direction",
+            "design_type", "eligible_population", "guardrails",
+            "evaluation_window_days", "minimum_sample_size",
+        }:
+            raise ValueError("invalid experiment design schema")
+        text_limits = {
+            "hypothesis": 2000, "intervention": 2000, "primary_metric": 160,
+            "eligible_population": 1000,
+        }
+        for key, maximum in text_limits.items():
+            value = design[key]
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError("invalid experiment design field: " + key)
+        if design["preferred_direction"] not in {"increase", "decrease"}:
+            raise ValueError("invalid preferred_direction")
+        if design["design_type"] not in {"randomized_controlled", "pre_post_descriptive"}:
+            raise ValueError("invalid design_type")
+        if (not isinstance(design["guardrails"], list) or len(design["guardrails"]) > 20
+                or any(not isinstance(item, str) or not item.strip() or len(item) > 240
+                       for item in design["guardrails"])):
+            raise ValueError("invalid guardrails")
+        for key, low, high in (("evaluation_window_days", 1, 90), ("minimum_sample_size", 2, 100000)):
+            if type(design[key]) is not int or not low <= design[key] <= high:
+                raise ValueError("invalid " + key)
+        design_json = self._json(design)
+        if len(design_json.encode("utf-8")) > 8192:
+            raise ValueError("experiment design exceeds 8 KB")
+        fingerprint = hashlib.sha256((proposal_id + "\\0" + design_json).encode("utf-8")).hexdigest()
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            proposal = c.execute(
+                "SELECT state FROM workforce_improvement_proposals WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+            if proposal is None:
+                raise TaskNotFound("linked improvement proposal not found")
+            if proposal["state"] != "approved":
+                raise TaskConflict("experiment requires an approved improvement proposal")
+            existing = c.execute(
+                "SELECT experiment_fingerprint FROM workforce_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["experiment_fingerprint"] != fingerprint:
+                    raise TaskConflict("experiment ID reused with different design")
+                c.commit()
+                return {"created": False, **self.get_workforce_experiment(experiment_id)}
+            c.execute(
+                "INSERT INTO workforce_experiments(experiment_id,proposal_id,experiment_fingerprint,design_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (experiment_id, proposal_id, fingerprint, design_json, "proposed", now, now),
+            )
+            c.execute(
+                "INSERT INTO workforce_experiment_events(experiment_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (experiment_id, "experiment.created", "system",
+                 self._json({"proposal_id": proposal_id, "fingerprint": fingerprint}), now),
+            )
+            c.commit()
+        return {"created": True, **self.get_workforce_experiment(experiment_id)}
+
+    def transition_workforce_experiment(
+        self, experiment_id, *, expected_state, new_state, actor_id, decision_note=None
+    ):
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 256:
+            raise ValueError("invalid actor_id")
+        if decision_note is not None and (
+            not isinstance(decision_note, str) or len(decision_note) > 2000
+        ):
+            raise ValueError("invalid decision_note")
+        if new_state not in {"approved", "rejected"}:
+            raise ValueError("invalid experiment transition target")
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT state FROM workforce_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if row is None:
+                raise TaskNotFound("experiment not found")
+            if row["state"] != expected_state:
+                raise TaskConflict("experiment state changed")
+            if expected_state != "proposed" or new_state not in {"approved", "rejected"}:
+                raise TaskConflict("invalid experiment state transition")
+            now = self.clock()
+            c.execute(
+                "UPDATE workforce_experiments SET state=?,updated_at=?,decided_by=?,decision_note=? WHERE experiment_id=?",
+                (new_state, now, actor_id, decision_note, experiment_id),
+            )
+            c.execute(
+                "INSERT INTO workforce_experiment_events(experiment_id,event_type,actor_id,detail_json,created_at) VALUES(?,?,?,?,?)",
+                (experiment_id, "experiment." + new_state, actor_id,
+                 self._json({"from_state": expected_state, "to_state": new_state,
+                             "decision_note": decision_note}), now),
+            )
+            c.commit()
+        return self.get_workforce_experiment(experiment_id)
+
+    def get_workforce_experiment(self, experiment_id):
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT * FROM workforce_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if row is None:
+                raise TaskNotFound("experiment not found")
+            events = c.execute(
+                "SELECT * FROM workforce_experiment_events WHERE experiment_id=? ORDER BY id",
+                (experiment_id,),
+            ).fetchall()
+        result = dict(row)
+        result["design"] = json.loads(result.pop("design_json"))
+        result.pop("experiment_fingerprint")
+        result["events"] = [
+            {"id": event["id"], "event_type": event["event_type"],
+             "actor_id": event["actor_id"], "detail": json.loads(event["detail_json"]),
+             "created_at": event["created_at"]}
+            for event in events
+        ]
+        return result
+
+    def list_workforce_experiments(self, *, limit=100):
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT experiment_id FROM workforce_experiments ORDER BY updated_at DESC,experiment_id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self.get_workforce_experiment(row["experiment_id"]) for row in rows]
 
     def get_task_by_idempotency(self, goal_id, idempotency_key):
         """Return a task and its persisted dependency IDs for safe DAG recovery."""
