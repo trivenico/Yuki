@@ -33,8 +33,10 @@ class SandboxJobRecovery:
     ):
         if not isinstance(store, SandboxJobStore):
             raise TypeError("durable sandbox job store is required")
-        if not isinstance(runtime, DockerJobRuntime):
-            raise TypeError("Docker job runtime is required")
+        if not callable(getattr(runtime, "handle_for_job", None)) or not callable(
+            getattr(runtime, "reconcile", None)
+        ):
+            raise TypeError("runtime must provide deterministic handle reconstruction and reconciliation")
         if not callable(audit):
             raise TypeError("mandatory recovery audit callback is required")
         root = Path(jobs_root).expanduser()
