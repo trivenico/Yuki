@@ -67,6 +67,47 @@ class ObservationKnowledgeReviewServiceTests(unittest.TestCase):
             ObservationKnowledgeReviewService(self.store, authorize=None)
 
 
+    def test_promote_requires_separate_grant_and_preserves_provenance(self):
+        from core.curated_knowledge_store import SQLiteCuratedKnowledge
+
+        proposal = self.store.propose("application", "com.example.editor")
+        self.service.approve(proposal.proposal_id, actor_id="operator-1")
+        catalog = SQLiteCuratedKnowledge(
+            str(Path(self.tmp.name) / "curated.sqlite3"), owner_id="owner-1"
+        )
+        with self.assertRaises(PermissionError):
+            self.service.promote_approved(
+                proposal.proposal_id, actor_id="operator-1", catalog=catalog
+            )
+        self.grants["admin-1"] = {"memory:knowledge:promote"}
+        entry_id = self.service.promote_approved(
+            proposal.proposal_id, actor_id="admin-1", catalog=catalog
+        )
+        entry, = catalog.list_active()
+        self.assertEqual(entry["entry_id"], entry_id)
+        self.assertEqual(entry["source_proposal_id"], proposal.proposal_id)
+        self.assertEqual(entry["approved_by"], "operator-1")
+        self.assertEqual(entry["promoted_by"], "admin-1")
+        self.assertEqual(
+            self.service.promote_approved(
+                proposal.proposal_id, actor_id="admin-1", catalog=catalog
+            ),
+            entry_id,
+        )
+
+    def test_pending_proposal_cannot_be_promoted(self):
+        from core.curated_knowledge_store import SQLiteCuratedKnowledge
+
+        proposal = self.store.propose("application", "com.example.editor")
+        self.grants["admin-1"] = {"memory:knowledge:promote"}
+        catalog = SQLiteCuratedKnowledge(
+            str(Path(self.tmp.name) / "curated.sqlite3"), owner_id="owner-1"
+        )
+        with self.assertRaises(PermissionError):
+            self.service.promote_approved(
+                proposal.proposal_id, actor_id="admin-1", catalog=catalog
+            )
+
     def test_capability_check_requires_read_and_decision_for_capture_review(self):
         self.grants["reader"] = {"observation:review:read"}
         self.assertTrue(self.service.can_review(actor_id="reader"))
