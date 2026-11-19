@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,14 @@ import uuid
 from core.backup_inventory import SQLiteDatabaseEntry
 from core.sqlite_backup import backup_sqlite_database
 from core.sqlite_backup_verify import verify_sqlite_backup_set
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class SQLiteRestoreVerificationError(RuntimeError):
@@ -95,12 +104,28 @@ def restore_and_verify_sqlite_backup_set(
                 "size_bytes": destination.stat().st_size,
             })
 
+        restored_digests = {name: _sha256(path) for name, path in restored.items()}
         try:
             validation_result = application_validator(dict(restored))
         except Exception as exc:
             raise SQLiteRestoreVerificationError("application_validation_failed") from exc
         if validation_result is not True:
             raise SQLiteRestoreVerificationError("application_validation_rejected_restore")
+        expected_files = {path.name for path in restored.values()}
+        try:
+            actual_files = {child.name for child in staging.iterdir()}
+        except OSError as exc:
+            raise SQLiteRestoreVerificationError("restore_staging_unreadable") from exc
+        if actual_files != expected_files:
+            raise SQLiteRestoreVerificationError("application_validator_changed_restore_inventory")
+        for name, path in restored.items():
+            if path.is_symlink():
+                raise SQLiteRestoreVerificationError("application_validator_replaced_restore_file")
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise SQLiteRestoreVerificationError("application_validator_changed_restore_file_type")
+            if _sha256(path) != restored_digests[name]:
+                raise SQLiteRestoreVerificationError("application_validator_modified_restore_database")
 
         report = {
             "format_version": 1,
