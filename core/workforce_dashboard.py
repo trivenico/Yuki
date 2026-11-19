@@ -51,6 +51,7 @@ class WorkforceDashboard:
             and isinstance(record.get("knowledge_id"), str)
             and record.get("state") == "verified"
         }
+        knowledge_records: dict[str, dict[str, Any] | None] = {}
         knowledge_outcomes: dict[str, dict[str, Any]] = {}
         for task in tasks:
             payload = task.get("payload")
@@ -76,6 +77,9 @@ class WorkforceDashboard:
                     "currently_verified_exposures": 0,
                     "currently_verified_succeeded_tasks": 0,
                     "currently_verified_failed_tasks": 0,
+                    "historically_verified_before_task_creation_exposures": 0,
+                    "historically_verified_succeeded_tasks": 0,
+                    "historically_verified_failed_tasks": 0,
                     "unverified_reference_exposures": 0,
                 })
                 metrics["exposures"] += 1
@@ -84,10 +88,42 @@ class WorkforceDashboard:
                     metrics["currently_verified_exposures"] += 1
                 else:
                     metrics["unverified_reference_exposures"] += 1
+
+                # A verified event must predate task creation, and the persisted
+                # record content/provenance must still match the attached context.
+                # This is a creation-time boundary, not proof of actual execution.
+                if knowledge_id not in knowledge_records:
+                    try:
+                        knowledge_records[knowledge_id] = self.task_engine.get_knowledge(knowledge_id)
+                    except Exception:
+                        knowledge_records[knowledge_id] = None
+                record = knowledge_records[knowledge_id]
+                created_at = task.get("created_at")
+                historical_verified = (
+                    isinstance(record, dict)
+                    and isinstance(created_at, (int, float))
+                    and not isinstance(created_at, bool)
+                    and record.get("source_task_id") == lesson.get("source_task_id")
+                    and record.get("reviewed_by") == lesson.get("reviewed_by")
+                    and isinstance(record.get("knowledge"), dict)
+                    and record["knowledge"].get("title") == lesson.get("title")
+                    and record["knowledge"].get("lesson") == lesson.get("lesson")
+                    and any(
+                        isinstance(event, dict)
+                        and event.get("event_type") == "knowledge.verified"
+                        and isinstance(event.get("created_at"), (int, float))
+                        and event["created_at"] <= created_at
+                        for event in record.get("events", [])
+                    )
+                )
+                if historical_verified:
+                    metrics["historically_verified_before_task_creation_exposures"] += 1
                 if task["state"] == "succeeded":
                     metrics["succeeded_tasks"] += 1
                     if is_currently_verified:
                         metrics["currently_verified_succeeded_tasks"] += 1
+                    if historical_verified:
+                        metrics["historically_verified_succeeded_tasks"] += 1
                     result = task.get("result")
                     evidence = result.get("review_evidence") if isinstance(result, dict) else None
                     if (
@@ -115,6 +151,8 @@ class WorkforceDashboard:
                     metrics["failed_tasks"] += 1
                     if is_currently_verified:
                         metrics["currently_verified_failed_tasks"] += 1
+                    if historical_verified:
+                        metrics["historically_verified_failed_tasks"] += 1
 
         employee_tasks: dict[str, Counter] = defaultdict(Counter)
         for task in tasks:
@@ -617,6 +655,8 @@ class WorkforceDashboard:
                     "tasks may use multiple lessons and differ in difficulty, staffing, and context",
                     "raw exposure counts include caller-provided lesson references; currently verified registry matches are reported separately",
                     "current verified status does not prove a lesson was verified at the historical task execution time",
+                    "historical verification is checked against task creation time, not the exact worker execution instant",
+                    "historical verification requires a matching current lesson content/provenance snapshot; revised records may be conservatively excluded",
                     "verified-registry lookup is bounded to the newest 500 records; missing references are not proof that a lesson never existed",
                     "only independently reviewed successes with consistent persisted evidence count as verified successes",
                     "this is observational reporting, not an automatic quality score or lesson retirement decision",
