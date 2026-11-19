@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import math
 import sqlite3
+from contextlib import contextmanager
 import threading
 import time
 from collections import OrderedDict
@@ -75,7 +76,7 @@ class MemoryFabric:
         self._evictions = 0
         self._corruptions = 0
         self._closed = False
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS memory_fabric_entries (
@@ -102,6 +103,15 @@ class MemoryFabric:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA synchronous=NORMAL")
         return connection
+
+    @contextmanager
+    def _connection(self):
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -172,7 +182,7 @@ class MemoryFabric:
         digest = hashlib.sha256(payload).hexdigest()
         with self._lock:
             self._ensure_open()
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
                     "DELETE FROM memory_fabric_entries WHERE expires_at IS NOT NULL AND expires_at<=?",
@@ -220,7 +230,7 @@ class MemoryFabric:
                 self._ram.move_to_end(identity)
                 self._hits += 1
                 return cached
-            with self._connect() as connection:
+            with self._connection() as connection:
                 row = connection.execute(
                     "SELECT payload,sha256,expires_at FROM memory_fabric_entries "
                     "WHERE namespace=? AND cache_key=?",
@@ -261,7 +271,7 @@ class MemoryFabric:
         with self._lock:
             self._ensure_open()
             self._remove_ram(identity)
-            with self._connect() as connection:
+            with self._connection() as connection:
                 cursor = connection.execute(
                     "DELETE FROM memory_fabric_entries WHERE namespace=? AND cache_key=?",
                     identity,
@@ -276,13 +286,13 @@ class MemoryFabric:
             if namespace is None:
                 self._ram.clear()
                 self._ram_bytes = 0
-                with self._connect() as connection:
+                with self._connection() as connection:
                     cursor = connection.execute("DELETE FROM memory_fabric_entries")
             else:
                 for identity in tuple(self._ram):
                     if identity[0] == namespace:
                         self._remove_ram(identity)
-                with self._connect() as connection:
+                with self._connection() as connection:
                     cursor = connection.execute(
                         "DELETE FROM memory_fabric_entries WHERE namespace=?", (namespace,)
                     )
@@ -291,7 +301,7 @@ class MemoryFabric:
     def stats(self) -> dict[str, int]:
         with self._lock:
             self._ensure_open()
-            with self._connect() as connection:
+            with self._connection() as connection:
                 disk_bytes, entries = connection.execute(
                     "SELECT COALESCE(SUM(size_bytes),0),COUNT(*) FROM memory_fabric_entries"
                 ).fetchone()
