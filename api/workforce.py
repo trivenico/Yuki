@@ -14,6 +14,7 @@ from core.approval_preview import confirmation_digest, redact_preview
 from core.durable_task_engine import TaskConflict, TaskNotFound
 from core.workforce_ceo import WorkforceCEO
 from core.workforce_dashboard import WorkforceDashboard
+from core.workforce_improvement_evaluator import evaluate_improvement_snapshots
 
 _QUERY_KEYS = {"max_goals"}
 _EMPLOYEE_QUERY_KEYS = {"department", "status", "search", "page", "page_size"}
@@ -298,6 +299,7 @@ class AuthenticatedWorkforceDashboardAPI:
                 "tasks": current.get("tasks", {}),
                 "performance": current.get("performance", {}),
             }
+            evaluation = evaluate_improvement_snapshots(baseline, current_metrics)
             changes = {}
             for section in ("workforce", "tasks", "performance"):
                 before = baseline.get(section, {})
@@ -324,6 +326,7 @@ class AuthenticatedWorkforceDashboardAPI:
             "comparison_captured_at": self.dashboard.task_engine.clock(),
             "baseline_scope": baseline.get("scope"),
             "changes": changes,
+            "evaluation": evaluation,
             "interpretation": "Descriptive snapshot differences only; they do not establish causation or intervention effectiveness.",
         })
 
