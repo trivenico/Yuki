@@ -2201,6 +2201,7 @@ class DurableTaskEngine:
             "unsupported_task_type": "task type is not supported by this worker",
             "unsafe_retry_policy": "side-effecting tasks must use a single attempt",
             "invalid_payload": "skill invocation payload is invalid",
+            "unverified_knowledge_context": "task references unverified organizational knowledge",
         }
         if not isinstance(reason, str) or reason not in messages:
             raise ValueError("invalid task rejection reason")
