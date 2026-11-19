@@ -168,6 +168,43 @@ class WorkforceDashboardTests(unittest.TestCase):
             snapshot["knowledge_effectiveness"]["limitations"]
         ))
 
+    def test_knowledge_outcomes_require_verification_event_before_task_creation(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        task = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Task references not-yet-verified lesson",
+                "review_required": False,
+                "knowledge_context": [{
+                    "knowledge_id": "lesson-not-yet-verified",
+                    "title": "Lesson title",
+                    "lesson": "Lesson body",
+                    "source_task_id": "source-task",
+                    "reviewed_by": "reviewer",
+                }],
+            },
+            idempotency_key="knowledge-not-yet-verified", max_attempts=1,
+        )
+        with patch.object(self.engine, "get_knowledge", return_value={
+            "knowledge_id": "lesson-not-yet-verified",
+            "state": "verified",
+            "source_task_id": "source-task",
+            "reviewed_by": "reviewer",
+            "knowledge": {"title": "Lesson title", "lesson": "Lesson body"},
+            "events": [{
+                "event_type": "knowledge.verified",
+                "created_at": task["created_at"] + 1,
+            }],
+        }):
+            snapshot = self.dashboard.snapshot()
+
+        lesson = snapshot["knowledge_effectiveness"]["lessons"][0]
+        self.assertEqual(lesson["currently_verified_exposures"], 0)
+        self.assertEqual(lesson["historically_verified_before_task_creation_exposures"], 0)
+        self.assertEqual(lesson["unverified_reference_exposures"], 1)
+
     def test_knowledge_review_evidence_rejects_owner_alias_and_mismatched_result_employee(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
