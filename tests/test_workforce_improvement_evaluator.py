@@ -41,6 +41,42 @@ class WorkforceImprovementEvaluatorTests(unittest.TestCase):
         self.assertFalse(result["metrics"]["success_rate"]["available"])
         self.assertEqual(result["metrics"]["queued_tasks"]["status"], "unavailable")
 
+    def test_flags_inconsistent_verified_success_counts(self):
+        baseline = {
+            "tasks": {"succeeded": 4, "failed": 1, "queued": 0},
+            "performance": {"independently_verified_successes": 5},
+        }
+        current = {
+            "tasks": {"succeeded": 5, "failed": 1, "queued": 0},
+            "performance": {"independently_verified_successes": 3},
+        }
+        result = evaluate_improvement_snapshots(
+            baseline, current, minimum_completed_observations=1,
+        )
+        self.assertEqual(result["data_quality"]["status"], "warnings")
+        self.assertIn(
+            "verified_successes_exceed_succeeded_tasks",
+            [item["code"] for item in result["data_quality"]["issues"]],
+        )
+        self.assertFalse(result["metrics"]["independently_verified_successes"]["available"])
+
+    def test_flags_fractional_operational_counts(self):
+        baseline = {
+            "tasks": {"succeeded": 4.5, "failed": 1, "queued": 0},
+            "performance": {"independently_verified_successes": 2},
+        }
+        current = {
+            "tasks": {"succeeded": 5, "failed": 1, "queued": 0},
+            "performance": {"independently_verified_successes": 3},
+        }
+        result = evaluate_improvement_snapshots(
+            baseline, current, minimum_completed_observations=1,
+        )
+        self.assertIn(
+            "non_integer_task_count",
+            [item["code"] for item in result["data_quality"]["issues"]],
+        )
+
     def test_rejects_invalid_threshold_and_snapshot(self):
         with self.assertRaises(ValueError):
             evaluate_improvement_snapshots([], {})
