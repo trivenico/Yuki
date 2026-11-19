@@ -957,6 +957,64 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(missing["error"], "resource_not_found")
 
+    def test_knowledge_delivery_integrity_reads_task_and_evidence_in_one_snapshot(self):
+        goal = self.engine.create_goal()
+        task = self.engine.submit(
+            goal, "workforce.task",
+            {"assigned_employee_id": "snapshot-worker", "knowledge_context": []},
+            idempotency_key="delivery-integrity-single-snapshot",
+            max_attempts=3,
+        )
+        claimed = self.engine.claim("snapshot-worker")
+        self.assertEqual(claimed["id"], task["id"])
+
+        statements = []
+        real_connect = self.engine._connect
+
+        class RecordingConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, sql, parameters=()):
+                statements.append(" ".join(sql.split()).upper())
+                return self.connection.execute(sql, parameters)
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+        self.engine._connect = lambda: RecordingConnection(real_connect())
+        self.engine.get_task = lambda _task_id: (_ for _ in ()).throw(
+            AssertionError("audit must not read task metadata on a separate connection")
+        )
+        try:
+            report = self.engine.get_workforce_knowledge_delivery_integrity(task["id"])
+        finally:
+            self.engine._connect = real_connect
+            del self.engine.get_task
+
+        begin_index = statements.index("BEGIN")
+        task_index = next(
+            index for index, sql in enumerate(statements)
+            if sql.startswith("SELECT * FROM TASKS WHERE ID=?")
+        )
+        count_index = next(
+            index for index, sql in enumerate(statements)
+            if sql.startswith("SELECT COUNT(*) AS RECORD_COUNT")
+        )
+        deliveries_index = next(
+            index for index, sql in enumerate(statements)
+            if "FROM WORKFORCE_KNOWLEDGE_DELIVERIES WHERE TASK_ID=?" in sql
+            and sql.startswith("SELECT TASK_ID,ATTEMPT")
+        )
+        commit_index = statements.index("COMMIT")
+        self.assertLess(begin_index, task_index)
+        self.assertLess(task_index, count_index)
+        self.assertLess(count_index, deliveries_index)
+        self.assertLess(deliveries_index, commit_index)
+        self.assertEqual(report["task_attempts"], 1)
+        self.assertEqual(report["task_state"], "running")
+        self.assertEqual(report["max_attempts"], 3)
+
     def test_knowledge_delivery_integrity_api_confirms_matching_attestation(self):
         candidate = self._seed_knowledge_candidate()
         self.engine.transition_knowledge(
