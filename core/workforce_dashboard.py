@@ -111,7 +111,12 @@ class WorkforceDashboard:
                     and any(
                         isinstance(event, dict)
                         and event.get("event_type") == "knowledge.verified"
+                        # The verification event's actor must match the
+                        # persisted reviewer identity; record-level metadata
+                        # alone is not sufficient provenance.
+                        and event.get("actor_id") == record.get("reviewed_by")
                         and isinstance(event.get("created_at"), (int, float))
+                        and not isinstance(event.get("created_at"), bool)
                         and event["created_at"] <= created_at
                         for event in record.get("events", [])
                     )
