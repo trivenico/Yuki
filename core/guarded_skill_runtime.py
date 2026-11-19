@@ -214,6 +214,7 @@ def invoke_registered_skill(
     audit: Callable[[str, str], None] | None = None,
     max_result_chars: int = 2000,
     expected_skill: Any = None,
+    before_execute: Callable[[], None] | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -278,6 +279,24 @@ def invoke_registered_skill(
     if not callable(execute):
         record("invalid_skill")
         return SkillInvocationResult(False, "Registered skill has no supported run()/execute() interface.", skill_name, "invalid_skill")
+
+    if before_execute is not None:
+        if not callable(before_execute):
+            record("invalid_pre_execution_observer")
+            return SkillInvocationResult(
+                False, "Pre-execution observer is invalid.", skill_name,
+                "invalid_pre_execution_observer",
+            )
+        try:
+            before_execute()
+        except Exception:
+            # Fail closed: if required exposure evidence cannot be persisted,
+            # do not execute the skill without its audit record.
+            record("pre_execution_observer_failed")
+            return SkillInvocationResult(
+                False, "Pre-execution evidence could not be recorded; skill was not invoked.",
+                skill_name, "pre_execution_observer_failed",
+            )
 
     try:
         result = execute(argument)
