@@ -30,7 +30,7 @@ _ALLOWED_TRANSITIONS = {
     "launching": {"running", "failed", "cancelled"},
     "running": {"frozen", "failed", "cancelled"},
     "frozen": {"validated", "failed", "cancelled"},
-    "validated": {"promoted", "failed"},
+    "validated": {"validated", "promoted", "failed"},
     "promoted": {"cleaned"},
     "failed": {"cleaned"},
     "cancelled": {"cleaned"},
