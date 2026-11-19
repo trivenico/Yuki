@@ -83,12 +83,20 @@ def build_docker_argv(
     if "write_workspace" in policy.capabilities:
         raise SandboxRuntimeError("trusted workspace is always mounted read-only")
 
-    mounts = ["--mount", f"type=bind,src={str(path.resolve())},dst=/workspace,ro"]
+    workspace_source = str(path.resolve())
+    # Docker --mount uses comma-separated key/value fields. Reject commas rather
+    # than allowing a host path to alter the mount specification.
+    if "," in workspace_source:
+        raise SandboxRuntimeError("workspace path cannot contain a comma")
+    mounts = ["--mount", f"type=bind,src={workspace_source},dst=/workspace,ro"]
     if artifact_output_directory is not None:
         output = _validate_artifact_output_directory(
             artifact_output_directory, workspace=path, uid=uid
         )
-        mounts.extend(["--mount", f"type=bind,src={str(output)},dst=/output,rw"])
+        output_source = str(output)
+        if "," in output_source:
+            raise SandboxRuntimeError("artifact output path cannot contain a comma")
+        mounts.extend(["--mount", f"type=bind,src={output_source},dst=/output,rw"])
 
     return [
         "docker", "run", "--rm", "--pull=never", "--interactive", "--read-only",
