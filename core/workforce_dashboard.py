@@ -319,6 +319,57 @@ class WorkforceDashboard:
                 ),
             })
 
+        # Convert repeated capability failures into a bounded development-review
+        # plan. A verified tag match is only a candidate resource; outcome exposure
+        # counts are descriptive and never treated as proof of lesson effectiveness.
+        skill_development_plans = []
+        for signal in capability_gap_signals:
+            if signal["failed_tasks"] < 2 or signal["terminal_tasks"] < 3:
+                continue
+            lesson_evidence = []
+            for knowledge_id in signal["verified_knowledge_ids"]:
+                outcome = knowledge_outcomes.get(knowledge_id, {})
+                exposures = outcome.get("exposures", 0)
+                verified_successes = outcome.get("independently_verified_successes", 0)
+                if exposures >= 3 and verified_successes >= 1:
+                    evidence_level = "reviewed_success_observation_available"
+                elif exposures > 0:
+                    evidence_level = "limited_outcome_observations"
+                else:
+                    evidence_level = "no_outcome_exposure_in_window"
+                lesson_evidence.append({
+                    "knowledge_id": knowledge_id,
+                    "exposures": exposures,
+                    "succeeded_tasks": outcome.get("succeeded_tasks", 0),
+                    "failed_tasks": outcome.get("failed_tasks", 0),
+                    "independently_verified_successes": verified_successes,
+                    "evidence_level": evidence_level,
+                })
+            if not lesson_evidence:
+                evidence_level = "no_exact_verified_lesson_match"
+            elif any(item["evidence_level"] == "reviewed_success_observation_available" for item in lesson_evidence):
+                evidence_level = "reviewed_success_observation_available"
+            elif any(item["evidence_level"] == "limited_outcome_observations" for item in lesson_evidence):
+                evidence_level = "limited_outcome_observations"
+            else:
+                evidence_level = "no_outcome_exposure_in_window"
+            skill_development_plans.append({
+                "capability": signal["capability"],
+                "failed_tasks": signal["failed_tasks"],
+                "terminal_tasks": signal["terminal_tasks"],
+                "failure_rate": signal["failure_rate"],
+                "verified_lessons": lesson_evidence,
+                "evidence_level": evidence_level,
+                "evidence_scope": "bounded_dashboard_goal_window_and_newest_500_verified_knowledge_records",
+                "recommended_review": (
+                    "Have a qualified reviewer assess representative failures and determine whether the matched verified lessons are applicable; if not, consider a human-authored development or knowledge proposal."
+                    if lesson_evidence
+                    else "Have a qualified reviewer inspect representative failures and consider a human-authored skill-development or knowledge proposal; do not infer or fabricate a lesson."
+                ),
+                "requires_human_approval": True,
+                "automatic_training_or_assignment_change": False,
+            })
+
         department_signals = []
         for department in sorted(department_rows.values(), key=lambda row: row["name"]):
             terminal = department["succeeded_tasks"] + department["failed_tasks"]
@@ -436,6 +487,24 @@ class WorkforceDashboard:
                     "automatic_action_taken": False,
                 })
 
+        for plan in skill_development_plans:
+            improvement_recommendations.append({
+                "id": f"skill-development:{plan['capability']}",
+                "category": "skill_development_review",
+                "priority": "medium",
+                "evidence": {
+                    "capability": plan["capability"],
+                    "failed_tasks": plan["failed_tasks"],
+                    "terminal_tasks": plan["terminal_tasks"],
+                    "failure_rate": plan["failure_rate"],
+                    "evidence_level": plan["evidence_level"],
+                    "verified_knowledge_ids": [item["knowledge_id"] for item in plan["verified_lessons"]],
+                },
+                "recommendation": plan["recommended_review"],
+                "requires_human_approval": True,
+                "automatic_action_taken": False,
+            })
+
         for index, pattern in enumerate(failure_patterns):
             improvement_recommendations.append({
                 "id": f"failure-pattern:{index}",
@@ -529,6 +598,7 @@ class WorkforceDashboard:
                 "scope": "descriptive signals from the dashboard's bounded goal window and current registry",
                 "capability_demand": capability_signals,
                 "capability_gap_signals": capability_gap_signals,
+                "skill_development_plans": skill_development_plans,
                 "department_signals": department_signals,
                 "failure_patterns": failure_patterns,
                 "improvement_recommendations": improvement_recommendations,
@@ -544,6 +614,8 @@ class WorkforceDashboard:
                     "capability gap assessments combine bounded task observations with a point-in-time registry capacity snapshot; they are review priorities, not forecasts or proof of staffing shortages",
                     "verified knowledge listing is bounded to the newest 500 records; coverage may omit older verified lessons",
                     "signals are not forecasts, employee quality scores, or authorization to reassign work",
+                    "skill-development plans are review prompts; lesson exposure and reviewed successes are observational and do not establish that a lesson caused improvement",
+                    "skill-development evidence is limited to tasks in the bounded goal window and exact capability-tag matches among the newest 500 verified knowledge records",
                 ],
             },
             "employees": employee_rows,
