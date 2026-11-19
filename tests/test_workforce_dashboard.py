@@ -175,6 +175,37 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(lesson["succeeded_tasks"], 2)
         self.assertEqual(lesson["independently_verified_successes"], 0)
 
+    def test_knowledge_review_requires_approved_evidence_status(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        for index, evidence_status in enumerate(("pending", "rejected", " ")):
+            task = self.engine.submit(
+                goal_id, "workforce.task",
+                {
+                    "assigned_employee_id": employee.employee_id,
+                    "description": f"Non-approved review status {index}",
+                    "review_required": True,
+                    "knowledge_context": [{"knowledge_id": "lesson-non-approved-review"}],
+                },
+                idempotency_key=f"knowledge-non-approved-review-{index}", max_attempts=1,
+            )
+            self.engine.claim("knowledge-review-status-worker", task_type="workforce.task")
+            self.engine.complete(task["id"], "knowledge-review-status-worker", {
+                "ok": True,
+                "status": "completed:reviewed",
+                "employee_id": employee.employee_id,
+                "review_required": True,
+                "review_evidence": {
+                    "reviewer_id": "INDEPENDENT-QA",
+                    "status": evidence_status,
+                    "approved": True,
+                },
+            })
+
+        lesson = self.dashboard.snapshot()["knowledge_effectiveness"]["lessons"][0]
+        self.assertEqual(lesson["succeeded_tasks"], 3)
+        self.assertEqual(lesson["independently_verified_successes"], 0)
+
     def test_repeated_knowledge_associated_failures_create_review_prompt_only(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
