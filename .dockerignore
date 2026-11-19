@@ -1,0 +1,51 @@
+# Keep local credentials and private Yuki state out of Docker build contexts.
+.git
+.git/**
+.env
+.env.*
+!.env.example
+**/*.pem
+**/*.key
+**/credentials.json
+**/token.json
+**/google_oauth_client.json
+**/google_token.json
+
+# Local databases, backups, logs, and runtime state.
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/*.db-journal
+**/*.log
+**/*.audit.jsonl
+BACKUP/
+**/BACKUP/
+YukiData/
+**/YukiData/
+.yuki/
+**/.yuki/
+yuki_workspace/
+**/yuki_workspace/
+audio_private/
+**/audio_private/
+
+# Downloaded models and generated artifacts.
+models/
+**/models/
+*.onnx
+*.onnx.data
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Editor and operating-system metadata.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
