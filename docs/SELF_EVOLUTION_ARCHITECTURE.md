@@ -137,5 +137,6 @@ Run offline evaluations before enabling a new memory, skill, prompt, or code ver
 - The architecture remains a proposal for the full adaptive-intelligence system.
 - A standalone observation authorization primitive exists in `core/observation_policy.py`: disabled by default, explicit consent, exact source allowlist, denylist and sensitive-category overrides, pause/resume/revocation, and fail-closed metadata audit.
 - `core/observation_sources.py` defines a bounded metadata-only source contract, an in-memory fake source, and a gateway that authorizes before forwarding events. Event metadata is bounded, scalar-only, and immutable.
-- Regression coverage is in `tests/test_observation_policy.py` and `tests/test_observation_sources.py`.
+- `core/observation_session_manager.py` adds a bounded session registry, per-session source limits and event budgets, indicator status, pause/resume/revocation, and source-queue cleanup. Manager polling is deliberately non-blocking so a long source wait cannot delay pause or revocation.
+- Regression coverage is in `tests/test_observation_policy.py`, `tests/test_observation_sources.py`, and `tests/test_observation_session_manager.py`.
 - No OS desktop capture, OCR, browser inspection, persistent learning records, or tool-execution permissions are provided by these components. Real adapters and learning remain future work.
