@@ -279,6 +279,11 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(listed[0]["skill_name"], "triage")
         report = self.engine.get_workforce_experiment_integrity("treatment-exposure-exp")
         self.assertEqual(report["treatment_exposures"], 1)
+        outcomes = self.engine.get_workforce_experiment_outcomes("treatment-exposure-exp")
+        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["exposed_tasks"], 1)
+        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["exposure_attempts"], 1)
+        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["task_coverage"], 1.0)
+        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["skills"][0]["skill_name"], "triage")
         self.assertNotIn("treatment_execution_without_skill_exposure",
                          {issue["code"] for issue in report["issues"]})
 
