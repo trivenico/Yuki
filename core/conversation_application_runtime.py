@@ -45,7 +45,7 @@ def build_conversation_application_runtime(
     agent_loop: AgentExecutionLoop,
     owner_id: str | None = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
-    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,\n    knowledge_entries_for_owner: Callable[[str, str], Any] | None = None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -65,7 +65,7 @@ def build_conversation_application_runtime(
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
     store = store_factory(config)
     try:
-        conversations = ConversationService(store, agent_loop, agent_loop_for_owner=agent_loop_for_owner)
+        conversations = ConversationService(\n            store, agent_loop, agent_loop_for_owner=agent_loop_for_owner,\n            knowledge_entries_for_owner=knowledge_entries_for_owner,\n        )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,
         )
