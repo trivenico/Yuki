@@ -657,6 +657,44 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body["error"], "invalid_proposal_request")
 
+    def test_experiment_outcome_report_is_read_only_and_role_restricted(self):
+        self.engine.create_improvement_proposal("outcome-api-proposal", {"recommendation": "Measure"})
+        self.engine.transition_improvement_proposal(
+            "outcome-api-proposal", expected_state="proposed", new_state="approved",
+            actor_id=self.admin_session.user.user_id,
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": "Workforce tasks",
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 5,
+        }
+        self.engine.create_workforce_experiment("outcome-api-exp", "outcome-api-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "outcome-api-exp", expected_state="proposed", new_state="approved",
+            actor_id=self.admin_session.user.user_id,
+        )
+        task = self.engine.submit(self.engine.create_goal(), "workforce.task", {}, idempotency_key="outcome-api-task")
+        self.engine.assign_workforce_experiment_task("outcome-api-exp", task["id"])
+        path = "/v1/workforce/experiments/outcome-api-exp/outcomes"
+        status, _ = self.request(path)
+        self.assertEqual(status, 401)
+        status, _ = self.request(path, token=self.user_session.token)
+        self.assertEqual(status, 403)
+        status, report = self.request(path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["total_assigned"], 1)
+        self.assertEqual(report["total_evaluable"], 0)
+        self.assertEqual(report["status"], "insufficient_observations")
+        self.assertFalse(report["automatic_action"])
+        status, _ = self.request(path, token=self.admin_session.token, query=b"unexpected=true")
+        self.assertEqual(status, 400)
+
     def test_experiment_api_is_authenticated_review_gated_and_non_executing(self):
         self.engine.create_improvement_proposal("experiment-proposal", {"recommendation": "Review queue"})
         self.engine.transition_improvement_proposal(
