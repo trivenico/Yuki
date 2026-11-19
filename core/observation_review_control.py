@@ -81,6 +81,8 @@ class ObservationKnowledgeReviewService:
         if not isinstance(catalog, SQLiteCuratedKnowledge):
             raise TypeError("catalog must be a SQLiteCuratedKnowledge")
         promoter_id = self._require(actor_id, "memory:knowledge:promote")
+        if catalog.owner_id != self._store.owner_id:
+            raise PermissionError("knowledge catalog owner does not match the review owner")
         proposal = self._store.get(proposal_id)
         if proposal is None or proposal.status != "approved":
             raise PermissionError("only an existing approved proposal can be promoted")
