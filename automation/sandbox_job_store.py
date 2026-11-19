@@ -149,6 +149,22 @@ class SandboxJobStore:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(sandbox_jobs)")}
             if "manifest_json" not in columns:
                 connection.execute("ALTER TABLE sandbox_jobs ADD COLUMN manifest_json TEXT")
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS sandbox_promotions (
+                    job_id TEXT NOT NULL,
+                    artifact_path TEXT NOT NULL,
+                    destination_path TEXT NOT NULL,
+                    artifact_sha256 TEXT NOT NULL,
+                    artifact_size INTEGER NOT NULL,
+                    approval_digest TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('intent','completed')),
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(job_id, artifact_path),
+                    FOREIGN KEY(job_id) REFERENCES sandbox_jobs(job_id)
+                )
+            """)
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS sandbox_jobs_state_idx ON sandbox_jobs(state)"
             )
@@ -209,6 +225,101 @@ class SandboxJobStore:
         except sqlite3.IntegrityError as exc:
             connection.execute("ROLLBACK")
             raise SandboxJobStoreError("job already exists or violates registry constraints") from exc
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+
+    def record_promotion_intent(
+        self, *, job_id: str, artifact_path: str, destination_path: str,
+        artifact_sha256: str, artifact_size: int, approval_digest: str, actor_id: str,
+    ) -> dict:
+        self._validate_job_id(job_id)
+        for value in (artifact_path, destination_path):
+            if (not isinstance(value, str) or not value or value.startswith("/")
+                    or "\\" in value or "\\x00" in value
+                    or any(part in {"", ".", ".."} for part in value.split("/"))):
+                raise SandboxJobStoreError("invalid promotion path")
+        for digest in (artifact_sha256, approval_digest):
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise SandboxJobStoreError("invalid promotion digest")
+        if type(artifact_size) is not int or artifact_size < 0:
+            raise SandboxJobStoreError("invalid promotion size")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200:
+            raise SandboxJobStoreError("invalid promotion actor")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM sandbox_promotions WHERE job_id=? AND artifact_path=?",
+                (job_id, artifact_path),
+            ).fetchone()
+            expected = (destination_path, artifact_sha256, artifact_size, approval_digest, actor_id)
+            if row is not None:
+                actual = (row["destination_path"], row["artifact_sha256"], row["artifact_size"],
+                          row["approval_digest"], row["actor_id"])
+                if actual != expected:
+                    raise SandboxJobStoreError("promotion intent conflicts with an existing intent")
+                result = dict(row)
+            else:
+                now = time.time()
+                connection.execute(
+                    """INSERT INTO sandbox_promotions
+                       (job_id,artifact_path,destination_path,artifact_sha256,artifact_size,
+                        approval_digest,actor_id,status,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,'intent',?,?)""",
+                    (job_id, artifact_path, destination_path, artifact_sha256, artifact_size,
+                     approval_digest, actor_id, now, now),
+                )
+                result = dict(connection.execute(
+                    "SELECT * FROM sandbox_promotions WHERE job_id=? AND artifact_path=?",
+                    (job_id, artifact_path),
+                ).fetchone())
+            connection.execute("COMMIT")
+            return result
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+
+    def get_promotion(self, *, job_id: str, artifact_path: str) -> dict | None:
+        self._validate_job_id(job_id)
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM sandbox_promotions WHERE job_id=? AND artifact_path=?",
+                (job_id, artifact_path),
+            ).fetchone()
+            return dict(row) if row is not None else None
+        finally:
+            connection.close()
+
+    def complete_promotion(self, *, job_id: str, artifact_path: str,
+                           approval_digest: str) -> dict:
+        self._validate_job_id(job_id)
+        if not isinstance(approval_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", approval_digest):
+            raise SandboxJobStoreError("invalid promotion digest")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """UPDATE sandbox_promotions SET status='completed',updated_at=?
+                   WHERE job_id=? AND artifact_path=? AND approval_digest=?
+                   AND status IN ('intent','completed')""",
+                (time.time(), job_id, artifact_path, approval_digest),
+            )
+            if cursor.rowcount != 1:
+                raise SandboxJobStoreError("promotion intent missing or changed")
+            row = connection.execute(
+                "SELECT * FROM sandbox_promotions WHERE job_id=? AND artifact_path=?",
+                (job_id, artifact_path),
+            ).fetchone()
+            connection.execute("COMMIT")
+            return dict(row)
         except Exception:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
