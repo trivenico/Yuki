@@ -1522,7 +1522,6 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self._observation_buffer = None
             self._observation_worker = None
             self._observation_writer = None
-            self._observation_worker_busy = False
             self.observation_allowlist.setEnabled(True)
             self.observation_event_limit.setEnabled(True)
             self.observation_start_button.setEnabled(sys.platform == "win32")
