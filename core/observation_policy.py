@@ -80,6 +80,17 @@ class ObservationSession:
         with self._lock:
             return self._state
 
+    def is_source_allowlisted(self, source: str) -> bool:
+        """Check configured source membership without authorizing an event."""
+        try:
+            source_id = _normalize_identifier(source, "source")
+        except ValueError:
+            return False
+        return (
+            source_id in self._policy.allowed_sources
+            and source_id not in self._policy.denied_sources
+        )
+
     def _record(self, source: str, category: str, allowed: bool, reason: str) -> bool:
         if self._audit_sink is None:
             return True
