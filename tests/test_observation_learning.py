@@ -86,6 +86,18 @@ class ObservationLearningTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.worker.process_batch(limit=0)
 
+    def test_review_backpressure_does_not_drain_the_rest_of_the_batch(self):
+        review = ObservationKnowledgeReview(capacity=1)
+        worker = ObservationLearningWorker(self.buffer, review)
+        for name in ("com.example.one", "com.example.two", "com.example.three"):
+            self.buffer(ObservationEvent(
+                "desktop:metadata", "app_activity", {"application_id": name},
+            ))
+        with self.assertRaisesRegex(BufferError, "capacity"):
+            worker.process_batch(limit=3)
+        self.assertEqual(len(self.buffer), 1)
+        self.assertEqual(review.list_pending()[0].value, "com.example.one")
+
 
 if __name__ == "__main__":
     unittest.main()
