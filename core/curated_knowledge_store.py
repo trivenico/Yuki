@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 
 from core.sqlite_file_security import prepare_private_sqlite_path
 
@@ -57,10 +58,14 @@ class SQLiteCuratedKnowledge:
             db.execute("""CREATE INDEX IF NOT EXISTS idx_curated_knowledge_owner_active
                 ON curated_knowledge(owner_id, active, created_at)""")
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout=5000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout=5000")
+            yield db
+        finally:
+            db.close()
 
     def promote(self, proposal, *, approved_by: str, promoted_by: str):
         if proposal.status != "approved":
