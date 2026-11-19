@@ -88,8 +88,11 @@ def build_sandbox_job_recovery(config: dict[str, Any]) -> SandboxJobRecovery | N
             raise SandboxJobCompositionError("sandbox database files cannot be symlinks")
         if path.exists():
             info = path.lstat()
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-                raise SandboxJobCompositionError("sandbox database files must be regular files owned by the service user")
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_nlink != 1):
+                raise SandboxJobCompositionError(
+                    "sandbox database files must be single-link regular files owned by the service user"
+                )
 
     try:
         store = SandboxJobStore(database_path)
