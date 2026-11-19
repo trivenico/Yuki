@@ -210,7 +210,15 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                reference_context = None\n                if self.knowledge_entries_for_owner is not None:\n                    entries = self.knowledge_entries_for_owner(owner_id, user_text)\n                    reference_context = build_curated_knowledge_reference_context(entries)\n                result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, reference_context=reference_context, **kwargs)
+                reference_context = None
+                if self.knowledge_entries_for_owner is not None:
+                    entries = self.knowledge_entries_for_owner(owner_id, user_text)
+                    reference_context = build_curated_knowledge_reference_context(entries)
+                result = agent_loop.run(
+                    user_text, on_text_delta=on_text_delta,
+                    cancellation_requested=cancellation_requested,
+                    reference_context=reference_context, **kwargs,
+                )
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
