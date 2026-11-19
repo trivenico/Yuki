@@ -85,8 +85,20 @@ class ObservationSessionManagerTests(unittest.TestCase):
             self.manager.register_source(self.session_id, self.source)
 
     def test_session_and_source_capacity_are_bounded(self):
+        second_session = self.manager.create_session(
+            self.policy, consent_granted=True,
+        )
         with self.assertRaises(RuntimeError):
             self.manager.create_session(self.policy, consent_granted=True)
+
+        # Revocation releases active capacity. The old status remains available
+        # until a later allocation needs to reclaim its bounded registry slot.
+        self.manager.revoke(second_session)
+        replacement = self.manager.create_session(
+            self.policy, consent_granted=True,
+        )
+        self.assertEqual(self.manager.status(replacement).state, "active")
+
         self.manager.register_source(self.session_id, FakeObservationSource("browser:docs"))
         with self.assertRaises(RuntimeError):
             self.manager.register_source(self.session_id, FakeObservationSource("browser:extra"))
