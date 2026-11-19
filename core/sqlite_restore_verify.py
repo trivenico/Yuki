@@ -141,7 +141,7 @@ def restore_and_verify_sqlite_backup_set(
         report_path = staging / "restore-report.json"
         with report_path.open("x", encoding="utf-8") as output:
             json.dump(report, output, sort_keys=True, separators=(",", ":"))
-            output.write("\\n")
+            output.write("\n")
             output.flush()
             if os.name == "posix":
                 os.fchmod(output.fileno(), 0o600)
