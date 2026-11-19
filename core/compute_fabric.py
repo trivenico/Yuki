@@ -324,14 +324,15 @@ class ModelLifecycleManager:
         backend = self._scheduler.backend_for(request.backend)
         try:
             handle = backend.execute(lambda: loader(backend))
-        except BaseException:
+        except BaseException as load_error:
             if cleanup_failed_load is None:
                 lease.mark_unload_failed()
             else:
                 try:
                     backend.execute(lambda: cleanup_failed_load(backend, model_id))
-                except BaseException:
+                except BaseException as cleanup_error:
                     lease.mark_unload_failed()
+                    raise load_error from cleanup_error
                 else:
                     lease.release()
             raise
