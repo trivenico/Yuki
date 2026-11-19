@@ -242,7 +242,7 @@ def run() -> int:
         from PySide6.QtWidgets import (
             QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
             QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-            QStackedWidget, QVBoxLayout, QWidget, QTabWidget,
+            QStackedWidget, QVBoxLayout, QWidget, QTabWidget, QComboBox,
             QListWidget, QListWidgetItem, QTextEdit, QFileDialog,
         )
     except ImportError as exc:
@@ -509,6 +509,21 @@ def run() -> int:
             self.transcript.setReadOnly(True)
             self.transcript.setPlaceholderText("Your conversation appears here.")
             chat_layout.addWidget(self.transcript, 1)
+            conversation_controls = QHBoxLayout()
+            self.conversation_selector = QComboBox()
+            self.conversation_selector.setMinimumWidth(240)
+            self.conversation_selector.setPlaceholderText("Conversation history")
+            self.conversation_selector.currentIndexChanged.connect(
+                self._select_conversation_from_list
+            )
+            self.new_conversation_button = QPushButton("New chat")
+            self.new_conversation_button.clicked.connect(self._new_conversation)
+            self.refresh_conversations_button = QPushButton("Refresh history")
+            self.refresh_conversations_button.clicked.connect(self._refresh_conversation_list)
+            conversation_controls.addWidget(self.conversation_selector, 1)
+            conversation_controls.addWidget(self.new_conversation_button)
+            conversation_controls.addWidget(self.refresh_conversations_button)
+            chat_layout.addLayout(conversation_controls)
             composer = QHBoxLayout()
             self.message = QLineEdit()
             self.message.setMaxLength(4000)
@@ -1308,6 +1323,75 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self._refresh_tasks()
             self._refresh_observation_proposals()
             self.message.setFocus()
+
+        def _refresh_conversation_list(self, *, select_id: str | None = None):
+            if self.controller is None:
+                return
+            try:
+                conversations = self.controller.list_conversations(limit=100)
+                self.conversation_selector.blockSignals(True)
+                self.conversation_selector.clear()
+                selected_index = -1
+                for item in conversations:
+                    conversation_id = item.get("conversation_id")
+                    title = item.get("title")
+                    if not isinstance(conversation_id, str) or not conversation_id:
+                        continue
+                    label = title if isinstance(title, str) and title.strip() else "Untitled conversation"
+                    self.conversation_selector.addItem(label[:100], conversation_id)
+                    if conversation_id == select_id:
+                        selected_index = self.conversation_selector.count() - 1
+                if selected_index >= 0:
+                    self.conversation_selector.setCurrentIndex(selected_index)
+                elif self.conversation_selector.count():
+                    self.conversation_selector.setCurrentIndex(0)
+                self.conversation_selector.blockSignals(False)
+            except Exception as exc:
+                self.conversation_selector.blockSignals(False)
+                self.chat_status.setText(
+                    "Conversation list unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _select_conversation_from_list(self, index: int):
+            if self.controller is None or index < 0 or self.busy:
+                return
+            conversation_id = self.conversation_selector.itemData(index)
+            if not isinstance(conversation_id, str) or not conversation_id:
+                return
+            try:
+                self.controller.select_conversation(conversation_id)
+                self.transcript.clear()
+                for item in self.controller.history(limit=200):
+                    role = item.get("role")
+                    content = item.get("content")
+                    if role in ("user", "assistant") and isinstance(content, str):
+                        speaker = "You" if role == "user" else "Yuki"
+                        self.transcript.appendPlainText(speaker + ": " + content)
+                self.chat_status.setText("Conversation loaded.")
+            except Exception as exc:
+                self.transcript.clear()
+                self.chat_status.setText(
+                    "Conversation could not be loaded (" + type(exc).__name__ + ")."
+                )
+                if isinstance(exc, PermissionError):
+                    self._return_to_login()
+
+        def _new_conversation(self):
+            if self.controller is None or self.busy:
+                return
+            try:
+                created = self.controller.start_new_conversation()
+                conversation_id = created.get("conversation_id")
+                self.transcript.clear()
+                self._refresh_conversation_list(select_id=conversation_id)
+                self.chat_status.setText("New conversation ready.")
+                self.message.setFocus()
+            except Exception as exc:
+                self.chat_status.setText(
+                    "Could not create a new conversation (" + type(exc).__name__ + ")."
+                )
+                if isinstance(exc, PermissionError):
+                    self._return_to_login()
 
         def _set_memory_context(self, enabled: bool):
             if self.controller is None:
