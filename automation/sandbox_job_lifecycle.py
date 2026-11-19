@@ -228,7 +228,15 @@ class SandboxJobLifecycle:
                 manifest = validate_artifact_directory(
                     job.staging_directory, allowed_extensions=allowed_extensions
                 )
-            except Exception:
+            except Exception as exc:
+                try:
+                    self._store.transition(
+                        job.job_id, expected_states=("frozen",), new_state="failed"
+                    )
+                except Exception as persist_exc:
+                    raise SandboxJobError(
+                        "artifact validation failed and durable failure state needs reconciliation"
+                    ) from persist_exc
                 job.state = JobState.FAILED
                 raise
             try:
@@ -324,7 +332,10 @@ class SandboxJobLifecycle:
             if directory.is_symlink():
                 raise SandboxJobError("job staging directory was replaced by a symlink")
             self._record(job, "cleanup", "requested")
-            shutil.rmtree(directory)
+            if directory.exists():
+                if not directory.is_dir():
+                    raise SandboxJobError("job staging path is no longer a directory")
+                shutil.rmtree(directory)
             try:
                 self._store.transition(
                     job.job_id, expected_states=(job.state.value,), new_state="cleaned"
@@ -355,12 +366,17 @@ class SandboxJobLifecycle:
             directory = Path(record.staging_directory)
             if directory.parent != self._root or directory.name != job_id:
                 raise SandboxJobError("durable staging path does not match manager root")
-            info = directory.lstat()
-            if directory.is_symlink() or not directory.is_dir():
-                raise SandboxJobError("durable staging directory is not a real directory")
-            if info.st_uid != os.getuid() or (info.st_mode & 0o777) != 0o700:
-                raise SandboxJobError("durable staging directory ownership or mode is unsafe")
+            if directory.exists() or directory.is_symlink():
+                info = directory.lstat()
+                if directory.is_symlink() or not directory.is_dir():
+                    raise SandboxJobError("durable staging directory is not a real directory")
+                if info.st_uid != os.getuid() or (info.st_mode & 0o777) != 0o700:
+                    raise SandboxJobError("durable staging directory ownership or mode is unsafe")
+            elif state not in {JobState.CLEANED, JobState.FAILED, JobState.CANCELLED}:
+                raise SandboxJobError("durable staging directory is missing")
             manifest = None
+            if state in {JobState.VALIDATED, JobState.PROMOTED} and not directory.exists():
+                raise SandboxJobError("validated staging directory is missing")
             if state in {JobState.VALIDATED, JobState.PROMOTED}:
                 if not record.manifest_json:
                     raise SandboxJobError("durable validated job has no manifest")
