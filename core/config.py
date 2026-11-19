@@ -175,12 +175,12 @@ def load_config(path=None):
         raise RuntimeError("sandbox_jobs_image must be bounded text.")
     sandbox_jobs_command = raw.get("sandbox_jobs_command", [])
     if (not isinstance(sandbox_jobs_command, list) or len(sandbox_jobs_command) > 64
-            or any(not isinstance(part, str) or not part or "\\x00" in part or len(part) > 500
+            or any(not isinstance(part, str) or not part or "\x00" in part or len(part) > 500
                    for part in sandbox_jobs_command)):
         raise RuntimeError("sandbox_jobs_command must be a list of at most 64 bounded argv strings.")
     sandbox_jobs_docker_binary = raw.get("sandbox_jobs_docker_binary", "docker")
     if (not isinstance(sandbox_jobs_docker_binary, str) or not sandbox_jobs_docker_binary
-            or len(sandbox_jobs_docker_binary) > 1024 or "\\x00" in sandbox_jobs_docker_binary):
+            or len(sandbox_jobs_docker_binary) > 1024 or "\x00" in sandbox_jobs_docker_binary):
         raise RuntimeError("sandbox_jobs_docker_binary must be bounded non-empty text.")
     if sandbox_jobs_enabled:
         if sandbox_jobs_root is None or not str(sandbox_jobs_root):
