@@ -1171,6 +1171,14 @@ class DurableTaskEngine:
                 ).fetchone()
                 if not started:
                     raise TaskConflict("execution terminal event requires a recorded start")
+                terminal = c.execute(
+                    """SELECT 1 FROM workforce_experiment_execution_events
+                       WHERE experiment_id=? AND task_id=? AND attempt=?
+                         AND event_type IN ('execution_succeeded','execution_failed')""",
+                    (experiment_id, task_id, attempt),
+                ).fetchone()
+                if terminal:
+                    raise TaskConflict("execution attempt already has a terminal event")
             try:
                 c.execute(
                     """INSERT INTO workforce_experiment_execution_events
