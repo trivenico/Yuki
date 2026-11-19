@@ -25,7 +25,7 @@ class CuratedKnowledgeProviderTests(unittest.TestCase):
             authorize=lambda actor, permission: permission in self.grants.get(actor, set()),
         )
 
-    def add_approved(self, value, summary):
+    def add_approved(self, value):
         proposal = self.review_store.propose("application", value)
         self.review_store.approve(proposal.proposal_id, reviewer_id="reviewer")
         return self.service.promote_approved(
@@ -38,8 +38,8 @@ class CuratedKnowledgeProviderTests(unittest.TestCase):
         )
 
     def test_retrieves_relevant_records_with_provenance_and_bounded_results(self):
-        first = self.add_approved("com.example.editor", "A desktop code editor")
-        self.add_approved("com.example.browser", "A web browser")
+        first = self.add_approved("com.example.editor")
+        self.add_approved("com.example.browser")
         result = self.provider()("owner-a", "Help me use my code editor")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["entry_id"], first)
