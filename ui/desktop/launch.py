@@ -1498,7 +1498,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.observation_timer.stop()
             controller = self._observation_controller
             buffer = self._observation_buffer
+            learner = self._observation_worker
             error = None
+            if learner is not None:
+                learner.stop()
             if controller is not None:
                 try:
                     controller.revoke()
