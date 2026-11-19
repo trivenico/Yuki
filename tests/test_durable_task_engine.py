@@ -48,8 +48,17 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(replay["created"])
         self.assertEqual(first["assignment"], replay["assignment"])
         self.assertIn(first["assignment"], {"control", "treatment"})
+        self.engine.create_improvement_proposal("second-assignment-proposal", {"recommendation": "Second review"})
+        self.engine.transition_improvement_proposal(
+            "second-assignment-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        self.engine.create_workforce_experiment("second-assignment-exp", "second-assignment-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "second-assignment-exp", expected_state="proposed", new_state="approved", actor_id="reviewer-3",
+        )
         with self.assertRaises(TaskConflict):
-            self.engine.assign_workforce_experiment_task("another-exp", task["id"])
+            self.engine.assign_workforce_experiment_task("second-assignment-exp", task["id"])
         assignments = self.engine.list_workforce_experiment_assignments("assignment-exp")
         self.assertEqual(len(assignments), 1)
         self.assertEqual(assignments[0]["task_id"], task["id"])
