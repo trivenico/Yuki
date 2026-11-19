@@ -133,6 +133,64 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(report["automatic_action"])
         self.assertIn("no causal effect", report["interpretation"])
 
+    def test_experiment_worker_execution_telemetry_requires_live_lease_and_is_reported(self):
+        self.engine.create_improvement_proposal("execution-telemetry-proposal", {"recommendation": "Measure worker runs"})
+        self.engine.transition_improvement_proposal(
+            "execution-telemetry-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment(
+            "execution-telemetry-exp", "execution-telemetry-proposal", design,
+        )
+        self.engine.transition_workforce_experiment(
+            "execution-telemetry-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        task = self.engine.submit(
+            self.goal, "workforce.task", {}, idempotency_key="execution-telemetry-task",
+        )
+        self.engine.assign_workforce_experiment_task("execution-telemetry-exp", task["id"])
+        with self.assertRaises(TaskConflict):
+            self.engine.record_task_experiment_execution_event(
+                task["id"], "execution_started", worker_id="worker-1", attempt=1,
+            )
+        claimed = self.engine.claim("worker-1", task_type="workforce.task")
+        self.assertEqual(claimed["id"], task["id"])
+        started = self.engine.record_task_experiment_execution_event(
+            task["id"], "execution_started", worker_id="worker-1", attempt=1,
+        )
+        replay = self.engine.record_task_experiment_execution_event(
+            task["id"], "execution_started", worker_id="worker-1", attempt=1,
+        )
+        self.assertTrue(started["created"])
+        self.assertIsNone(replay)
+        terminal = self.engine.record_task_experiment_execution_event(
+            task["id"], "execution_succeeded", worker_id="worker-1", attempt=1,
+        )
+        self.assertTrue(terminal["created"])
+        with self.assertRaises(TaskConflict):
+            self.engine.record_task_experiment_execution_event(
+                task["id"], "execution_failed", worker_id="worker-1", attempt=1,
+            )
+        events = self.engine.list_workforce_experiment_execution_events("execution-telemetry-exp")
+        self.assertEqual([item["event_type"] for item in events],
+                         ["execution_started", "execution_succeeded"])
+        report = self.engine.get_workforce_experiment_integrity("execution-telemetry-exp")
+        self.assertEqual(report["worker_execution_events"]["execution_started"], 1)
+        self.assertEqual(report["worker_execution_events"]["execution_succeeded"], 1)
+        self.assertIn("not that a specific treatment was delivered", " ".join(report["limitations"]))
+
     def test_experiment_integrity_audit_detects_missing_delivery_and_eligibility_drift(self):
         self.engine.create_improvement_proposal("integrity-proposal", {"recommendation": "Audit exposure"})
         self.engine.transition_improvement_proposal(
