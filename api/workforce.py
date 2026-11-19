@@ -217,6 +217,8 @@ class AuthenticatedWorkforceDashboardAPI:
                     return await self._respond(send, 400, {"error": "invalid_query"})
                 after_event_id = self._integer(query.get("after_event_id", "0"), "after_event_id", max_digits=18)
                 event_limit = self._integer(query.get("event_limit", "100"), "event_limit")
+                if not 1 <= event_limit <= 500:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
                 goal_id = path.rsplit("/", 1)[-1]
                 goal = await asyncio.to_thread(self.dashboard.task_engine.get_goal, goal_id)
                 if goal.get("owner_id") != user.user_id and user.role != "admin":
