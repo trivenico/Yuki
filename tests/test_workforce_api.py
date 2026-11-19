@@ -991,6 +991,18 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(report["findings"][0]["status"], "consistent")
         self.assertEqual(report["findings"][0]["reasons"], [])
 
+    def test_knowledge_delivery_integrity_reports_malformed_context_and_retries(self):
+        goal = self.engine.create_goal()
+        task = self.engine.submit(
+            goal, "workforce.task", {"knowledge_context": "not-a-list"},
+            idempotency_key="delivery-integrity-malformed", max_attempts=2,
+        )
+        path = f"/v1/workforce/tasks/{task['id']}/knowledge-delivery-integrity"
+        status, report = self.request(path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["invalid_context_reasons"], ["knowledge_context_not_a_list"])
+        self.assertEqual(report["expected_lessons"], 0)
+        self.assertEqual(report["attestation_records"], 0)
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
         self.assertEqual(status, 404)
