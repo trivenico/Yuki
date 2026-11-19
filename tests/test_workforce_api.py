@@ -70,11 +70,11 @@ class WorkforceDashboardAPITests(unittest.TestCase):
                 "type": "http", "method": method, "path": path,
                 "headers": headers, "query_string": query,
             }, receive, send)
-            body = messages[1].get("body", b"")
+            response_body = messages[1].get("body", b"")
             try:
-                decoded = json.loads(body)
+                decoded = json.loads(response_body)
             except (json.JSONDecodeError, UnicodeDecodeError):
-                decoded = body.decode("utf-8", errors="replace")
+                decoded = response_body.decode("utf-8", errors="replace")
             return messages[0]["status"], decoded
         return asyncio.run(run())
 
