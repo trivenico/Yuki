@@ -206,6 +206,7 @@ class SQLiteObservationKnowledgeReview:
                 if cursor.rowcount != 1:
                     exists = db.execute("""SELECT 1 FROM observation_knowledge_proposals
                         WHERE owner_id=? AND proposal_id=?""", (self._owner, proposal_id)).fetchone()
+                    db.execute("COMMIT")
                     if exists:
                         raise RuntimeError("knowledge proposal has already been reviewed")
                     raise KeyError("knowledge proposal not found")
@@ -219,7 +220,8 @@ class SQLiteObservationKnowledgeReview:
                 db.execute("COMMIT")
                 return self._proposal(row)
             except Exception:
-                db.execute("ROLLBACK")
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
                 raise
 
     def approve(self, proposal_id: str, *, reviewer_id: str) -> KnowledgeProposal:
@@ -245,21 +247,35 @@ class SQLiteObservationKnowledgeReview:
         if not isinstance(proposal_id, str) or not proposal_id:
             raise ValueError("proposal_id is required")
         with self._lock, self._connect() as db:
-            db.execute("DELETE FROM observation_knowledge_review_events WHERE owner_id=? AND proposal_id=?",
-                       (self._owner, proposal_id))
-            cursor = db.execute(
-                "DELETE FROM observation_knowledge_proposals WHERE owner_id=? AND proposal_id=?",
-                (self._owner, proposal_id),
-            )
-            return cursor.rowcount == 1
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("DELETE FROM observation_knowledge_review_events WHERE owner_id=? AND proposal_id=?",
+                           (self._owner, proposal_id))
+                cursor = db.execute(
+                    "DELETE FROM observation_knowledge_proposals WHERE owner_id=? AND proposal_id=?",
+                    (self._owner, proposal_id),
+                )
+                db.execute("COMMIT")
+                return cursor.rowcount == 1
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
 
     def clear(self) -> int:
         with self._lock, self._connect() as db:
-            db.execute("DELETE FROM observation_knowledge_review_events WHERE owner_id=?", (self._owner,))
-            cursor = db.execute(
-                "DELETE FROM observation_knowledge_proposals WHERE owner_id=?",
-                (self._owner,),
-            )
-            return cursor.rowcount
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("DELETE FROM observation_knowledge_review_events WHERE owner_id=?", (self._owner,))
+                cursor = db.execute(
+                    "DELETE FROM observation_knowledge_proposals WHERE owner_id=?",
+                    (self._owner,),
+                )
+                db.execute("COMMIT")
+                return cursor.rowcount
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
 
 __all__ = ["KnowledgeProposal", "SQLiteObservationKnowledgeReview"]
