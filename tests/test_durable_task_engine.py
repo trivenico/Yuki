@@ -78,7 +78,13 @@ class DurableTaskEngineTests(unittest.TestCase):
             "preferred_direction": "decrease",
             "design_type": "randomized_controlled",
             "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
-            "guardrails": [],
+            "guardrails": [
+                {"metric": "task_failure_rate", "operator": "<=", "threshold": 0.0,
+                 "scope": "both", "severity": "critical"},
+                {"metric": "task_success_rate", "operator": ">=", "threshold": 0.1,
+                 "scope": "treatment", "severity": "warning"},
+                "No permission changes",
+            ],
             "evaluation_window_days": 14,
             "minimum_sample_size": 2,
         }
@@ -140,6 +146,14 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertIsNotNone(comparison["success_rate_difference_treatment_minus_control"])
         self.assertFalse(comparison["causal_inference"])
         self.assertFalse(comparison["statistical_significance_tested"])
+        guardrails = report["guardrail_evaluation"]
+        self.assertEqual(guardrails["status"], "violations_detected")
+        self.assertEqual(guardrails["measurable_guardrails_defined"], 2)
+        self.assertEqual(guardrails["descriptive_guardrails_not_evaluated"], 1)
+        self.assertGreaterEqual(guardrails["critical_violations"], 1)
+        self.assertTrue(all(item["status"] in {"passed", "violated", "not_evaluable"}
+                            for item in guardrails["results"]))
+        self.assertFalse(guardrails["automatic_action"])
         self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["exposed_tasks"], 0)
         self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["task_coverage"], 0)
         self.assertIn("no causal effect", report["interpretation"])
