@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
@@ -145,6 +146,46 @@ class ConversationRuntimeTests(unittest.TestCase):
             # A second ASGI shutdown path must not retry partially failed cleanup.
             runtime.close()
             self.assertEqual(close_calls, ["application"])
+
+    def test_construction_failure_attempts_all_cleanup_and_preserves_original_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            original_builder = __import__(
+                "api.runtime", fromlist=["build_conversation_application_runtime"]
+            ).build_conversation_application_runtime
+            captured = []
+
+            def capture_application(*args, **kwargs):
+                application = original_builder(*args, **kwargs)
+                captured.append(application)
+                return application
+
+            def fail_workforce_close():
+                raise RuntimeError("workforce close failed")
+
+            workforce.close = fail_workforce_close
+            with patch("api.runtime.build_conversation_application_runtime", side_effect=capture_application), \
+                 patch("api.runtime.YukiConversationAPI", side_effect=ValueError("composition failed")):
+                with self.assertRaisesRegex(ValueError, "composition failed"):
+                    build_conversation_runtime(
+                        {"storage_backend": "sqlite", "workspace": directory},
+                        auth_service=auth, agent_loop=_loop(),
+                        workforce_application=workforce,
+                    )
+
+            self.assertEqual(len(captured), 1)
+            self.assertTrue(captured[0].closed)
+            # The workforce close failure must not mask the original error.
+            workforce.close = lambda: None
+            workforce.close()
 
     def test_runtime_rejects_dashboard_using_different_workforce_store(self):
         with tempfile.TemporaryDirectory() as directory:
