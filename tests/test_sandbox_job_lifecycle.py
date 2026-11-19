@@ -195,13 +195,13 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         digest = self.lifecycle._promotion.promote(
             principal=self.principal, job_id=job.job_id,
             staging_directory=job.staging_directory,
-            manifest=job.manifest, artifact_path="report.txt",
+            manifest=self.lifecycle._get(job.job_id).manifest, artifact_path="report.txt",
             destination_path="report.txt",
         )
         import hashlib, json
-        item = job.manifest.files[0]
+        item = self.lifecycle._get(job.job_id).manifest.files[0]
         approval_digest = hashlib.sha256(json.dumps({
-            "job_id": job.job_id, "manifest_digest": job.manifest.digest,
+            "job_id": job.job_id, "manifest_digest": self.lifecycle._get(job.job_id).manifest.digest,
             "artifact_path": "report.txt", "artifact_sha256": item.sha256,
             "destination_path": "report.txt",
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
