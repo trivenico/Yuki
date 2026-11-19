@@ -338,6 +338,26 @@ class WorkforceDashboard:
                     "automatic_action_taken": False,
                 })
 
+        for index, pattern in enumerate(failure_patterns):
+            improvement_recommendations.append({
+                "id": f"failure-pattern:{index}",
+                "category": "recurring_failure_pattern",
+                "priority": "medium" if pattern["failure_rate"] < 0.5 else "high",
+                "evidence": {
+                    "department": pattern["department"],
+                    "task_type": pattern["task_type"],
+                    "required_capabilities": pattern["required_capabilities"],
+                    "failed_tasks": pattern["failed_tasks"],
+                    "succeeded_tasks": pattern["succeeded_tasks"],
+                    "completed_tasks": pattern["completed_tasks"],
+                    "failure_rate": pattern["failure_rate"],
+                    "evidence_scope": pattern["evidence_scope"],
+                },
+                "recommendation": "Review representative task records and execution conditions for a shared cause before proposing a workflow, capability, or tooling change.",
+                "requires_human_approval": True,
+                "automatic_action_taken": False,
+            })
+
         goal_rows = []
         for goal in goals:
             goal_tasks = [task for task in tasks if task["goal_id"] == goal["id"]]
