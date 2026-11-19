@@ -141,6 +141,25 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         self.assertEqual(count, 0)
 
 
+    def test_review_audit_read_enforces_proposal_retention(self):
+        store = self.store(retention_seconds=60)
+        proposal = store.propose("application", "com.example.editor")
+        store.approve(proposal.proposal_id, reviewer_id="operator-1")
+        self.assertEqual(len(store.list_review_events(proposal.proposal_id)), 1)
+        self.clock[0] += 61
+        self.assertEqual(store.list_review_events(proposal.proposal_id), ())
+        with sqlite3.connect(self.path) as db:
+            proposal_count = db.execute(
+                "SELECT COUNT(*) FROM observation_knowledge_proposals WHERE proposal_id=?",
+                (proposal.proposal_id,),
+            ).fetchone()[0]
+            event_count = db.execute(
+                "SELECT COUNT(*) FROM observation_knowledge_review_events WHERE proposal_id=?",
+                (proposal.proposal_id,),
+            ).fetchone()[0]
+        self.assertEqual(proposal_count, 0)
+        self.assertEqual(event_count, 0)
+
     def test_list_recent_includes_pending_and_reviewed_with_owner_scope(self):
         owner_a = self.store("user-a")
         owner_b = self.store("user-b")
