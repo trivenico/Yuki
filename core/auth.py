@@ -26,7 +26,8 @@ _ROLE_PERMISSIONS = {
     "admin": frozenset({
         "workflow:read", "workflow:approve", "users:manage",
         "observation:review:read", "observation:review:decide",
-        "observation:review:delete", "memory:knowledge:promote",\n        "memory:knowledge:read", "memory:knowledge:deactivate",
+        "observation:review:delete", "memory:knowledge:promote",
+        "memory:knowledge:read", "memory:knowledge:deactivate",
     }),
     "operator": frozenset({
         "workflow:read", "workflow:approve",
