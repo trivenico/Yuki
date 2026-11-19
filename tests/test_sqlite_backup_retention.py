@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -26,9 +27,10 @@ class SQLiteBackupRetentionTests(unittest.TestCase):
         if os.name == "posix":
             os.chmod(self.backup_root, 0o700)
         source = self.workspace / "auth.sqlite3"
-        with sqlite3.connect(source) as db:
+        with closing(sqlite3.connect(source)) as db:
             db.execute("CREATE TABLE records(value TEXT NOT NULL)")
             db.execute("INSERT INTO records VALUES ('source')")
+            db.commit()
         self.entries = (SQLiteDatabaseEntry("authentication", source),)
 
     def tearDown(self):
@@ -111,6 +113,7 @@ class SQLiteBackupRetentionTests(unittest.TestCase):
             )
         self.assertTrue(old.exists())
 
+    @unittest.skipUnless(os.name == "posix", "safe backup pruning requires POSIX dir_fd support")
     def test_prunes_only_explicitly_approved_eligible_set(self):
         old = self._backup(1)
         newest = self._backup(2)
@@ -125,6 +128,7 @@ class SQLiteBackupRetentionTests(unittest.TestCase):
         self.assertEqual(plan.retained_set_ids, (newest.name,))
         self.assertEqual(plan.eligible_set_ids, ())
 
+    @unittest.skipUnless(os.name == "posix", "safe backup pruning requires POSIX dir_fd support")
     def test_cannot_prune_last_known_good(self):
         only = self._backup(1)
         with self.assertRaisesRegex(SQLiteBackupRetentionError, "approved_set_not_eligible"):
@@ -134,6 +138,7 @@ class SQLiteBackupRetentionTests(unittest.TestCase):
             )
         self.assertTrue(only.exists())
 
+    @unittest.skipUnless(os.name == "posix", "safe backup pruning requires POSIX dir_fd support")
     def test_cannot_prune_pinned_set(self):
         pinned = self._backup(1)
         self._backup(2)
