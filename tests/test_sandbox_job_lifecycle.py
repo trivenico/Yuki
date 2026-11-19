@@ -20,7 +20,7 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
         self.launch_calls = []
-        self.freeze_calls = []
+        self.freeze_calls = []\n        self.audit_events = []\n        self.audit_fails = False
         self.freeze_ok = True
         self.launch_fails = False
 
@@ -117,6 +117,34 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         with self.assertRaises(SandboxJobError):
             self.lifecycle.cleanup_job(job.job_id)
 
+
+
+    def test_lifecycle_transitions_emit_audit_events(self):
+        job = self.lifecycle.create_job()
+        self.lifecycle.start_job(job.job_id)
+        self.lifecycle.freeze_job(job.job_id)
+        self.lifecycle.validate_job(job.job_id, allowed_extensions=(".txt",))
+        actions = [event["action"] for event in self.audit_events]
+        self.assertEqual(
+            actions,
+            ["sandbox.job.create", "sandbox.job.start",
+             "sandbox.job.freeze", "sandbox.job.validate"],
+        )
+        self.assertTrue(all(event["job_id"] == job.job_id for event in self.audit_events))
+
+    def test_create_fails_closed_when_audit_is_unavailable(self):
+        self.audit_fails = True
+        with self.assertRaises(SandboxJobError):
+            self.lifecycle.create_job()
+        self.assertEqual(list(self.jobs.iterdir()), [])
+
+    def test_start_audit_failure_stops_launched_runtime(self):
+        job = self.lifecycle.create_job()
+        self.audit_fails = True
+        with self.assertRaises(SandboxJobError):
+            self.lifecycle.start_job(job.job_id)
+        self.assertEqual(self.freeze_calls, [{"container": job.job_id}])
+        self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.FAILED)
 
 if __name__ == "__main__":
     unittest.main()
