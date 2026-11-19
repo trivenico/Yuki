@@ -57,16 +57,24 @@ class AgentInvocationObserverTests(unittest.TestCase):
     def test_observer_failure_fails_closed_before_skill_execution(self):
         gate = Gate(True)
         agent = YukiCoreAgent(registry=Registry(), permission_gate=gate)
-        with patch("core.agent.invoke_registered_skill") as invoke:
+        def invoke(*args, **kwargs):
+            try:
+                kwargs["before_execute"]()
+            except Exception:
+                return SimpleNamespace(
+                    ok=False, message="Pre-execution evidence could not be recorded.",
+                    data=None,
+                )
+            self.fail("skill invocation must not proceed after observer failure")
+
+        with patch("core.agent.invoke_registered_skill", side_effect=invoke) as mocked:
             response = agent.run_skill(
                 "triage", "review this",
                 before_invoke=lambda: (_ for _ in ()).throw(RuntimeError("telemetry unavailable")),
             )
         self.assertFalse(response.ok)
-        self.assertEqual(response.stage, "pre_execution_observer_failed")
-        invoke.assert_called_once()
-        # The guarded runtime owns the callback and returns before execute().
-        # No skill execution occurs when the evidence write fails.
+        self.assertEqual(response.stage, "observe")
+        mocked.assert_called_once()
 
     def test_observer_is_not_called_when_permission_is_denied(self):
         order = []
