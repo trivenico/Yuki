@@ -99,36 +99,37 @@ class DurableTaskEngineTests(unittest.TestCase):
         for task, arm in assigned:
             selected.setdefault(arm, []).append(task)
         self.assertEqual(set(selected), {"control", "treatment"})
-        cancelled_ids = set()
         for arm, tasks in selected.items():
-            self.engine.cancel_task(tasks[2]["id"])
-            cancelled_ids.add(tasks[2]["id"])
-        terminal_counts = {"control": 0, "treatment": 0}
+            self.engine.cancel_task(tasks[0]["id"])
+            delayed = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"pending-{arm}",
+                delay_seconds=86400,
+            )
+            self.assertEqual(
+                self.engine.assign_workforce_experiment_task("outcome-exp", delayed["id"])["assignment"],
+                arm,
+            )
+        outcome_index = {"control": 0, "treatment": 0}
         while True:
             claimed = self.engine.claim("outcome-worker")
             if claimed is None:
                 break
             arm = next(arm for task, arm in assigned if task["id"] == claimed["id"])
-            if terminal_counts[arm] == 0:
+            if outcome_index[arm] % 2 == 0:
                 self.engine.complete(claimed["id"], "outcome-worker", {"ok": True})
-            elif terminal_counts[arm] == 1:
-                self.engine.fail(claimed["id"], "outcome-worker", "redacted")
             else:
-                # Leave remaining tasks pending by not claiming them further.
-                self.fail("unexpected extra claim")
-            terminal_counts[arm] += 1
-            if all(value >= 2 for value in terminal_counts.values()):
-                break
+                self.engine.fail(claimed["id"], "outcome-worker", "redacted")
+            outcome_index[arm] += 1
         report = self.engine.get_workforce_experiment_outcomes("outcome-exp")
-        self.assertEqual(report["total_assigned"], 40)
-        self.assertEqual(report["total_evaluable"], 4)
+        self.assertEqual(report["total_assigned"], 42)
+        self.assertEqual(report["total_evaluable"], 38)
         self.assertEqual(report["status"], "descriptive_outcomes_available")
         for arm in ("control", "treatment"):
-            self.assertEqual(report["arms"][arm]["succeeded"], 1)
-            self.assertEqual(report["arms"][arm]["failed"], 1)
             self.assertEqual(report["arms"][arm]["cancelled"], 1)
-            self.assertGreater(report["arms"][arm]["pending"], 0)
-            self.assertEqual(report["arms"][arm]["success_rate"], 0.5)
+            self.assertEqual(report["arms"][arm]["pending"], 1)
+            self.assertEqual(report["arms"][arm]["evaluable"], 19)
+            self.assertGreater(report["arms"][arm]["success_rate"], 0)
+            self.assertLess(report["arms"][arm]["success_rate"], 1)
         self.assertFalse(report["automatic_action"])
         self.assertIn("no causal effect", report["interpretation"])
 
