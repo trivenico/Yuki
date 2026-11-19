@@ -63,6 +63,14 @@ class SharedDesktopControllerBridge:
             self._close_after_authorization_failure()
             raise
 
+    def start_new_conversation(self, *, title: str = "New conversation") -> Any:
+        self._ensure_open()
+        try:
+            return self._chat.start_new_conversation(title=title)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
     def select_conversation(self, conversation_id: str) -> Any:
         self._ensure_open()
         try:
