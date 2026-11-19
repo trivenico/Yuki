@@ -1117,6 +1117,15 @@ class DurableTaskEngine:
                    GROUP BY a.assignment,t.state""",
                 (experiment_id,),
             ).fetchall()
+            delivery_rows = c.execute(
+                """SELECT d.delivery_state, COUNT(*) AS task_count
+                   FROM workforce_experiment_assignments a
+                   LEFT JOIN workforce_experiment_deliveries d
+                     ON d.experiment_id=a.experiment_id AND d.task_id=a.task_id
+                   WHERE a.experiment_id=? AND a.assignment='treatment'
+                   GROUP BY d.delivery_state""",
+                (experiment_id,),
+            ).fetchall()
         arms = {}
         for arm in ("control", "treatment"):
             counts = {"succeeded": 0, "failed": 0, "cancelled": 0, "pending": 0}
@@ -1137,6 +1146,15 @@ class DurableTaskEngine:
                     if terminal_evaluable else None
                 ),
             }
+        delivery = {"delivered": 0, "not_delivered": 0, "unknown": 0, "unrecorded": 0}
+        for row in delivery_rows:
+            key = row["delivery_state"] if row["delivery_state"] in delivery else "unrecorded"
+            delivery[key] += row["task_count"]
+        treatment_assigned = arms["treatment"]["assigned"]
+        delivery["unrecorded"] = treatment_assigned - sum(
+            delivery[key] for key in ("delivered", "not_delivered", "unknown")
+        )
+        arms["treatment"]["delivery_attestations"] = delivery
         design = json.loads(experiment["design_json"])
         minimum = design.get("minimum_sample_size")
         evaluable_total = sum(arm["evaluable"] for arm in arms.values())
@@ -1157,8 +1175,9 @@ class DurableTaskEngine:
                       else "insufficient_observations",
             "interpretation": (
                 "Lifecycle outcome counts only; no causal effect, statistical "
-                "significance, treatment delivery, eligibility, or contamination "
-                "is established. Cancelled and pending tasks are not included "
+                "significance, causal validity, eligibility, or contamination "
+                "is established. Treatment delivery fields are operator attestations, "
+                "not proof of execution. Cancelled and pending tasks are not included "
                 "in the success-rate denominator."
             ),
             "automatic_action": False,
