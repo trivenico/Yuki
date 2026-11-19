@@ -37,6 +37,9 @@ class DockerSandboxOutputTests(unittest.TestCase):
         self.assertTrue(popen.call_args.kwargs["shell"] is False)
         self.assertIs(popen.call_args.kwargs["stdout"], subprocess.PIPE)
         self.assertIs(popen.call_args.kwargs["stderr"], subprocess.PIPE)
+        mount_index = popen.call_args.args[0].index("--mount")
+        self.assertTrue(popen.call_args.args[0][mount_index + 1].endswith(",ro"))
+        self.assertNotIn(",rw", popen.call_args.args[0][mount_index + 1])
 
     @patch("hackback.sandbox.subprocess.Popen")
     def test_timeout_kills_child_and_raises_safe_error(self, popen):
