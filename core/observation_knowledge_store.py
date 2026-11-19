@@ -100,6 +100,10 @@ class SQLiteObservationKnowledgeReview:
         finally:
             db.close()
 
+    @property
+    def owner_id(self) -> str:
+        return self._owner
+
     @staticmethod
     def _fingerprint(kind: str, value: str) -> str:
         return hashlib.sha256(f"{kind}\0{value}".encode("utf-8")).hexdigest()
