@@ -138,7 +138,7 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
     def test_promotes_exact_digest_to_exact_new_destination(self):
         (self.workspace / "reports").mkdir()
         digest = self.service.promote(
-            principal=self.principal, staging_directory=self.staging,
+            principal=self.principal, job_id="job_" + "a" * 32, staging_directory=self.staging,
             manifest=self.manifest, artifact_path="report.txt",
             destination_path="reports/report.txt",
         )
@@ -208,13 +208,13 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
         with self.assertRaises(ToolAuthorizationError):
             self.service.promote(
                 principal=ToolPrincipal("mallory", frozenset({"workspace:write"})),
-                staging_directory=self.staging, manifest=self.manifest,
+                job_id="job_" + "a" * 32, staging_directory=self.staging, manifest=self.manifest,
                 artifact_path="report.txt", destination_path="report.txt",
             )
         with self.assertRaises(ToolAuthorizationError):
             self.service.promote(
                 principal=ToolPrincipal("alice", frozenset()),
-                staging_directory=self.staging, manifest=self.manifest,
+                job_id="job_" + "a" * 32, staging_directory=self.staging, manifest=self.manifest,
                 artifact_path="report.txt", destination_path="report.txt",
             )
 
