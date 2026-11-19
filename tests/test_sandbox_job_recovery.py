@@ -8,6 +8,7 @@ from automation.sandbox_job_recovery import SandboxJobRecovery
 from automation.sandbox_job_store import SandboxJobStore
 
 
+@unittest.skipUnless(os.name == "posix", "sandbox job recovery ownership requires POSIX UID metadata")
 class SandboxJobRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
