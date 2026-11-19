@@ -15,12 +15,19 @@ class FakeDockerRunner:
         self.calls = []
         self.running = "false"
         self.fail_inspect = False
+        self.inspect_stderr = b""
+        self.inspect_sequence = None
 
     def __call__(self, argv, **kwargs):
         self.calls.append((list(argv), kwargs))
         if argv[1:2] == ["inspect"]:
+            if self.inspect_sequence:
+                value = self.inspect_sequence.pop(0)
+                if isinstance(value, tuple):
+                    return subprocess.CompletedProcess(argv, value[0], value[1], value[2])
+                return subprocess.CompletedProcess(argv, 0, value.encode(), b"")
             if self.fail_inspect:
-                return subprocess.CompletedProcess(argv, 1, b"", b"")
+                return subprocess.CompletedProcess(argv, 1, b"", self.inspect_stderr)
             return subprocess.CompletedProcess(argv, 0, self.running.encode(), b"")
         if argv[1:2] == ["run"]:
             return subprocess.CompletedProcess(argv, 0, b"container-id\n", b"")
@@ -82,6 +89,35 @@ class DockerJobRuntimeTests(unittest.TestCase):
         self.runner.fail_inspect = True
         with self.assertRaises(DockerJobRuntimeError):
             self.runtime.freeze(handle)
+
+
+    def test_reconcile_removes_a_running_container_after_confirming_stop(self):
+        handle = self.runtime.handle_for_job(self.job_id)
+        self.runner.inspect_sequence = ["true", "false"]
+        self.assertEqual(self.runtime.reconcile(handle), "removed")
+        commands = [call[0][1] for call in self.runner.calls]
+        self.assertEqual(commands, ["inspect", "stop", "inspect", "rm"])
+
+    def test_reconcile_accepts_only_exact_missing_container_response(self):
+        handle = self.runtime.handle_for_job(self.job_id)
+        self.runner.fail_inspect = True
+        self.runner.inspect_stderr = (
+            f"Error: No such object: {handle.container_name}".encode()
+        )
+        self.assertEqual(self.runtime.reconcile(handle), "missing")
+
+    def test_reconcile_does_not_mistake_daemon_failure_for_missing_container(self):
+        handle = self.runtime.handle_for_job(self.job_id)
+        self.runner.fail_inspect = True
+        self.runner.inspect_stderr = b"Cannot connect to the Docker daemon"
+        with self.assertRaises(DockerJobRuntimeError):
+            self.runtime.reconcile(handle)
+
+    def test_reconcile_rejects_unknown_inspect_state(self):
+        handle = self.runtime.handle_for_job(self.job_id)
+        self.runner.inspect_sequence = ["unknown"]
+        with self.assertRaises(DockerJobRuntimeError):
+            self.runtime.reconcile(handle)
 
     def test_reconstructs_only_deterministic_job_handle(self):
         handle = self.runtime.handle_for_job(self.job_id)
