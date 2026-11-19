@@ -25,8 +25,10 @@ class CuratedKnowledgeProviderTests(unittest.TestCase):
             authorize=lambda actor, permission: permission in self.grants.get(actor, set()),
         )
 
-    def add_approved(self, value):
-        proposal = self.review_store.propose("application", value)
+    def add_approved(self, value, summary=None):
+        proposal = self.review_store.propose(
+            "application", value, summary=summary
+        )
         self.review_store.approve(proposal.proposal_id, reviewer_id="reviewer")
         return self.service.promote_approved(
             proposal.proposal_id, actor_id="admin", catalog=self.catalog
