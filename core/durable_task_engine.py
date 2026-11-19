@@ -1199,6 +1199,31 @@ class DurableTaskEngine:
         return {"created": True, "experiment_id": experiment_id, "task_id": task_id,
                 "event_type": event_type, "attempt": attempt, "worker_id": worker_id}
 
+    def get_task_workforce_experiment_context(self, task_id):
+        """Return approved experiment assignment context for trusted internal workers."""
+        if not isinstance(task_id, str) or not 1 <= len(task_id) <= 256:
+            raise ValueError("invalid task_id")
+        with closing(self._connect()) as c:
+            row = c.execute(
+                """SELECT a.experiment_id,a.assignment,e.state,e.design_json
+                   FROM workforce_experiment_assignments a
+                   JOIN workforce_experiments e ON e.experiment_id=a.experiment_id
+                   WHERE a.task_id=?""",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        design = json.loads(row["design_json"])
+        intervention = design.get("intervention")
+        version = hashlib.sha256(intervention.encode("utf-8")).hexdigest() if isinstance(intervention, str) else None
+        return {
+            "experiment_id": row["experiment_id"],
+            "assignment": row["assignment"],
+            "experiment_state": row["state"],
+            "intervention": intervention if row["assignment"] == "treatment" else None,
+            "intervention_version": version if row["assignment"] == "treatment" else None,
+        }
+
     def record_task_experiment_execution_event(self, task_id, event_type, *, worker_id, attempt):
         """Record an execution event when a task belongs to an experiment; otherwise no-op."""
         if not isinstance(task_id, str) or not 1 <= len(task_id) <= 256:
