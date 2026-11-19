@@ -5,12 +5,23 @@ and observation session manager. It is caller-polled and never starts a thread.
 """
 from __future__ import annotations
 
+from functools import wraps
+import threading
 from typing import Callable, Optional
 
 from core.desktop_metadata_adapter import DesktopMetadataAdapter
 from core.desktop_windows import WindowsForegroundAppCollector
 from core.observation_policy import ObservationPolicy
 from core.observation_session_manager import ObservationSessionManager
+
+
+def _serialized(method):
+    """Serialize lifecycle transitions and polling on one controller instance."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class DesktopObservationController:
@@ -34,6 +45,7 @@ class DesktopObservationController:
             raise ValueError("executable_to_app_id must be a mapping")
         if not policy.enabled or "desktop:metadata" not in policy.allowed_sources:
             raise PermissionError("policy must enable and allow desktop:metadata")
+        self._lock = threading.RLock()
         self._policy = policy
         self._mapping = dict(executable_to_app_id)
         self._indicator_callback = indicator
@@ -60,6 +72,7 @@ class DesktopObservationController:
     def _set_indicator(self, active: bool) -> None:
         self._indicator_callback(active)
 
+    @_serialized
     def start(self, *, consent_granted: bool) -> str:
         if self._state != "stopped":
             raise RuntimeError("desktop observation controller has already been started")
@@ -97,6 +110,7 @@ class DesktopObservationController:
         self._state = "active"
         return session_id
 
+    @_serialized
     def poll_once(self, consumer: Callable) -> bool:
         if not callable(consumer):
             raise ValueError("consumer must be callable")
@@ -119,6 +133,7 @@ class DesktopObservationController:
                 self._collector.stop()
         return delivered
 
+    @_serialized
     def pause(self) -> None:
         if self._state != "active":
             return
@@ -130,6 +145,7 @@ class DesktopObservationController:
             self.revoke()
             raise
 
+    @_serialized
     def resume(self) -> bool:
         if self._state != "paused":
             return False
@@ -143,6 +159,7 @@ class DesktopObservationController:
         self._state = "active"
         return True
 
+    @_serialized
     def revoke(self) -> None:
         if self._state in ("revoked", "stopped"):
             return
