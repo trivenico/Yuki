@@ -99,5 +99,16 @@ class ObservationLearningTests(unittest.TestCase):
         self.assertEqual(review.list_pending()[0].value, "com.example.one")
 
 
+    def test_stopped_worker_does_not_consume_queued_events(self):
+        self.buffer(ObservationEvent(
+            "desktop:metadata", "app_activity",
+            {"application_id": "com.example.editor"},
+        ))
+        self.worker.stop()
+        self.assertEqual(self.worker.process_batch(), ())
+        self.assertEqual(len(self.buffer), 1)
+        self.assertEqual(self.review.list_pending(), ())
+
+
 if __name__ == "__main__":
     unittest.main()
