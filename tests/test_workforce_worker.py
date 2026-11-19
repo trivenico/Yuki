@@ -159,6 +159,52 @@ class WorkforceWorkerTests(unittest.TestCase):
             max_attempts=max_attempts,
         )
 
+    def test_worker_attests_exact_verified_knowledge_before_executor_receives_it(self):
+        source = self.submit()
+        self.engine.claim("source-worker")
+        self.engine.complete(source["id"], "source-worker", {
+            "ok": True, "status": "completed:reviewed", "employee_id": "ENG-001",
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "SOURCE-QA", "status": "approved", "approved": True,
+            },
+        })
+        lesson = {
+            "title": "Use bounded execution",
+            "lesson": "Keep each execution attempt bounded and observable.",
+            "domain": "workforce",
+            "tags": ["reliability"],
+        }
+        self.engine.create_knowledge_candidate("lesson-worker-delivery", source["id"], lesson)
+        self.engine.transition_knowledge(
+            "lesson-worker-delivery", expected_state="candidate",
+            new_state="verified", actor_id="LESSON-REVIEWER",
+        )
+        context = [{
+            "knowledge_id": "lesson-worker-delivery",
+            "title": lesson["title"], "lesson": lesson["lesson"],
+            "source_task_id": source["id"], "reviewed_by": "LESSON-REVIEWER",
+        }]
+        task = self.submit(payload={
+            "description": "Use verified lesson",
+            "assigned_employee_id": "ENG-001",
+            "required_capabilities": ["python", "api_design"],
+            "required_permissions": ["repo:read"],
+            "max_autonomy_tier": 1,
+            "execution_authorized": False,
+            "review_required": False,
+            "knowledge_context": context,
+        })
+        result = self.worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertEqual(self.executor.calls[0]["knowledge_context"], context)
+        deliveries = self.engine.list_workforce_knowledge_deliveries(task["id"])
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0]["worker_id"], "workforce-worker")
+        self.assertEqual(deliveries[0]["context"], context[0])
+        self.assertEqual(len(deliveries[0]["context_fingerprint"]), 64)
+        self.assertEqual(len(deliveries[0]["knowledge_fingerprint"]), 64)
+
     def test_worker_emits_execution_telemetry_for_experiment_assigned_tasks(self):
         self.engine.create_improvement_proposal(
             "worker-telemetry-proposal", {"recommendation": "Measure worker execution"},
