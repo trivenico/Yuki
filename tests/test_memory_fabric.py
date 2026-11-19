@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from core.memory_fabric import (
     MemoryFabric,
     MemoryFabricClosed,
     MemoryFabricCorruption,
+    MemoryFabricError,
 )
 
 
@@ -26,6 +28,25 @@ class MemoryFabricTests(unittest.TestCase):
     def _close_fabrics(self):
         for fabric in self.fabrics:
             fabric.close()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission contract")
+    def test_storage_directory_and_database_are_private(self):
+        self._make_fabric(self.path, ram_capacity_bytes=0, disk_capacity_bytes=100)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission contract")
+    def test_rejects_group_or_world_accessible_storage_directory(self):
+        os.chmod(self.tmp.name, 0o755)
+        with self.assertRaises(MemoryFabricError):
+            MemoryFabric(self.path)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission contract")
+    def test_rejects_group_or_world_accessible_existing_database(self):
+        self.path.write_bytes(b"")
+        os.chmod(self.path, 0o644)
+        with self.assertRaises(MemoryFabricError):
+            MemoryFabric(self.path)
 
     def test_put_and_get_promotes_ssd_entry_into_bounded_ram(self):
         fabric = self._make_fabric(
