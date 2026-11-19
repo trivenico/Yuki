@@ -40,10 +40,11 @@ def detect_desktop_platform(platform_name: str | None = None) -> DesktopPlatform
     return DesktopPlatformInfo(
         platform=name,
         supported=name in _SUPPORTED_PLATFORMS,
-        # No native OS collectors are implemented yet.
-        native_collector_available=False,
+        # Windows has a caller-polled foreground-app collector; other native
+        # platform backends remain unavailable.
+        native_collector_available=name == "windows",
         permission_state="not_requested",
-        supported_signals=(),
+        supported_signals=("allowlisted_foreground_application_id",) if name == "windows" else (),
     )
 
 
@@ -60,8 +61,14 @@ class DesktopCollector(Protocol):
     def platform(self) -> str:
         ...
 
-    def start(self, sink: DesktopMetadataAdapter) -> None:
-        """Begin emitting only permitted identifiers into the supplied sink."""
+    def start(
+        self,
+        sink: DesktopMetadataAdapter,
+        *,
+        consent_granted: bool,
+        indicator: Callable[[bool], None],
+    ) -> None:
+        """Start only after explicit consent and visible-indicator activation."""
         ...
 
     def stop(self) -> None:
@@ -81,7 +88,13 @@ class UnsupportedDesktopCollector:
     def platform(self) -> str:
         return self._platform
 
-    def start(self, sink: DesktopMetadataAdapter) -> None:
+    def start(
+        self,
+        sink: DesktopMetadataAdapter,
+        *,
+        consent_granted: bool,
+        indicator: Callable[[bool], None],
+    ) -> None:
         if not isinstance(sink, DesktopMetadataAdapter):
             raise TypeError("sink must be a DesktopMetadataAdapter")
         raise RuntimeError(f"native {self._platform} desktop collector is not implemented")
