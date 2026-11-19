@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home --uid 10001 yuki
 
 COPY . .
-RUN mkdir -p /workspace && chown -R yuki:yuki /app /workspace
+RUN mkdir -p /workspace && chown yuki:yuki /workspace
 USER yuki
 
 ENV YUKI_WORKSPACE=/workspace
