@@ -104,3 +104,110 @@ class SandboxArtifactValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApprovedArtifactPromotionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.staging = self.root / "staging"
+        self.workspace = self.root / "workspace"
+        self.staging.mkdir()
+        self.workspace.mkdir()
+        self.payload = self.staging / "report.txt"
+        self.payload.write_text("trusted report", encoding="utf-8")
+        self.manifest = validate_artifact_directory(
+            self.staging, allowed_extensions=(".txt",)
+        )
+        from automation.authorized_read_tools import ToolPrincipal
+        self.principal = ToolPrincipal("alice", frozenset({"workspace:write"}))
+        self.approvals = []
+        self.audit_events = []
+        self.approved = True
+        from automation.sandbox_artifacts import ApprovedArtifactPromotion
+        self.service = ApprovedArtifactPromotion(
+            self.workspace,
+            trusted_principal=lambda p: p.actor_id == "alice",
+            approve_promotion=lambda actor, promotion_id, digest: (
+                self.approvals.append((actor, promotion_id, digest)) or self.approved
+            ),
+            audit=self.audit_events.append,
+        )
+
+    def test_promotes_exact_digest_to_exact_new_destination(self):
+        digest = self.service.promote(
+            principal=self.principal, staging_directory=self.staging,
+            manifest=self.manifest, artifact_path="report.txt",
+            destination_path="reports/report.txt",
+        ) if (self.workspace / "reports").mkdir() is None else None
+        target = self.workspace / "reports" / "report.txt"
+        self.assertEqual(target.read_text(encoding="utf-8"), "trusted report")
+        self.assertEqual(digest, self.approvals[0][2])
+        self.assertEqual(self.audit_events[-1]["outcome"], "succeeded")
+
+    def test_denied_approval_does_not_create_destination(self):
+        self.approved = False
+        with self.assertRaises(Exception):
+            self.service.promote(
+                principal=self.principal, staging_directory=self.staging,
+                manifest=self.manifest, artifact_path="report.txt",
+                destination_path="report.txt",
+            )
+        self.assertFalse((self.workspace / "report.txt").exists())
+
+    def test_rejects_overwrite_traversal_and_manifest_mismatch(self):
+        target = self.workspace / "existing.txt"
+        target.write_text("keep", encoding="utf-8")
+        with self.assertRaises(ArtifactValidationError):
+            self.service.promote(
+                principal=self.principal, staging_directory=self.staging,
+                manifest=self.manifest, artifact_path="report.txt",
+                destination_path="existing.txt",
+            )
+        with self.assertRaises(ArtifactValidationError):
+            self.service.promote(
+                principal=self.principal, staging_directory=self.staging,
+                manifest=self.manifest, artifact_path="../report.txt",
+                destination_path="new.txt",
+            )
+        self.payload.write_text("tampered", encoding="utf-8")
+        with self.assertRaises(ArtifactValidationError):
+            self.service.promote(
+                principal=self.principal, staging_directory=self.staging,
+                manifest=self.manifest, artifact_path="report.txt",
+                destination_path="new.txt",
+            )
+        self.assertEqual(target.read_text(encoding="utf-8"), "keep")
+        self.assertFalse((self.workspace / "new.txt").exists())
+
+    def test_rejects_untrusted_principal_and_missing_permission(self):
+        from automation.authorized_read_tools import ToolPrincipal, ToolAuthorizationError
+        with self.assertRaises(ToolAuthorizationError):
+            self.service.promote(
+                principal=ToolPrincipal("mallory", frozenset({"workspace:write"})),
+                staging_directory=self.staging, manifest=self.manifest,
+                artifact_path="report.txt", destination_path="report.txt",
+            )
+        with self.assertRaises(ToolAuthorizationError):
+            self.service.promote(
+                principal=ToolPrincipal("alice", frozenset()),
+                staging_directory=self.staging, manifest=self.manifest,
+                artifact_path="report.txt", destination_path="report.txt",
+            )
+
+    def test_audit_failure_rolls_back_created_file(self):
+        from automation.sandbox_artifacts import ApprovedArtifactPromotion
+        failing = ApprovedArtifactPromotion(
+            self.workspace, trusted_principal=lambda p: True,
+            approve_promotion=lambda *_: True,
+            audit=lambda event: (_ for _ in ()).throw(OSError("audit unavailable"))
+                if event["outcome"] == "succeeded" else None,
+        )
+        with self.assertRaises(RuntimeError):
+            failing.promote(
+                principal=self.principal, staging_directory=self.staging,
+                manifest=self.manifest, artifact_path="report.txt",
+                destination_path="report.txt",
+            )
+        self.assertFalse((self.workspace / "report.txt").exists())
