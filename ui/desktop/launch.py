@@ -1260,7 +1260,24 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
-            self.chat_status.setText("Connected to your configured provider.")
+            availability_check = getattr(self.provider, "is_available", None)
+            provider_ready = None
+            if callable(availability_check):
+                try:
+                    provider_ready = availability_check()
+                except Exception:
+                    provider_ready = None
+            if provider_ready is False:
+                self.chat_status.setText(
+                    "Provider selected but not configured or unavailable. "
+                    "Check OPENAI_API_KEY or your local provider setup before sending."
+                )
+            elif provider_ready is True:
+                self.chat_status.setText("Provider reports ready. Send a message to verify a live response.")
+            else:
+                self.chat_status.setText(
+                    "Provider selected. Yuki will verify availability on the first request."
+                )
             self.pages.setCurrentIndex(1)
             self._refresh_specialists()
             self._refresh_tasks()
