@@ -55,6 +55,30 @@ class SharedDesktopControllerBridge:
             self._close_after_authorization_failure()
             raise
 
+    def list_conversations(self, *, limit: int = 50) -> Any:
+        self._ensure_open()
+        try:
+            return self._chat.list_conversations(limit=limit)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def select_conversation(self, conversation_id: str) -> Any:
+        self._ensure_open()
+        try:
+            return self._chat.select_conversation(conversation_id)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def history(self, *, limit: int = 100) -> Any:
+        self._ensure_open()
+        try:
+            return self._chat.history(limit=limit)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
     def set_memory_context(self, enabled: bool) -> None:
         self._ensure_open()
         try:
