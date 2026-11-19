@@ -216,18 +216,19 @@ class ApprovedArtifactPromotion:
         self.approve_promotion = approve_promotion
         self.audit = audit
 
-    def _record(self, actor: str, outcome: str, digest: str,
+    def _record(self, actor: str, job_id: str, outcome: str, digest: str,
                 source: str, destination: str) -> None:
         try:
             self.audit({
-                "actor_id": actor[:200], "action": "sandbox.artifact.promote",
+                "actor_id": actor[:200], "job_id": job_id,
+                "action": "sandbox.artifact.promote",
                 "outcome": outcome, "approval_digest": digest,
                 "source": source[:1000], "destination": destination[:1000],
             })
         except Exception as exc:
             raise RuntimeError("audit unavailable; artifact promotion denied") from exc
 
-    def promote(self, *, principal, staging_directory: str | Path,
+    def promote(self, *, principal, job_id: str, staging_directory: str | Path,
                 manifest: ArtifactManifest, artifact_path: str,
                 destination_path: str) -> str:
         from automation.authorized_read_tools import ToolPrincipal, ToolAuthorizationError
@@ -243,6 +244,8 @@ class ApprovedArtifactPromotion:
                 or not isinstance(principal.permissions, frozenset)
                 or "workspace:write" not in principal.permissions):
             raise ToolAuthorizationError("trusted workspace write permission is required")
+        if not isinstance(job_id, str) or not re.fullmatch(r"job_[0-9a-f]{32}", job_id):
+            raise ArtifactValidationError("a valid sandbox job ID is required")
         if not isinstance(manifest, ArtifactManifest) or not re.fullmatch(r"[0-9a-f]{64}", manifest.digest):
             raise ArtifactValidationError("a validated artifact manifest is required")
         if not isinstance(manifest.files, tuple) or not manifest.files:
@@ -305,6 +308,7 @@ class ApprovedArtifactPromotion:
             raise ArtifactValidationError("destination already exists; overwrites are forbidden")
 
         approval_data = {
+            "job_id": job_id,
             "manifest_digest": manifest.digest,
             "artifact_path": source_rel.as_posix(),
             "artifact_sha256": item.sha256,
@@ -314,14 +318,14 @@ class ApprovedArtifactPromotion:
             json.dumps(approval_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         promotion_id = "prom_" + approval_digest[:24]
-        self._record(principal.actor_id, "requested", approval_digest,
+        self._record(principal.actor_id, job_id, "requested", approval_digest,
                      source_rel.as_posix(), destination_rel.as_posix())
         try:
             approved = self.approve_promotion(principal.actor_id, promotion_id, approval_digest) is True
         except Exception:
             approved = False
         if not approved:
-            self._record(principal.actor_id, "denied", approval_digest,
+            self._record(principal.actor_id, job_id, "denied", approval_digest,
                          source_rel.as_posix(), destination_rel.as_posix())
             raise ToolAuthorizationError("explicit approval for this artifact and destination is required")
 
@@ -388,7 +392,7 @@ class ApprovedArtifactPromotion:
             promoted = True
             temporary_path.unlink()
             temporary_path = None
-            self._record(principal.actor_id, "succeeded", approval_digest,
+            self._record(principal.actor_id, job_id, "succeeded", approval_digest,
                          source_rel.as_posix(), destination_rel.as_posix())
             return approval_digest
         except Exception:
