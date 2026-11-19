@@ -474,6 +474,10 @@ def run() -> int:
             chat_layout = QVBoxLayout(chat)
             header = QHBoxLayout()
             self.identity_label = QLabel("Signed in")
+            self.observation_global_indicator = QLabel("Observation off")
+            self.observation_global_indicator.setToolTip(
+                "Persistent desktop observation status. Capture is off unless explicitly enabled."
+            )
             self.memory_toggle = QCheckBox("Use saved memory in replies")
             self.memory_toggle.setToolTip(
                 "Allow saved notes to be included in this session's chat context. "
@@ -483,6 +487,7 @@ def run() -> int:
             self.logout_button = QPushButton("Sign out")
             self.logout_button.clicked.connect(self._logout)
             header.addWidget(self.identity_label)
+            header.addWidget(self.observation_global_indicator)
             header.addStretch(1)
             header.addWidget(self.memory_toggle)
             header.addWidget(self.logout_button)
@@ -1334,6 +1339,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
             return mapping
 
         def _set_observation_indicator(self, active):
+            self.observation_global_indicator.setText(
+                "● OBSERVATION ACTIVE" if active else "Observation off"
+            )
             self.observation_status.setText(
                 "● OBSERVATION ACTIVE — allowlisted foreground app metadata only."
                 if active else "Observation indicator off."
@@ -1472,6 +1480,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.observation_timer.stop()
                 self.observation_pause_button.setEnabled(False)
                 self.observation_resume_button.setEnabled(True)
+                self.observation_global_indicator.setText("Observation paused")
                 self.observation_status.setText("Observation paused. No foreground sampling is occurring.")
             except Exception as exc:
                 self.observation_status.setText(
