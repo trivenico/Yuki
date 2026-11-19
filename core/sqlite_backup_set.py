@@ -138,6 +138,8 @@ def create_sqlite_backup_set(
             json.dump(manifest, output, sort_keys=True, separators=(",", ":"))
             output.write("\n")
             output.flush()
+            if os.name == "posix":
+                os.fchmod(output.fileno(), 0o600)
             os.fsync(output.fileno())
         if os.name == "posix":
             directory_fd = os.open(staging, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
