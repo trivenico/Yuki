@@ -191,7 +191,7 @@ class ComputeFabricTests(unittest.TestCase):
                 self.assertEqual(result, f"{backend}-scheduled")
                 self.assertEqual(
                     scheduler.stats()[backend],
-                    {"reserved_memory_bytes": 0, "active_operations": 0},
+                    {"reserved_memory_bytes": 0, "resident_memory_bytes": 0, "transient_memory_bytes": 0, "resident_models": 0, "active_operations": 0},
                 )
 
     def test_accelerator_execution_failure_releases_scheduler_reservation(self):
@@ -219,7 +219,7 @@ class ComputeFabricTests(unittest.TestCase):
             )
         self.assertEqual(
             scheduler.stats()["cuda"],
-            {"reserved_memory_bytes": 0, "active_operations": 0},
+            {"reserved_memory_bytes": 0, "resident_memory_bytes": 0, "transient_memory_bytes": 0, "resident_models": 0, "active_operations": 0},
         )
 
 
