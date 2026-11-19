@@ -8,6 +8,7 @@ from hackback.sandbox import DockerSandbox, SandboxError, _OUTPUT_TAIL_BYTES
 
 
 IMAGE = "python:3.11-slim@sha256:" + ("a" * 64)
+_REAL_POPEN = subprocess.Popen
 
 
 class DockerSandboxOutputTests(unittest.TestCase):
