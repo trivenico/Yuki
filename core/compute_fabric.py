@@ -222,6 +222,47 @@ class GoogleTPUBackend(ComputeBackend):
             raise ComputeBackendError("TPU operation failed") from exc
 
 
+class ModelResidencyLease:
+    """Long-lived memory admission held until model unload is confirmed.
+
+    A failed/uncertain unload poisons the lease. Only explicit scheduler
+    reconciliation may release a poisoned lease after the runtime is known
+    to have relinquished the model allocation.
+    """
+
+    def __init__(self, scheduler, backend: str, model_id: str, memory_bytes: int):
+        self._scheduler = scheduler
+        self.backend = backend
+        self.model_id = model_id
+        self.memory_bytes = memory_bytes
+        self._state = "active"
+
+    @property
+    def state(self) -> str:
+        with self._scheduler._lock:
+            return self._state
+
+    def release(self) -> None:
+        """Release after successful unload; repeated release is harmless."""
+        with self._scheduler._lock:
+            if self._state == "released":
+                return
+            if self._state == "poisoned":
+                raise ComputeBackendError(
+                    "poisoned model residency requires explicit reconciliation"
+                )
+            self._scheduler._resident_bytes[self.backend] -= self.memory_bytes
+            self._scheduler._resident_models[self.backend] -= 1
+            self._state = "released"
+
+    def mark_unload_failed(self) -> None:
+        """Retain admission when unload may have left device memory resident."""
+        with self._scheduler._lock:
+            if self._state == "released":
+                raise ComputeBackendError("cannot poison a released residency lease")
+            self._state = "poisoned"
+
+
 class ComputeScheduler:
     """Thread-safe admission controller with bounded memory and concurrency.
 
@@ -233,6 +274,8 @@ class ComputeScheduler:
         self._lock = threading.Lock()
         self._backends: dict[str, ComputeBackend] = {}
         self._reserved_bytes: dict[str, int] = {}
+        self._resident_bytes: dict[str, int] = {}
+        self._resident_models: dict[str, int] = {}
         self._active: dict[str, int] = {}
         for backend in backends:
             self.register(backend)
@@ -249,6 +292,8 @@ class ComputeScheduler:
                 raise ValueError(f"backend already registered: {name}")
             self._backends[name] = backend
             self._reserved_bytes[name] = 0
+            self._resident_bytes[name] = 0
+            self._resident_models[name] = 0
             self._active[name] = 0
 
     def inventory(self) -> list[ComputeCapabilities]:
@@ -257,6 +302,43 @@ class ComputeScheduler:
                 backend.capabilities
                 for _, backend in sorted(self._backends.items())
             ]
+
+    def reserve_model(self, request: ComputeRequest, *, model_id: str) -> ModelResidencyLease:
+        """Admit persistent model memory before loading weights.
+
+        This lease does not consume an operation-concurrency slot. Each
+        inference must still use reserve() for transient memory/concurrency.
+        """
+        if not isinstance(request, ComputeRequest):
+            raise TypeError("request must be a ComputeRequest")
+        if not isinstance(model_id, str) or not model_id.strip() or len(model_id) > 256:
+            raise ValueError("model_id must be non-empty text of at most 256 characters")
+        with self._lock:
+            backend = self._backends.get(request.backend)
+            if backend is None:
+                raise LookupError(f"compute backend is not registered: {request.backend}")
+            caps = backend.capabilities
+            if not caps.available:
+                raise ComputeBackendError(f"compute backend is unavailable: {request.backend}")
+            committed = self._resident_bytes[request.backend] + self._reserved_bytes[request.backend]
+            if request.memory_bytes > caps.memory_capacity_bytes - committed:
+                raise ComputeCapacityError("model residency exceeds configured capacity")
+            self._resident_bytes[request.backend] += request.memory_bytes
+            self._resident_models[request.backend] += 1
+            return ModelResidencyLease(self, request.backend, model_id, request.memory_bytes)
+
+    def confirm_model_unloaded(self, lease: ModelResidencyLease) -> None:
+        """Operator/runtime reconciliation after a poisoned lease's allocation is gone."""
+        if not isinstance(lease, ModelResidencyLease) or lease._scheduler is not self:
+            raise TypeError("lease must belong to this scheduler")
+        with self._lock:
+            if lease._state == "released":
+                return
+            if lease._state != "poisoned":
+                raise ComputeBackendError("only poisoned leases require reconciliation")
+            self._resident_bytes[lease.backend] -= lease.memory_bytes
+            self._resident_models[lease.backend] -= 1
+            lease._state = "released"
 
     @contextmanager
     def reserve(self, request: ComputeRequest) -> Iterator[ComputeBackend]:
@@ -271,7 +353,8 @@ class ComputeScheduler:
                 raise ComputeBackendError(f"compute backend is unavailable: {request.backend}")
             current_bytes = self._reserved_bytes[request.backend]
             current_active = self._active[request.backend]
-            if request.memory_bytes > caps.memory_capacity_bytes - current_bytes:
+            committed_bytes = self._resident_bytes[request.backend] + current_bytes
+            if request.memory_bytes > caps.memory_capacity_bytes - committed_bytes:
                 raise ComputeCapacityError("compute memory reservation exceeds configured capacity")
             if current_active >= caps.max_concurrency:
                 raise ComputeCapacityError("compute concurrency limit reached")
@@ -296,7 +379,10 @@ class ComputeScheduler:
         with self._lock:
             return {
                 name: {
-                    "reserved_memory_bytes": self._reserved_bytes[name],
+                    "reserved_memory_bytes": self._reserved_bytes[name] + self._resident_bytes[name],
+                    "resident_memory_bytes": self._resident_bytes[name],
+                    "transient_memory_bytes": self._reserved_bytes[name],
+                    "resident_models": self._resident_models[name],
                     "active_operations": self._active[name],
                 }
                 for name in sorted(self._backends)
