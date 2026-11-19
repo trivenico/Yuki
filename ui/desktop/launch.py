@@ -679,6 +679,33 @@ def run() -> int:
             ):
                 observation_actions.addWidget(control)
             observation_layout.addLayout(observation_actions)
+
+            observation_layout.addWidget(QLabel(
+                "Curated knowledge promoted into Yuki's durable reference catalog. "
+                "Deactivation immediately removes an entry from future retrieval."
+            ))
+            self.curated_knowledge_list = QListWidget()
+            self.curated_knowledge_list.currentItemChanged.connect(
+                self._show_curated_knowledge_entry
+            )
+            observation_layout.addWidget(self.curated_knowledge_list, 1)
+            curated_actions = QHBoxLayout()
+            self.curated_refresh_button = QPushButton("Refresh knowledge")
+            self.curated_refresh_button.clicked.connect(self._refresh_curated_knowledge)
+            self.curated_deactivate_button = QPushButton("Deactivate selected")
+            self.curated_deactivate_button.clicked.connect(self._deactivate_curated_knowledge)
+            self.curated_audit_button = QPushButton("View knowledge audit")
+            self.curated_audit_button.clicked.connect(self._show_curated_knowledge_audit)
+            for control in (
+                self.curated_refresh_button, self.curated_deactivate_button,
+                self.curated_audit_button,
+            ):
+                curated_actions.addWidget(control)
+            observation_layout.addLayout(curated_actions)
+            self.curated_knowledge_details = QTextEdit()
+            self.curated_knowledge_details.setReadOnly(True)
+            self.curated_knowledge_details.setMaximumHeight(100)
+            observation_layout.addWidget(self.curated_knowledge_details)
             tabs.addTab(observation_page, "Learning")
 
 
@@ -1684,6 +1711,131 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.observation_status.setText(
                     "Knowledge promotion failed (" + type(exc).__name__ + ")."
                 )
+        def _selected_curated_knowledge_id(self):
+            item = self.curated_knowledge_list.currentItem()
+            return item.data(256) if item is not None else None
+
+        def _refresh_curated_knowledge(self):
+            self.curated_knowledge_list.clear()
+            self.curated_knowledge_details.clear()
+            self.curated_deactivate_button.setEnabled(False)
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            if service is None or catalog is None or identity is None:
+                self.observation_status.setText("Sign in to inspect curated knowledge.")
+                return
+            try:
+                entries = service.list_curated(actor_id=identity.actor_id, catalog=catalog, limit=500)
+                for entry in entries:
+                    item = QListWidgetItem(
+                        f"{entry['kind']}: {entry['value']} — {entry['summary']}"
+                    )
+                    item.setData(256, entry['entry_id'])
+                    self.curated_knowledge_list.addItem(item)
+                self.observation_status.setText(
+                    f"{len(entries)} active curated knowledge entr(y/ies)."
+                )
+                self._show_curated_knowledge_entry()
+            except PermissionError:
+                self.observation_status.setText(
+                    "Viewing curated knowledge requires memory:knowledge:read."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Curated knowledge unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _show_curated_knowledge_entry(self, *_args):
+            entry_id = self._selected_curated_knowledge_id()
+            self.curated_deactivate_button.setEnabled(False)
+            if not entry_id:
+                self.curated_knowledge_details.clear()
+                return
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            if service is None or catalog is None or identity is None:
+                return
+            try:
+                entries = service.list_curated(actor_id=identity.actor_id, catalog=catalog, limit=500)
+                entry = next((item for item in entries if item['entry_id'] == entry_id), None)
+                if entry is None:
+                    self.curated_knowledge_details.setPlainText("Entry is no longer active.")
+                    return
+                self.curated_knowledge_details.setPlainText(
+                    "Entry: " + entry['entry_id'] + "\n"
+                    + "Source proposal: " + entry['source_proposal_id'] + "\n"
+                    + "Approved by: " + entry['approved_by'] + "\n"
+                    + "Promoted by: " + entry['promoted_by'] + "\n"
+                    + "Created: " + str(entry['created_at'])
+                )
+                self.curated_deactivate_button.setEnabled(True)
+            except Exception as exc:
+                self.curated_knowledge_details.setPlainText(
+                    "Entry details unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _deactivate_curated_knowledge(self):
+            entry_id = self._selected_curated_knowledge_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            if not entry_id or identity is None or service is None or catalog is None:
+                return
+            answer = QMessageBox.question(
+                self, "Deactivate curated knowledge",
+                "Remove this entry from future retrieval? Its audit history will be retained.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                changed = service.deactivate_curated(
+                    entry_id, actor_id=identity.actor_id, catalog=catalog,
+                )
+                self.observation_status.setText(
+                    "Knowledge entry deactivated." if changed else "Entry was already inactive."
+                )
+                self._refresh_curated_knowledge()
+            except PermissionError:
+                self.observation_status.setText(
+                    "Deactivation requires memory:knowledge:deactivate."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Knowledge deactivation failed (" + type(exc).__name__ + ")."
+                )
+
+        def _show_curated_knowledge_audit(self):
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            if identity is None or service is None or catalog is None:
+                return
+            try:
+                events = service.list_curated_events(
+                    actor_id=identity.actor_id, catalog=catalog, limit=200,
+                )
+                if not events:
+                    self.observation_status.setText("No curated knowledge audit events recorded.")
+                    return
+                lines = [
+                    f"{event['action']} — {event['entry_id']} by {event['actor_id']} at {event['created_at']}"
+                    for event in events
+                ]
+                QMessageBox.information(
+                    self, "Curated knowledge audit", "\n".join(lines)
+                )
+            except PermissionError:
+                self.observation_status.setText(
+                    "Knowledge audit viewing requires memory:knowledge:read."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Knowledge audit unavailable (" + type(exc).__name__ + ")."
+                )
+
         def _delete_observation_proposal(self):
             proposal_id = self._selected_observation_proposal_id()
             identity = self.sessions.current_identity() if self.sessions is not None else None
@@ -2191,6 +2343,9 @@ Version: {version}",
             self.task_progress_view.clear()
             self.observation_proposal_list.clear()
             self.observation_proposal_details.clear()
+            self.curated_knowledge_list.clear()
+            self.curated_knowledge_details.clear()
+            self.curated_deactivate_button.setEnabled(False)
             self.observation_status.setText("Sign in to access learning review.")
             self.observation_review_service = None
             self.curated_knowledge_catalog = None
