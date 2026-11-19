@@ -35,7 +35,6 @@ class KnowledgeProposal:
     status: str
     created_at: float
     reviewed_at: Optional[float] = None
-    reviewed_by: Optional[str] = None
 
 
 class SQLiteObservationKnowledgeReview:
@@ -218,7 +217,7 @@ class SQLiteObservationKnowledgeReview:
                     FROM observation_knowledge_proposals WHERE owner_id=? AND proposal_id=?""",
                     (self._owner, proposal_id)).fetchone()
                 db.execute("COMMIT")
-                return KnowledgeProposal(*row, reviewer_id)
+                return self._proposal(row)
             except Exception:
                 db.execute("ROLLBACK")
                 raise
