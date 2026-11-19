@@ -3,11 +3,7 @@ import unittest
 from pathlib import Path
 
 from automation.sandbox_artifacts import ApprovedArtifactPromotion
-from automation.sandbox_job_lifecycle import (
-    JobState,
-    SandboxJobError,
-    SandboxJobLifecycle,
-)
+from automation.sandbox_job_lifecycle import JobState, SandboxJobError, SandboxJobLifecycle
 
 
 class SandboxJobLifecycleTests(unittest.TestCase):
@@ -20,7 +16,9 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
         self.launch_calls = []
-        self.freeze_calls = []\n        self.audit_events = []\n        self.audit_fails = False
+        self.freeze_calls = []
+        self.audit_events = []
+        self.audit_fails = False
         self.freeze_ok = True
         self.launch_fails = False
 
@@ -35,6 +33,11 @@ class SandboxJobLifecycleTests(unittest.TestCase):
             self.freeze_calls.append(handle)
             return self.freeze_ok
 
+        def audit(event):
+            if self.audit_fails:
+                raise OSError("audit unavailable")
+            self.audit_events.append(dict(event))
+
         self.promotion = ApprovedArtifactPromotion(
             self.workspace,
             trusted_principal=lambda principal: principal.actor_id == "alice",
@@ -42,7 +45,8 @@ class SandboxJobLifecycleTests(unittest.TestCase):
             audit=lambda _event: None,
         )
         self.lifecycle = SandboxJobLifecycle(
-            self.jobs, launcher=launch, freezer=freeze, promotion=self.promotion
+            self.jobs, launcher=launch, freezer=freeze,
+            promotion=self.promotion, audit=audit,
         )
         from automation.authorized_read_tools import ToolPrincipal
         self.principal = ToolPrincipal("alice", frozenset({"workspace:write"}))
@@ -69,24 +73,18 @@ class SandboxJobLifecycleTests(unittest.TestCase):
 
     def test_validates_promotes_and_cleans_complete_job(self):
         job = self.lifecycle.create_job()
-        started = self.lifecycle.start_job(job.job_id)
-        self.assertEqual(started.state, JobState.RUNNING)
-        frozen = self.lifecycle.freeze_job(job.job_id)
-        self.assertEqual(frozen.state, JobState.FROZEN)
+        self.assertEqual(self.lifecycle.start_job(job.job_id).state, JobState.RUNNING)
+        self.assertEqual(self.lifecycle.freeze_job(job.job_id).state, JobState.FROZEN)
         manifest = self.lifecycle.validate_job(job.job_id, allowed_extensions=(".txt",))
         self.assertEqual(len(manifest.files), 1)
-        validated = self.lifecycle.get_job(job.job_id)
-        self.assertEqual(validated.state, JobState.VALIDATED)
+        self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.VALIDATED)
         self.lifecycle.promote_artifact(
             job.job_id, principal=self.principal,
             artifact_path="report.txt", destination_path="report.txt",
         )
-        promoted = self.lifecycle.get_job(job.job_id)
-        self.assertEqual(promoted.state, JobState.PROMOTED)
-        self.assertEqual((self.workspace / "report.txt").read_text(encoding="utf-8"),
-                         "sandbox output")
-        cleaned = self.lifecycle.cleanup_job(job.job_id)
-        self.assertEqual(cleaned.state, JobState.CLEANED)
+        self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.PROMOTED)
+        self.assertEqual((self.workspace / "report.txt").read_text(encoding="utf-8"), "sandbox output")
+        self.assertEqual(self.lifecycle.cleanup_job(job.job_id).state, JobState.CLEANED)
         self.assertFalse(Path(job.staging_directory).exists())
 
     def test_failed_launch_can_only_be_cleaned_after_terminal_state(self):
@@ -117,19 +115,16 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         with self.assertRaises(SandboxJobError):
             self.lifecycle.cleanup_job(job.job_id)
 
-
-
     def test_lifecycle_transitions_emit_audit_events(self):
         job = self.lifecycle.create_job()
         self.lifecycle.start_job(job.job_id)
         self.lifecycle.freeze_job(job.job_id)
         self.lifecycle.validate_job(job.job_id, allowed_extensions=(".txt",))
         actions = [event["action"] for event in self.audit_events]
-        self.assertEqual(
-            actions,
-            ["sandbox.job.create", "sandbox.job.start",
-             "sandbox.job.freeze", "sandbox.job.validate"],
-        )
+        self.assertEqual(actions, [
+            "sandbox.job.create", "sandbox.job.start",
+            "sandbox.job.freeze", "sandbox.job.validate",
+        ])
         self.assertTrue(all(event["job_id"] == job.job_id for event in self.audit_events))
 
     def test_create_fails_closed_when_audit_is_unavailable(self):
@@ -145,6 +140,7 @@ class SandboxJobLifecycleTests(unittest.TestCase):
             self.lifecycle.start_job(job.job_id)
         self.assertEqual(self.freeze_calls, [{"container": job.job_id}])
         self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.FAILED)
+
 
 if __name__ == "__main__":
     unittest.main()
