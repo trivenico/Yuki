@@ -778,12 +778,26 @@ class DurableTaskEngine:
             raise ValueError("invalid experiment design schema")
         text_limits = {
             "hypothesis": 2000, "intervention": 2000, "primary_metric": 160,
-            "eligible_population": 1000,
         }
         for key, maximum in text_limits.items():
             value = design[key]
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
                 raise ValueError("invalid experiment design field: " + key)
+        population = design["eligible_population"]
+        if isinstance(population, str):
+            if not population.strip() or len(population) > 1000:
+                raise ValueError("invalid experiment eligible_population")
+        elif isinstance(population, dict):
+            if set(population) != {"description", "task_types"}:
+                raise ValueError("eligible_population requires description and task_types")
+            description, task_types = population["description"], population["task_types"]
+            if (not isinstance(description, str) or not description.strip() or len(description) > 1000
+                    or not isinstance(task_types, list) or not 1 <= len(task_types) <= 50
+                    or any(not isinstance(item, str) or not item.strip() or len(item) > 128 for item in task_types)
+                    or len({item.casefold() for item in task_types}) != len(task_types)):
+                raise ValueError("invalid structured eligible_population")
+        else:
+            raise ValueError("invalid experiment eligible_population")
         if design["preferred_direction"] not in {"increase", "decrease"}:
             raise ValueError("invalid preferred_direction")
         if design["design_type"] not in {"randomized_controlled", "pre_post_descriptive"}:
@@ -922,9 +936,15 @@ class DurableTaskEngine:
             design = json.loads(experiment["design_json"])
             if design["design_type"] != "randomized_controlled":
                 raise TaskConflict("task assignment requires randomized_controlled design")
-            task = c.execute("SELECT id FROM tasks WHERE id=?", (task_id,)).fetchone()
+            population = design["eligible_population"]
+            if not isinstance(population, dict) or set(population) != {"description", "task_types"}:
+                raise TaskConflict("randomized assignment requires structured task-type eligibility")
+            task = c.execute("SELECT id,task_type FROM tasks WHERE id=?", (task_id,)).fetchone()
             if task is None:
                 raise TaskNotFound("task not found")
+            allowed_types = {item.casefold() for item in population["task_types"]}
+            if task["task_type"].casefold() not in allowed_types:
+                raise TaskConflict("task does not satisfy experiment task-type eligibility")
             existing = c.execute(
                 "SELECT experiment_id,assignment,assignment_key FROM workforce_experiment_assignments WHERE task_id=?",
                 (task_id,),
