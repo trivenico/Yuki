@@ -331,6 +331,22 @@ class ComputeFabricTests(unittest.TestCase):
         self.assertEqual(self.scheduler.stats()["cpu"]["reserved_memory_bytes"], 0)
         manager.unload(session, lambda backend, handle: self.fail("unload must be idempotent"))
 
+    def test_backend_lookup_failure_releases_model_admission(self):
+        scheduler = ComputeScheduler((CPUBackend(memory_capacity_bytes=100),))
+        manager = ModelLifecycleManager(scheduler)
+        request = ComputeRequest(memory_bytes=40)
+        original_backend_for = scheduler.backend_for
+
+        def unavailable_backend(_backend_name):
+            raise ComputeBackendError("backend became unavailable")
+
+        scheduler.backend_for = unavailable_backend
+        with self.assertRaisesRegex(ComputeBackendError, "backend became unavailable"):
+            manager.load(request, model_id="lookup-failure", loader=lambda _backend: object())
+        scheduler.backend_for = original_backend_for
+        self.assertEqual(scheduler.stats()["cpu"]["resident_memory_bytes"], 0)
+        self.assertEqual(scheduler.stats()["cpu"]["resident_models"], 0)
+
     def test_model_load_failure_releases_only_after_cleanup_confirmation(self):
         from core.compute_fabric import ModelLifecycleManager
 
