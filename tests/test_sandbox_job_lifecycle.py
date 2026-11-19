@@ -101,6 +101,34 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.LAUNCHING)
         self.assertEqual(self.store.get(job.job_id).state, "launching")
 
+    def test_created_job_is_restored_from_reopened_sqlite_store(self):
+        job = self.lifecycle.create_job()
+        reopened = SandboxJobStore(self.dbroot / "jobs.sqlite3")
+        restored = SandboxJobLifecycle(
+            self.jobs, launcher=self.lifecycle._launcher,
+            freezer=self.lifecycle._freezer, promotion=self.promotion,
+            audit=lambda _event: None, store=reopened,
+        )
+        snapshot = restored.get_job(job.job_id)
+        self.assertEqual(snapshot.state, JobState.CREATED)
+        self.assertEqual(snapshot.staging_directory, job.staging_directory)
+
+    def test_ambiguous_launch_state_survives_lifecycle_restart(self):
+        self.launch_fails = True
+        job = self.lifecycle.create_job()
+        with self.assertRaises(SandboxJobError):
+            self.lifecycle.start_job(job.job_id)
+        reopened = SandboxJobStore(self.dbroot / "jobs.sqlite3")
+        restored = SandboxJobLifecycle(
+            self.jobs, launcher=self.lifecycle._launcher,
+            freezer=self.lifecycle._freezer, promotion=self.promotion,
+            audit=lambda _event: None, store=reopened,
+        )
+        snapshot = restored.get_job(job.job_id)
+        self.assertEqual(snapshot.state, JobState.LAUNCHING)
+        self.assertEqual(reopened.get(job.job_id).container_name,
+                         "yuki-job-" + job.job_id[4:])
+
     def test_running_job_must_be_frozen_before_discard(self):
         job = self.lifecycle.create_job()
         self.lifecycle.start_job(job.job_id)
