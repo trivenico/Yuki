@@ -56,3 +56,27 @@ configuration validation.
 The tests have been added but have not been independently executed in this
 environment. GitHub Actions is the verification source for this branch; do
 not treat queued or in-progress workflows as passing.
+
+## Dedicated web image
+
+`docker/Dockerfile.web` is a separate ASGI deployment image. It installs both
+the base runtime and `requirements-web.txt`, runs as the unprivileged
+`10001:10001` service user, and starts `scripts/run_web.py`. The existing
+`docker/Dockerfile` remains the interactive CLI image and is unchanged.
+
+Example build:
+
+```bash
+docker build -f docker/Dockerfile.web -t yuki-web:local .
+```
+
+Run it only with a persistent, service-owned volume mounted at `/workspace`
+and on a private network behind a TLS-terminating reverse proxy. The image
+sets the explicit public-bind opt-in because container interfaces are not
+loopback; network publication must still be controlled by the deployment
+platform. Do not publish the container directly to the public internet.
+
+`tests/test_web_deployment_image.py` checks the separation between the web
+and CLI images, the web entrypoint, unprivileged user, and deployment notes.
+These source-level checks are not a substitute for building and running the
+image in CI.
