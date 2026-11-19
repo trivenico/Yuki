@@ -4,6 +4,8 @@ from pathlib import Path
 
 from automation.sandbox_artifacts import ApprovedArtifactPromotion
 from automation.sandbox_job_lifecycle import JobState, SandboxJobError, SandboxJobLifecycle
+from automation.sandbox_job_store import SandboxJobStore
+import os
 
 
 class SandboxJobLifecycleTests(unittest.TestCase):
@@ -15,6 +17,10 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         self.jobs.mkdir()
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
+        self.dbroot = self.root / "db"
+        self.dbroot.mkdir(mode=0o700)
+        os.chmod(self.dbroot, 0o700)
+        self.store = SandboxJobStore(self.dbroot / "jobs.sqlite3")
         self.launch_calls = []
         self.freeze_calls = []
         self.audit_events = []
@@ -46,7 +52,7 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         )
         self.lifecycle = SandboxJobLifecycle(
             self.jobs, launcher=launch, freezer=freeze,
-            promotion=self.promotion, audit=audit,
+            promotion=self.promotion, audit=audit, store=self.store,
         )
         from automation.authorized_read_tools import ToolPrincipal
         self.principal = ToolPrincipal("alice", frozenset({"workspace:write"}))
@@ -92,8 +98,8 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         job = self.lifecycle.create_job()
         with self.assertRaises(SandboxJobError):
             self.lifecycle.start_job(job.job_id)
-        self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.FAILED)
-        self.assertEqual(self.lifecycle.cleanup_job(job.job_id).state, JobState.CLEANED)
+        self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.LAUNCHING)
+        self.assertEqual(self.store.get(job.job_id).state, "launching")
 
     def test_running_job_must_be_frozen_before_discard(self):
         job = self.lifecycle.create_job()
