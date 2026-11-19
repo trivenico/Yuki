@@ -16,6 +16,7 @@ from core.pending_approvals import SQLitePendingApprovalStore
 from core.sqlite_backup_set import create_sqlite_backup_set
 
 
+@unittest.skipUnless(os.name == "posix", "safe backup pruning requires POSIX dir_fd support")
 class ApprovedSQLiteBackupPruningTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
