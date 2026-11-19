@@ -263,6 +263,32 @@ class _Connection:
         return False
 
 
+def observation_review_authorizer(auth_service, session_token_provider):
+    """Authorize review operations from the currently authenticated session.
+
+    The caller supplies a trusted token provider (for example, the desktop
+    session manager). Actor IDs supplied by UI controls are never trusted on
+    their own: they must match the account resolved from that live token.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    def authorize(actor_id, permission):
+        if not isinstance(permission, str) or not permission.startswith("observation:review:"):
+            return False
+        token = session_token_provider()
+        user = auth_service.resolve_session(token)
+        return bool(
+            user is not None
+            and user.user_id == actor_id
+            and permission in user.permissions
+        )
+
+    return authorize
+
+
 def workflow_principal_resolver(auth_service):
     """Resolve workflow approval identity from a trusted, transport-extracted session token."""
     from automation.workflow_approval import AuthenticatedPrincipal
