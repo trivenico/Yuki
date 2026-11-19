@@ -43,6 +43,10 @@ class ObservationKnowledgeReviewService:
         self._require(actor_id, "observation:review:read")
         return self._store.list_pending(limit=limit)
 
+    def list_recent(self, *, actor_id: str, limit: int = 100):
+        self._require(actor_id, "observation:review:read")
+        return self._store.list_recent(limit=limit)
+
     def get(self, proposal_id: str, *, actor_id: str):
         self._require(actor_id, "observation:review:read")
         return self._store.get(proposal_id)
