@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 import os
 import sqlite3
 import tempfile
@@ -12,9 +13,10 @@ from core.sqlite_backup_verify import SQLiteBackupVerificationError, verify_sqli
 
 class SQLiteBackupVerificationTests(unittest.TestCase):
     def _db(self, path, value):
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db:
             db.execute("CREATE TABLE records(value TEXT NOT NULL)")
             db.execute("INSERT INTO records VALUES (?)", (value,))
+            db.commit()
 
     def _fixture(self):
         temporary = tempfile.TemporaryDirectory()
