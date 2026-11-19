@@ -213,10 +213,19 @@ class YukiAgentWorkforceExecutor:
                     + "\n[experiment_id=" + experiment_context["experiment_id"]
                     + "; intervention_version=" + version + "]"
                 )
-                # This event is emitted immediately before the actual skill
-                # invocation, after the treatment content has been assembled.
-                record_treatment_exposure(skill_name=selected.name)
-        response = self.agent.run_skill(selected.name, argument)
+                # YukiCoreAgent invokes this observer only after fresh human
+                # permission approval and immediately before guarded skill execution.
+                before_invoke = lambda: record_treatment_exposure(skill_name=selected.name)
+            else:
+                before_invoke = None
+        else:
+            before_invoke = None
+        if before_invoke is None:
+            response = self.agent.run_skill(selected.name, argument)
+        else:
+            response = self.agent.run_skill(
+                selected.name, argument, before_invoke=before_invoke,
+            )
         if type(getattr(response, "ok", None)) is not bool:
             return WorkforceExecutionOutcome(False, "invalid_agent_response", "Yuki agent returned an invalid response.")
         stage = getattr(response, "stage", None)
