@@ -11,12 +11,12 @@ from typing import Any
 
 
 def _close_expired_controller(controller: Any) -> Exception | None:
-    """Best-effort revoke and close a controller before returning to login.
+    """Best-effort revoke and close a controller before reopening the local profile.
 
     Authorization failures can arrive from background workers after the
-    authenticated session has already expired. Attempt complete cleanup before
-    returning to login; callers retain the closed controller if cleanup fails so
-    the owner can retry revocation without reopening session actions.
+    local profile session has expired. Attempt complete cleanup before opening
+    a fresh process session; callers retain the closed controller if cleanup
+    fails so the owner can retry cleanup without reopening session actions.
     """
     if controller is None:
         return None
@@ -113,17 +113,10 @@ def _build_services():
             keyring_account=memory_keyring_account,
         ),),
     )
+    # The desktop is a single local profile. The session manager creates
+    # its sole owner on first launch and opens a fresh OS-keyring-backed
+    # process session; hosted/API authentication remains a separate concern.
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
-    if not auth.list_users():
-        bootstrap_username = os.environ.get("YUKI_BOOTSTRAP_ADMIN_USERNAME", "").strip()
-        bootstrap_password = os.environ.get("YUKI_BOOTSTRAP_ADMIN_PASSWORD", "")
-        if bool(bootstrap_username) != bool(bootstrap_password):
-            raise RuntimeError(
-                "Set both YUKI_BOOTSTRAP_ADMIN_USERNAME and "
-                "YUKI_BOOTSTRAP_ADMIN_PASSWORD for first-run desktop setup."
-            )
-        if bootstrap_username and bootstrap_password:
-            auth.bootstrap_admin(bootstrap_username, bootstrap_password)
     sessions = DesktopSessionManager(auth, keyring)
     provider = None
     try:
