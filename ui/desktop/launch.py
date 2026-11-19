@@ -1260,6 +1260,31 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
+            # Restore only the newest conversation owned by this authenticated
+            # account. The controller delegates to the live-session-checked
+            # facade, which enforces owner scope again at every operation.
+            try:
+                recent_conversations = self.controller.list_conversations(limit=1)
+                if recent_conversations:
+                    recent = recent_conversations[0]
+                    conversation_id = recent.get("conversation_id")
+                    if isinstance(conversation_id, str) and conversation_id:
+                        self.controller.select_conversation(conversation_id)
+                        for item in self.controller.history(limit=200):
+                            role = item.get("role")
+                            content = item.get("content")
+                            if role in ("user", "assistant") and isinstance(content, str):
+                                speaker = "You" if role == "user" else "Yuki"
+                                self.transcript.appendPlainText(speaker + ": " + content)
+                        self.chat_status.setText("Restored your most recent conversation.")
+            except Exception as exc:
+                # History failure must not grant access or block chat startup;
+                # report it clearly and leave the transcript empty.
+                self.transcript.clear()
+                self.chat_status.setText(
+                    "Conversation history could not be restored ("
+                    + type(exc).__name__ + "). You can still start a new chat."
+                )
             availability_check = getattr(self.provider, "is_available", None)
             provider_ready = None
             if callable(availability_check):
