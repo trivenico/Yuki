@@ -140,6 +140,34 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(lesson["independently_verified_successes"], 1)
         self.assertIn("association", " ".join(snapshot["knowledge_effectiveness"]["limitations"]))
 
+    def test_knowledge_outcomes_separate_unverified_caller_references(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        task = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Task with forged lesson reference",
+                "review_required": False,
+                "knowledge_context": [{"knowledge_id": "caller-invented-lesson"}],
+            },
+            idempotency_key="knowledge-forged-reference", max_attempts=1,
+        )
+        self.engine.claim("knowledge-provenance-worker", task_type="workforce.task")
+        self.engine.complete(task["id"], "knowledge-provenance-worker", {
+            "ok": True, "status": "completed", "employee_id": employee.employee_id,
+            "review_required": False, "review_evidence": None,
+        })
+
+        snapshot = self.dashboard.snapshot()
+        lesson = snapshot["knowledge_effectiveness"]["lessons"][0]
+        self.assertEqual(lesson["exposures"], 1)
+        self.assertEqual(lesson["currently_verified_exposures"], 0)
+        self.assertEqual(lesson["unverified_reference_exposures"], 1)
+        self.assertIn("current verified status does not prove", " ".join(
+            snapshot["knowledge_effectiveness"]["limitations"]
+        ))
+
     def test_knowledge_review_evidence_rejects_owner_alias_and_mismatched_result_employee(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
