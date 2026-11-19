@@ -7,6 +7,7 @@ Accelerator backends can implement ComputeBackend without changing callers.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import importlib
 from dataclasses import dataclass
 import threading
 from typing import Callable, Iterator, TypeVar
@@ -98,6 +99,127 @@ class CPUBackend(ComputeBackend):
         if not callable(operation):
             raise TypeError("operation must be callable")
         return operation()
+
+
+class CUDABackend(ComputeBackend):
+    """Optional NVIDIA CUDA backend using an installed PyTorch runtime.
+
+    The reported capacity is the free VRAM snapshot taken at construction;
+    deployments should recreate/refresh the backend after device topology or
+    external GPU workloads change. Reservations remain process-local.
+    """
+
+    def __init__(
+        self, *, device_index: int = 0, max_concurrency: int = 1,
+        torch_module=None,
+    ) -> None:
+        if type(device_index) is not int or device_index < 0:
+            raise ValueError("device_index must be a non-negative integer")
+        if type(max_concurrency) is not int or max_concurrency < 1:
+            raise ValueError("max_concurrency must be a positive integer")
+        self.device_index = device_index
+        self._torch = torch_module
+        if self._torch is None:
+            try:
+                self._torch = importlib.import_module("torch")
+            except ImportError:
+                self._torch = None
+        available = False
+        capacity = 0
+        device_name = f"cuda:{device_index}"
+        if self._torch is not None:
+            try:
+                cuda = self._torch.cuda
+                available = bool(cuda.is_available() and device_index < cuda.device_count())
+                if available:
+                    device_name = str(cuda.get_device_name(device_index))
+                    free_bytes, _total_bytes = cuda.mem_get_info(device_index)
+                    capacity = max(0, int(free_bytes))
+            except Exception:
+                # Discovery is diagnostic; a broken driver/runtime is unavailable.
+                available = False
+                capacity = 0
+        self._capabilities = ComputeCapabilities(
+            backend="cuda", device="cuda", available=available,
+            memory_capacity_bytes=capacity, max_concurrency=max_concurrency,
+        )
+        self.device_name = device_name
+
+    @property
+    def capabilities(self) -> ComputeCapabilities:
+        return self._capabilities
+
+    def execute(self, operation: Callable[[], T]) -> T:
+        if not callable(operation):
+            raise TypeError("operation must be callable")
+        if not self._capabilities.available or self._torch is None:
+            raise ComputeBackendError("NVIDIA CUDA runtime is unavailable")
+        try:
+            with self._torch.cuda.device(self.device_index):
+                return operation()
+        except Exception as exc:
+            raise ComputeBackendError("CUDA operation failed") from exc
+
+
+class GoogleTPUBackend(ComputeBackend):
+    """Optional Google TPU backend using JAX device placement.
+
+    JAX does not expose a portable, reliable free-HBM query across TPU
+    generations. Capacity is therefore an explicit operator-supplied budget,
+    never a fabricated hardware measurement.
+    """
+
+    def __init__(
+        self, *, memory_capacity_bytes: int, max_concurrency: int = 1,
+        device_index: int = 0, jax_module=None,
+    ) -> None:
+        if type(memory_capacity_bytes) is not int or memory_capacity_bytes < 0:
+            raise ValueError("memory_capacity_bytes must be a non-negative integer")
+        if type(max_concurrency) is not int or max_concurrency < 1:
+            raise ValueError("max_concurrency must be a positive integer")
+        if type(device_index) is not int or device_index < 0:
+            raise ValueError("device_index must be a non-negative integer")
+        self.device_index = device_index
+        self._jax = jax_module
+        if self._jax is None:
+            try:
+                self._jax = importlib.import_module("jax")
+            except ImportError:
+                self._jax = None
+        self._device = None
+        available = False
+        if self._jax is not None:
+            try:
+                devices = self._jax.devices(" TPU")
+                # JAX platform spelling is "tpu"; tolerate runtime normalization.
+                if not devices:
+                    devices = [device for device in self._jax.devices()
+                               if str(getattr(device, "platform", "")).lower() == "tpu"]
+                if device_index < len(devices):
+                    self._device = devices[device_index]
+                    available = True
+            except Exception:
+                available = False
+        self._capabilities = ComputeCapabilities(
+            backend="tpu", device="tpu", available=available,
+            memory_capacity_bytes=memory_capacity_bytes if available else 0,
+            max_concurrency=max_concurrency,
+        )
+
+    @property
+    def capabilities(self) -> ComputeCapabilities:
+        return self._capabilities
+
+    def execute(self, operation: Callable[[], T]) -> T:
+        if not callable(operation):
+            raise TypeError("operation must be callable")
+        if not self._capabilities.available or self._jax is None or self._device is None:
+            raise ComputeBackendError("Google TPU runtime is unavailable")
+        try:
+            with self._jax.default_device(self._device):
+                return operation()
+        except Exception as exc:
+            raise ComputeBackendError("TPU operation failed") from exc
 
 
 class ComputeScheduler:
