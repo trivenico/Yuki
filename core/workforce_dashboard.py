@@ -277,6 +277,48 @@ class WorkforceDashboard:
             for capability, demand in sorted(capability_demand.items())
         ]
 
+        capability_failures: Counter = Counter()
+        capability_terminal: Counter = Counter()
+        for (_, _, capabilities), counts in failure_groups.items():
+            for capability in capabilities:
+                capability_failures[capability] += counts["failed"]
+                capability_terminal[capability] += counts["completed_tasks"]
+
+        capability_gap_signals = []
+        capability_names = sorted(set(capability_demand) | set(capability_failures))
+        for capability in capability_names:
+            demand = capability_demand[capability]
+            capacity = capability_supply[capability]
+            failed = capability_failures[capability]
+            terminal = capability_terminal[capability]
+            matching_lessons = sorted(knowledge_by_capability.get(capability.casefold(), []))
+            if demand > 0 and capacity == 0:
+                assessment = "backlog_without_current_capacity"
+            elif failed >= 2 and terminal >= 3:
+                assessment = "repeated_failures_with_current_capacity" if capacity else "repeated_failures_without_current_capacity"
+            elif demand > 0:
+                assessment = "backlog_with_current_capacity"
+            elif failed > 0:
+                assessment = "limited_failure_observations"
+            else:
+                assessment = "no_current_gap_signal"
+            capability_gap_signals.append({
+                "capability": capability,
+                "queued_or_running_tasks": demand,
+                "employees_with_capacity": capacity,
+                "failed_tasks": failed,
+                "terminal_tasks": terminal,
+                "failure_rate": failed / terminal if terminal else None,
+                "verified_knowledge_ids": matching_lessons,
+                "knowledge_coverage": "verified_tag_match_available" if matching_lessons else "no_verified_tag_match",
+                "assessment": assessment,
+                "evidence_scope": "bounded_dashboard_goal_window_and_current_registry",
+                "signal_strength": (
+                    "repeated_observation" if failed >= 2 and terminal >= 3
+                    else "limited_observation" if failed else "current_capacity_snapshot"
+                ),
+            })
+
         department_signals = []
         for department in sorted(department_rows.values(), key=lambda row: row["name"]):
             terminal = department["succeeded_tasks"] + department["failed_tasks"]
@@ -311,6 +353,39 @@ class WorkforceDashboard:
                     "requires_human_approval": True,
                     "automatic_action_taken": False,
                 })
+
+        for signal in capability_gap_signals:
+            if signal["assessment"] not in {
+                "backlog_without_current_capacity",
+                "repeated_failures_with_current_capacity",
+                "repeated_failures_without_current_capacity",
+            }:
+                continue
+            high_priority = signal["assessment"] == "backlog_without_current_capacity"
+            improvement_recommendations.append({
+                "id": f"capability-gap:{signal['capability']}",
+                "category": "capability_gap_review",
+                "priority": "high" if high_priority else "medium",
+                "evidence": {
+                    "capability": signal["capability"],
+                    "assessment": signal["assessment"],
+                    "queued_or_running_tasks": signal["queued_or_running_tasks"],
+                    "employees_with_capacity": signal["employees_with_capacity"],
+                    "failed_tasks": signal["failed_tasks"],
+                    "terminal_tasks": signal["terminal_tasks"],
+                    "failure_rate": signal["failure_rate"],
+                    "verified_knowledge_ids": signal["verified_knowledge_ids"],
+                    "knowledge_coverage": signal["knowledge_coverage"],
+                    "evidence_scope": signal["evidence_scope"],
+                },
+                "recommendation": (
+                    "Review scheduling, task prioritization, and approved capability development; current registry capacity is a snapshot, not proof that hiring or reassignment is required."
+                    if high_priority
+                    else "Review representative failed tasks, available capacity, and matching verified lessons before deciding whether workflow, training, or staffing changes are warranted."
+                ),
+                "requires_human_approval": True,
+                "automatic_action_taken": False,
+            })
 
         for signal in department_signals:
             if signal["queued_tasks"] > 0:
@@ -453,6 +528,7 @@ class WorkforceDashboard:
             "decision_intelligence": {
                 "scope": "descriptive signals from the dashboard's bounded goal window and current registry",
                 "capability_demand": capability_signals,
+                "capability_gap_signals": capability_gap_signals,
                 "department_signals": department_signals,
                 "failure_patterns": failure_patterns,
                 "improvement_recommendations": improvement_recommendations,
@@ -465,6 +541,7 @@ class WorkforceDashboard:
                     "recurring failure patterns require at least two failures and three terminal observations in a department/task-type/capability group",
                     "failure patterns are descriptive, do not attribute fault to individual employees, and omit raw failure details",
                     "knowledge coverage uses exact verified-lesson tag matches only; a match does not prove applicability or effectiveness, and no match does not prove knowledge is absent",
+                    "capability gap assessments combine bounded task observations with a point-in-time registry capacity snapshot; they are review priorities, not forecasts or proof of staffing shortages",
                     "verified knowledge listing is bounded to the newest 500 records; coverage may omit older verified lessons",
                     "signals are not forecasts, employee quality scores, or authorization to reassign work",
                 ],
