@@ -1281,6 +1281,19 @@ class DurableTaskEngine:
                    GROUP BY task_id HAVING COUNT(DISTINCT attempt)>1""",
                 (experiment_id,),
             ).fetchall()
+            incomplete_execution_rows = c.execute(
+                """SELECT started.task_id,started.attempt
+                   FROM workforce_experiment_execution_events started
+                   WHERE started.experiment_id=? AND started.event_type='execution_started'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM workforce_experiment_execution_events terminal
+                       WHERE terminal.experiment_id=started.experiment_id
+                         AND terminal.task_id=started.task_id
+                         AND terminal.attempt=started.attempt
+                         AND terminal.event_type IN ('execution_succeeded','execution_failed')
+                     )""",
+                (experiment_id,),
+            ).fetchall()
         design = json.loads(experiment["design_json"])
         population = design.get("eligible_population")
         allowed_types = (
@@ -1296,6 +1309,9 @@ class DurableTaskEngine:
         for row in repeated_execution_rows:
             issues.append({"code": "repeated_worker_execution", "task_id": row["task_id"],
                            "attempts": row["attempts"]})
+        for row in incomplete_execution_rows:
+            issues.append({"code": "worker_execution_missing_terminal_event",
+                           "task_id": row["task_id"], "attempt": row["attempt"]})
         delivery_counts = {"delivered": 0, "not_delivered": 0, "unknown": 0, "unrecorded": 0}
         for row in rows:
             expected_key = hashlib.sha256(
