@@ -97,7 +97,13 @@ def _build_services():
         require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
-    from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+    from core.profile_identity import (
+        bind_profile_to_current_os_user, load_or_create_profile_id,
+        profile_memory_keyring_account,
+    )
+    # Bind before opening auth, memory, conversations or tool stores. A second
+    # OS account must never inherit the first owner's local assistant authority.
+    bind_profile_to_current_os_user(root)
     keyring = load_os_keyring()
     profile_id = load_or_create_profile_id(root)
     memory_keyring_account = profile_memory_keyring_account(profile_id)
