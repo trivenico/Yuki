@@ -422,6 +422,7 @@ def run() -> int:
             self.lifecycle = None
             self.observation_review_database = None
             self.observation_review_service = None
+            self.curated_knowledge_catalog = None
             self.controller = None
             self.voice_session = None
             self.speech_session = None
@@ -667,12 +668,14 @@ def run() -> int:
             )
             self.observation_delete_button = QPushButton("Delete")
             self.observation_delete_button.clicked.connect(self._delete_observation_proposal)
+            self.observation_promote_button = QPushButton("Promote approved")
+            self.observation_promote_button.clicked.connect(self._promote_observation_proposal)
             self.observation_audit_button = QPushButton("View audit")
             self.observation_audit_button.clicked.connect(self._show_observation_audit)
             for control in (
                 self.observation_refresh_button, self.observation_approve_button,
                 self.observation_reject_button, self.observation_delete_button,
-                self.observation_audit_button,
+                self.observation_promote_button, self.observation_audit_button,
             ):
                 observation_actions.addWidget(control)
             observation_layout.addLayout(observation_actions)
@@ -1171,8 +1174,15 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
             from ui.desktop.observation_learning import build_desktop_observation_review_service
+            from core.curated_knowledge_store import SQLiteCuratedKnowledge
             self.observation_review_service = build_desktop_observation_review_service(
                 self.auth, self.sessions, identity, self.observation_review_database,
+            )
+            curated_path = Path(self.observation_review_database).with_name(
+                "curated-knowledge.sqlite3"
+            )
+            self.curated_knowledge_catalog = SQLiteCuratedKnowledge(
+                str(curated_path), owner_id=identity.actor_id,
             )
             specialist_controller = DesktopCompanionController(
                 context.application, context.identity, self.sessions,
@@ -1561,6 +1571,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.observation_approve_button.setEnabled(False)
             self.observation_reject_button.setEnabled(False)
             self.observation_delete_button.setEnabled(False)
+            self.observation_promote_button.setEnabled(False)
             service = self.observation_review_service
             identity = self.sessions.current_identity() if self.sessions is not None else None
             if service is None or identity is None:
@@ -1594,6 +1605,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.observation_approve_button.setEnabled(False)
             self.observation_reject_button.setEnabled(False)
             self.observation_delete_button.setEnabled(False)
+            self.observation_promote_button.setEnabled(False)
             if not proposal_id or identity is None or service is None:
                 self.observation_proposal_details.clear()
                 return
@@ -1612,6 +1624,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.observation_approve_button.setEnabled(pending)
                 self.observation_reject_button.setEnabled(pending)
                 self.observation_delete_button.setEnabled(True)
+                self.observation_promote_button.setEnabled(
+                    proposal.status == "approved" and self.curated_knowledge_catalog is not None
+                )
             except Exception as exc:
                 self.observation_proposal_details.setPlainText(
                     "Proposal unavailable (" + type(exc).__name__ + ")."
@@ -1632,6 +1647,37 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     "Review action failed (" + type(exc).__name__ + ")."
                 )
 
+        def _promote_observation_proposal(self):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            if not proposal_id or identity is None or service is None or catalog is None:
+                return
+            answer = QMessageBox.question(
+                self, "Promote curated knowledge",
+                "Add this approved observation to Yuki's durable curated knowledge catalog? "
+                "This does not change system instructions, permissions, or model weights.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                entry_id = service.promote_approved(
+                    proposal_id, actor_id=identity.actor_id, catalog=catalog,
+                )
+                self.observation_status.setText(
+                    "Approved proposal promoted to curated knowledge (" + entry_id[:12] + ")."
+                )
+                self._refresh_observation_proposals()
+            except PermissionError:
+                self.observation_status.setText(
+                    "Promotion requires the separate memory:knowledge:promote permission."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Knowledge promotion failed (" + type(exc).__name__ + ")."
+                )
         def _delete_observation_proposal(self):
             proposal_id = self._selected_observation_proposal_id()
             identity = self.sessions.current_identity() if self.sessions is not None else None
