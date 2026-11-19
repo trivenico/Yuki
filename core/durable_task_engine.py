@@ -144,6 +144,27 @@ class DurableTaskEngine:
             );
             CREATE INDEX IF NOT EXISTS workforce_experiment_execution_events_idx
               ON workforce_experiment_execution_events(experiment_id,event_type,created_at);
+            CREATE TABLE IF NOT EXISTS workforce_experiment_treatment_exposures(
+              exposure_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              experiment_id TEXT NOT NULL,
+              task_id TEXT NOT NULL,
+              attempt INTEGER NOT NULL CHECK(attempt >= 1),
+              worker_id TEXT NOT NULL,
+              intervention_version TEXT NOT NULL,
+              skill_name TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              FOREIGN KEY(experiment_id,task_id)
+                REFERENCES workforce_experiment_assignments(experiment_id,task_id),
+              UNIQUE(experiment_id,task_id,attempt)
+            );
+            CREATE INDEX IF NOT EXISTS workforce_experiment_treatment_exposures_idx
+              ON workforce_experiment_treatment_exposures(experiment_id,created_at);
+            CREATE TRIGGER IF NOT EXISTS workforce_experiment_treatment_exposures_no_update
+            BEFORE UPDATE ON workforce_experiment_treatment_exposures
+            BEGIN SELECT RAISE(ABORT,'treatment exposure events are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS workforce_experiment_treatment_exposures_no_delete
+            BEFORE DELETE ON workforce_experiment_treatment_exposures
+            BEGIN SELECT RAISE(ABORT,'treatment exposure events are immutable'); END;
             CREATE TRIGGER IF NOT EXISTS workforce_experiment_execution_events_no_update
             BEFORE UPDATE ON workforce_experiment_execution_events
             BEGIN SELECT RAISE(ABORT,'experiment execution events are immutable'); END;
@@ -1223,6 +1244,91 @@ class DurableTaskEngine:
             "intervention": intervention if row["assignment"] == "treatment" else None,
             "intervention_version": version if row["assignment"] == "treatment" else None,
         }
+
+    def record_workforce_experiment_treatment_exposure(
+        self, experiment_id, task_id, *, worker_id, attempt, intervention_version, skill_name,
+    ):
+        """Record treatment only at the trusted adapter immediately before skill invocation."""
+        for name, value in (("experiment_id", experiment_id), ("task_id", task_id),
+                            ("worker_id", worker_id), ("intervention_version", intervention_version),
+                            ("skill_name", skill_name)):
+            if not isinstance(value, str) or not 1 <= len(value) <= 256 or value.strip() != value:
+                raise ValueError("invalid " + name)
+        if type(attempt) is not int or attempt < 1:
+            raise ValueError("attempt must be a positive integer")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                """SELECT a.assignment,e.state,t.state AS task_state,t.lease_owner,
+                          t.lease_until,t.attempts,e.design_json
+                   FROM workforce_experiment_assignments a
+                   JOIN workforce_experiments e ON e.experiment_id=a.experiment_id
+                   JOIN tasks t ON t.id=a.task_id
+                   WHERE a.experiment_id=? AND a.task_id=?""",
+                (experiment_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise TaskNotFound("experiment assignment not found")
+            if row["assignment"] != "treatment":
+                raise TaskConflict("control assignments cannot record treatment exposure")
+            if row["state"] != "approved" or row["task_state"] != "running":
+                raise TaskConflict("approved experiment and running task are required")
+            if (row["lease_owner"] != worker_id or row["lease_until"] is None
+                    or row["lease_until"] <= now or row["attempts"] != attempt):
+                raise TaskConflict("worker does not hold the matching live task lease")
+            intervention = json.loads(row["design_json"]).get("intervention")
+            expected_version = hashlib.sha256(intervention.encode("utf-8")).hexdigest()
+            if intervention_version != expected_version:
+                raise TaskConflict("intervention version does not match the approved experiment design")
+            existing = c.execute(
+                """SELECT worker_id,intervention_version,skill_name FROM workforce_experiment_treatment_exposures
+                   WHERE experiment_id=? AND task_id=? AND attempt=?""",
+                (experiment_id, task_id, attempt),
+            ).fetchone()
+            requested = (worker_id, intervention_version, skill_name)
+            if existing is not None:
+                if (existing["worker_id"], existing["intervention_version"], existing["skill_name"]) != requested:
+                    raise TaskConflict("treatment exposure already recorded with different provenance")
+                c.commit()
+                return {"created": False, "experiment_id": experiment_id, "task_id": task_id,
+                        "attempt": attempt, "intervention_version": intervention_version,
+                        "skill_name": skill_name}
+            c.execute(
+                """INSERT INTO workforce_experiment_treatment_exposures
+                   (experiment_id,task_id,attempt,worker_id,intervention_version,skill_name,created_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (experiment_id, task_id, attempt, worker_id, intervention_version, skill_name, now),
+            )
+            c.execute(
+                """INSERT INTO workforce_experiment_events
+                   (experiment_id,event_type,actor_id,detail_json,created_at)
+                   VALUES(?,?,?,?,?)""",
+                (experiment_id, "experiment.treatment_exposed", worker_id,
+                 self._json({"task_id": task_id, "attempt": attempt,
+                             "intervention_version": intervention_version, "skill_name": skill_name}), now),
+            )
+            c.commit()
+        return {"created": True, "experiment_id": experiment_id, "task_id": task_id,
+                "attempt": attempt, "intervention_version": intervention_version,
+                "skill_name": skill_name}
+
+    def list_workforce_experiment_treatment_exposures(self, experiment_id, *, limit=500):
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        with closing(self._connect()) as c:
+            if c.execute("SELECT 1 FROM workforce_experiments WHERE experiment_id=?",
+                         (experiment_id,)).fetchone() is None:
+                raise TaskNotFound("experiment not found")
+            rows = c.execute(
+                """SELECT task_id,attempt,worker_id,intervention_version,skill_name,created_at
+                   FROM workforce_experiment_treatment_exposures
+                   WHERE experiment_id=? ORDER BY exposure_id LIMIT ?""",
+                (experiment_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def record_task_experiment_execution_event(self, task_id, event_type, *, worker_id, attempt):
         """Record an execution event when a task belongs to an experiment; otherwise no-op."""
