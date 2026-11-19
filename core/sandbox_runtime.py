@@ -58,7 +58,10 @@ def build_docker_argv(
     if uid == 0:
         raise SandboxRuntimeError("refusing sandbox launch from a root service")
 
-    workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
+    # This is the trusted workspace, never a sandbox scratch directory.
+    # Artifact export must use isolated staging and explicit promotion.
+    if "write_workspace" in policy.capabilities:
+        raise SandboxRuntimeError("trusted workspace is always mounted read-only")
     return [
         "docker", "run", "--rm", "--interactive", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
@@ -66,6 +69,6 @@ def build_docker_argv(
         "--pids-limit", str(policy.max_processes), "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges:true",
         "--tmpfs", f"/tmp:rw,noexec,nosuid,nodev,size={min(policy.memory_mb, 256)}m",
-        "--mount", f"type=bind,src={str(path.resolve())},dst=/workspace,{workspace_access}",
+        "--mount", f"type=bind,src={str(path.resolve())},dst=/workspace,ro",
         "--workdir", "/workspace", *network_args, image, *command,
     ]
