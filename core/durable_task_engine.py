@@ -199,6 +199,24 @@ class DurableTaskEngine:
               ON workforce_knowledge(state,updated_at);
             CREATE INDEX IF NOT EXISTS workforce_knowledge_events_idx
               ON workforce_knowledge_events(knowledge_id,id);
+            CREATE TABLE IF NOT EXISTS workforce_knowledge_deliveries(
+              task_id TEXT NOT NULL REFERENCES tasks(id),
+              attempt INTEGER NOT NULL,
+              worker_id TEXT NOT NULL,
+              knowledge_id TEXT NOT NULL REFERENCES workforce_knowledge(knowledge_id),
+              knowledge_fingerprint TEXT NOT NULL,
+              context_fingerprint TEXT NOT NULL,
+              context_json TEXT NOT NULL,
+              delivered_at REAL NOT NULL,
+              PRIMARY KEY(task_id,attempt,knowledge_id));
+            CREATE INDEX IF NOT EXISTS workforce_knowledge_deliveries_task_idx
+              ON workforce_knowledge_deliveries(task_id,attempt);
+            CREATE TRIGGER IF NOT EXISTS workforce_knowledge_deliveries_no_update
+              BEFORE UPDATE ON workforce_knowledge_deliveries
+              BEGIN SELECT RAISE(ABORT,'knowledge delivery attestations are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS workforce_knowledge_deliveries_no_delete
+              BEFORE DELETE ON workforce_knowledge_deliveries
+              BEGIN SELECT RAISE(ABORT,'knowledge delivery attestations are immutable'); END;
             CREATE TABLE IF NOT EXISTS workforce_knowledge_revisions(
               revision_id TEXT PRIMARY KEY,
               knowledge_id TEXT NOT NULL REFERENCES workforce_knowledge(knowledge_id),
@@ -550,6 +568,127 @@ class DurableTaskEngine:
                     (domain, limit),
                 ).fetchall()
         return [self.get_knowledge(row["knowledge_id"]) for row in rows]
+
+    def record_workforce_knowledge_delivery(self, task_id, worker_id, attempt, knowledge_context):
+        """Persist immutable lesson-delivery evidence at the leased worker boundary."""
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 256:
+            raise ValueError("invalid task_id")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 256:
+            raise ValueError("invalid worker_id")
+        if type(attempt) is not int or attempt < 1:
+            raise ValueError("attempt must be a positive integer")
+        if not isinstance(knowledge_context, list) or len(knowledge_context) > 5:
+            raise ValueError("knowledge_context must be a list of at most five lessons")
+
+        normalized = []
+        for item in knowledge_context:
+            required = {"knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"}
+            if (not isinstance(item, dict) or set(item) != required
+                    or any(not isinstance(item.get(key), str) or not item[key].strip()
+                           for key in required)):
+                raise ValueError("invalid knowledge delivery context")
+            normalized.append(dict(item))
+
+        now = self.clock()
+        delivered = []
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            task = c.execute(
+                "SELECT state,lease_owner,lease_until,attempts FROM tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+            if (task is None or task["state"] != "running"
+                    or task["lease_owner"] != worker_id
+                    or task["attempts"] != attempt
+                    or not isinstance(task["lease_until"], (int, float))
+                    or task["lease_until"] < now):
+                raise TaskConflict("knowledge delivery requires the current live worker lease")
+
+            seen = set()
+            for item in normalized:
+                knowledge_id = item["knowledge_id"]
+                if knowledge_id in seen:
+                    raise ValueError("duplicate knowledge delivery reference")
+                seen.add(knowledge_id)
+                row = c.execute(
+                    "SELECT fingerprint,knowledge_json,state,source_task_id,reviewed_by "
+                    "FROM workforce_knowledge WHERE knowledge_id=?",
+                    (knowledge_id,),
+                ).fetchone()
+                if row is None or row["state"] != "verified":
+                    raise TaskConflict("knowledge is not currently verified")
+                if (row["source_task_id"] != item["source_task_id"]
+                        or row["reviewed_by"] != item["reviewed_by"]):
+                    raise TaskConflict("knowledge provenance changed before delivery")
+                stored_knowledge = json.loads(row["knowledge_json"])
+                if (stored_knowledge.get("title") != item["title"]
+                        or stored_knowledge.get("lesson") != item["lesson"]):
+                    raise TaskConflict("knowledge content changed before delivery")
+                context_json = self._json(item)
+                context_fingerprint = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
+                existing = c.execute(
+                    "SELECT worker_id,knowledge_fingerprint,context_fingerprint,context_json "
+                    "FROM workforce_knowledge_deliveries "
+                    "WHERE task_id=? AND attempt=? AND knowledge_id=?",
+                    (task_id, attempt, knowledge_id),
+                ).fetchone()
+                if existing is not None:
+                    if (existing["worker_id"] != worker_id
+                            or existing["knowledge_fingerprint"] != row["fingerprint"]
+                            or existing["context_fingerprint"] != context_fingerprint
+                            or existing["context_json"] != context_json):
+                        raise TaskConflict("conflicting knowledge delivery replay")
+                    delivered.append({
+                        "task_id": task_id, "attempt": attempt, "worker_id": worker_id,
+                        "knowledge_id": knowledge_id,
+                        "knowledge_fingerprint": row["fingerprint"],
+                        "context_fingerprint": context_fingerprint,
+                        "context": item, "delivered_at": c.execute(
+                            "SELECT delivered_at FROM workforce_knowledge_deliveries "
+                            "WHERE task_id=? AND attempt=? AND knowledge_id=?",
+                            (task_id, attempt, knowledge_id),
+                        ).fetchone()["delivered_at"],
+                    })
+                    continue
+                c.execute(
+                    "INSERT INTO workforce_knowledge_deliveries "
+                    "(task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
+                    "context_fingerprint,context_json,delivered_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (task_id, attempt, worker_id, knowledge_id, row["fingerprint"],
+                     context_fingerprint, context_json, now),
+                )
+                delivered.append({
+                    "task_id": task_id, "attempt": attempt, "worker_id": worker_id,
+                    "knowledge_id": knowledge_id,
+                    "knowledge_fingerprint": row["fingerprint"],
+                    "context_fingerprint": context_fingerprint,
+                    "context": item, "delivered_at": now,
+                })
+            c.commit()
+        return delivered
+
+    def list_workforce_knowledge_deliveries(self, task_id, *, limit=5):
+        """Return immutable delivery attestations for one task, oldest attempt first."""
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 256:
+            raise ValueError("invalid task_id")
+        if type(limit) is not int or not 1 <= limit <= 25:
+            raise ValueError("limit must be between 1 and 25")
+        with closing(self._connect()) as c:
+            rows = c.execute(
+                "SELECT task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
+                "context_fingerprint,context_json,delivered_at "
+                "FROM workforce_knowledge_deliveries WHERE task_id=? "
+                "ORDER BY attempt,knowledge_id LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+        return [{
+            "task_id": row["task_id"], "attempt": row["attempt"],
+            "worker_id": row["worker_id"], "knowledge_id": row["knowledge_id"],
+            "knowledge_fingerprint": row["knowledge_fingerprint"],
+            "context_fingerprint": row["context_fingerprint"],
+            "context": json.loads(row["context_json"]),
+            "delivered_at": row["delivered_at"],
+        } for row in rows]
 
     def create_knowledge_revision(self, knowledge_id, revision_id, knowledge):
         """Propose a bounded revision to an existing verified lesson; never activates it."""
