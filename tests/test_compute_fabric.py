@@ -1,0 +1,93 @@
+import threading
+import unittest
+
+from core.compute_fabric import (
+    CPUBackend,
+    ComputeCapabilities,
+    ComputeCapacityError,
+    ComputeFabricError,
+    ComputeRequest,
+    ComputeScheduler,
+)
+
+
+class ComputeFabricTests(unittest.TestCase):
+    def setUp(self):
+        self.backend = CPUBackend(memory_capacity_bytes=100, max_concurrency=2)
+        self.scheduler = ComputeScheduler((self.backend,))
+
+    def test_cpu_backend_executes_operation(self):
+        self.assertEqual(self.scheduler.execute(ComputeRequest(), lambda: 42), 42)
+
+    def test_memory_budget_is_enforced_and_released(self):
+        with self.scheduler.reserve(ComputeRequest(memory_bytes=80)):
+            with self.assertRaises(ComputeCapacityError):
+                with self.scheduler.reserve(ComputeRequest(memory_bytes=21)):
+                    self.fail("over-budget reservation should not be admitted")
+        self.assertEqual(
+            self.scheduler.stats()["cpu"]["reserved_memory_bytes"], 0
+        )
+
+    def test_concurrency_limit_is_enforced(self):
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+
+        def operation():
+            entered.set()
+            release.wait(timeout=2)
+
+        worker = threading.Thread(
+            target=lambda: self.scheduler.execute(ComputeRequest(), operation)
+        )
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        try:
+            with self.scheduler.reserve(ComputeRequest()):
+                with self.assertRaises(ComputeCapacityError):
+                    with self.scheduler.reserve(ComputeRequest()):
+                        pass
+        finally:
+            release.set()
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+
+    def test_operation_failure_releases_reservation(self):
+        def fail():
+            raise RuntimeError("expected")
+
+        with self.assertRaisesRegex(RuntimeError, "expected"):
+            self.scheduler.execute(ComputeRequest(memory_bytes=30), fail)
+        self.assertEqual(
+            self.scheduler.stats()["cpu"],
+            {"reserved_memory_bytes": 0, "active_operations": 0},
+        )
+
+    def test_rejects_invalid_resource_values(self):
+        for value in (-1, True, 1.5):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ComputeRequest(memory_bytes=value)
+        with self.assertRaises(ValueError):
+            ComputeCapabilities("cpu", "gpu", True, 10, 1)
+
+    def test_unknown_or_unavailable_backend_is_not_executed(self):
+        with self.assertRaises(LookupError):
+            self.scheduler.execute(ComputeRequest(backend="cuda"), lambda: None)
+
+        class UnavailableBackend(CPUBackend):
+            @property
+            def capabilities(self):
+                return ComputeCapabilities("offline", "cpu", False, 10, 1)
+
+        scheduler = ComputeScheduler((UnavailableBackend(),))
+        with self.assertRaises(ComputeFabricError):
+            scheduler.execute(ComputeRequest(backend="offline"), lambda: None)
+
+    def test_duplicate_backend_registration_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.scheduler.register(CPUBackend())
+
+
+if __name__ == "__main__":
+    unittest.main()
