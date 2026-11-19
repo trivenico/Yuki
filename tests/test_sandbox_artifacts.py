@@ -182,6 +182,16 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "keep")
         self.assertFalse((self.workspace / "new.txt").exists())
 
+    def test_rejects_nul_and_backslash_paths(self):
+        for unsafe_path in ("folder\\report.txt", "folder\x00report.txt"):
+            with self.subTest(path=unsafe_path):
+                with self.assertRaises(ArtifactValidationError):
+                    self.service.promote(
+                        principal=self.principal, staging_directory=self.staging,
+                        manifest=self.manifest, artifact_path=unsafe_path,
+                        destination_path="report.txt",
+                    )
+
     def test_rejects_forged_manifest_digest(self):
         from dataclasses import replace
         forged = replace(self.manifest, digest="0" * 64)
