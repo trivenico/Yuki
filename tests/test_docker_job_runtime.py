@@ -83,6 +83,13 @@ class DockerJobRuntimeTests(unittest.TestCase):
         with self.assertRaises(DockerJobRuntimeError):
             self.runtime.freeze(handle)
 
+    def test_reconstructs_only_deterministic_job_handle(self):
+        handle = self.runtime.handle_for_job(self.job_id)
+        self.assertEqual(handle.job_id, self.job_id)
+        self.assertEqual(handle.container_name, "yuki-job-" + "b" * 32)
+        with self.assertRaises(DockerJobRuntimeError):
+            self.runtime.handle_for_job("job_not-a-valid-id")
+
     def test_rejects_unpinned_image_and_forged_handle(self):
         with self.assertRaises(ValueError):
             DockerJobRuntime(
