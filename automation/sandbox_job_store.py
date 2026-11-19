@@ -20,13 +20,14 @@ from typing import Iterable
 _JOB_ID_RE = re.compile(r"^job_[0-9a-f]{32}$")
 _CONTAINER_RE = re.compile(r"^yuki-job-[0-9a-f]{32}$")
 _STATES = {
-    "created", "running", "frozen", "validated", "promoted",
+    "created", "launching", "running", "frozen", "validated", "promoted",
     "failed", "cancelled", "cleaned",
 }
 
 
 _ALLOWED_TRANSITIONS = {
-    "created": {"running", "failed", "cancelled"},
+    "created": {"launching", "failed", "cancelled"},
+    "launching": {"running", "failed", "cancelled"},
     "running": {"frozen", "failed", "cancelled"},
     "frozen": {"validated", "failed", "cancelled"},
     "validated": {"promoted", "failed"},
@@ -99,7 +100,7 @@ class SandboxJobStore:
                 CREATE TABLE IF NOT EXISTS sandbox_jobs (
                     job_id TEXT PRIMARY KEY,
                     state TEXT NOT NULL CHECK(state IN (
-                        'created','running','frozen','validated','promoted',
+                        'created','launching','running','frozen','validated','promoted',
                         'failed','cancelled','cleaned'
                     )),
                     staging_directory TEXT NOT NULL,
