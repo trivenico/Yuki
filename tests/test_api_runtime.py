@@ -307,6 +307,64 @@ class ConversationRuntimeTests(unittest.TestCase):
             ])
             self.assertTrue(runtime._closed)
 
+    def test_startup_runs_sandbox_recovery_before_accepting_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            recovery = SimpleNamespace(
+                calls=0,
+                recover_nonterminal=lambda: [{"job_id": "job_x", "outcome": "removed"}],
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), sandbox_job_recovery=recovery,
+            )
+            events = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            import asyncio
+            asyncio.run(runtime({"type": "lifespan"}, receive, send))
+            self.assertEqual(sent[0]["type"], "lifespan.startup.complete")
+            self.assertTrue(runtime._startup_complete)
+
+    def test_startup_fails_closed_when_sandbox_recovery_is_ambiguous(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            recovery = SimpleNamespace(
+                recover_nonterminal=lambda: [
+                    {"job_id": "job_x", "outcome": "recovery_required"}
+                ],
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), sandbox_job_recovery=recovery,
+            )
+            events = [{"type": "lifespan.startup"}]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            import asyncio
+            asyncio.run(runtime({"type": "lifespan"}, receive, send))
+            self.assertEqual(sent, [{
+                "type": "lifespan.startup.failed",
+                "message": "Yuki startup recovery failed: RuntimeError",
+            }])
+            self.assertTrue(runtime._closed)
+            self.assertFalse(runtime._startup_complete)
+
+    def test_runtime_rejects_invalid_sandbox_recovery_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "sandbox_job_recovery"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), sandbox_job_recovery=object(),
+                )
+
     def test_invalid_dependencies_fail_before_store_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(TypeError, "auth_service"):
