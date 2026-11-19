@@ -97,6 +97,18 @@ class SandboxJobCompositionTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_config(config_path)
 
+    def test_production_factory_injects_recovery_when_enabled(self):
+        runtime = object()
+        recovery = object()
+        with patch("api.production_runtime.build_sandbox_job_recovery", return_value=recovery), patch(
+            "api.production_runtime.build_conversation_runtime", return_value=runtime
+        ) as builder:
+            result = build_production_conversation_runtime(
+                {"sandbox_jobs_enabled": True}, auth_service=object(), agent_loop=object()
+            )
+        self.assertIs(result, runtime)
+        self.assertIs(builder.call_args.kwargs["sandbox_job_recovery"], recovery)
+
     def test_production_factory_rejects_caller_supplied_recovery(self):
         with self.assertRaises(ValueError):
             build_production_conversation_runtime(
