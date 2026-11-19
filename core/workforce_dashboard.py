@@ -149,12 +149,30 @@ class WorkforceDashboard:
             group["completed_tasks"] += 1
             group[task["state"]] += 1
 
+        # Only the durable store's verified records are eligible for coverage.
+        # Capability matching is deliberately exact against curated knowledge tags;
+        # free-text lesson/domain similarity would create unsupported associations.
+        verified_knowledge = self.task_engine.list_verified_knowledge(limit=500)
+        knowledge_by_capability: dict[str, list[str]] = defaultdict(list)
+        for record in verified_knowledge:
+            knowledge = record.get("knowledge") if isinstance(record, dict) else None
+            if not isinstance(knowledge, dict) or not isinstance(knowledge.get("tags"), list):
+                continue
+            for tag in knowledge["tags"]:
+                if isinstance(tag, str) and tag.strip():
+                    knowledge_by_capability[tag.strip().casefold()].append(record["knowledge_id"])
+
         failure_patterns = []
         for (department, task_type, capabilities), counts in sorted(failure_groups.items()):
             failed = counts["failed"]
             completed = counts["completed_tasks"]
             if failed < 2 or completed < 3:
                 continue
+            matched_knowledge = sorted({
+                knowledge_id
+                for capability in capabilities
+                for knowledge_id in knowledge_by_capability.get(capability.casefold(), [])
+            })
             failure_patterns.append({
                 "department": department,
                 "task_type": task_type,
@@ -163,6 +181,11 @@ class WorkforceDashboard:
                 "succeeded_tasks": counts["succeeded"],
                 "completed_tasks": completed,
                 "failure_rate": failed / completed,
+                "verified_knowledge_ids": matched_knowledge,
+                "knowledge_coverage": (
+                    "verified_tag_match_available" if matched_knowledge
+                    else "no_verified_tag_match"
+                ),
                 "signal_strength": "repeated_observation",
                 "evidence_scope": "bounded_dashboard_goal_window",
                 "employee_attribution": False,
@@ -352,8 +375,14 @@ class WorkforceDashboard:
                     "completed_tasks": pattern["completed_tasks"],
                     "failure_rate": pattern["failure_rate"],
                     "evidence_scope": pattern["evidence_scope"],
+                    "verified_knowledge_ids": pattern["verified_knowledge_ids"],
+                    "knowledge_coverage": pattern["knowledge_coverage"],
                 },
-                "recommendation": "Review representative task records and execution conditions for a shared cause before proposing a workflow, capability, or tooling change.",
+                "recommendation": (
+                    "Review matching verified lessons and representative task evidence; a tag match does not establish lesson applicability or effectiveness."
+                    if pattern["verified_knowledge_ids"]
+                    else "No verified lesson has an exact capability-tag match; review whether curated knowledge is needed alongside representative task evidence."
+                ),
                 "requires_human_approval": True,
                 "automatic_action_taken": False,
             })
@@ -435,6 +464,8 @@ class WorkforceDashboard:
                     "failure rates exclude cancelled tasks and are omitted when no succeeded/failed tasks exist",
                     "recurring failure patterns require at least two failures and three terminal observations in a department/task-type/capability group",
                     "failure patterns are descriptive, do not attribute fault to individual employees, and omit raw failure details",
+                    "knowledge coverage uses exact verified-lesson tag matches only; a match does not prove applicability or effectiveness, and no match does not prove knowledge is absent",
+                    "verified knowledge listing is bounded to the newest 500 records; coverage may omit older verified lessons",
                     "signals are not forecasts, employee quality scores, or authorization to reassign work",
                 ],
             },
