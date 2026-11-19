@@ -84,6 +84,10 @@ class DesktopObservationController:
             )
         except Exception:
             collector.stop()
+            try:
+                self._set_indicator(False)
+            except Exception:
+                pass
             sink.close()
             self._manager.revoke(session_id)
             raise
