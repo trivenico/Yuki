@@ -1575,7 +1575,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     item.setData(256, proposal.proposal_id)
                     self.observation_proposal_list.addItem(item)
                 self.observation_status.setText(
-                    f"{len(proposals)} pending proposal(s). No automatic memory promotion."
+                    f"{len(proposals)} recent proposal(s). No automatic memory promotion."
                 )
                 self._show_observation_proposal()
             except PermissionError:
