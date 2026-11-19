@@ -53,9 +53,11 @@ initializing Docker or either sandbox database.
 
 ## Explicit limitations
 
-- The repository still has no single checked-in ASGI server launcher. A
-  deployment entrypoint must call the new production factory; adding the
-  factory does not prove an external deployment has adopted it.
+- The checked-in ASGI launcher is `scripts/run_web.py`. Phase 96 wires it
+  through the production factory. Existing deployments must update to this
+  branch and use that launcher to receive mandatory durable-job recovery
+  composition; the separate `main.py` interactive CLI remains a different
+  runtime surface.
 - This phase composes recovery only. It does not wire a public or model-callable
   job submission API, a promotion approval UI, or an artifact promotion
   executor. Those require a separately reviewed authenticated service and
