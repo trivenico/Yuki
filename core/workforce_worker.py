@@ -194,7 +194,16 @@ class WorkforceWorker:
             rejected = self.engine.reject(task_id, self.worker_id, "invalid_payload")
             return {"task_id": task_id, "state": rejected["state"], "status": "employee_policy_changed"}
 
+        execution_telemetry_started = False
         try:
+            # Experiment telemetry is emitted only after payload, knowledge, and
+            # employee policy checks pass, immediately before the executor seam.
+            # It records worker invocation, not proof of treatment delivery.
+            self.engine.record_task_experiment_execution_event(
+                task_id, "execution_started", worker_id=self.worker_id,
+                attempt=task.get("attempts"),
+            )
+            execution_telemetry_started = True
             # This is the only execution seam. The injected executor must perform
             # fresh authorization and obtain any required approval; registry
             # assignment and this worker are never treated as approval.
@@ -211,6 +220,10 @@ class WorkforceWorker:
             status = getattr(outcome, "status", None)
             if type(ok) is not bool or not isinstance(status, str) or not status:
                 raise TypeError("executor returned an invalid outcome")
+            self.engine.record_task_experiment_execution_event(
+                task_id, "execution_succeeded" if ok else "execution_failed",
+                worker_id=self.worker_id, attempt=task.get("attempts"),
+            )
             review_evidence = None
             if ok and payload["review_required"]:
                 if self.reviewer is None:
@@ -260,6 +273,16 @@ class WorkforceWorker:
             failed = self.engine.fail(task_id, self.worker_id, status)
             return {"task_id": task_id, "state": failed["state"], "status": status}
         except Exception:
+            if execution_telemetry_started:
+                try:
+                    self.engine.record_task_experiment_execution_event(
+                        task_id, "execution_failed", worker_id=self.worker_id,
+                        attempt=task.get("attempts"),
+                    )
+                except Exception:
+                    # The immutable telemetry stream may already contain a
+                    # terminal event, or the lease may have expired.
+                    pass
             # Side effects may have happened before an exception; single-attempt
             # tasks are failed, never automatically replayed.
             try:
