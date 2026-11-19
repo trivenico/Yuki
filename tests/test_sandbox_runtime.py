@@ -4,6 +4,9 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+_TEST_UID = os.getuid() if hasattr(os, "getuid") else 1000
+_TEST_GID = os.getgid() if hasattr(os, "getgid") else 1000
+
 from core.sandbox_policy import SandboxPolicy
 from core.sandbox_runtime import SandboxRuntimeError, build_docker_argv
 
@@ -13,8 +16,8 @@ class DockerSandboxArgvTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    @patch("core.sandbox_runtime.os.getgid", return_value=os.getgid(), create=True)
-    @patch("core.sandbox_runtime.os.getuid", return_value=os.getuid(), create=True)
+    @patch("core.sandbox_runtime.os.getgid", return_value=_TEST_GID, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=_TEST_UID, create=True)
     def test_restrictive_flags_and_read_only_workspace_default(self, _uid, _gid):
         command = ["python", "--version"]
         argv = build_docker_argv(SandboxPolicy(), image="python:3.12",
@@ -99,6 +102,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    @unittest.skipUnless(os.name == "posix", "artifact directory ownership checks require POSIX UID metadata")
     def test_artifact_output_is_separate_private_writable_mount(self, _uid, _gid):
         import os
         output = tempfile.TemporaryDirectory()
@@ -114,7 +118,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
         self.assertTrue(mounts[0].endswith(",ro"))
         self.assertTrue(mounts[1].endswith(",rw"))
         self.assertIn("dst=/output,rw", mounts[1])
-        self.assertEqual(argv[argv.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
+        self.assertEqual(argv[argv.index("--user") + 1], f"{_TEST_UID}:{_TEST_GID}")
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
