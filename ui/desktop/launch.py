@@ -684,6 +684,9 @@ def run() -> int:
                 "Curated knowledge promoted into Yuki's durable reference catalog. "
                 "Deactivation immediately removes an entry from future retrieval."
             ))
+            self.curated_knowledge_status = QLabel("Sign in to inspect curated knowledge.")
+            self.curated_knowledge_status.setWordWrap(True)
+            observation_layout.addWidget(self.curated_knowledge_status)
             self.curated_knowledge_list = QListWidget()
             self.curated_knowledge_list.currentItemChanged.connect(
                 self._show_curated_knowledge_entry
@@ -1622,6 +1625,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     f"{len(proposals)} recent proposal(s). No automatic memory promotion."
                 )
                 self._show_observation_proposal()
+                self._refresh_curated_knowledge()
             except PermissionError:
                 self.observation_status.setText(
                     "Your account does not have permission to view learning proposals."
@@ -1718,12 +1722,13 @@ MIGRATION COMPLETE — verified manifest written to destination."
         def _refresh_curated_knowledge(self):
             self.curated_knowledge_list.clear()
             self.curated_knowledge_details.clear()
+            self.curated_knowledge_status.setText("Sign in to inspect curated knowledge.")
             self.curated_deactivate_button.setEnabled(False)
             service = self.observation_review_service
             catalog = self.curated_knowledge_catalog
             identity = self.sessions.current_identity() if self.sessions is not None else None
             if service is None or catalog is None or identity is None:
-                self.observation_status.setText("Sign in to inspect curated knowledge.")
+                self.curated_knowledge_status.setText("Sign in to inspect curated knowledge.")
                 return
             try:
                 entries = service.list_curated(actor_id=identity.actor_id, catalog=catalog, limit=500)
@@ -1733,16 +1738,16 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     )
                     item.setData(256, entry['entry_id'])
                     self.curated_knowledge_list.addItem(item)
-                self.observation_status.setText(
+                self.curated_knowledge_status.setText(
                     f"{len(entries)} active curated knowledge entr(y/ies)."
                 )
                 self._show_curated_knowledge_entry()
             except PermissionError:
-                self.observation_status.setText(
+                self.curated_knowledge_status.setText(
                     "Viewing curated knowledge requires memory:knowledge:read."
                 )
             except Exception as exc:
-                self.observation_status.setText(
+                self.curated_knowledge_status.setText(
                     "Curated knowledge unavailable (" + type(exc).__name__ + ")."
                 )
 
@@ -1818,7 +1823,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     actor_id=identity.actor_id, catalog=catalog, limit=200,
                 )
                 if not events:
-                    self.observation_status.setText("No curated knowledge audit events recorded.")
+                    self.curated_knowledge_status.setText("No curated knowledge audit events recorded.")
                     return
                 lines = [
                     f"{event['action']} — {event['entry_id']} by {event['actor_id']} at {event['created_at']}"
@@ -1828,11 +1833,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self, "Curated knowledge audit", "\n".join(lines)
                 )
             except PermissionError:
-                self.observation_status.setText(
+                self.curated_knowledge_status.setText(
                     "Knowledge audit viewing requires memory:knowledge:read."
                 )
             except Exception as exc:
-                self.observation_status.setText(
+                self.curated_knowledge_status.setText(
                     "Knowledge audit unavailable (" + type(exc).__name__ + ")."
                 )
 
