@@ -43,7 +43,10 @@ def build_web_sqlite_inventory(
     workspace_input = Path(workspace_value).expanduser()
     if workspace_input.is_symlink():
         raise BackupInventoryError("workspace_must_be_existing_directory")
-    workspace = workspace_input.resolve(strict=True)
+    try:
+        workspace = workspace_input.resolve(strict=True)
+    except OSError as exc:
+        raise BackupInventoryError("workspace_must_be_existing_directory") from exc
     if not workspace.is_dir():
         raise BackupInventoryError("workspace_must_be_existing_directory")
 
