@@ -216,7 +216,11 @@ class MemoryFabric:
                     """,
                     (namespace, key, sqlite3.Binary(payload), len(payload), digest, expires_at, now, now),
                 )
-            self._remember_ram(identity, payload)
+            if expires_at is None:
+                self._remember_ram(identity, payload)
+            else:
+                # TTL entries stay on SSD so RAM hits cannot outlive expiry.
+                self._remove_ram(identity)
 
     def get(self, namespace: str, key: str) -> bytes | None:
         """Return cached bytes, promoting SSD hits into RAM."""
