@@ -49,6 +49,22 @@ class DesktopMetadataAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DesktopMetadataAdapter(allowed_browser_domains=("https://example.com/path",))
 
+    def test_browser_domain_allowlist_rejects_a_bare_string(self):
+        with self.assertRaises(ValueError):
+            DesktopMetadataAdapter(allowed_browser_domains="docs.example.com")
+
+    def test_allowlist_generator_is_bounded_before_full_consumption(self):
+        consumed = []
+        def identifiers():
+            index = 0
+            while True:
+                consumed.append(index)
+                yield f"app{index}.example"
+                index += 1
+        with self.assertRaises(ValueError):
+            DesktopMetadataAdapter(allowed_browser_domains=identifiers())
+        self.assertEqual(len(consumed), 257)
+
     def test_queue_is_bounded_and_close_is_terminal(self):
         self.assertTrue(self.adapter.publish_app_activity("com.example.editor"))
         self.assertTrue(self.adapter.publish_app_activity("com.example.editor"))
