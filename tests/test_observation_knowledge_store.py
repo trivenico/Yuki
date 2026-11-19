@@ -62,8 +62,9 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         store = self.store(retention_seconds=60)
         proposal = store.propose("application", "com.example.editor")
         self.clock[0] += 61
-        self.assertEqual(store.list_pending(), ())
+        # Direct lookup must enforce expiry too, not only list operations.
         self.assertIsNone(store.get(proposal.proposal_id))
+        self.assertEqual(store.list_pending(), ())
 
     def test_rejects_invalid_metadata_and_review_transitions(self):
         store = self.store()
