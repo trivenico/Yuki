@@ -141,5 +141,22 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         self.assertEqual(count, 0)
 
 
+    def test_list_recent_includes_pending_and_reviewed_with_owner_scope(self):
+        owner_a = self.store("user-a")
+        owner_b = self.store("user-b")
+        pending = owner_a.propose("application", "com.example.editor")
+        reviewed = owner_a.propose("application", "com.example.terminal")
+        owner_a.approve(reviewed.proposal_id, reviewer_id="operator-a")
+        owner_b.propose("application", "com.example.editor")
+        recent = owner_a.list_recent()
+        self.assertEqual({item.proposal_id for item in recent}, {
+            pending.proposal_id, reviewed.proposal_id,
+        })
+        self.assertEqual(
+            {item.status for item in recent}, {"pending", "approved"},
+        )
+        self.assertEqual(len(owner_a.list_recent(limit=1)), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
