@@ -690,6 +690,102 @@ class DurableTaskEngine:
             "delivered_at": row["delivered_at"],
         } for row in rows]
 
+    def get_workforce_knowledge_delivery_integrity(self, task_id):
+        """Audit one task's lesson handoff records without repairing or inferring execution."""
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 256:
+            raise ValueError("invalid task_id")
+        task = self.get_task(task_id)
+        if task.get("task_type") != "workforce.task":
+            raise ValueError("task is not a workforce task")
+        payload = task.get("payload")
+        context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
+        if not isinstance(context, list):
+            context = []
+        context = context[:5]
+        deliveries = self.list_workforce_knowledge_deliveries(task_id, limit=25)
+        expected = {}
+        duplicate_ids = []
+        for item in context:
+            if not isinstance(item, dict) or not isinstance(item.get("knowledge_id"), str):
+                continue
+            knowledge_id = item["knowledge_id"].strip()
+            if not knowledge_id:
+                continue
+            if knowledge_id in expected:
+                duplicate_ids.append(knowledge_id)
+            else:
+                expected[knowledge_id] = item
+
+        by_id = {}
+        for delivery in deliveries:
+            by_id.setdefault(delivery.get("knowledge_id"), []).append(delivery)
+        assigned_worker = payload.get("assigned_employee_id") if isinstance(payload, dict) else None
+        findings = []
+        for knowledge_id, lesson in expected.items():
+            records = by_id.get(knowledge_id, [])
+            if not records:
+                findings.append({
+                    "knowledge_id": knowledge_id,
+                    "status": "not_attested",
+                    "reason": "no_delivery_record",
+                    "coverage": "unknown_pre_instrumentation_or_missing",
+                })
+                continue
+            for delivery in records:
+                problems = []
+                if delivery.get("task_id") != task_id:
+                    problems.append("task_identity_mismatch")
+                if assigned_worker and delivery.get("worker_id") != assigned_worker:
+                    problems.append("worker_identity_mismatch")
+                attempt = delivery.get("attempt")
+                if (type(attempt) is not int or attempt < 1
+                        or attempt > task.get("attempts", 0)):
+                    problems.append("attempt_identity_mismatch")
+                if delivery.get("context") != lesson:
+                    problems.append("context_mismatch")
+                context_json = self._json(delivery.get("context"))
+                expected_context_fingerprint = hashlib.sha256(
+                    context_json.encode("utf-8")
+                ).hexdigest()
+                if delivery.get("context_fingerprint") != expected_context_fingerprint:
+                    problems.append("context_fingerprint_mismatch")
+                with closing(self._connect()) as c:
+                    current = c.execute(
+                        "SELECT fingerprint,state FROM workforce_knowledge WHERE knowledge_id=?",
+                        (knowledge_id,),
+                    ).fetchone()
+                if current is None:
+                    problems.append("knowledge_record_missing")
+                elif current["fingerprint"] != delivery.get("knowledge_fingerprint"):
+                    problems.append("knowledge_version_changed_since_delivery")
+                elif current["state"] != "verified":
+                    problems.append("knowledge_not_currently_verified")
+                findings.append({
+                    "knowledge_id": knowledge_id,
+                    "attempt": attempt,
+                    "worker_id": delivery.get("worker_id"),
+                    "status": "consistent" if not problems else "review_required",
+                    "reasons": problems,
+                    "delivered_at": delivery.get("delivered_at"),
+                })
+        unexpected = sorted(set(by_id) - set(expected))
+        return {
+            "task_id": task_id,
+            "task_state": task.get("state"),
+            "task_attempts": task.get("attempts"),
+            "expected_lessons": len(expected),
+            "attestation_records": len(deliveries),
+            "findings": findings,
+            "duplicate_context_knowledge_ids": sorted(set(duplicate_ids)),
+            "unexpected_attestation_knowledge_ids": unexpected,
+            "coverage_note": (
+                "A missing attestation cannot be classified as a defect because this task "
+                "may predate delivery instrumentation. A matching record proves persisted "
+                "handoff context only, not model attention or use."
+            ),
+            "remediation": "none_automatic_human_review_only",
+        }
+
     def create_knowledge_revision(self, knowledge_id, revision_id, knowledge):
         """Propose a bounded revision to an existing verified lesson; never activates it."""
         if not isinstance(knowledge_id, str) or not 1 <= len(knowledge_id) <= 256:
