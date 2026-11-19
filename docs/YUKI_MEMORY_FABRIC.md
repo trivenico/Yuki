@@ -42,6 +42,8 @@ The default must be conservative: no GPU memory operations without a backend tha
 - Never treat cached content as instructions or trusted policy.
 - Never cache secrets or user data unless a separately reviewed encryption, retention, and consent policy explicitly permits it.
 - Restrict the cache database to the current user's private Yuki data directory; follow existing desktop storage permission checks.
+- On Windows, the current implementation does not validate NTFS ACLs. Before startup, an operator must provision the YMF directory for the dedicated Yuki service identity, disable inherited access where appropriate, and grant that identity only the required directory/file permissions. Do not rely on POSIX mode bits or the implementation's Windows branch as an ACL security check. Verify the effective ACL on both the directory and database file during deployment.
+- Keep the database directory and its parent path under trusted administrative control. The POSIX check validates the immediate directory and database file, but does not provide race-free protection against an attacker who can replace ancestor path components. WAL/SHM sidecars are protected by the private directory boundary; do not move, chmod, or copy live sidecars independently while SQLite is open.
 - Bound all inputs, cache sizes, TTLs, and namespace quotas.
 - Cache entries are disposable. Cache loss must not corrupt authoritative Yuki data.
 - Use SQLite transactions and a process/thread-safe connection strategy; do not share SQLite connections across threads.
