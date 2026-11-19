@@ -251,11 +251,20 @@ class SQLiteObservationKnowledgeReview:
             raise ValueError("proposal_id is required")
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("limit must be an integer in 1..1000")
+        now = float(self._clock())
         with self._lock, self._connect() as db:
-            rows = db.execute("""SELECT decision,reviewer_id,created_at
-                FROM observation_knowledge_review_events
-                WHERE owner_id=? AND proposal_id=? ORDER BY created_at,event_id LIMIT ?""",
-                (self._owner, proposal_id, limit)).fetchall()
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                self._purge_expired(db, now)
+                rows = db.execute("""SELECT decision,reviewer_id,created_at
+                    FROM observation_knowledge_review_events
+                    WHERE owner_id=? AND proposal_id=? ORDER BY created_at,event_id LIMIT ?""",
+                    (self._owner, proposal_id, limit)).fetchall()
+                db.execute("COMMIT")
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
         return tuple({"decision": row[0], "reviewer_id": row[1], "created_at": row[2]} for row in rows)
 
     def delete(self, proposal_id: str) -> bool:
