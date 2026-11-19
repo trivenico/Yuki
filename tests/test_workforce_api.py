@@ -1078,7 +1078,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertIn("delivery_records_truncated", report["invalid_context_reasons"])
         self.assertEqual(
             report["attempt_coverage"][0]["attempts"][0]["status"],
-            "unknown_delivery_records_truncated",
+            "attested_review_required",
         )
 
     def test_knowledge_delivery_integrity_reports_malformed_context_and_retries(self):
