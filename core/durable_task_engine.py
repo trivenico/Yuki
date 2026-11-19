@@ -708,33 +708,6 @@ class DurableTaskEngine:
             if len(context) > 5:
                 context_errors.append("knowledge_context_exceeds_delivery_limit")
                 context = context[:5]
-        # Pin one SQLite read snapshot for both the total and bounded page. Separate
-        # connections could observe different commits and produce a false completeness
-        # result while new immutable attestations are being written.
-        with closing(self._connect()) as c:
-            c.execute("BEGIN")
-            delivery_count_row = c.execute(
-                "SELECT COUNT(*) AS record_count FROM workforce_knowledge_deliveries WHERE task_id=?",
-                (task_id,),
-            ).fetchone()
-            delivery_rows = c.execute(
-                "SELECT task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
-                "context_fingerprint,context_json,delivered_at "
-                "FROM workforce_knowledge_deliveries WHERE task_id=? "
-                "ORDER BY attempt,knowledge_id LIMIT ?",
-                (task_id, 100),
-            ).fetchall()
-            c.execute("COMMIT")
-        deliveries = [{
-            "task_id": row["task_id"], "attempt": row["attempt"],
-            "worker_id": row["worker_id"], "knowledge_id": row["knowledge_id"],
-            "knowledge_fingerprint": row["knowledge_fingerprint"],
-            "context_fingerprint": row["context_fingerprint"],
-            "context": json.loads(row["context_json"]),
-            "delivered_at": row["delivered_at"],
-        } for row in delivery_rows]
-        total_delivery_records = int(delivery_count_row["record_count"])
-        records_truncated = total_delivery_records > len(deliveries)
         expected = {}
         duplicate_ids = []
         for index, item in enumerate(context):
@@ -751,6 +724,43 @@ class DurableTaskEngine:
                 duplicate_ids.append(knowledge_id)
             else:
                 expected[knowledge_id] = item
+
+        # Pin delivery records and current knowledge versions to one SQLite read
+        # snapshot. Otherwise a concurrent lesson revision could make a single audit
+        # compare attestations against a mixture of pre- and post-revision state.
+        with closing(self._connect()) as c:
+            c.execute("BEGIN")
+            delivery_count_row = c.execute(
+                "SELECT COUNT(*) AS record_count FROM workforce_knowledge_deliveries WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            delivery_rows = c.execute(
+                "SELECT task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
+                "context_fingerprint,context_json,delivered_at "
+                "FROM workforce_knowledge_deliveries WHERE task_id=? "
+                "ORDER BY attempt,knowledge_id LIMIT ?",
+                (task_id, 100),
+            ).fetchall()
+            knowledge_rows = []
+            if expected:
+                placeholders = ",".join("?" for _ in expected)
+                knowledge_rows = c.execute(
+                    "SELECT knowledge_id,fingerprint,state FROM workforce_knowledge "
+                    f"WHERE knowledge_id IN ({placeholders})",
+                    tuple(expected),
+                ).fetchall()
+            c.execute("COMMIT")
+        deliveries = [{
+            "task_id": row["task_id"], "attempt": row["attempt"],
+            "worker_id": row["worker_id"], "knowledge_id": row["knowledge_id"],
+            "knowledge_fingerprint": row["knowledge_fingerprint"],
+            "context_fingerprint": row["context_fingerprint"],
+            "context": json.loads(row["context_json"]),
+            "delivered_at": row["delivered_at"],
+        } for row in delivery_rows]
+        current_knowledge_by_id = {row["knowledge_id"]: row for row in knowledge_rows}
+        total_delivery_records = int(delivery_count_row["record_count"])
+        records_truncated = total_delivery_records > len(deliveries)
 
         by_id = {}
         for delivery in deliveries:
@@ -790,11 +800,7 @@ class DurableTaskEngine:
                 ).hexdigest()
                 if delivery.get("context_fingerprint") != expected_context_fingerprint:
                     problems.append("context_fingerprint_mismatch")
-                with closing(self._connect()) as c:
-                    current = c.execute(
-                        "SELECT fingerprint,state FROM workforce_knowledge WHERE knowledge_id=?",
-                        (knowledge_id,),
-                    ).fetchone()
+                current = current_knowledge_by_id.get(knowledge_id)
                 if current is None:
                     problems.append("knowledge_record_missing")
                 elif current["fingerprint"] != delivery.get("knowledge_fingerprint"):
