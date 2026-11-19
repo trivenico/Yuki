@@ -778,11 +778,41 @@ class DurableTaskEngine:
                     "reasons": problems,
                     "delivered_at": delivery.get("delivered_at"),
                 })
+        attempt_coverage = []
+        observed_attempts = task.get("attempts", 0)
+        for knowledge_id in expected:
+            records = by_id.get(knowledge_id, [])
+            status_by_attempt = {}
+            for finding in findings:
+                if finding.get("knowledge_id") == knowledge_id and "attempt" in finding:
+                    status_by_attempt[finding["attempt"]] = finding["status"]
+            attempt_rows = []
+            for attempt_number in range(1, observed_attempts + 1):
+                record_status = status_by_attempt.get(attempt_number)
+                attempt_rows.append({
+                    "attempt": attempt_number,
+                    "status": (
+                        "attested_consistent" if record_status == "consistent"
+                        else "attested_review_required" if record_status == "review_required"
+                        else "unknown_no_handoff_attestation"
+                    ),
+                })
+            attempt_coverage.append({
+                "knowledge_id": knowledge_id,
+                "attempts_with_attestation": sorted(
+                    record["attempt"] for record in records
+                    if type(record.get("attempt")) is int
+                ),
+                "attempts": attempt_rows,
+                "coverage_is_defect": False,
+            })
         unexpected = sorted(set(by_id) - set(expected))
         return {
             "task_id": task_id,
             "task_state": task.get("state"),
-            "task_attempts": task.get("attempts"),
+            "task_attempts": observed_attempts,
+            "max_attempts": task.get("max_attempts"),
+            "attempt_coverage": attempt_coverage,
             "expected_lessons": len(expected),
             "attestation_records": len(deliveries),
             "findings": findings,
