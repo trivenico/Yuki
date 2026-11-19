@@ -26,7 +26,7 @@ _ROLE_PERMISSIONS = {
     "admin": frozenset({
         "workflow:read", "workflow:approve", "users:manage",
         "observation:review:read", "observation:review:decide",
-        "observation:review:delete", "memory:knowledge:promote",
+        "observation:review:delete", "memory:knowledge:promote",\n        "memory:knowledge:read", "memory:knowledge:deactivate",
     }),
     "operator": frozenset({
         "workflow:read", "workflow:approve",
@@ -276,7 +276,7 @@ def observation_review_authorizer(auth_service, session_token_provider):
         raise TypeError("session_token_provider must be callable")
 
     def authorize(actor_id, permission):
-        if not isinstance(permission, str) or not (permission.startswith("observation:review:") or permission == "memory:knowledge:promote"):
+        if not isinstance(permission, str) or not (permission.startswith("observation:review:") or permission.startswith("memory:knowledge:")):
             return False
         token = session_token_provider()
         user = auth_service.resolve_session(token)
