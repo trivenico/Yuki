@@ -77,6 +77,21 @@ class DesktopObservationControllerTests(unittest.TestCase):
         # Failed startup must not leave a live, authorized session behind.
         self.assertFalse(controller.poll_once(lambda event: None))
 
+    def test_event_limit_stops_collector_and_turns_indicator_off(self):
+        controller = DesktopObservationController(
+            self.policy,
+            {"code.exe": "ide"},
+            indicator=self.indicator.append,
+            manager=ObservationSessionManager(),
+            reader=lambda: "code.exe",
+            event_limit=1,
+        )
+        controller.start(consent_granted=True)
+        self.assertTrue(controller.poll_once(lambda event: None))
+        self.assertEqual(controller.state, "limit_reached")
+        self.assertEqual(self.indicator, [True, False])
+        self.assertFalse(controller.poll_once(lambda event: None))
+
     def test_consumer_receives_only_policy_authorized_event(self):
         self.controller.start(consent_granted=True)
         self.assertTrue(self.controller.poll_once(self.received.append))
