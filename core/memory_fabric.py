@@ -206,6 +206,9 @@ class MemoryFabric:
                         "DELETE FROM memory_fabric_entries WHERE namespace=? AND cache_key=?",
                         (oldest[0], oldest[1]),
                     )
+                    # The RAM tier must never serve an entry whose SSD
+                    # backing record has been evicted for capacity.
+                    self._remove_ram((oldest[0], oldest[1]))
                     used -= oldest[2]
                     self._evictions += 1
                 connection.execute(
