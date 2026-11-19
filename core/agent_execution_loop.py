@@ -122,10 +122,10 @@ class AgentExecutionLoop:
         reference_context: str | None = None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
-            raise ValueError("cancellation_requested must be callable.")
+            raise TypeError("cancellation_requested must be callable.")
         cancel_check = cancellation_requested or self.cancellation_requested
         if on_text_delta is not None and not callable(on_text_delta):
-            raise ValueError("on_text_delta must be callable.")
+            raise TypeError("on_text_delta must be callable.")
         if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 20_000:
             raise ValueError("user_text must be non-empty text of at most 20000 characters.")
         if not isinstance(system_text, str) or len(system_text) > 10_000:
