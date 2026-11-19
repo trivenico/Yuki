@@ -275,6 +275,124 @@ class ModelResidencyLease:
             self._state = "poisoned"
 
 
+
+class ModelSessionError(ComputeFabricError):
+    """A model session is not in a state that permits the requested operation."""
+
+
+class ModelSession:
+    """Opaque manager-owned model handle with serialized lifecycle operations."""
+
+    def __init__(self, manager, model_id: str, request: ComputeRequest,
+                 backend: ComputeBackend, lease: ModelResidencyLease, handle):
+        self._manager = manager
+        self.model_id = model_id
+        self.request = request
+        self.backend = backend
+        self._lease = lease
+        self._handle = handle
+        self._state = "ready"
+        self._lock = threading.RLock()
+
+    @property
+    def state(self) -> str:
+        with self._lock:
+            return self._state
+
+
+class ModelLifecycleManager:
+    """Owns admission, load, inference, and unload around a runtime adapter.
+
+    The adapter is injected as callbacks so this layer remains independent of
+    PyTorch, JAX, and provider implementations. Calls are serialized per model.
+    """
+
+    def __init__(self, scheduler: ComputeScheduler):
+        if not isinstance(scheduler, ComputeScheduler):
+            raise TypeError("scheduler must be a ComputeScheduler")
+        self._scheduler = scheduler
+
+    def load(self, request: ComputeRequest, *, model_id: str,
+             loader: Callable[[ComputeBackend], T],
+             cleanup_failed_load: Callable[[ComputeBackend, str], None] | None = None
+             ) -> ModelSession:
+        if not callable(loader):
+            raise TypeError("loader must be callable")
+        if cleanup_failed_load is not None and not callable(cleanup_failed_load):
+            raise TypeError("cleanup_failed_load must be callable")
+        lease = self._scheduler.reserve_model(request, model_id=model_id)
+        backend = self._scheduler.backend_for(request.backend)
+        try:
+            handle = backend.execute(lambda: loader(backend))
+        except BaseException:
+            if cleanup_failed_load is None:
+                lease.mark_unload_failed()
+            else:
+                try:
+                    backend.execute(lambda: cleanup_failed_load(backend, model_id))
+                except BaseException:
+                    lease.mark_unload_failed()
+                else:
+                    lease.release()
+            raise
+        return ModelSession(self, model_id, request, backend, lease, handle)
+
+    def infer(self, session: ModelSession, request: ComputeRequest,
+              operation: Callable[[object], T]) -> T:
+        if not isinstance(session, ModelSession) or session._manager is not self:
+            raise TypeError("session must belong to this manager")
+        if not isinstance(request, ComputeRequest):
+            raise TypeError("request must be a ComputeRequest")
+        if request.backend != session.request.backend:
+            raise ModelSessionError("inference backend must match model residency backend")
+        if not callable(operation):
+            raise TypeError("operation must be callable")
+        with session._lock:
+            if session._state != "ready":
+                raise ModelSessionError(f"model session is not ready: {session._state}")
+            with self._scheduler.reserve(request) as backend:
+                return backend.execute(lambda: operation(session._handle))
+
+    def unload(self, session: ModelSession,
+               unloader: Callable[[ComputeBackend, object], None]) -> None:
+        if not isinstance(session, ModelSession) or session._manager is not self:
+            raise TypeError("session must belong to this manager")
+        if not callable(unloader):
+            raise TypeError("unloader must be callable")
+        with session._lock:
+            if session._state == "unloaded":
+                return
+            if session._state == "unhealthy":
+                raise ModelSessionError("unhealthy model session requires reconciliation")
+            if session._state != "ready":
+                raise ModelSessionError(f"model session cannot unload from {session._state}")
+            session._state = "unloading"
+            try:
+                session.backend.execute(
+                    lambda: unloader(session.backend, session._handle)
+                )
+            except BaseException:
+                session._state = "unhealthy"
+                session._lease.mark_unload_failed()
+                raise
+            session._handle = None
+            session._lease.release()
+            session._state = "unloaded"
+
+    def reconcile_unloaded(self, session: ModelSession) -> None:
+        """Release poisoned admission only after caller confirms runtime cleanup."""
+        if not isinstance(session, ModelSession) or session._manager is not self:
+            raise TypeError("session must belong to this manager")
+        with session._lock:
+            if session._state == "unloaded":
+                return
+            if session._state != "unhealthy":
+                raise ModelSessionError("only unhealthy sessions can be reconciled")
+            self._scheduler.confirm_model_unloaded(session._lease)
+            session._handle = None
+            session._state = "unloaded"
+
+
 class ComputeScheduler:
     """Thread-safe admission controller with bounded memory and concurrency.
 
@@ -307,6 +425,16 @@ class ComputeScheduler:
             self._resident_bytes[name] = 0
             self._resident_models[name] = 0
             self._active[name] = 0
+
+    def backend_for(self, backend_name: str) -> ComputeBackend:
+        """Return a registered backend for controlled lifecycle orchestration."""
+        with self._lock:
+            backend = self._backends.get(backend_name)
+            if backend is None:
+                raise LookupError(f"compute backend is not registered: {backend_name}")
+            if not backend.capabilities.available:
+                raise ComputeBackendError(f"compute backend is unavailable: {backend_name}")
+            return backend
 
     def inventory(self) -> list[ComputeCapabilities]:
         with self._lock:
