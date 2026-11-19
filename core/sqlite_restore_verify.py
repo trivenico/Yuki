@@ -124,6 +124,8 @@ def restore_and_verify_sqlite_backup_set(
             info = path.stat()
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise SQLiteRestoreVerificationError("application_validator_changed_restore_file_type")
+            if os.name == "posix" and info.st_mode & 0o077:
+                raise SQLiteRestoreVerificationError("application_validator_changed_restore_permissions")
             if _sha256(path) != restored_digests[name]:
                 raise SQLiteRestoreVerificationError("application_validator_modified_restore_database")
 
