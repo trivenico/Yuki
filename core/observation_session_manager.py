@@ -124,25 +124,25 @@ class ObservationSessionManager:
             source = managed.sources.get(source_id)
             if source is None:
                 raise KeyError("source is not registered")
-            def dispatch(event):
+            attempts_before = managed.processed_events
+            def mark_authorized(_event):
                 # The gateway calls this only after source and policy authorization.
-                # Count the attempt before consumer code can fail.
                 managed.processed_events += 1
-                try:
-                    consumer(event)
-                except Exception:
-                    managed.delivery_failures += 1
-                    raise
-                managed.delivered_events += 1
 
             try:
-                delivered = managed.gateway.poll(source, dispatch, timeout=timeout)
+                delivered = managed.gateway.poll(
+                    source, consumer, timeout=timeout, on_authorized=mark_authorized,
+                )
             except Exception:
+                if managed.processed_events > attempts_before:
+                    managed.delivery_failures += 1
                 if managed.processed_events >= managed.event_limit:
                     managed.state_override = "limit_reached"
                     self._close_sources(managed)
                 raise
-            if delivered and managed.processed_events >= managed.event_limit:
+            if delivered:
+                managed.delivered_events += 1
+            if managed.processed_events >= managed.event_limit:
                 managed.state_override = "limit_reached"
                 self._close_sources(managed)
             return delivered
