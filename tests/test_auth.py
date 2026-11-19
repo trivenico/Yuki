@@ -101,6 +101,23 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.auth.revoke_session(session.token)
         self.assertFalse(authorize(admin.user_id, "observation:review:read"))
 
+    def test_knowledge_promotion_permission_is_admin_only_and_session_bound(self):
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        admin_session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        admin_authorize = observation_review_authorizer(self.auth, lambda: admin_session.token)
+        self.assertTrue(admin_authorize(admin.user_id, "memory:knowledge:promote"))
+
+        operator = self.auth.create_account("ops.user", "Another secure password 4!")
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
+        operator = next(user for user in self.auth.list_users() if user.user_id == operator.user_id)
+        operator_session = self.auth.authenticate("ops.user", "Another secure password 4!")
+        operator_authorize = observation_review_authorizer(self.auth, lambda: operator_session.token)
+        self.assertFalse(operator_authorize(operator.user_id, "memory:knowledge:promote"))
+        self.assertFalse(admin_authorize("forged-actor", "memory:knowledge:promote"))
+        self.auth.revoke_session(admin_session.token)
+        self.assertFalse(admin_authorize(admin.user_id, "memory:knowledge:promote"))
+
     def test_observation_review_roles_are_least_privilege(self):
         self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         operator = self.auth.create_account("ops.user", "Another secure password 4!")
