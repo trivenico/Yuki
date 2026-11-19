@@ -37,7 +37,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
         reviewed = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {"assigned_employee_id": employee.employee_id, "description": "Reviewed task", "review_required": True},
             idempotency_key="reviewed-performance", max_attempts=1,
         )
@@ -54,7 +54,7 @@ class WorkforceDashboardTests(unittest.TestCase):
             },
         })
         unreviewed = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {"assigned_employee_id": employee.employee_id, "description": "Unreviewed task", "review_required": False},
             idempotency_key="unreviewed-performance", max_attempts=1,
         )
@@ -67,7 +67,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         # A result that claims review but conflicts with its task payload is
         # not counted as independent QA evidence.
         inconsistent = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {"assigned_employee_id": employee.employee_id, "description": "Mismatched task", "review_required": False},
             idempotency_key="mismatched-performance", max_attempts=1,
         )
@@ -101,7 +101,7 @@ class WorkforceDashboardTests(unittest.TestCase):
             "reviewed_by": "human-curator",
         }]
         successful = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {
                 "assigned_employee_id": employee.employee_id,
                 "description": "Reviewed task",
@@ -119,7 +119,7 @@ class WorkforceDashboardTests(unittest.TestCase):
             },
         })
         failed = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {
                 "assigned_employee_id": employee.employee_id,
                 "description": "Failed task",
@@ -257,7 +257,7 @@ class WorkforceDashboardTests(unittest.TestCase):
             (1, "INDEPENDENT-QA", "different-employee"),
         ):
             task = self.engine.submit(
-                goal_id, "workforce.task",
+                self.engine.create_goal(), "workforce.task",
                 {
                     "assigned_employee_id": employee.employee_id,
                     "description": f"Invalid review evidence {index}",
@@ -289,7 +289,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         employee = self.registry.recommend({"python"}, limit=1)[0]
         for index, evidence_status in enumerate(("pending", "rejected", " ")):
             task = self.engine.submit(
-                goal_id, "workforce.task",
+                self.engine.create_goal(), "workforce.task",
                 {
                     "assigned_employee_id": employee.employee_id,
                     "description": f"Non-approved review status {index}",
@@ -327,7 +327,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         }]
         for index in range(3):
             task = self.engine.submit(
-                goal_id, "workforce.task",
+                self.engine.create_goal(), "workforce.task",
                 {
                     "assigned_employee_id": employee.employee_id,
                     "description": f"Task {index}",
@@ -360,7 +360,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
         failed = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {
                 "assigned_employee_id": employee.employee_id,
                 "description": "A failed task",
@@ -371,7 +371,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.engine.claim("intelligence-worker", task_type="workforce.task")
         self.engine.fail(failed["id"], "intelligence-worker", "redacted failure")
         queued = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {
                 "assigned_employee_id": employee.employee_id,
                 "description": "Unstaffed capability demand",
@@ -405,7 +405,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         employee = self.registry.recommend({"python"}, limit=1)[0]
         for index in range(2):
             task = self.engine.submit(
-                goal_id, "workforce.task",
+                self.engine.create_goal(), "workforce.task",
                 {
                     "assigned_employee_id": employee.employee_id,
                     "description": f"Failure sample {index}",
@@ -417,7 +417,7 @@ class WorkforceDashboardTests(unittest.TestCase):
             self.engine.fail(task["id"], "improvement-worker", "redacted failure")
 
         success = self.engine.submit(
-            goal_id, "workforce.task",
+            self.engine.create_goal(), "workforce.task",
             {
                 "assigned_employee_id": employee.employee_id,
                 "description": "Successful comparison sample",
@@ -471,7 +471,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         employee = self.registry.recommend({"python"}, limit=1)[0]
         for index in range(3):
             task = self.engine.submit(
-                goal_id, "workforce.task",
+                self.engine.create_goal(), "workforce.task",
                 {
                     "assigned_employee_id": employee.employee_id,
                     "description": f"Capability failure sample {index}",
@@ -579,16 +579,16 @@ class WorkforceDashboardTests(unittest.TestCase):
             {"assigned_employee_id": employee.employee_id, "description": "Success"},
             idempotency_key="outcome-success", max_attempts=1,
         )
-        self.engine.claim("outcome-worker", task_type="workforce.task")
-        self.engine.complete(succeeded["id"], "outcome-worker", {
-            "ok": True, "status": "completed", "employee_id": employee.employee_id,
-            "review_required": False, "review_evidence": None,
-        })
         failed = self.engine.submit(
             goal_id, "workforce.task",
             {"assigned_employee_id": employee.employee_id, "description": "Failure"},
             idempotency_key="outcome-failure", max_attempts=1,
         )
+        self.engine.claim("outcome-worker", task_type="workforce.task")
+        self.engine.complete(succeeded["id"], "outcome-worker", {
+            "ok": True, "status": "completed", "employee_id": employee.employee_id,
+            "review_required": False, "review_evidence": None,
+        })
         self.engine.claim("outcome-worker", task_type="workforce.task")
         self.engine.fail(failed["id"], "outcome-worker", "redacted failure")
 
