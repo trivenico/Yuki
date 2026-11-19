@@ -263,6 +263,18 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("tests/test_multilingual_voice.py",),
         ("An end-to-end interruptible voice conversation and always-on listener are not verified.",),
     ),
+    CapabilityContract(
+        "compute-fabric", "Bounded hardware-independent compute scheduler", "implemented",
+        "Provides a CPU reference backend and process-local admission control for caller-estimated memory and concurrency budgets.",
+        ("core/compute_fabric.py",), ("Python standard library",), (),
+        ("synchronous CPU operation execution and process-local resource reservations",),
+        ("local",), "medium", ("tests/test_compute_fabric.py",),
+        (
+            "Budgets are operator-configured reservations, not measured free physical memory.",
+            "Reservations are process-local and do not coordinate multiple Yuki processes.",
+            "No hardware discovery, device-memory allocation, CUDA execution, or TPU execution is implemented.",
+        ),
+    ),
 
 )
 
