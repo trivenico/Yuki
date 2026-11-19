@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import stat
@@ -14,6 +15,9 @@ import uuid
 
 from core.backup_inventory import SQLiteDatabaseEntry
 from core.sqlite_backup import backup_sqlite_database
+
+
+_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 class SQLiteBackupSetError(RuntimeError):
@@ -61,7 +65,9 @@ def create_sqlite_backup_set(
     for entry in entries:
         if not isinstance(entry, SQLiteDatabaseEntry):
             raise SQLiteBackupSetError("invalid_inventory_entry")
-        if not entry.name or entry.name in names:
+        if not isinstance(entry.name, str) or not _NAME.fullmatch(entry.name):
+            raise SQLiteBackupSetError("invalid_database_name")
+        if entry.name in names:
             raise SQLiteBackupSetError("duplicate_or_empty_database_name")
         source = Path(entry.path)
         if source.is_symlink() or not source.is_file():
