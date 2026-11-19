@@ -154,6 +154,74 @@ class ComputeFabricTests(unittest.TestCase):
         with self.assertRaises(ComputeBackendError):
             backend.execute(lambda: None)
 
+
+    def test_accelerator_backends_are_scheduler_admitted_and_release_resources(self):
+        from contextlib import nullcontext
+        from core.compute_fabric import CUDABackend, GoogleTPUBackend
+
+        class FakeCuda:
+            def is_available(self): return True
+            def device_count(self): return 1
+            def get_device_name(self, index): return "NVIDIA Test GPU"
+            def mem_get_info(self, index): return (4096, 8192)
+            def device(self, index): return nullcontext()
+
+        class FakeTorch:
+            cuda = FakeCuda()
+
+        class Device:
+            platform = "tpu"
+
+        class FakeJax:
+            def devices(self, backend=None):
+                return [Device()] if backend == "tpu" else []
+            def default_device(self, device): return nullcontext()
+
+        backends = (
+            CUDABackend(torch_module=FakeTorch()),
+            GoogleTPUBackend(memory_capacity_bytes=8192, jax_module=FakeJax()),
+        )
+        scheduler = ComputeScheduler(backends)
+        for backend, budget in (("cuda", 1024), ("tpu", 2048)):
+            with self.subTest(backend=backend):
+                result = scheduler.execute(
+                    ComputeRequest(backend=backend, memory_bytes=budget),
+                    lambda: f"{backend}-scheduled",
+                )
+                self.assertEqual(result, f"{backend}-scheduled")
+                self.assertEqual(
+                    scheduler.stats()[backend],
+                    {"reserved_memory_bytes": 0, "active_operations": 0},
+                )
+
+    def test_accelerator_execution_failure_releases_scheduler_reservation(self):
+        from contextlib import nullcontext
+        from core.compute_fabric import CUDABackend, ComputeBackendError
+
+        class FakeCuda:
+            def is_available(self): return True
+            def device_count(self): return 1
+            def get_device_name(self, index): return "NVIDIA Test GPU"
+            def mem_get_info(self, index): return (4096, 8192)
+            def device(self, index): return nullcontext()
+
+        class FakeTorch:
+            cuda = FakeCuda()
+
+        scheduler = ComputeScheduler((CUDABackend(torch_module=FakeTorch()),))
+
+        def fail():
+            raise RuntimeError("device operation failed")
+
+        with self.assertRaises(ComputeBackendError):
+            scheduler.execute(
+                ComputeRequest(backend="cuda", memory_bytes=512), fail,
+            )
+        self.assertEqual(
+            scheduler.stats()["cuda"],
+            {"reserved_memory_bytes": 0, "active_operations": 0},
+        )
+
     def test_duplicate_backend_registration_is_rejected(self):
         with self.assertRaises(ValueError):
             self.scheduler.register(CPUBackend())
