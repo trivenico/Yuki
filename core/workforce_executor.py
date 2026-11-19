@@ -132,6 +132,7 @@ class YukiAgentWorkforceExecutor:
                     or set(item) != {"knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"}
                     or any(not isinstance(item.get(key), str) or not item[key].strip()
                            for key in ("knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"))
+                    or any(len(item[key]) > 256 for key in ("knowledge_id", "source_task_id", "reviewed_by"))
                     or len(item["title"]) > 200 or len(item["lesson"]) > 1000):
                 return WorkforceExecutionOutcome(False, "invalid_knowledge_context", "Verified knowledge context is invalid.")
             total_context_chars += sum(len(item[key]) for key in item)
