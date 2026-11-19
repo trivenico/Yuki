@@ -191,6 +191,86 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(report["worker_execution_events"]["execution_succeeded"], 1)
         self.assertIn("not that a specific treatment was delivered", " ".join(report["limitations"]))
 
+    def test_treatment_exposure_requires_treatment_arm_and_live_worker_lease(self):
+        self.engine.create_improvement_proposal("treatment-exposure-proposal", {"recommendation": "Verify actual treatment invocation"})
+        self.engine.transition_improvement_proposal(
+            "treatment-exposure-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Use the reviewed triage checklist as reference context",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment(
+            "treatment-exposure-exp", "treatment-exposure-proposal", design,
+        )
+        self.engine.transition_workforce_experiment(
+            "treatment-exposure-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        treatment_task = None
+        control_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"treatment-exposure-{index}",
+            )
+            assignment = self.engine.assign_workforce_experiment_task(
+                "treatment-exposure-exp", task["id"],
+            )
+            if assignment["assignment"] == "treatment":
+                treatment_task = task
+            else:
+                control_task = task
+            if treatment_task and control_task:
+                break
+        self.assertIsNotNone(treatment_task)
+        self.assertIsNotNone(control_task)
+        context = self.engine.get_task_workforce_experiment_context(treatment_task["id"])
+        self.assertEqual(context["assignment"], "treatment")
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_treatment_exposure(
+                "treatment-exposure-exp", control_task["id"], worker_id="worker-1",
+                attempt=1, intervention_version=context["intervention_version"],
+                skill_name="triage",
+            )
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_treatment_exposure(
+                "treatment-exposure-exp", treatment_task["id"], worker_id="worker-1",
+                attempt=1, intervention_version=context["intervention_version"],
+                skill_name="triage",
+            )
+        claimed = self.engine.claim("worker-1", task_type="workforce.task")
+        self.assertEqual(claimed["id"], treatment_task["id"])
+        self.engine.record_task_experiment_execution_event(
+            treatment_task["id"], "execution_started", worker_id="worker-1", attempt=1,
+        )
+        exposure = self.engine.record_workforce_experiment_treatment_exposure(
+            "treatment-exposure-exp", treatment_task["id"], worker_id="worker-1",
+            attempt=1, intervention_version=context["intervention_version"],
+            skill_name="triage",
+        )
+        replay = self.engine.record_workforce_experiment_treatment_exposure(
+            "treatment-exposure-exp", treatment_task["id"], worker_id="worker-1",
+            attempt=1, intervention_version=context["intervention_version"],
+            skill_name="triage",
+        )
+        self.assertTrue(exposure["created"])
+        self.assertFalse(replay["created"])
+        listed = self.engine.list_workforce_experiment_treatment_exposures("treatment-exposure-exp")
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["skill_name"], "triage")
+        report = self.engine.get_workforce_experiment_integrity("treatment-exposure-exp")
+        self.assertEqual(report["treatment_exposures"], 1)
+        self.assertNotIn("treatment_execution_without_skill_exposure",
+                         {issue["code"] for issue in report["issues"]})
+
     def test_experiment_integrity_audit_detects_missing_delivery_and_eligibility_drift(self):
         self.engine.create_improvement_proposal("integrity-proposal", {"recommendation": "Audit exposure"})
         self.engine.transition_improvement_proposal(
