@@ -12,7 +12,8 @@ from typing import Any, Sequence
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
 from companion.persona import DEFAULT_PERSONA, Persona
-from core.role_engine import RoleEngine\nfrom core.curated_knowledge_context import build_curated_knowledge_reference_context
+from core.role_engine import RoleEngine
+from core.curated_knowledge_context import build_curated_knowledge_reference_context
 
 
 class ConversationService:
