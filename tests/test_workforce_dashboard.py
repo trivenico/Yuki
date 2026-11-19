@@ -585,15 +585,31 @@ class WorkforceDashboardTests(unittest.TestCase):
             {"assigned_employee_id": employee.employee_id, "description": "Failure"},
             idempotency_key="outcome-failure", max_attempts=1,
         )
-        claimed_success = self.engine.claim("outcome-worker", task_type="workforce.task")
-        self.assertEqual(claimed_success["id"], succeeded["id"])
-        self.engine.complete(succeeded["id"], "outcome-worker", {
-            "ok": True, "status": "completed", "employee_id": employee.employee_id,
-            "review_required": False, "review_evidence": None,
-        })
-        claimed_failure = self.engine.claim("outcome-worker", task_type="workforce.task")
-        self.assertEqual(claimed_failure["id"], failed["id"])
-        self.engine.fail(failed["id"], "outcome-worker", "redacted failure")
+        # Tasks submitted in the same clock tick can have identical ordering
+        # timestamps; the engine's UUID tie-breaker is intentionally not
+        # insertion order. Assert the two outcomes without assuming which task
+        # the cross-platform SQLite scheduler returns first.
+        claimed_first = self.engine.claim("outcome-worker", task_type="workforce.task")
+        self.assertIn(claimed_first["id"], {succeeded["id"], failed["id"]})
+        if claimed_first["id"] == succeeded["id"]:
+            self.engine.complete(succeeded["id"], "outcome-worker", {
+                "ok": True, "status": "completed", "employee_id": employee.employee_id,
+                "review_required": False, "review_evidence": None,
+            })
+        else:
+            self.engine.fail(failed["id"], "outcome-worker", "redacted failure")
+
+        claimed_second = self.engine.claim("outcome-worker", task_type="workforce.task")
+        self.assertIsNotNone(claimed_second)
+        self.assertNotEqual(claimed_second["id"], claimed_first["id"])
+        if claimed_second["id"] == succeeded["id"]:
+            self.engine.complete(succeeded["id"], "outcome-worker", {
+                "ok": True, "status": "completed", "employee_id": employee.employee_id,
+                "review_required": False, "review_evidence": None,
+            })
+        else:
+            self.assertEqual(claimed_second["id"], failed["id"])
+            self.engine.fail(failed["id"], "outcome-worker", "redacted failure")
 
         row = next(
             item for item in self.dashboard.snapshot()["goals"]
