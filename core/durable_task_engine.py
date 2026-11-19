@@ -1578,6 +1578,20 @@ class DurableTaskEngine:
                    GROUP BY d.delivery_state""",
                 (experiment_id,),
             ).fetchall()
+            exposure_rows = c.execute(
+                """SELECT COUNT(DISTINCT task_id) AS exposed_tasks,
+                          COUNT(*) AS exposure_attempts
+                   FROM workforce_experiment_treatment_exposures
+                   WHERE experiment_id=?""",
+                (experiment_id,),
+            ).fetchone()
+            exposure_skill_rows = c.execute(
+                """SELECT skill_name,COUNT(*) AS attempts,
+                          COUNT(DISTINCT task_id) AS tasks
+                   FROM workforce_experiment_treatment_exposures
+                   WHERE experiment_id=? GROUP BY skill_name ORDER BY skill_name""",
+                (experiment_id,),
+            ).fetchall()
         arms = {}
         for arm in ("control", "treatment"):
             counts = {"succeeded": 0, "failed": 0, "cancelled": 0, "pending": 0}
@@ -1607,12 +1621,34 @@ class DurableTaskEngine:
             delivery[key] for key in ("delivered", "not_delivered", "unknown")
         )
         arms["treatment"]["delivery_attestations"] = delivery
+        treatment_exposed_tasks = exposure_rows["exposed_tasks"] or 0
+        treatment_exposure_attempts = exposure_rows["exposure_attempts"] or 0
+        treatment_assigned_count = arms["treatment"]["assigned"]
+        treatment_exposure_coverage = (
+            treatment_exposed_tasks / treatment_assigned_count
+            if treatment_assigned_count else None
+        )
+        arms["treatment"]["runtime_exposure"] = {
+            "exposed_tasks": treatment_exposed_tasks,
+            "unexposed_assigned_tasks": max(0, treatment_assigned_count - treatment_exposed_tasks),
+            "exposure_attempts": treatment_exposure_attempts,
+            "task_coverage": treatment_exposure_coverage,
+            "skills": [dict(row) for row in exposure_skill_rows],
+        }
         design = json.loads(experiment["design_json"])
         minimum = design.get("minimum_sample_size")
         evaluable_total = sum(arm["evaluable"] for arm in arms.values())
         enough_observations = (
             isinstance(minimum, int) and not isinstance(minimum, bool)
             and evaluable_total >= minimum
+        )
+        control_rate = arms["control"]["success_rate"]
+        treatment_rate = arms["treatment"]["success_rate"]
+        comparison_available = (
+            enough_observations and control_rate is not None and treatment_rate is not None
+        )
+        success_rate_difference = (
+            treatment_rate - control_rate if comparison_available else None
         )
         return {
             "experiment_id": experiment_id,
@@ -1621,16 +1657,37 @@ class DurableTaskEngine:
             "primary_metric": design.get("primary_metric"),
             "minimum_sample_size": minimum,
             "arms": arms,
+            "descriptive_comparison": {
+                "status": "descriptive_comparison_available" if comparison_available
+                          else "insufficient_arm_observations",
+                "control_success_rate": control_rate,
+                "treatment_success_rate": treatment_rate,
+                "success_rate_difference_treatment_minus_control": success_rate_difference,
+                "direction": (
+                    "treatment_higher" if success_rate_difference is not None and success_rate_difference > 0
+                    else "treatment_lower" if success_rate_difference is not None and success_rate_difference < 0
+                    else "equal" if success_rate_difference == 0
+                    else "not_available"
+                ),
+                "minimum_sample_size_met": enough_observations,
+                "both_arms_have_evaluable_tasks": control_rate is not None and treatment_rate is not None,
+                "causal_inference": False,
+                "statistical_significance_tested": False,
+            },
             "total_assigned": sum(arm["assigned"] for arm in arms.values()),
             "total_evaluable": evaluable_total,
             "status": "descriptive_outcomes_available" if enough_observations
                       else "insufficient_observations",
             "interpretation": (
-                "Lifecycle outcome counts only; no causal effect, statistical "
-                "significance, causal validity, eligibility, or contamination "
-                "is established. Treatment delivery fields are operator attestations, "
-                "not proof of execution. Cancelled and pending tasks are not included "
-                "in the success-rate denominator."
+                "Per-arm success rates and their difference are descriptive only. "
+                "No causal effect, statistical significance, causal validity, "
+                "eligibility, or absence of contamination is established. Runtime "
+                "exposure records mean approved treatment text reached the guarded "
+                "skill execute boundary; they do not prove model attention, compliance, "
+                "or benefit. Delivery fields are operator attestations, not proof of "
+                "execution. Cancelled and pending tasks are excluded from success-rate "
+                "denominators. Task-mix, timing, retries, and operational differences "
+                "may explain observed arm differences."
             ),
             "automatic_action": False,
         }
