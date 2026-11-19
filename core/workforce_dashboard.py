@@ -130,7 +130,7 @@ class WorkforceDashboard:
         # Group recurring failures by stable operational dimensions only.
         # Do not expose employee-level blame labels or free-form failure details.
         employee_by_id = {employee.employee_id: employee for employee in employees}
-        failure_groups: dict[tuple[str, str], Counter] = defaultdict(Counter)
+        failure_groups: dict[tuple[str, str, tuple[str, ...]], Counter] = defaultdict(Counter)
         for task in tasks:
             if task["state"] not in {"succeeded", "failed"}:
                 continue
@@ -140,12 +140,17 @@ class WorkforceDashboard:
             assigned_id = payload.get("assigned_employee_id")
             employee = employee_by_id.get(assigned_id) if isinstance(assigned_id, str) else None
             department = employee.department if employee else "unassigned"
-            group = failure_groups[(department, task["task_type"])]
+            required = payload.get("required_capabilities", ())
+            capabilities = tuple(sorted({
+                item.strip() for item in required
+                if isinstance(item, str) and item.strip() and len(item) <= 80
+            })) if isinstance(required, (list, tuple)) else ()
+            group = failure_groups[(department, task["task_type"], capabilities)]
             group["completed_tasks"] += 1
             group[task["state"]] += 1
 
         failure_patterns = []
-        for (department, task_type), counts in sorted(failure_groups.items()):
+        for (department, task_type, capabilities), counts in sorted(failure_groups.items()):
             failed = counts["failed"]
             completed = counts["completed_tasks"]
             if failed < 2 or completed < 3:
@@ -153,6 +158,7 @@ class WorkforceDashboard:
             failure_patterns.append({
                 "department": department,
                 "task_type": task_type,
+                "required_capabilities": list(capabilities),
                 "failed_tasks": failed,
                 "succeeded_tasks": counts["succeeded"],
                 "completed_tasks": completed,
@@ -407,7 +413,7 @@ class WorkforceDashboard:
                     "failure-pattern prompts require at least two failed tasks in a department and do not assign blame",
                     "capacity counts are current registry metadata, not guaranteed future availability",
                     "failure rates exclude cancelled tasks and are omitted when no succeeded/failed tasks exist",
-                    "recurring failure patterns require at least two failures and three terminal observations in a department/task-type group",
+                    "recurring failure patterns require at least two failures and three terminal observations in a department/task-type/capability group",
                     "failure patterns are descriptive, do not attribute fault to individual employees, and omit raw failure details",
                     "signals are not forecasts, employee quality scores, or authorization to reassign work",
                 ],
