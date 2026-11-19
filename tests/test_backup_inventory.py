@@ -78,6 +78,7 @@ class BackupInventoryTests(unittest.TestCase):
             root = Path(directory)
             workspace = self._workspace(root, [
                 "auth.sqlite3", "inference.sqlite3", "income-opportunities.sqlite3",
+                "conversations.sqlite3",
             ])
             with self.assertRaisesRegex(BackupInventoryError, "duplicate_database_path"):
                 build_web_sqlite_inventory(
