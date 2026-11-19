@@ -86,10 +86,16 @@ class DockerJobRuntime:
             raise DockerJobRuntimeError("Docker command failed")
         return result
 
-    def launch(self, job_id: str, staging_directory: str) -> DockerJobHandle:
+    @staticmethod
+    def handle_for_job(job_id: str) -> DockerJobHandle:
+        """Reconstruct only the deterministic managed handle during recovery."""
         if not isinstance(job_id, str) or not _JOB_ID_RE.fullmatch(job_id):
             raise DockerJobRuntimeError("invalid sandbox job identifier")
-        container_name = "yuki-job-" + job_id[4:]
+        return DockerJobHandle(job_id=job_id, container_name="yuki-job-" + job_id[4:])
+
+    def launch(self, job_id: str, staging_directory: str) -> DockerJobHandle:
+        handle = self.handle_for_job(job_id)
+        container_name = handle.container_name
         try:
             argv = build_docker_argv(
                 self.policy,
@@ -109,7 +115,7 @@ class DockerJobRuntime:
         argv.remove("--interactive")
         argv[2:2] = ["--detach", "--name", container_name]
         self._run(argv)
-        return DockerJobHandle(job_id=job_id, container_name=container_name)
+        return handle
 
     def freeze(self, handle: object) -> bool:
         if not isinstance(handle, DockerJobHandle) or not _JOB_ID_RE.fullmatch(handle.job_id):
