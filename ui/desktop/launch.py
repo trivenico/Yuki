@@ -422,7 +422,6 @@ def run() -> int:
             self.lifecycle = None
             self.observation_review_database = None
             self.observation_review_service = None
-            self._revoke_observation()
             self.controller = None
             self.voice_session = None
             self.speech_session = None
@@ -2202,6 +2201,7 @@ Version: {version}",
         def _logout(self):
             if self._logout_started or self._shutdown_started:
                 return
+            self._revoke_observation()
             self._logout_started = True
             if self.voice_session is not None:
                 self.voice_session.close()
@@ -2257,6 +2257,7 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            self._revoke_observation()
             if self.voice_session is not None:
                 self.voice_session.close()
             if self.speech_session is not None:
