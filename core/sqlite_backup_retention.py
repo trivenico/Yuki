@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import uuid
 
 from core.backup_inventory import SQLiteDatabaseEntry
 from core.sqlite_backup_verify import verify_sqlite_backup_set
@@ -202,7 +203,7 @@ def prune_sqlite_backup_sets(
             except Exception as exc:
                 raise SQLiteBackupRetentionError("candidate_revalidation_failed") from exc
 
-            quarantine = ".yuki-prune-" + __import__("uuid").uuid4().hex
+            quarantine = ".yuki-prune-" + uuid.uuid4().hex
             try:
                 opened_identity = os.fstat(candidate_fd)
                 named_identity = os.stat(set_id, dir_fd=root_fd, follow_symlinks=False)
@@ -236,7 +237,7 @@ def prune_sqlite_backup_sets(
                     # Only the exact, preflighted regular files are unlinked.
                     for filename, prior in file_identities.items():
                         current_info = os.stat(filename, dir_fd=quarantined_fd, follow_symlinks=False)
-                        if not _same_identity(prior, current_info) or current_info.st_nlink != 1:
+                        if not _same_file_snapshot(prior, current_info):
                             raise SQLiteBackupRetentionError("candidate_file_changed_before_unlink")
                         os.unlink(filename, dir_fd=quarantined_fd)
                     os.close(quarantined_fd)
