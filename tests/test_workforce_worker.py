@@ -160,7 +160,19 @@ class WorkforceWorkerTests(unittest.TestCase):
         )
 
     def test_worker_attests_exact_verified_knowledge_before_executor_receives_it(self):
-        source = self.submit()
+        source = self.engine.submit(
+            self.goal, "workforce.task",
+            {
+                "description": "Create reviewed lesson source",
+                "assigned_employee_id": "ENG-001",
+                "required_capabilities": ["python", "api_design"],
+                "required_permissions": ["repo:read"],
+                "max_autonomy_tier": 1,
+                "execution_authorized": False,
+                "review_required": True,
+            },
+            idempotency_key="knowledge-delivery-source", max_attempts=1,
+        )
         self.engine.claim("source-worker")
         self.engine.complete(source["id"], "source-worker", {
             "ok": True, "status": "completed:reviewed", "employee_id": "ENG-001",
