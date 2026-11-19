@@ -102,10 +102,6 @@ class SandboxArtifactValidationTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ApprovedArtifactPromotionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -218,6 +214,16 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
                 artifact_path="report.txt", destination_path="report.txt",
             )
 
+
+    def test_approval_digest_changes_with_job_identity(self):
+        other_digest = self.service.promote(
+            principal=self.principal, job_id="job_" + "b" * 32,
+            staging_directory=self.staging, manifest=self.manifest,
+            artifact_path="report.txt", destination_path="other.txt",
+        )
+        self.assertNotEqual(other_digest, self.approvals[-1][2] if len(self.approvals) > 1 else "")
+        self.assertEqual(self.audit_events[-1]["job_id"], "job_" + "b" * 32)
+
     def test_audit_failure_rolls_back_created_file(self):
         from automation.sandbox_artifacts import ApprovedArtifactPromotion
         failing = ApprovedArtifactPromotion(
@@ -233,3 +239,7 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
                 destination_path="report.txt",
             )
         self.assertFalse((self.workspace / "report.txt").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
