@@ -53,6 +53,13 @@ class WorkforceDashboard:
         }
         knowledge_records: dict[str, dict[str, Any] | None] = {}
         knowledge_outcomes: dict[str, dict[str, Any]] = {}
+        delivery_records: dict[str, list[dict[str, Any]]] = {}
+        for task in tasks:
+            try:
+                delivery_records[task["id"]] = self.task_engine.list_workforce_knowledge_deliveries(task["id"])
+            except Exception:
+                # Missing or unreadable attestations are not treated as delivery.
+                delivery_records[task["id"]] = []
         for task in tasks:
             payload = task.get("payload")
             context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
@@ -81,8 +88,27 @@ class WorkforceDashboard:
                     "historically_verified_succeeded_tasks": 0,
                     "historically_verified_failed_tasks": 0,
                     "unverified_reference_exposures": 0,
+                    "attested_deliveries": 0,
+                    "attested_delivery_succeeded_tasks": 0,
+                    "attested_delivery_failed_tasks": 0,
                 })
                 metrics["exposures"] += 1
+                task_deliveries = delivery_records.get(task["id"], [])
+                is_attested_delivery = any(
+                    isinstance(delivery, dict)
+                    and delivery.get("knowledge_id") == knowledge_id
+                    and delivery.get("context") == lesson
+                    and delivery.get("worker_id")
+                    and type(delivery.get("attempt")) is int
+                    and delivery["attempt"] >= 1
+                    and isinstance(delivery.get("context_fingerprint"), str)
+                    and len(delivery["context_fingerprint"]) == 64
+                    and isinstance(delivery.get("knowledge_fingerprint"), str)
+                    and len(delivery["knowledge_fingerprint"]) == 64
+                    for delivery in task_deliveries
+                )
+                if is_attested_delivery:
+                    metrics["attested_deliveries"] += 1
                 is_currently_verified = knowledge_id in currently_verified_knowledge_ids
                 if is_currently_verified:
                     metrics["currently_verified_exposures"] += 1
@@ -131,8 +157,11 @@ class WorkforceDashboard:
                         metrics["historically_verified_succeeded_tasks"] += 1
                     result = task.get("result")
                     evidence = result.get("review_evidence") if isinstance(result, dict) else None
+                    if is_attested_delivery:
+                        metrics["attested_delivery_succeeded_tasks"] += 1
                     if (
-                        isinstance(payload, dict)
+                        is_attested_delivery
+                        and isinstance(payload, dict)
                         and payload.get("review_required") is True
                         and isinstance(result, dict)
                         and result.get("ok") is True
@@ -156,6 +185,8 @@ class WorkforceDashboard:
                     metrics["failed_tasks"] += 1
                     if is_currently_verified:
                         metrics["currently_verified_failed_tasks"] += 1
+                    if is_attested_delivery:
+                        metrics["attested_delivery_failed_tasks"] += 1
                     if historical_verified:
                         metrics["historically_verified_failed_tasks"] += 1
 
@@ -403,7 +434,7 @@ class WorkforceDashboard:
             lesson_evidence = []
             for knowledge_id in signal["verified_knowledge_ids"]:
                 outcome = knowledge_outcomes.get(knowledge_id, {})
-                exposures = outcome.get("currently_verified_exposures", 0)
+                exposures = outcome.get("attested_deliveries", 0)
                 verified_successes = outcome.get("independently_verified_successes", 0)
                 if exposures >= 3 and verified_successes >= 1:
                     evidence_level = "reviewed_success_observation_available"
@@ -414,11 +445,11 @@ class WorkforceDashboard:
                 lesson_evidence.append({
                     "knowledge_id": knowledge_id,
                     "exposures": exposures,
-                    "succeeded_tasks": outcome.get("currently_verified_succeeded_tasks", 0),
-                    "failed_tasks": outcome.get("currently_verified_failed_tasks", 0),
+                    "succeeded_tasks": outcome.get("attested_delivery_succeeded_tasks", 0),
+                    "failed_tasks": outcome.get("attested_delivery_failed_tasks", 0),
                     "independently_verified_successes": verified_successes if knowledge_id in currently_verified_knowledge_ids else 0,
                     "unverified_reference_exposures": outcome.get("unverified_reference_exposures", 0),
-                    "provenance": "currently_verified_record_match" if knowledge_id in currently_verified_knowledge_ids else "not_found_in_bounded_verified_registry",
+                    "provenance": "immutable_worker_delivery_attestation" if exposures else "no_attested_worker_delivery",
                     "evidence_level": evidence_level,
                 })
             if not lesson_evidence:
