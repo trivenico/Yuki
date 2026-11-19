@@ -8,7 +8,7 @@ from core.observation_sources import FakeObservationSource, ObservationEvent
 class ObservationSessionManagerTests(unittest.TestCase):
     def setUp(self):
         self.manager = ObservationSessionManager(max_sessions=2, max_sources_per_session=2)
-        self.policy = ObservationPolicy(enabled=True, allowed_sources=("app:ide", "browser:docs"))
+        self.policy = ObservationPolicy(enabled=True, allowed_sources=("app:ide", "browser:docs", "browser:extra"))
         self.session_id = self.manager.create_session(self.policy, consent_granted=True)
         self.source = FakeObservationSource("app:ide")
         self.manager.register_source(self.session_id, self.source)
@@ -48,6 +48,35 @@ class ObservationSessionManagerTests(unittest.TestCase):
         self.assertFalse(self.manager.status(sid).indicator_active)
         self.assertFalse(src.publish(ObservationEvent("app:ide", "development", {})))
         self.manager.revoke(sid)
+
+    def test_failed_consumer_counts_against_event_budget(self):
+        manager = ObservationSessionManager()
+        sid = manager.create_session(self.policy, consent_granted=True, event_limit=1)
+        source = FakeObservationSource("app:ide")
+        manager.register_source(sid, source)
+        source.publish(ObservationEvent("app:ide", "development", {"app": "editor"}))
+
+        def fail(_event):
+            raise RuntimeError("consumer failed")
+
+        with self.assertRaisesRegex(RuntimeError, "consumer failed"):
+            manager.poll(sid, "app:ide", fail)
+
+        status = manager.status(sid)
+        self.assertEqual(status.processed_events, 1)
+        self.assertEqual(status.delivered_events, 0)
+        self.assertEqual(status.delivery_failures, 1)
+        self.assertEqual(status.state, "limit_reached")
+        self.assertFalse(status.indicator_active)
+        self.assertFalse(source.publish(ObservationEvent("app:ide", "development", {})))
+        manager.revoke(sid)
+
+    def test_empty_poll_does_not_consume_event_budget(self):
+        status_before = self.manager.status(self.session_id)
+        self.assertFalse(self.manager.poll(self.session_id, "app:ide", lambda _event: None))
+        status_after = self.manager.status(self.session_id)
+        self.assertEqual(status_after.processed_events, status_before.processed_events)
+        self.assertEqual(status_after.delivery_failures, 0)
 
     def test_source_must_be_allowlisted_and_unique(self):
         with self.assertRaises(PermissionError):
