@@ -1103,6 +1103,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
             )
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
+            from ui.desktop.observation_learning import build_desktop_observation_review_service
+            self.observation_review_service = build_desktop_observation_review_service(
+                self.auth, self.sessions, identity, self.observation_review_database,
+            )
             specialist_controller = DesktopCompanionController(
                 context.application, context.identity, self.sessions,
                 workspace_path=Path(config["workspace"]),
@@ -1118,10 +1122,6 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 sessions=self.sessions,
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
-            )
-            from ui.desktop.observation_learning import build_desktop_observation_review_service
-            self.observation_review_service = build_desktop_observation_review_service(
-                self.auth, self.sessions, identity, self.observation_review_database,
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
