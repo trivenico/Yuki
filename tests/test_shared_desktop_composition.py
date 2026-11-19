@@ -6,8 +6,27 @@ from ui.desktop.shared_desktop_composition import build_shared_desktop_controlle
 
 
 class FakeConversation:
+    def __init__(self):
+        self.selected = "conversation-1"
+
     def send(self, message, **kwargs):
         return {"status": "completed", "answer": "reply"}
+
+    def start_new_conversation(self, *, title="New conversation"):
+        self.selected = "conversation-new"
+        return {"conversation_id": self.selected, "title": title, "version": 0}
+
+    def select_conversation(self, conversation_id):
+        if conversation_id == "foreign-owner-conversation":
+            raise PermissionError("not owned by this account")
+        self.selected = conversation_id
+        return {"conversation_id": conversation_id, "title": "Test", "version": 1}
+
+    def list_conversations(self, *, limit=50):
+        return [{"conversation_id": "conversation-1", "title": "Existing"}][:limit]
+
+    def history(self, *, limit=100):
+        return [{"role": "user", "content": "hello"}][:limit]
 
     def set_memory_context_enabled(self, enabled):
         self.enabled = enabled
@@ -67,6 +86,42 @@ class SharedDesktopCompositionTests(unittest.TestCase):
         self.assertEqual(session.close_count, 1)
         self.assertEqual(specialists.logout_count, 1)
         build.assert_called_once()
+
+    @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
+    def test_bridge_exposes_owner_scoped_conversation_navigation(self, build):
+        session = FakeSession()
+        build.return_value = session
+        specialists = SpecialistController()
+        add_specialist_contract(specialists)
+        bridge = build_shared_desktop_controller(
+            {}, provider=object(), identity=object(), sessions=object(),
+            specialist_controller=specialists,
+        )
+
+        created = bridge.start_new_conversation(title="Fresh")
+        self.assertEqual(created["conversation_id"], "conversation-new")
+        self.assertEqual(bridge.list_conversations()[0]["conversation_id"], "conversation-1")
+        selected = bridge.select_conversation("conversation-1")
+        self.assertEqual(selected["conversation_id"], "conversation-1")
+        self.assertEqual(bridge.history()[0]["content"], "hello")
+
+    @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
+    def test_owner_scope_failure_closes_bridge_and_both_sessions(self, build):
+        session = FakeSession()
+        build.return_value = session
+        specialists = SpecialistController()
+        add_specialist_contract(specialists)
+        bridge = build_shared_desktop_controller(
+            {}, provider=object(), identity=object(), sessions=object(),
+            specialist_controller=specialists,
+        )
+
+        with self.assertRaises(PermissionError):
+            bridge.select_conversation("foreign-owner-conversation")
+        self.assertEqual(session.close_count, 1)
+        self.assertEqual(specialists.logout_count, 1)
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            bridge.history()
 
     @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
     def test_passes_curated_knowledge_provider_to_authenticated_chat(self, build):
