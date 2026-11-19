@@ -276,7 +276,7 @@ def observation_review_authorizer(auth_service, session_token_provider):
         raise TypeError("session_token_provider must be callable")
 
     def authorize(actor_id, permission):
-        if not isinstance(permission, str) or not permission.startswith("observation:review:"):
+        if not isinstance(permission, str) or not (permission.startswith("observation:review:") or permission == "memory:knowledge:promote"):
             return False
         token = session_token_provider()
         user = auth_service.resolve_session(token)
