@@ -32,6 +32,7 @@ def build_desktop_conversation_runtime(
     provider: Any,
     owner_id: str,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    knowledge_entries_for_owner: Callable[[str, str], Any] | None = None,
 ) -> ConversationApplicationRuntime:
     """Build the shared runtime for one authenticated desktop owner.
 
@@ -42,6 +43,8 @@ def build_desktop_conversation_runtime(
     """
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
+    if knowledge_entries_for_owner is not None and not callable(knowledge_entries_for_owner):
+        raise TypeError("knowledge_entries_for_owner must be callable.")
     if (
         not isinstance(owner_id, str)
         or not owner_id.strip()
@@ -69,4 +72,5 @@ def build_desktop_conversation_runtime(
         agent_loop=agent_loop,
         owner_id=owner_id.strip(),
         store_factory=store_factory,
+        knowledge_entries_for_owner=knowledge_entries_for_owner,
     )
