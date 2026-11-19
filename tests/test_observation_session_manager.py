@@ -62,6 +62,10 @@ class ObservationSessionManagerTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.manager.register_source(self.session_id, FakeObservationSource("browser:extra"))
 
+    def test_manager_polling_is_nonblocking_for_prompt_revocation(self):
+        with self.assertRaises(ValueError):
+            self.manager.poll(self.session_id, "app:ide", lambda item: None, timeout=0.1)
+
     def test_nonconsented_session_never_activates(self):
         sid = self.manager.create_session(self.policy, consent_granted=False)
         self.assertEqual(self.manager.status(sid).state, "disabled")
