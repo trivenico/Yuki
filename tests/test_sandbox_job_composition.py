@@ -14,6 +14,7 @@ from api.production_runtime import build_production_conversation_runtime
 from core.config import load_config
 
 
+@unittest.skipUnless(os.name == "posix", "sandbox job composition ownership requires POSIX UID metadata")
 class SandboxJobCompositionTests(unittest.TestCase):
     def test_disabled_mode_does_not_initialize_docker_or_storage(self):
         with patch("automation.sandbox_job_composition.shutil.which") as which:
