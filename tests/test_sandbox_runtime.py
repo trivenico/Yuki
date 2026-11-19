@@ -28,11 +28,11 @@ class DockerSandboxArgvTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
-    def test_write_workspace_capability_is_explicit(self, _uid, _gid):
+    def test_trusted_workspace_write_capability_is_rejected(self, _uid, _gid):
         policy = SandboxPolicy(capabilities=frozenset({"write_workspace"}))
-        argv = build_docker_argv(policy, image="python:3.12",
-            workspace=self.tmp.name, command=["python", "--version"])
-        self.assertTrue(argv[argv.index("--mount") + 1].endswith(",rw"))
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(policy, image="python:3.12",
+                workspace=self.tmp.name, command=["python", "--version"])
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
