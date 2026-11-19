@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import math
 import threading
 import time
+from types import MappingProxyType
 from typing import Mapping, Optional, Protocol, runtime_checkable
 
 from core.observation_policy import ObservationSession, _normalize_identifier
@@ -38,7 +39,7 @@ class ObservationEvent:
             if isinstance(value, float) and not math.isfinite(value):
                 raise ValueError("metadata numbers must be finite")
             clean[key] = value
-        object.__setattr__(self, "metadata", clean)
+        object.__setattr__(self, "metadata", MappingProxyType(clean))
 
 
 @runtime_checkable
