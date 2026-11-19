@@ -731,6 +731,12 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(report["assignments_checked"], 1)
         self.assertFalse(report["automatic_action"])
         self.assertIn(report["status"], {"integrity_warnings", "no_detected_integrity_issues"})
+        events_path = "/v1/workforce/experiments/integrity-api-exp/execution-events"
+        status, events = self.request(events_path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(events["execution_events"], [])
+        status, _ = self.request(events_path, token=self.user_session.token)
+        self.assertEqual(status, 403)
         status, _ = self.request(path, token=self.admin_session.token, query=b"unexpected=true")
         self.assertEqual(status, 400)
 
