@@ -339,6 +339,21 @@ class WorkforceDashboardTests(unittest.TestCase):
         )
         self.assertEqual(pattern["verified_knowledge_ids"], ["verified-python-lesson"])
         self.assertEqual(pattern["knowledge_coverage"], "verified_tag_match_available")
+        gap_signal = next(
+            row for row in snapshot["decision_intelligence"]["capability_gap_signals"]
+            if row["capability"] == "python"
+        )
+        self.assertEqual(gap_signal["assessment"], "repeated_failures_with_current_capacity")
+        self.assertEqual(gap_signal["failed_tasks"], 2)
+        self.assertGreaterEqual(gap_signal["employees_with_capacity"], 1)
+        self.assertEqual(gap_signal["verified_knowledge_ids"], ["verified-python-lesson"])
+        gap_recommendation = next(
+            item for item in snapshot["decision_intelligence"]["improvement_recommendations"]
+            if item["category"] == "capability_gap_review"
+        )
+        self.assertEqual(gap_recommendation["priority"], "medium")
+        self.assertTrue(gap_recommendation["requires_human_approval"])
+        self.assertFalse(gap_recommendation["automatic_action_taken"])
         recommendation = next(
             item for item in snapshot["decision_intelligence"]["improvement_recommendations"]
             if item["category"] == "recurring_failure_pattern"
