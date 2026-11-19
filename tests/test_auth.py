@@ -22,11 +22,24 @@ class BuiltInAuthServiceTests(unittest.TestCase):
     def test_first_admin_bootstrap_is_one_time_and_signup_is_least_privilege(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         self.assertIn("users:manage", admin.permissions)
+        self.assertIn("observation:review:read", admin.permissions)
+        self.assertIn("observation:review:decide", admin.permissions)
+        self.assertIn("observation:review:delete", admin.permissions)
+        operator = self.auth.create_account("ops.user", "Another secure password 4!")
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
+        operator = next(user for user in self.auth.list_users() if user.user_id == operator.user_id)
+        self.assertIn("observation:review:read", operator.permissions)
+        self.assertIn("observation:review:decide", operator.permissions)
+        self.assertNotIn("observation:review:delete", operator.permissions)
         with self.assertRaises(PermissionError):
             self.auth.bootstrap_admin("other.admin", "Correct horse battery staple 9!")
         user = self.auth.create_account("normal.user", "Another secure password 4!")
         self.assertEqual(user.role, "user")
         self.assertNotIn("workflow:approve", user.permissions)
+        self.assertNotIn("observation:review:read", user.permissions)
+        self.assertNotIn("observation:review:decide", user.permissions)
+        self.assertNotIn("observation:review:delete", user.permissions)
 
     def test_login_stores_only_session_hash_and_logout_revokes(self):
         self.auth.create_account("alice.user", "A sufficiently long password 3!")
