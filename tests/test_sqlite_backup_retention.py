@@ -10,6 +10,7 @@ from core.backup_inventory import SQLiteDatabaseEntry
 from core.sqlite_backup_retention import (
     SQLiteBackupRetentionError,
     plan_sqlite_backup_retention,
+    prune_sqlite_backup_sets,
 )
 from core.sqlite_backup_set import create_sqlite_backup_set
 
@@ -98,6 +99,51 @@ class SQLiteBackupRetentionTests(unittest.TestCase):
         self._backup(1)
         with self.assertRaisesRegex(SQLiteBackupRetentionError, "pinned_backup_set_missing"):
             self._plan(pinned=("0" * 32,))
+
+
+    def test_pruning_requires_explicit_approval(self):
+        old = self._backup(1)
+        self._backup(2)
+        with self.assertRaisesRegex(SQLiteBackupRetentionError, "explicit_approval_required"):
+            prune_sqlite_backup_sets(
+                self.backup_root, self.entries, workspace_root=self.workspace,
+                keep_last=1, approved_set_ids=(old.name,), explicit_approval=False,
+            )
+        self.assertTrue(old.exists())
+
+    def test_prunes_only_explicitly_approved_eligible_set(self):
+        old = self._backup(1)
+        newest = self._backup(2)
+        removed = prune_sqlite_backup_sets(
+            self.backup_root, self.entries, workspace_root=self.workspace,
+            keep_last=1, approved_set_ids=(old.name,), explicit_approval=True,
+        )
+        self.assertEqual(removed, (old.name,))
+        self.assertFalse(old.exists())
+        self.assertTrue(newest.exists())
+        plan = self._plan(keep_last=1)
+        self.assertEqual(plan.retained_set_ids, (newest.name,))
+        self.assertEqual(plan.eligible_set_ids, ())
+
+    def test_cannot_prune_last_known_good(self):
+        only = self._backup(1)
+        with self.assertRaisesRegex(SQLiteBackupRetentionError, "approved_set_not_eligible"):
+            prune_sqlite_backup_sets(
+                self.backup_root, self.entries, workspace_root=self.workspace,
+                keep_last=1, approved_set_ids=(only.name,), explicit_approval=True,
+            )
+        self.assertTrue(only.exists())
+
+    def test_cannot_prune_pinned_set(self):
+        pinned = self._backup(1)
+        self._backup(2)
+        with self.assertRaisesRegex(SQLiteBackupRetentionError, "approved_set_not_eligible"):
+            prune_sqlite_backup_sets(
+                self.backup_root, self.entries, workspace_root=self.workspace,
+                keep_last=1, pinned_set_ids=(pinned.name,),
+                approved_set_ids=(pinned.name,), explicit_approval=True,
+            )
+        self.assertTrue(pinned.exists())
 
 
 if __name__ == "__main__":
