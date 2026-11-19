@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from core.auth import BuiltInAuthService
+from core.observation_knowledge_store import SQLiteObservationKnowledgeReview
 from ui.desktop.auth import DesktopSessionManager
 from ui.desktop.bootstrap import AuthenticatedDesktopIdentity
 from ui.desktop.observation_learning import build_desktop_observation_review_service
@@ -43,7 +44,10 @@ class DesktopObservationReviewCompositionTests(unittest.TestCase):
 
     def test_composes_owner_scoped_service_from_live_identity(self):
         service = self.build()
-        proposal = service._store.propose("application", "com.example.editor")
+        writer = SQLiteObservationKnowledgeReview(
+            str(self.database), owner_id=self.user.user_id,
+        )
+        proposal = writer.propose("application", "com.example.editor")
         self.assertEqual(
             service.list_pending(actor_id=self.user.user_id)[0].proposal_id,
             proposal.proposal_id,
