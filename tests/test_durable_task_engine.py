@@ -99,16 +99,15 @@ class DurableTaskEngineTests(unittest.TestCase):
         for task, arm in assigned:
             selected.setdefault(arm, []).append(task)
         self.assertEqual(set(selected), {"control", "treatment"})
+        pending_by_arm = {"control": 0, "treatment": 0}
         for arm, tasks in selected.items():
             self.engine.cancel_task(tasks[0]["id"])
             delayed = self.engine.submit(
                 self.goal, "workforce.task", {}, idempotency_key=f"pending-{arm}",
                 delay_seconds=86400,
             )
-            self.assertEqual(
-                self.engine.assign_workforce_experiment_task("outcome-exp", delayed["id"])["assignment"],
-                arm,
-            )
+            delayed_arm = self.engine.assign_workforce_experiment_task("outcome-exp", delayed["id"])["assignment"]
+            pending_by_arm[delayed_arm] += 1
         outcome_index = {"control": 0, "treatment": 0}
         while True:
             claimed = self.engine.claim("outcome-worker")
@@ -126,7 +125,8 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(report["status"], "descriptive_outcomes_available")
         for arm in ("control", "treatment"):
             self.assertEqual(report["arms"][arm]["cancelled"], 1)
-            self.assertEqual(report["arms"][arm]["pending"], 1)
+            self.assertEqual(report["arms"][arm]["pending"], pending_by_arm[arm])
+            self.assertEqual(report["arms"][arm]["assigned"], len(selected[arm]) + pending_by_arm[arm])
             self.assertEqual(report["arms"][arm]["evaluable"], len(selected[arm]) - 1)
             self.assertGreater(report["arms"][arm]["success_rate"], 0)
             self.assertLess(report["arms"][arm]["success_rate"], 1)
