@@ -61,11 +61,11 @@ def _restrict_session_to_logout_retry(
 
 
 def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -> None:
-    """Revoke the active owner session, then close process resources."""
+    """Revoke the local profile session, then close process resources."""
     def revoke_active_session():
         if controller is not None:
             controller.logout()
-        elif sessions is not None:
+        if sessions is not None:
             sessions.logout()
 
     if lifecycle is not None:
@@ -2501,15 +2501,28 @@ Version: {version}",
                 self.pages.setCurrentIndex(1)
                 self._restrict_to_logout_retry()
                 self.chat_status.setText(
-                    "Session expired; cleanup is incomplete. Retry sign out before signing in again."
+                    "Local session cleanup is incomplete. Close Yuki to retry cleanup safely."
                 )
                 self.login_status.setText(
-                    "Local session cleanup is incomplete ("
-                    + type(cleanup_error).__name__ + "). Retry sign out."
+                    "Local profile cleanup is incomplete ("
+                    + type(cleanup_error).__name__ + "). Close Yuki to retry."
                 )
                 return
             self.controller = None
-            self.pages.setCurrentIndex(0)
+            try:
+                if self.sessions is not None:
+                    self.sessions.logout()
+                    identity = self.sessions.open_local_profile_session()
+                    self._open_session(identity)
+                else:
+                    self.pages.setCurrentIndex(0)
+                    self.login_status.setText("Local profile session is unavailable.")
+            except Exception as exc:
+                self.pages.setCurrentIndex(0)
+                self.login_status.setText(
+                    "Yuki could not reopen its local profile ("
+                    + type(exc).__name__ + "). Close and restart Yuki."
+                )
 
         def _restrict_to_logout_retry(self):
             self.setEnabled(True)
@@ -2533,7 +2546,7 @@ Version: {version}",
                 # can retry any cleanup step that failed. Returning to login and
                 # discarding it here would make the retry path unreachable.
                 self._clear_authenticated_session_ui()
-                self.logout_button.setText("Retry sign out")
+                self.logout_button.setText("Retry cleanup")
                 self.chat_status.setText(
                     "Sign-out cleanup incomplete. Other session actions are blocked; retry sign out."
                 )
@@ -2541,16 +2554,16 @@ Version: {version}",
                     self._restrict_to_logout_retry()
                 QMessageBox.warning(
                     self, "Sign out",
-                    "Session cleanup did not fully complete (" + type(error).__name__ + "). "
-                    "Yuki has closed the session action gate. Retry sign out to finish cleanup."
+                    "Local profile cleanup did not fully complete (" + type(error).__name__ + "). "
+                    "Yuki has closed the session action gate. Close Yuki again to retry cleanup."
                 )
                 return
             self.controller = None
             self._return_to_login()
             if not self._shutdown_started:
                 self.setEnabled(True)
-            self.logout_button.setText("Sign out")
-            self.login_status.setText("You are signed out.")
+            self.logout_button.setText("Close Yuki")
+            self.login_status.setText("Local profile session refreshed.")
 
         def _logout(self):
             if self._logout_started or self._shutdown_started:
@@ -2571,7 +2584,7 @@ Version: {version}",
             self.speech_session = None
             self.setEnabled(False)
             self.login_status.setText(
-                "Yuki is finishing active work before signing out…"
+                "Yuki is closing the local profile session…"
             )
             worker = LogoutWorker(self.controller, self.sessions)
             worker.signals.finished.connect(self._logout_finished)
@@ -2626,7 +2639,7 @@ Version: {version}",
             self.speech_session = None
             self.setEnabled(False)
             self.login_status.setText(
-                "Yuki is safely signing out and shutting down…"
+                "Yuki is safely closing the local profile and shutting down…"
             )
             # The pool is single-threaded: this shutdown task runs only after
             # any active provider/backup/plan operation has returned. Resource
