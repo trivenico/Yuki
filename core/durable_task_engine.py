@@ -865,10 +865,34 @@ class DurableTaskEngine:
             raise ValueError("invalid preferred_direction")
         if design["design_type"] not in {"randomized_controlled", "pre_post_descriptive"}:
             raise ValueError("invalid design_type")
-        if (not isinstance(design["guardrails"], list) or len(design["guardrails"]) > 20
-                or any(not isinstance(item, str) or not item.strip() or len(item) > 240
-                       for item in design["guardrails"])):
+        if not isinstance(design["guardrails"], list) or len(design["guardrails"]) > 20:
             raise ValueError("invalid guardrails")
+        guardrail_metrics = {
+            "task_success_rate", "task_failure_rate", "failed_tasks", "cancelled_tasks",
+        }
+        for guardrail in design["guardrails"]:
+            if isinstance(guardrail, str):
+                if not guardrail.strip() or len(guardrail) > 240:
+                    raise ValueError("invalid descriptive guardrail")
+                continue
+            if not isinstance(guardrail, dict) or set(guardrail) != {
+                "metric", "operator", "threshold", "scope", "severity",
+            }:
+                raise ValueError("invalid measurable guardrail schema")
+            if guardrail["metric"] not in guardrail_metrics:
+                raise ValueError("unsupported guardrail metric")
+            if guardrail["operator"] not in {"<", "<=", ">", ">="}:
+                raise ValueError("invalid guardrail operator")
+            threshold = guardrail["threshold"]
+            if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
+                    or not math.isfinite(threshold) or threshold < 0
+                    or (guardrail["metric"] in {"task_success_rate", "task_failure_rate"}
+                        and threshold > 1)):
+                raise ValueError("invalid guardrail threshold")
+            if guardrail["scope"] not in {"treatment", "control", "both"}:
+                raise ValueError("invalid guardrail scope")
+            if guardrail["severity"] not in {"warning", "critical"}:
+                raise ValueError("invalid guardrail severity")
         for key, low, high in (("evaluation_window_days", 1, 90), ("minimum_sample_size", 2, 100000)):
             if type(design[key]) is not int or not low <= design[key] <= high:
                 raise ValueError("invalid " + key)
@@ -1636,6 +1660,60 @@ class DurableTaskEngine:
             "skills": [dict(row) for row in exposure_skill_rows],
         }
         design = json.loads(experiment["design_json"])
+        measurable_guardrails = [
+            item for item in design.get("guardrails", []) if isinstance(item, dict)
+        ]
+        guardrail_results = []
+        guardrail_violations = []
+        operators = {
+            "<": lambda actual, limit: actual < limit,
+            "<=": lambda actual, limit: actual <= limit,
+            ">": lambda actual, limit: actual > limit,
+            ">=": lambda actual, limit: actual >= limit,
+        }
+        for index, guardrail in enumerate(measurable_guardrails):
+            target_arms = (
+                ("control", "treatment") if guardrail["scope"] == "both"
+                else (guardrail["scope"],)
+            )
+            for arm_name in target_arms:
+                arm = arms[arm_name]
+                metric = guardrail["metric"]
+                if metric == "task_success_rate":
+                    actual = arm["success_rate"]
+                elif metric == "task_failure_rate":
+                    actual = arm["failed"] / arm["evaluable"] if arm["evaluable"] else None
+                elif metric == "failed_tasks":
+                    actual = arm["failed"]
+                else:
+                    actual = arm["cancelled"]
+                evaluated = actual is not None
+                passed = operators[guardrail["operator"]](actual, guardrail["threshold"]) if evaluated else None
+                result = {
+                    "guardrail_index": index, "metric": metric, "arm": arm_name,
+                    "operator": guardrail["operator"], "threshold": guardrail["threshold"],
+                    "actual": actual, "severity": guardrail["severity"],
+                    "status": "passed" if passed else "violated" if evaluated else "not_evaluable",
+                }
+                guardrail_results.append(result)
+                if evaluated and not passed:
+                    guardrail_violations.append(result)
+        guardrail_summary = {
+            "status": (
+                "violations_detected" if guardrail_violations else
+                "not_evaluable" if any(item["status"] == "not_evaluable" for item in guardrail_results)
+                else "passed" if guardrail_results else
+                "no_measurable_guardrails"
+            ),
+            "measurable_guardrails_defined": len(measurable_guardrails),
+            "descriptive_guardrails_not_evaluated": sum(
+                isinstance(item, str) for item in design.get("guardrails", [])
+            ),
+            "results": guardrail_results,
+            "violations": guardrail_violations,
+            "critical_violations": sum(item["severity"] == "critical" for item in guardrail_violations),
+            "automatic_action": False,
+        }
         minimum = design.get("minimum_sample_size")
         evaluable_total = sum(arm["evaluable"] for arm in arms.values())
         enough_observations = (
@@ -1657,6 +1735,7 @@ class DurableTaskEngine:
             "primary_metric": design.get("primary_metric"),
             "minimum_sample_size": minimum,
             "arms": arms,
+            "guardrail_evaluation": guardrail_summary,
             "descriptive_comparison": {
                 "status": "descriptive_comparison_available" if comparison_available
                           else "insufficient_arm_observations",
