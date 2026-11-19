@@ -107,12 +107,16 @@ class DesktopObservationController:
         session_id = self._session_id
         if not source.poll_once():
             return False
-        delivered = self._manager.poll(
-            session_id, sink.source_id, consumer, timeout=0.0,
-        )
-        if self._manager.status(session_id).state == "limit_reached":
-            self._state = "limit_reached"
-            self._collector.stop()
+        try:
+            delivered = self._manager.poll(
+                session_id, sink.source_id, consumer, timeout=0.0,
+            )
+        finally:
+            # The manager can exhaust the budget before re-raising a consumer
+            # exception. Always reconcile collector and visible indicator state.
+            if self._manager.status(session_id).state == "limit_reached":
+                self._state = "limit_reached"
+                self._collector.stop()
         return delivered
 
     def pause(self) -> None:
