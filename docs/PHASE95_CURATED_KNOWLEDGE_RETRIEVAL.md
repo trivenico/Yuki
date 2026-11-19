@@ -39,3 +39,9 @@ The desktop Learning tab now exposes an explicit **Promote approved** action. It
 The desktop conversation composition now passes the live-session-backed `CuratedKnowledgeProvider` through the shared desktop composition seam into the canonical conversation runtime. Each conversation request therefore performs owner-scoped, live-authorized retrieval before model execution. Sign-out clears desktop references and revokes the session; the provider itself does not cache records.
 
 The UI button is enabled for approved proposals, but the service remains the authorization boundary: accounts without the promotion grant receive a permission failure and cannot promote.
+
+## Phase 96 desktop knowledge management
+
+The desktop Learning tab now lists active curated knowledge entries with provenance details, supports explicit deactivation with confirmation, and displays the catalog audit trail. Reads and audit inspection require the separate `memory:knowledge:read` grant; deactivation requires `memory:knowledge:deactivate`. The UI refreshes the catalog alongside proposal review and clears its displayed entries on sign-out.
+
+Deactivation marks an entry inactive and records an audit event; it does not erase the original proposal or rewrite historical provenance. Retrieval consults the active catalog on each request, so inactive entries are excluded without a cache invalidation delay.
