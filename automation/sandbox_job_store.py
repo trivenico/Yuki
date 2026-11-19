@@ -92,25 +92,58 @@ class SandboxJobStore:
         connection.execute("PRAGMA synchronous=FULL")
         return connection
 
+    @staticmethod
+    def _create_jobs_table(connection: sqlite3.Connection, table_name: str) -> None:
+        # table_name is an internal constant, never caller-controlled.
+        connection.execute(f"""
+            CREATE TABLE {table_name} (
+                job_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL CHECK(state IN (
+                    'created','launching','running','frozen','validated','promoted',
+                    'failed','cancelled','cleaned'
+                )),
+                staging_directory TEXT NOT NULL,
+                container_name TEXT,
+                manifest_digest TEXT,
+                promoted_paths_json TEXT NOT NULL DEFAULT '[]',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
+
     def _initialize(self) -> None:
         connection = self._connect()
         try:
             connection.execute("PRAGMA journal_mode=DELETE")
-            connection.execute("""
-                CREATE TABLE IF NOT EXISTS sandbox_jobs (
-                    job_id TEXT PRIMARY KEY,
-                    state TEXT NOT NULL CHECK(state IN (
-                        'created','launching','running','frozen','validated','promoted',
-                        'failed','cancelled','cleaned'
-                    )),
-                    staging_directory TEXT NOT NULL,
-                    container_name TEXT,
-                    manifest_digest TEXT,
-                    promoted_paths_json TEXT NOT NULL DEFAULT '[]',
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
-                )
-            """)
+            existing = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='sandbox_jobs'"
+            ).fetchone()
+            if existing is None:
+                self._create_jobs_table(connection, "sandbox_jobs")
+            elif "'launching'" not in (existing["sql"] or ""):
+                # Upgrade older CHECK constraints transactionally while preserving
+                # every durable record. SQLite cannot alter a CHECK constraint.
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    connection.execute(
+                        "ALTER TABLE sandbox_jobs RENAME TO sandbox_jobs_legacy"
+                    )
+                    self._create_jobs_table(connection, "sandbox_jobs")
+                    connection.execute("""
+                        INSERT INTO sandbox_jobs (
+                            job_id,state,staging_directory,container_name,
+                            manifest_digest,promoted_paths_json,created_at,updated_at
+                        )
+                        SELECT job_id,state,staging_directory,container_name,
+                               manifest_digest,promoted_paths_json,created_at,updated_at
+                        FROM sandbox_jobs_legacy
+                    """)
+                    connection.execute("DROP TABLE sandbox_jobs_legacy")
+                    connection.execute("COMMIT")
+                except Exception:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                    raise
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS sandbox_jobs_state_idx ON sandbox_jobs(state)"
             )
