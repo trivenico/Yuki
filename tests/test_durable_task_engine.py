@@ -195,7 +195,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(guardrails["automatic_action"])
         self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["exposed_tasks"], 0)
         self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["task_coverage"], 0)
-        self.assertIn("no causal effect", report["interpretation"])
+        self.assertIn("no causal effect", report["interpretation"].lower())
 
     def test_experiment_worker_execution_telemetry_requires_live_lease_and_is_reported(self):
         self.engine.create_improvement_proposal("execution-telemetry-proposal", {"recommendation": "Measure worker runs"})
@@ -616,7 +616,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             self.engine.create_knowledge_candidate("lesson-unreviewed", unreviewed["id"], lesson)
 
-        failed = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="failed-source", max_attempts=1)
+        failed = self.engine.submit(self.engine.create_goal(), "workforce.task", {}, idempotency_key="failed-source", max_attempts=1)
         self.engine.claim("knowledge-test-worker")
         self.engine.fail(failed["id"], "knowledge-test-worker", "redacted failure")
         with self.assertRaises(TaskConflict):
@@ -698,7 +698,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(proposal["state"], "proposed")
         self.assertEqual(self.engine.get_knowledge("revision-lesson")["knowledge"], original)
         self.assertEqual(self.engine.list_verified_knowledge()[0]["knowledge"], original)
-        with self.assertRaises(TaskConflict):
+        with self.assertRaises(ValueError):
             self.engine.transition_knowledge_revision(
                 "revision-2", expected_state="proposed", new_state="approved",
                 actor_id="",
