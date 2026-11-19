@@ -215,12 +215,12 @@ class AuthenticatedWorkforceDashboardAPI:
             elif re.fullmatch(r"/v1/workforce/goals/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", path):
                 if set(query) - _GOAL_QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
+                after_event_id = self._integer(query.get("after_event_id", "0"), "after_event_id", max_digits=18)
+                event_limit = self._integer(query.get("event_limit", "100"), "event_limit")
                 goal_id = path.rsplit("/", 1)[-1]
                 goal = await asyncio.to_thread(self.dashboard.task_engine.get_goal, goal_id)
                 if goal.get("owner_id") != user.user_id and user.role != "admin":
                     return await self._respond(send, 404, {"error": "resource_not_found"})
-                after_event_id = self._integer(query.get("after_event_id", "0"), "after_event_id", max_digits=18)
-                event_limit = self._integer(query.get("event_limit", "100"), "event_limit")
                 result = await asyncio.to_thread(
                     self.dashboard.goal_detail, goal_id,
                     after_event_id=after_event_id, event_limit=event_limit,
@@ -376,6 +376,20 @@ class AuthenticatedWorkforceDashboardAPI:
         recommendation_id = payload["recommendation_id"]
         if not isinstance(recommendation_id, str) or not 1 <= len(recommendation_id) <= 256:
             return await self._respond(send, 400, {"error": "invalid_proposal_request"})
+        proposal_id = "recommendation-" + hashlib.sha256(recommendation_id.encode("utf-8")).hexdigest()
+        try:
+            existing = await asyncio.to_thread(
+                self.dashboard.task_engine.get_improvement_proposal, proposal_id,
+            )
+        except TaskNotFound:
+            existing = None
+        except Exception:
+            return await self._respond(send, 503, {"error": "improvement_proposal_unavailable"})
+        if existing is not None:
+            return await self._respond(send, 200, {
+                "created": False, "proposal": existing["proposal"],
+                "proposal_id": existing["proposal_id"], "state": existing["state"],
+            })
         try:
             snapshot = await asyncio.to_thread(self.dashboard.snapshot)
             recommendations = snapshot["decision_intelligence"]["improvement_recommendations"]
@@ -405,8 +419,6 @@ class AuthenticatedWorkforceDashboardAPI:
                 "requires_human_approval": True,
                 "automatic_action_taken": False,
             }
-            canonical = json.dumps(proposal, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            proposal_id = "recommendation-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
             result = await asyncio.to_thread(self.dashboard.task_engine.create_improvement_proposal, proposal_id, proposal)
         except TaskConflict:
             return await self._respond(send, 409, {"error": "proposal_identity_conflict"})
@@ -555,6 +567,16 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._respond(send, 400, {"error": "invalid_experiment_request"})
         if not isinstance(payload["experiment_id"], str) or not isinstance(payload["proposal_id"], str) or not isinstance(payload["design"], dict):
             return await self._respond(send, 400, {"error": "invalid_experiment_request"})
+        try:
+            linked_proposal = await asyncio.to_thread(
+                self.dashboard.task_engine.get_improvement_proposal, payload["proposal_id"],
+            )
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "proposal_not_found"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "experiment_unavailable"})
+        if linked_proposal.get("state") != "approved":
+            return await self._respond(send, 409, {"error": "experiment_conflict"})
         try:
             result = await asyncio.to_thread(
                 self.dashboard.task_engine.create_workforce_experiment,
