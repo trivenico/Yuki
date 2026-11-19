@@ -136,11 +136,12 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
         )
 
     def test_promotes_exact_digest_to_exact_new_destination(self):
+        (self.workspace / "reports").mkdir()
         digest = self.service.promote(
             principal=self.principal, staging_directory=self.staging,
             manifest=self.manifest, artifact_path="report.txt",
             destination_path="reports/report.txt",
-        ) if (self.workspace / "reports").mkdir() is None else None
+        )
         target = self.workspace / "reports" / "report.txt"
         self.assertEqual(target.read_text(encoding="utf-8"), "trusted report")
         self.assertEqual(digest, self.approvals[0][2])
@@ -180,6 +181,17 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
             )
         self.assertEqual(target.read_text(encoding="utf-8"), "keep")
         self.assertFalse((self.workspace / "new.txt").exists())
+
+    def test_rejects_forged_manifest_digest(self):
+        from dataclasses import replace
+        forged = replace(self.manifest, digest="0" * 64)
+        with self.assertRaises(ArtifactValidationError):
+            self.service.promote(
+                principal=self.principal, staging_directory=self.staging,
+                manifest=forged, artifact_path="report.txt",
+                destination_path="report.txt",
+            )
+        self.assertFalse((self.workspace / "report.txt").exists())
 
     def test_rejects_untrusted_principal_and_missing_permission(self):
         from automation.authorized_read_tools import ToolPrincipal, ToolAuthorizationError
