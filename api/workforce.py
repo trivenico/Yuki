@@ -67,6 +67,8 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._create_workforce_experiment(scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
             return await self._transition_workforce_experiment(path, scope, receive, send)
+        if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/assignments", path):
+            return await self._assign_workforce_experiment_task(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/knowledge/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/revisions", path):
             return await self._create_knowledge_revision(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/knowledge-revisions/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
@@ -164,6 +166,12 @@ class AuthenticatedWorkforceDashboardAPI:
                     return await self._respond(send, 400, {"error": "invalid_query"})
                 experiments = await asyncio.to_thread(self.dashboard.task_engine.list_workforce_experiments, limit=limit)
                 result = {"experiments": experiments, "count": len(experiments)}
+            elif re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/assignments", path):
+                if set(query) - {"limit"}:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                experiment_id = path.split("/")[-2]
+                limit = self._integer(query.get("limit", "500"), "limit")
+                result = {"assignments": await asyncio.to_thread(self.dashboard.task_engine.list_workforce_experiment_assignments, experiment_id, limit=limit)}
             elif re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", path):
                 if query:
                     return await self._respond(send, 400, {"error": "invalid_query"})
@@ -449,6 +457,37 @@ class AuthenticatedWorkforceDashboardAPI:
         except Exception:
             return await self._respond(send, 503, {"error": "experiment_unavailable"})
         return await self._respond(send, 201 if result.get("created") else 200, result)
+
+    async def _assign_workforce_experiment_task(self, path, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _ = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        payload = await self._read_experiment_json(scope, receive, send)
+        if payload is None:
+            return
+        if not isinstance(payload, dict) or set(payload) != {"task_id"} or not isinstance(payload["task_id"], str):
+            return await self._respond(send, 400, {"error": "invalid_assignment_request"})
+        experiment_id = path.split("/")[-2]
+        try:
+            result = await asyncio.to_thread(
+                self.dashboard.task_engine.assign_workforce_experiment_task,
+                experiment_id, payload["task_id"],
+            )
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "experiment_assignment_conflict"})
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "experiment_or_task_not_found"})
+        except (TypeError, ValueError):
+            return await self._respond(send, 400, {"error": "invalid_assignment_request"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "experiment_assignment_unavailable"})
+        return await self._respond(send, 201 if result.get("created") else 200, {
+            **result, "intervention_executed": False,
+            "interpretation": "Assignment metadata only; no treatment was applied to the task.",
+        })
 
     async def _transition_workforce_experiment(self, path, scope, receive, send):
         principal = await self._principal(scope)
