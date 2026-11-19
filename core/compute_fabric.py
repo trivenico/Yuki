@@ -321,7 +321,13 @@ class ModelLifecycleManager:
         if cleanup_failed_load is not None and not callable(cleanup_failed_load):
             raise TypeError("cleanup_failed_load must be callable")
         lease = self._scheduler.reserve_model(request, model_id=model_id)
-        backend = self._scheduler.backend_for(request.backend)
+        try:
+            backend = self._scheduler.backend_for(request.backend)
+        except BaseException:
+            # Backend availability may change after admission. No runtime load
+            # has started, so release the reservation rather than poisoning it.
+            lease.release()
+            raise
         try:
             handle = backend.execute(lambda: loader(backend))
         except BaseException as load_error:
