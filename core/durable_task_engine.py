@@ -708,12 +708,31 @@ class DurableTaskEngine:
             if len(context) > 5:
                 context_errors.append("knowledge_context_exceeds_delivery_limit")
                 context = context[:5]
-        deliveries = self.list_workforce_knowledge_deliveries(task_id, limit=100)
+        # Pin one SQLite read snapshot for both the total and bounded page. Separate
+        # connections could observe different commits and produce a false completeness
+        # result while new immutable attestations are being written.
         with closing(self._connect()) as c:
+            c.execute("BEGIN")
             delivery_count_row = c.execute(
                 "SELECT COUNT(*) AS record_count FROM workforce_knowledge_deliveries WHERE task_id=?",
                 (task_id,),
             ).fetchone()
+            delivery_rows = c.execute(
+                "SELECT task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
+                "context_fingerprint,context_json,delivered_at "
+                "FROM workforce_knowledge_deliveries WHERE task_id=? "
+                "ORDER BY attempt,knowledge_id LIMIT ?",
+                (task_id, 100),
+            ).fetchall()
+            c.execute("COMMIT")
+        deliveries = [{
+            "task_id": row["task_id"], "attempt": row["attempt"],
+            "worker_id": row["worker_id"], "knowledge_id": row["knowledge_id"],
+            "knowledge_fingerprint": row["knowledge_fingerprint"],
+            "context_fingerprint": row["context_fingerprint"],
+            "context": json.loads(row["context_json"]),
+            "delivered_at": row["delivered_at"],
+        } for row in delivery_rows]
         total_delivery_records = int(delivery_count_row["record_count"])
         records_truncated = total_delivery_records > len(deliveries)
         expected = {}
