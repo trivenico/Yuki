@@ -6,8 +6,21 @@ from ui.desktop.shared_desktop_composition import build_shared_desktop_controlle
 
 
 class FakeConversation:
+    def __init__(self):
+        self.selected = None
+
     def send(self, message, **kwargs):
         return {"status": "completed", "answer": "reply"}
+
+    def list_conversations(self, *, limit=50):
+        return [{"conversation_id": "conversation-1", "title": "Previous chat"}]
+
+    def select_conversation(self, conversation_id):
+        self.selected = conversation_id
+        return {"conversation_id": conversation_id, "title": "Previous chat", "version": 2}
+
+    def history(self, *, limit=100):
+        return [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi"}]
 
     def set_memory_context_enabled(self, enabled):
         self.enabled = enabled
@@ -67,6 +80,29 @@ class SharedDesktopCompositionTests(unittest.TestCase):
         self.assertEqual(session.close_count, 1)
         self.assertEqual(specialists.logout_count, 1)
         build.assert_called_once()
+
+    @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
+    def test_bridge_exposes_owner_scoped_conversation_list_selection_and_history(self, build):
+        session = FakeSession()
+        build.return_value = session
+        specialists = SpecialistController()
+        add_specialist_contract(specialists)
+        bridge = build_shared_desktop_controller(
+            {}, provider=object(), identity=object(), sessions=object(),
+            specialist_controller=specialists,
+        )
+
+        conversations = bridge.list_conversations(limit=10)
+        selected = bridge.select_conversation("conversation-1")
+        history = bridge.history(limit=20)
+
+        self.assertEqual(conversations[0]["conversation_id"], "conversation-1")
+        self.assertEqual(selected["conversation_id"], "conversation-1")
+        self.assertEqual(session.conversation.selected, "conversation-1")
+        self.assertEqual([item["role"] for item in history], ["user", "assistant"])
+        bridge.logout()
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            bridge.history()
 
     @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
     def test_invalid_specialist_contract_closes_new_conversation_session(self, build):
