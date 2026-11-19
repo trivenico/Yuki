@@ -134,4 +134,7 @@ Run offline evaluations before enabling a new memory, skill, prompt, or code ver
 
 ## Current implementation status
 
-This is an architecture proposal only. It does not assert that Yuki currently has desktop screen observation, OCR capture, a learning pipeline, self-improvement sandbox, or autonomous code evolution. Those capabilities must be implemented and tested incrementally behind the existing permission and audit systems.
+- The architecture remains a proposal for the full adaptive-intelligence system.
+- A first, standalone observation authorization primitive now exists in `core/observation_policy.py`: observation is disabled by default, requires explicit consent and an exact source allowlist, applies denylist and sensitive-category overrides, supports pause/resume/revocation, and fails closed if its optional metadata audit sink fails.
+- Regression coverage is in `tests/test_observation_policy.py`.
+- This primitive does not capture screens, inspect browser content, perform OCR, persist learning records, or grant tool-execution permissions. Desktop adapters and the learning pipeline remain unimplemented and must be added incrementally behind the existing permission and audit systems.
