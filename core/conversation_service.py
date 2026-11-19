@@ -30,6 +30,8 @@ class ConversationService:
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
         if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
             raise TypeError("agent_loop_for_owner must be callable.")
+        if knowledge_entries_for_owner is not None and not callable(knowledge_entries_for_owner):
+            raise TypeError("knowledge_entries_for_owner must be callable.")
         self.store = store
         if not isinstance(persona, Persona):
             raise TypeError("persona must be a Persona instance.")
