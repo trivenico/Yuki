@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 import os
 import sqlite3
 import tempfile
@@ -11,9 +12,10 @@ from core.sqlite_backup_set import SQLiteBackupSetError, create_sqlite_backup_se
 
 class SQLiteBackupSetTests(unittest.TestCase):
     def _database(self, path, value):
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db:
             db.execute("CREATE TABLE records(value TEXT NOT NULL)")
             db.execute("INSERT INTO records VALUES (?)", (value,))
+            db.commit()
 
     def _root(self, path):
         path.mkdir(mode=0o700)
@@ -53,7 +55,7 @@ class SQLiteBackupSetTests(unittest.TestCase):
                 snapshot = published / item["filename"]
                 self.assertEqual(snapshot.stat().st_size, item["size_bytes"])
                 self.assertEqual(item["integrity_check"], "ok")
-                with sqlite3.connect(snapshot) as db:
+                with closing(sqlite3.connect(snapshot)) as db:
                     self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                     self.assertEqual(db.execute("SELECT value FROM records").fetchone()[0],
                                      "user-record" if item["name"] == "authentication" else "task-record")
