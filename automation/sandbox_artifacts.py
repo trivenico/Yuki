@@ -238,6 +238,32 @@ class ApprovedArtifactPromotion:
             raise ToolAuthorizationError("trusted workspace write permission is required")
         if not isinstance(manifest, ArtifactManifest) or not re.fullmatch(r"[0-9a-f]{64}", manifest.digest):
             raise ArtifactValidationError("a validated artifact manifest is required")
+        if not isinstance(manifest.files, tuple) or not manifest.files:
+            raise ArtifactValidationError("artifact manifest entries are invalid")
+        canonical_entries = []
+        seen_paths = set()
+        calculated_total = 0
+        for entry in manifest.files:
+            if (not isinstance(entry, ArtifactFile)
+                    or type(entry.size_bytes) is not int
+                    or not 0 <= entry.size_bytes <= _MAX_FILE_BYTES
+                    or not isinstance(entry.sha256, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", entry.sha256)):
+                raise ArtifactValidationError("artifact manifest entry is invalid")
+            entry_path = _safe_relative_path(entry.path).as_posix()
+            if entry_path in seen_paths:
+                raise ArtifactValidationError("artifact manifest contains duplicate paths")
+            seen_paths.add(entry_path)
+            calculated_total += entry.size_bytes
+            canonical_entries.append({
+                "path": entry_path, "size_bytes": entry.size_bytes, "sha256": entry.sha256
+            })
+        calculated_digest = hashlib.sha256(
+            json.dumps(canonical_entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if (calculated_total != manifest.total_bytes or calculated_total > _MAX_TOTAL_BYTES
+                or calculated_digest != manifest.digest):
+            raise ArtifactValidationError("artifact manifest integrity check failed")
 
         source_rel = _safe_relative_path(artifact_path)
         destination_rel = _safe_relative_path(destination_path)
