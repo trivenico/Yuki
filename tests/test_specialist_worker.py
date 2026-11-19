@@ -296,7 +296,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = worker.run_once()
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(scheduler.stats()["cpu"], {
-            "reserved_memory_bytes": 0, "active_operations": 0,
+            "reserved_memory_bytes": 0,
+            "resident_memory_bytes": 0,
+            "transient_memory_bytes": 0,
+            "resident_models": 0,
+            "active_operations": 0,
         })
 
     def test_compute_reservation_is_released_after_handler_failure(self):
@@ -310,7 +314,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = worker.run_once()
         self.assertEqual(result.state, "failed")
         self.assertEqual(scheduler.stats()["cpu"], {
-            "reserved_memory_bytes": 0, "active_operations": 0,
+            "reserved_memory_bytes": 0,
+            "resident_memory_bytes": 0,
+            "transient_memory_bytes": 0,
+            "resident_models": 0,
+            "active_operations": 0,
         })
 
 
@@ -335,7 +343,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(queued.attempts, 0)
         self.assertIsNone(queued.lease_owner)
         self.assertEqual(scheduler.stats()["cpu"], {
-            "reserved_memory_bytes": 0, "active_operations": 0,
+            "reserved_memory_bytes": 0,
+            "resident_memory_bytes": 0,
+            "transient_memory_bytes": 0,
+            "resident_models": 0,
+            "active_operations": 0,
         })
 
     def test_worker_skips_older_task_for_unhandled_specialist(self):
