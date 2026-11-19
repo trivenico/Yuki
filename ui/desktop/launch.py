@@ -2541,7 +2541,7 @@ Version: {version}",
                 self._clear_authenticated_session_ui()
                 self.logout_button.setText("Retry cleanup")
                 self.chat_status.setText(
-                    "Sign-out cleanup incomplete. Other session actions are blocked; retry sign out."
+                    "Local cleanup incomplete. Other session actions are blocked; close Yuki to retry."
                 )
                 if not self._shutdown_started:
                     self._restrict_to_logout_retry()
