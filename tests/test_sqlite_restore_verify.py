@@ -71,7 +71,7 @@ class SQLiteRestoreVerificationTests(unittest.TestCase):
                     application_validator=lambda paths: False,
                 )
             self.assertEqual(list(restore_root.iterdir()), [])
-            with sqlite3.connect(source) as db:
+            with closing(sqlite3.connect(source)) as db:
                 self.assertEqual(db.execute("SELECT value FROM records").fetchone()[0], "production-value")
 
     def test_validator_exception_fails_closed(self):
@@ -90,8 +90,9 @@ class SQLiteRestoreVerificationTests(unittest.TestCase):
         temporary, workspace, source, entries, backup_set, restore_root = self._fixture()
         with temporary:
             def mutate(paths):
-                with sqlite3.connect(paths["authentication"]) as db:
+                with closing(sqlite3.connect(paths["authentication"])) as db:
                     db.execute("INSERT INTO records VALUES ('tampered')")
+                    db.commit()
                 return True
             with self.assertRaisesRegex(SQLiteRestoreVerificationError, "application_validator_modified_restore_database"):
                 restore_and_verify_sqlite_backup_set(
