@@ -53,6 +53,17 @@ class WorkforceWorker:
         self.reviewer = reviewer
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
+        self._claim_lock = threading.Lock()
+        self._stop_requested = False
+
+    def request_stop(self) -> None:
+        """Stop future claims without interrupting work already in progress.
+
+        The lock makes the stop request atomic with respect to the claim step.
+        An active run_once() call is allowed to finish and keep renewing its lease.
+        """
+        with self._claim_lock:
+            self._stop_requested = True
 
     def _execute_with_heartbeat(self, **kwargs):
         stop = threading.Event()
@@ -109,7 +120,15 @@ class WorkforceWorker:
         return decision
 
     def run_once(self) -> dict[str, Any]:
-        task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds, task_type="workforce.task")
+        # Serialize the stop request with claiming: after request_stop() returns,
+        # no later invocation can take ownership of another queued task.
+        with self._claim_lock:
+            if self._stop_requested:
+                return {"state": "stopping", "status": "stop_requested"}
+            task = self.engine.claim(
+                self.worker_id, lease_seconds=self.lease_seconds,
+                task_type="workforce.task",
+            )
         if task is None:
             return {"state": "idle", "status": "no_task"}
         task_id = task["id"]
