@@ -78,6 +78,23 @@ class DesktopSessionManager:
                 ) from exc
         return AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
 
+    def open_local_profile_session(self) -> AuthenticatedDesktopIdentity:
+        """Open Yuki's sole local profile without presenting a sign-in form."""
+        issued = self.auth_service.open_local_profile_session()
+        try:
+            self.keyring.set_password(self.service_name, self.account_name, issued.token)
+            verified = self.keyring.get_password(self.service_name, self.account_name)
+            if not isinstance(verified, str) or verified != issued.token:
+                raise RuntimeError("Credential store did not retain the local session.")
+        except Exception as exc:
+            try:
+                self.auth_service.revoke_session(issued.token)
+            finally:
+                raise DesktopStartupError(
+                    "Yuki could not securely store its local profile session."
+                ) from exc
+        return AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
+
     def current_identity(self) -> AuthenticatedDesktopIdentity | None:
         try:
             token = self.keyring.get_password(self.service_name, self.account_name)
