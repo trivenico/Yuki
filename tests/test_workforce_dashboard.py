@@ -164,6 +164,8 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(lesson["exposures"], 1)
         self.assertEqual(lesson["currently_verified_exposures"], 0)
         self.assertEqual(lesson["unverified_reference_exposures"], 1)
+        self.assertEqual(lesson["attested_deliveries"], 0)
+        self.assertEqual(lesson["attested_delivery_succeeded_tasks"], 0)
         self.assertIn("current verified status does not prove", " ".join(
             snapshot["knowledge_effectiveness"]["limitations"]
         ))
