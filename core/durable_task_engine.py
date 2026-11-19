@@ -1191,6 +1191,22 @@ class DurableTaskEngine:
         return {"created": True, "experiment_id": experiment_id, "task_id": task_id,
                 "event_type": event_type, "attempt": attempt, "worker_id": worker_id}
 
+    def record_task_experiment_execution_event(self, task_id, event_type, *, worker_id, attempt):
+        """Record an execution event when a task belongs to an experiment; otherwise no-op."""
+        if not isinstance(task_id, str) or not 1 <= len(task_id) <= 256:
+            raise ValueError("invalid task_id")
+        with closing(self._connect()) as c:
+            row = c.execute(
+                "SELECT experiment_id FROM workforce_experiment_assignments WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.record_workforce_experiment_execution_event(
+            row["experiment_id"], task_id, event_type,
+            worker_id=worker_id, attempt=attempt,
+        )
+
     def list_workforce_experiment_execution_events(self, experiment_id, *, limit=500):
         if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
             raise ValueError("invalid experiment_id")
