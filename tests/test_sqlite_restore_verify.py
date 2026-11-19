@@ -84,6 +84,20 @@ class SQLiteRestoreVerificationTests(unittest.TestCase):
                 )
             self.assertEqual(list(restore_root.iterdir()), [])
 
+    def test_rejects_validator_mutating_restored_database(self):
+        temporary, workspace, source, entries, backup_set, restore_root = self._fixture()
+        with temporary:
+            def mutate(paths):
+                with sqlite3.connect(paths["authentication"]) as db:
+                    db.execute("INSERT INTO records VALUES ('tampered')")
+                return True
+            with self.assertRaisesRegex(SQLiteRestoreVerificationError, "application_validator_modified_restore_database"):
+                restore_and_verify_sqlite_backup_set(
+                    backup_set, entries, restore_root, workspace_root=workspace,
+                    application_validator=mutate,
+                )
+            self.assertEqual(list(restore_root.iterdir()), [])
+
     def test_rejects_restore_root_inside_live_workspace(self):
         temporary, workspace, source, entries, backup_set, restore_root = self._fixture()
         with temporary:
