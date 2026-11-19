@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -1035,6 +1036,49 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             {"attempt": 2, "status": "unknown_no_handoff_attestation"},
         ])
         self.assertFalse(report["attempt_coverage"][0]["coverage_is_defect"])
+
+    def test_knowledge_delivery_integrity_flags_truncated_storage_reads(self):
+        candidate = self._seed_knowledge_candidate()
+        self.engine.transition_knowledge(
+            candidate["knowledge_id"], expected_state="candidate",
+            new_state="verified", actor_id="knowledge-reviewer",
+        )
+        record = self.engine.get_knowledge(candidate["knowledge_id"])
+        context = {
+            "knowledge_id": record["knowledge_id"],
+            "title": record["knowledge"]["title"],
+            "lesson": record["knowledge"]["lesson"],
+            "source_task_id": record["source_task_id"],
+            "reviewed_by": record["reviewed_by"],
+        }
+        goal = self.engine.create_goal()
+        task = self.engine.submit(
+            goal, "workforce.task", {"knowledge_context": [context]},
+            idempotency_key="delivery-integrity-truncated", max_attempts=2,
+        )
+        context_json = self.engine._json(context)
+        with sqlite3.connect(self.engine.db_path) as connection:
+            connection.executemany(
+                "INSERT INTO workforce_knowledge_deliveries "
+                "(task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
+                "context_fingerprint,context_json,delivered_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                [
+                    (task["id"], attempt, "worker", candidate["knowledge_id"],
+                     "fingerprint", "context-fingerprint", context_json, float(attempt))
+                    for attempt in range(1, 102)
+                ],
+            )
+        report = self.engine.get_workforce_knowledge_delivery_integrity(task["id"])
+        self.assertEqual(report["attestation_records"], 100)
+        self.assertEqual(report["total_attestation_records"], 101)
+        self.assertTrue(report["records_truncated"])
+        self.assertEqual(report["audit_completeness"], "incomplete")
+        self.assertIn("delivery_records_truncated", report["invalid_context_reasons"])
+        self.assertEqual(
+            report["attempt_coverage"][0]["attempts"][0]["status"],
+            "unknown_delivery_records_truncated",
+        )
 
     def test_knowledge_delivery_integrity_reports_malformed_context_and_retries(self):
         goal = self.engine.create_goal()
