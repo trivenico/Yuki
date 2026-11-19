@@ -210,8 +210,11 @@ class MemoryFabric:
         self._ram[identity] = payload
         self._ram_bytes += len(payload)
         while self._ram_bytes > self.ram_capacity_bytes:
-            _, evicted = self._ram.popitem(last=False)
+            evicted_identity, evicted = self._ram.popitem(last=False)
             self._ram_bytes -= len(evicted)
+            # Recency metadata is useful only while this process retains the
+            # corresponding RAM entry; otherwise it must not grow unbounded.
+            self._pending_ram_accesses.pop(evicted_identity, None)
             self._evictions += 1
 
     def put(
@@ -363,6 +366,9 @@ class MemoryFabric:
                 for identity in tuple(self._ram):
                     if identity[0] == namespace:
                         self._remove_ram(identity)
+                for identity in tuple(self._pending_ram_accesses):
+                    if identity[0] == namespace:
+                        self._pending_ram_accesses.pop(identity, None)
                 with self._connection() as connection:
                     cursor = connection.execute(
                         "DELETE FROM memory_fabric_entries WHERE namespace=?", (namespace,)
