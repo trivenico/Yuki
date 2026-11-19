@@ -60,6 +60,10 @@ class ConversationRuntime:
             message = await receive()
             if message["type"] == "lifespan.startup":
                 try:
+                    if self.workforce_application is not None:
+                        recovered = self.workforce_application.engine.recover_expired_leases()
+                        if type(recovered) is not int or recovered < 0:
+                            raise RuntimeError("workforce lease recovery returned an invalid result")
                     if self.sandbox_job_recovery is not None:
                         outcomes = self.sandbox_job_recovery.recover_nonterminal()
                         blocked = [
