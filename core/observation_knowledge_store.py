@@ -176,6 +176,21 @@ class SQLiteObservationKnowledgeReview:
             db.execute("COMMIT")
         return tuple(self._proposal(row) for row in rows)
 
+    def list_recent(self, *, limit: int = 100) -> tuple[KnowledgeProposal, ...]:
+        """List pending and reviewed proposals for this owner within retention."""
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer in 1..1000")
+        now = float(self._clock())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._purge_expired(db, now)
+            rows = db.execute("""SELECT proposal_id,kind,value,summary,fingerprint,status,created_at,reviewed_at
+                FROM observation_knowledge_proposals
+                WHERE owner_id=? ORDER BY created_at DESC,proposal_id LIMIT ?""",
+                (self._owner, limit)).fetchall()
+            db.execute("COMMIT")
+        return tuple(self._proposal(row) for row in rows)
+
     def get(self, proposal_id: str) -> Optional[KnowledgeProposal]:
         if not isinstance(proposal_id, str) or not proposal_id:
             return None
