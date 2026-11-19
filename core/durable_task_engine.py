@@ -1660,10 +1660,14 @@ class DurableTaskEngine:
             "descriptive_comparison": {
                 "status": "descriptive_comparison_available" if comparison_available
                           else "insufficient_arm_observations",
+                "comparison_metric": "task_success_rate_proxy",
+                "primary_metric_evaluated": False,
+                "declared_primary_metric": design.get("primary_metric"),
+                "guardrails_evaluated": False,
                 "control_success_rate": control_rate,
                 "treatment_success_rate": treatment_rate,
                 "success_rate_difference_treatment_minus_control": success_rate_difference,
-                "direction": (
+                "task_success_rate_direction": (
                     "treatment_higher" if success_rate_difference is not None and success_rate_difference > 0
                     else "treatment_lower" if success_rate_difference is not None and success_rate_difference < 0
                     else "equal" if success_rate_difference == 0
@@ -1679,8 +1683,10 @@ class DurableTaskEngine:
             "status": "descriptive_outcomes_available" if enough_observations
                       else "insufficient_observations",
             "interpretation": (
-                "Per-arm success rates and their difference are descriptive only. "
-                "No causal effect, statistical significance, causal validity, "
+                "The comparison is a task-success-rate proxy only; the declared "
+                "primary metric and free-text guardrails are not evaluated by this "
+                "report. Per-arm success rates and their difference are descriptive "
+                "only. No causal effect, statistical significance, causal validity, "
                 "eligibility, or absence of contamination is established. Runtime "
                 "exposure records mean approved treatment text reached the guarded "
                 "skill execute boundary; they do not prove model attention, compliance, "
