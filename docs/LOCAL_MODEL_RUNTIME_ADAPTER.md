@@ -26,17 +26,17 @@ The adapter must reject a handle from another adapter, a changed model identity,
 
 The current ComputeScheduler reserves caller-estimated memory for the duration of one synchronous operation. That is insufficient to account for model weights that remain resident between inference calls.
 
-Compute Fabric now exposes `ComputeScheduler.reserve_model(ComputeRequest, model_id=...)`, returning a `ModelResidencyLease`. Its reservation remains held from before model load until successful unload. Inference calls use that already-admitted resident model and separately enforce bounded transient-memory/concurrency limits through `reserve()`. Releasing a request's transient reservation never releases the model's resident-memory reservation. The scheduler reports resident and transient accounting separately.
+Compute Fabric exposes `ComputeScheduler.reserve_model(ComputeRequest, model_id=...)`, returning a `ModelResidencyLease`, and `ModelLifecycleManager` to coordinate load, inference, and unload. The manager admits residency before calling the injected loader, serializes operations per session, applies transient admission for each inference, and releases residency only after successful unload. Releasing a request's transient reservation never releases the model's resident-memory reservation. The scheduler reports resident and transient accounting separately.
 
-The admission path must be:
+The managed lifecycle path is:
 
 1. Validate model/runtime/device compatibility without allocating weights.
 2. Acquire bounded resident-memory and model-slot admission.
 3. Load and place the model.
-4. On load failure, clean up any partial runtime allocation and release the lease if cleanup is confirmed.
+4. On load failure, use `cleanup_failed_load` to clean partial runtime allocations. Release the lease only if that cleanup returns successfully; without confirmed cleanup, the lease is poisoned and remains reserved.
 5. For each inference, acquire bounded transient-memory/concurrency admission.
 6. Execute, synchronize, collect host outputs, and release transient admission in all outcomes.
-7. On confirmed unload, release model resources first, then call `lease.release()`. If unload/cleanup is uncertain, call `lease.mark_unload_failed()`; the poisoned lease retains its reservation and rejects normal release. After runtime/operator reconciliation confirms the allocation is gone, call `scheduler.confirm_model_unloaded(lease)`.
+7. On confirmed unload, `ModelLifecycleManager` releases model resources and then the lease. If unload is uncertain, the session becomes unhealthy and its poisoned lease retains its reservation. After runtime/operator reconciliation confirms the allocation is gone, call `manager.reconcile_unloaded(session)`.
 
 All reservations are currently process-local. They do not protect against other processes, external GPU jobs, or another host. CUDA free VRAM is a construction-time snapshot and TPU HBM is operator-configured; neither is a live guarantee. Runtime OOM remains possible even after scheduler admission.
 
