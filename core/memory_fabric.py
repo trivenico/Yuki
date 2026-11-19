@@ -254,6 +254,7 @@ class MemoryFabric:
                         "DELETE FROM memory_fabric_entries WHERE namespace=? AND cache_key=?",
                         identity,
                     )
+                    connection.commit()
                     self._remove_ram(identity)
                     self._corruptions += 1
                     raise MemoryFabricCorruption("SSD cache entry failed SHA-256 integrity validation.")
