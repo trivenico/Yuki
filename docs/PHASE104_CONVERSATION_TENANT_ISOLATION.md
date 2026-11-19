@@ -3,6 +3,8 @@
 ## Implemented
 
 - Removed a duplicate method definition from the authenticated desktop conversation facade.
+- Fixed history refresh to preserve the current selection rather than visually selecting the first row while the controller remains on another conversation.
+- Ensured the history controls stay disabled if a chat worker completes after logout has already cleared the controller.
 - Added `tests/test_conversation_owner_isolation.py`, an integration-style persistence test using one SQLite database and two independent owner IDs.
 - The test creates conversations and messages for two accounts, verifies each account lists only its own conversations, and verifies cross-owner conversation lookup and message history raise `ConversationNotFound`.
 - Added a third-account check confirming an account with no conversations receives an empty list rather than another tenant's data.
