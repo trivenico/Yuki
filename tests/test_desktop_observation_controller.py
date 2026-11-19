@@ -120,5 +120,17 @@ class DesktopObservationControllerTests(unittest.TestCase):
         self.controller.revoke()
 
 
+    def test_status_exposes_bounded_event_budget_and_delivery_counts(self):
+        controller, reader, indicators, received = self.make_controller(event_limit=2)
+        controller.start(consent_granted=True)
+        self.assertEqual(controller.status.event_limit, 2)
+        reader.value = "code.exe"
+        controller.poll_once(received.append)
+        self.assertEqual(controller.status.processed_events, 1)
+        self.assertEqual(controller.status.delivered_events, 1)
+        controller.revoke()
+        self.assertEqual(controller.status.state, "revoked")
+
+
 if __name__ == "__main__":
     unittest.main()
