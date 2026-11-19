@@ -1270,7 +1270,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.observation_status.setText("Sign in to access learning review.")
                 return
             try:
-                proposals = service.list_pending(actor_id=identity.actor_id)
+                proposals = service.list_recent(actor_id=identity.actor_id)
                 for proposal in proposals:
                     item = QListWidgetItem(
                         f"{proposal.kind}: {proposal.value} — {proposal.status}"
@@ -1328,7 +1328,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 return
             try:
                 getattr(service, decision)(proposal_id, actor_id=identity.actor_id)
-                self.observation_status.setText("Proposal " + decision + "d and audit recorded.")
+                self.observation_status.setText("Proposal " + ("approved" if decision == "approve" else "rejected") + " and audit recorded.")
                 self._refresh_observation_proposals()
             except Exception as exc:
                 self.observation_status.setText(
@@ -1371,7 +1371,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self.observation_status.setText("No review events recorded for this proposal.")
                     return
                 lines = [
-                    f"{event.decision} by {event.reviewer_id} at {event.created_at}"
+                    f"{event['decision']} by {event['reviewer_id']} at {event['created_at']}"
                     for event in events
                 ]
                 QMessageBox.information(self, "Learning review audit", "\n".join(lines))
