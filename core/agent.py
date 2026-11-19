@@ -112,16 +112,15 @@ class YukiCoreAgent:
         )
         if needs_guard_approval:
             self.invocation_approvals.approve(name, argument)
-        # Called only after fresh permission approval and any guarded
-        # one-shot approval, immediately before the registered skill invocation.
-        if before_invoke is not None:
-            before_invoke()
+        # The guarded runtime calls this only after final registry/approval
+        # checks and immediately before the selected skill's execute() method.
         result = invoke_registered_skill(
             self.registry,
             name,
             argument,
             approvals=self.invocation_approvals,
             expected_skill=skill,
+            before_execute=before_invoke,
         )
         return AgentResponse(
             result.ok,
