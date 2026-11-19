@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from core.observation_knowledge_store import SQLiteObservationKnowledgeReview
+from core.observation_knowledge_store import SQLiteObservationKnowledgeReview\nfrom core.curated_knowledge_store import SQLiteCuratedKnowledge
 
 
 class ObservationKnowledgeReviewService:
@@ -74,6 +74,24 @@ class ObservationKnowledgeReviewService:
     def reject(self, proposal_id: str, *, actor_id: str):
         reviewer_id = self._require(actor_id, "observation:review:decide")
         return self._store.reject(proposal_id, reviewer_id=reviewer_id)
+
+    def promote_approved(self, proposal_id: str, *, actor_id: str,
+                         catalog: SQLiteCuratedKnowledge):
+        """Promote one approved proposal; requires a separate promotion grant."""
+        if not isinstance(catalog, SQLiteCuratedKnowledge):
+            raise TypeError("catalog must be a SQLiteCuratedKnowledge")
+        promoter_id = self._require(actor_id, "memory:knowledge:promote")
+        proposal = self._store.get(proposal_id)
+        if proposal is None or proposal.status != "approved":
+            raise PermissionError("only an existing approved proposal can be promoted")
+        events = self._store.list_review_events(proposal_id, limit=100)
+        approvals = [event for event in events if event["decision"] == "approved"]
+        if not approvals:
+            raise PermissionError("approved proposal has no review provenance")
+        return catalog.promote(
+            proposal, approved_by=approvals[-1]["reviewer_id"],
+            promoted_by=promoter_id,
+        )
 
     def delete(self, proposal_id: str, *, actor_id: str) -> bool:
         self._require(actor_id, "observation:review:delete")
