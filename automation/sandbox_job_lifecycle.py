@@ -63,7 +63,7 @@ class SandboxJobLifecycle:
     def __init__(self, jobs_root: str | Path, *,
                  launcher: Callable[[str, str], object],
                  freezer: Callable[[object], bool],
-                 promotion: ApprovedArtifactPromotion):
+                 promotion: ApprovedArtifactPromotion,\n                 audit: Callable[[dict], None]):
         root = Path(jobs_root).expanduser()
         if root.is_symlink():
             raise ValueError("jobs root cannot be a symlink")
@@ -213,7 +213,7 @@ class SandboxJobLifecycle:
             job.state = JobState.CLEANED
             return self._snapshot(job)
 
-    def get_job(self, job_id: str) -> SandboxJobSnapshot:
+    def _record(self, job: _Job, action: str, outcome: str, **details) -> None:\n        event = {\n            "action": "sandbox.job." + action,\n            "job_id": job.job_id,\n            "outcome": outcome,\n            "state": job.state.value,\n        }\n        event.update(details)\n        try:\n            self._audit(event)\n        except Exception as exc:\n            raise SandboxJobError("lifecycle audit unavailable; operation denied") from exc\n\n    def get_job(self, job_id: str) -> SandboxJobSnapshot:
         with self._lock:
             return self._snapshot(self._get(job_id))
 
