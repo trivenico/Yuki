@@ -26,7 +26,7 @@ class CuratedKnowledgeProviderTests(unittest.TestCase):
         )
 
     def add_approved(self, value, summary):
-        proposal = self.review_store.propose("application", value, summary=summary)
+        proposal = self.review_store.propose("application", value)
         self.review_store.approve(proposal.proposal_id, reviewer_id="reviewer")
         return self.service.promote_approved(
             proposal.proposal_id, actor_id="admin", catalog=self.catalog
