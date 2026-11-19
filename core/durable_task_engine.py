@@ -671,8 +671,8 @@ class DurableTaskEngine:
         """Return immutable delivery attestations for one task, oldest attempt first."""
         if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 256:
             raise ValueError("invalid task_id")
-        if type(limit) is not int or not 1 <= limit <= 25:
-            raise ValueError("limit must be between 1 and 25")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
         with closing(self._connect()) as c:
             rows = c.execute(
                 "SELECT task_id,attempt,worker_id,knowledge_id,knowledge_fingerprint,"
@@ -698,15 +698,25 @@ class DurableTaskEngine:
         if task.get("task_type") != "workforce.task":
             raise ValueError("task is not a workforce task")
         payload = task.get("payload")
-        context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
-        if not isinstance(context, list):
+        raw_context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
+        context_errors = []
+        if not isinstance(raw_context, list):
+            context_errors.append("knowledge_context_not_a_list")
             context = []
-        context = context[:5]
-        deliveries = self.list_workforce_knowledge_deliveries(task_id, limit=25)
+        else:
+            context = raw_context
+            if len(context) > 5:
+                context_errors.append("knowledge_context_exceeds_delivery_limit")
+                context = context[:5]
+        deliveries = self.list_workforce_knowledge_deliveries(task_id, limit=100)
         expected = {}
         duplicate_ids = []
-        for item in context:
-            if not isinstance(item, dict) or not isinstance(item.get("knowledge_id"), str):
+        for index, item in enumerate(context):
+            if (not isinstance(item, dict)
+                    or set(item) != {"knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"}
+                    or any(not isinstance(item.get(key), str) or not item[key].strip()
+                           for key in ("knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"))):
+                context_errors.append("invalid_knowledge_context_item_" + str(index))
                 continue
             knowledge_id = item["knowledge_id"].strip()
             if not knowledge_id:
@@ -777,6 +787,7 @@ class DurableTaskEngine:
             "attestation_records": len(deliveries),
             "findings": findings,
             "duplicate_context_knowledge_ids": sorted(set(duplicate_ids)),
+            "invalid_context_reasons": context_errors,
             "unexpected_attestation_knowledge_ids": unexpected,
             "coverage_note": (
                 "A missing attestation cannot be classified as a defect because this task "
