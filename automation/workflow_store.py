@@ -325,7 +325,7 @@ class WorkflowRunStore:
                     values.extend((len(prefix), prefix))
                 query += " AND (" + " OR ".join(clauses) + ")"
                 params = tuple(values)
-            query += " ORDER BY created_at, run_id"
+            query += " ORDER BY created_at, run_id LIMIT 100"
             rows = db.execute(query, params).fetchall()
             row = next((
                 candidate for candidate in rows
