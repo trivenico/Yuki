@@ -17,6 +17,70 @@ class DurableTaskEngineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_randomized_experiment_assignment_is_deterministic_and_exclusive(self):
+        proposal = {"recommendation": "Evaluate queue triage"}
+        self.engine.create_improvement_proposal("assignment-proposal", proposal)
+        self.engine.transition_improvement_proposal(
+            "assignment-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed triage checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": "Workforce tasks",
+            "guardrails": ["No permission changes"],
+            "evaluation_window_days": 14,
+            "minimum_sample_size": 10,
+        }
+        self.engine.create_workforce_experiment("assignment-exp", "assignment-proposal", design)
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("assignment-exp", "missing-task")
+        self.engine.transition_workforce_experiment(
+            "assignment-exp", expected_state="proposed", new_state="approved", actor_id="reviewer-2",
+        )
+        task = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="assignment-task")
+        first = self.engine.assign_workforce_experiment_task("assignment-exp", task["id"])
+        replay = self.engine.assign_workforce_experiment_task("assignment-exp", task["id"])
+        self.assertTrue(first["created"])
+        self.assertFalse(replay["created"])
+        self.assertEqual(first["assignment"], replay["assignment"])
+        self.assertIn(first["assignment"], {"control", "treatment"})
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("another-exp", task["id"])
+        assignments = self.engine.list_workforce_experiment_assignments("assignment-exp")
+        self.assertEqual(len(assignments), 1)
+        self.assertEqual(assignments[0]["task_id"], task["id"])
+        self.assertEqual(self.engine.get_workforce_experiment("assignment-exp")["events"][-1]["event_type"],
+                         "experiment.task_assigned")
+
+    def test_pre_post_experiment_cannot_assign_randomized_arms(self):
+        self.engine.create_improvement_proposal("descriptive-proposal", {"recommendation": "Observe"})
+        self.engine.transition_improvement_proposal(
+            "descriptive-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "Observe trend",
+            "intervention": "Document existing process",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "pre_post_descriptive",
+            "eligible_population": "Workforce tasks",
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 5,
+        }
+        self.engine.create_workforce_experiment("descriptive-exp", "descriptive-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "descriptive-exp", expected_state="proposed", new_state="approved", actor_id="reviewer-2",
+        )
+        task = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="descriptive-task")
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("descriptive-exp", task["id"])
+
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
         goal = engine.create_goal()
