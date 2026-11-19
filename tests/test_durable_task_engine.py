@@ -201,6 +201,21 @@ class DurableTaskEngineTests(unittest.TestCase):
         listed = self.engine.list_workforce_experiment_deliveries("delivery-exp")
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["actor_id"], "operator-1")
+        connection = self.engine._connect()
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE workforce_experiment_deliveries SET delivery_state='unknown' "
+                    "WHERE experiment_id=? AND task_id=?",
+                    ("delivery-exp", treatment_task["id"]),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "DELETE FROM workforce_experiment_deliveries WHERE experiment_id=? AND task_id=?",
+                    ("delivery-exp", treatment_task["id"]),
+                )
+        finally:
+            connection.close()
         report = self.engine.get_workforce_experiment_outcomes("delivery-exp")
         self.assertEqual(report["arms"]["treatment"]["delivery_attestations"]["delivered"], 1)
         self.assertEqual(report["arms"]["treatment"]["delivery_attestations"]["unrecorded"],
