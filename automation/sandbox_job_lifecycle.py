@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import threading
 from typing import Callable, Sequence
 
@@ -299,18 +300,27 @@ class SandboxJobLifecycle:
 
             destination = self._promotion.root / destination_path
             try:
+                cursor = self._promotion.root
+                for part in Path(destination_path).parts[:-1]:
+                    cursor = cursor / part
+                    if cursor.is_symlink() or not cursor.is_dir():
+                        raise SandboxJobError("promotion destination parent is not a trusted directory")
                 destination_parent = destination.parent.resolve(strict=True)
                 destination_parent.relative_to(self._promotion.root)
                 if destination.is_symlink():
                     raise SandboxJobError("promotion destination is a symlink")
                 if destination.exists():
                     info = destination.lstat()
-                    if not os.path.isfile(destination) or info.st_nlink != 1 or info.st_size != item.size_bytes:
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != item.size_bytes:
                         raise SandboxJobError("existing promotion destination is not the expected regular file")
                     digest_check = hashlib.sha256()
                     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
                     descriptor = os.open(str(destination), flags)
                     try:
+                        opened = os.fstat(descriptor)
+                        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                                or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
+                            raise SandboxJobError("promotion destination changed during reconciliation")
                         while True:
                             chunk = os.read(descriptor, 1024 * 1024)
                             if not chunk:
