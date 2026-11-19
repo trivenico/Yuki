@@ -74,6 +74,10 @@ class SharedDesktopChatController:
         self._ensure_open()
         return self._conversation.list_conversations(limit=limit)
 
+    def start_new_conversation(self, *, title: str = "New conversation") -> dict[str, Any]:
+        self._ensure_open()
+        return self._conversation.start_new_conversation(title=title)
+
     def select_conversation(self, conversation_id: str) -> dict[str, Any]:
         """Select a conversation; the authenticated facade enforces owner scope."""
         self._ensure_open()
