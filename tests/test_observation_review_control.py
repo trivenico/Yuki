@@ -67,5 +67,13 @@ class ObservationKnowledgeReviewServiceTests(unittest.TestCase):
             ObservationKnowledgeReviewService(self.store, authorize=None)
 
 
+    def test_capability_check_requires_read_and_decision_for_capture_review(self):
+        self.grants["reader"] = {"observation:review:read"}
+        self.assertTrue(self.service.can_review(actor_id="reader"))
+        self.assertFalse(self.service.can_review(actor_id="reader", decisions=True))
+        self.assertTrue(self.service.can_review(actor_id="operator-1", decisions=True))
+        self.assertFalse(self.service.can_review(actor_id="unknown", decisions=True))
+
+
 if __name__ == "__main__":
     unittest.main()
