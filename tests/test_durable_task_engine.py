@@ -339,8 +339,15 @@ class DurableTaskEngineTests(unittest.TestCase):
         outcomes = self.engine.get_workforce_experiment_outcomes("treatment-exposure-exp")
         self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["exposed_tasks"], 1)
         self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["exposure_attempts"], 1)
-        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["task_coverage"], 1.0)
-        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["skills"][0]["skill_name"], "triage")
+        runtime_exposure = outcomes["arms"]["treatment"]["runtime_exposure"]
+        # Deterministic hash assignment is 1:1 in expectation, not block-balanced:
+        # coverage is exposed treatment tasks divided by all treatment assignments.
+        self.assertEqual(
+            runtime_exposure["task_coverage"],
+            runtime_exposure["exposed_tasks"] / outcomes["arms"]["treatment"]["assigned"],
+        )
+        self.assertEqual(runtime_exposure["exposed_tasks"], 1)
+        self.assertEqual(runtime_exposure["skills"][0]["skill_name"], "triage")
         self.assertNotIn("treatment_execution_without_skill_exposure",
                          {issue["code"] for issue in report["issues"]})
 
