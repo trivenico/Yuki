@@ -103,9 +103,13 @@ class DesktopObservationController:
         session_id = self._session_id
         if not source.poll_once():
             return False
-        return self._manager.poll(
+        delivered = self._manager.poll(
             session_id, sink.source_id, consumer, timeout=0.0,
         )
+        if self._manager.status(session_id).state == "limit_reached":
+            self._state = "limit_reached"
+            self._collector.stop()
+        return delivered
 
     def pause(self) -> None:
         if self._state != "active":
