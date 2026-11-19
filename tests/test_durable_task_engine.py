@@ -127,7 +127,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         for arm in ("control", "treatment"):
             self.assertEqual(report["arms"][arm]["cancelled"], 1)
             self.assertEqual(report["arms"][arm]["pending"], 1)
-            self.assertEqual(report["arms"][arm]["evaluable"], 19)
+            self.assertEqual(report["arms"][arm]["evaluable"], len(selected[arm]) - 1)
             self.assertGreater(report["arms"][arm]["success_rate"], 0)
             self.assertLess(report["arms"][arm]["success_rate"], 1)
         self.assertFalse(report["automatic_action"])
