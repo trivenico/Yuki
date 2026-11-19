@@ -40,13 +40,15 @@ class ConversationRuntime:
         sandbox_job_recovery: Any | None = None,
     ):
         self.app = app
-        self.web = YukiWebApplication(app)
         self.application = application
         self.workforce_application = workforce_application
         self.sandbox_job_recovery = sandbox_job_recovery
         self._startup_complete = False
         self.store = application.store
         self._closed = False
+        self.web = YukiWebApplication(
+            app, readiness=lambda: self._startup_complete and not self._closed
+        )
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
