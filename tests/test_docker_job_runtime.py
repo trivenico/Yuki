@@ -54,6 +54,7 @@ class DockerJobRuntimeTests(unittest.TestCase):
         self.assertIn("--detach", argv)
         self.assertIn("--name", argv)
         self.assertNotIn("--rm", argv)
+        self.assertIn("--pull=never", argv)
         mounts = [argv[i + 1] for i, item in enumerate(argv[:-1]) if item == "--mount"]
         self.assertEqual(len(mounts), 2)
         self.assertTrue(mounts[0].endswith(",ro"))
