@@ -117,7 +117,7 @@ class ObservationSessionManager:
         with managed.lock:
             if managed.state_override is not None or managed.session.state != "active":
                 return False
-            if managed.delivered_events >= managed.event_limit:
+            if managed.processed_events >= managed.event_limit:
                 managed.state_override = "limit_reached"
                 self._close_sources(managed)
                 return False
