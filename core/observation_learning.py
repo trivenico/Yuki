@@ -155,6 +155,13 @@ class ObservationLearningWorker:
             raise TypeError("review must implement the knowledge review store contract")
         self._buffer = buffer
         self._review = review
+        self._stop_lock = threading.Lock()
+        self._stopped = False
+
+    def stop(self) -> None:
+        """Prevent further batch items from being consumed after revocation."""
+        with self._stop_lock:
+            self._stopped = True
 
     def process_batch(self, *, limit: int = 16) -> tuple[KnowledgeProposal, ...]:
         if type(limit) is not int or not 1 <= limit <= min(256, self._buffer.capacity):
@@ -163,6 +170,9 @@ class ObservationLearningWorker:
         # Pop incrementally: if review storage fills, only the current event
         # fails visibly and the remaining buffered events stay queued.
         for _ in range(limit):
+            with self._stop_lock:
+                if self._stopped:
+                    break
             event = self._buffer.get_nowait()
             if event is None:
                 break
