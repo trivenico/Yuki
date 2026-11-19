@@ -71,6 +71,22 @@ class ObservationSessionManagerTests(unittest.TestCase):
         self.assertFalse(source.publish(ObservationEvent("app:ide", "development", {})))
         manager.revoke(sid)
 
+    def test_limit_reached_session_releases_capacity_for_replacement(self):
+        manager = ObservationSessionManager(max_sessions=1)
+        session_id = manager.create_session(
+            self.policy, consent_granted=True, event_limit=1,
+        )
+        source = FakeObservationSource("app:ide")
+        manager.register_source(session_id, source)
+        source.publish(ObservationEvent("app:ide", "development", {}))
+        self.assertTrue(manager.poll(session_id, "app:ide", lambda _event: None))
+        self.assertEqual(manager.status(session_id).state, "limit_reached")
+
+        replacement = manager.create_session(
+            self.policy, consent_granted=True,
+        )
+        self.assertEqual(manager.status(replacement).state, "active")
+
     def test_empty_poll_does_not_consume_event_budget(self):
         status_before = self.manager.status(self.session_id)
         self.assertFalse(self.manager.poll(self.session_id, "app:ide", lambda _event: None))
