@@ -181,6 +181,7 @@ class SQLiteObservationKnowledgeReview:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                self._purge_expired(db, now)
                 cursor = db.execute("""UPDATE observation_knowledge_proposals
                     SET status=?,reviewed_at=? WHERE owner_id=? AND proposal_id=? AND status='pending'""",
                     (decision, now, self._owner, proposal_id))
