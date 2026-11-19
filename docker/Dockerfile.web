@@ -1,0 +1,26 @@
+# Dedicated web/API image. The existing docker/Dockerfile remains the CLI image.
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    YUKI_WORKSPACE=/workspace \
+    YUKI_WEB_HOST=0.0.0.0 \
+    YUKI_WEB_ALLOW_PUBLIC_BIND=true
+
+WORKDIR /app
+
+COPY requirements.txt requirements-web.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-web.txt \
+    && useradd --create-home --uid 10001 yuki \
+    && mkdir -p /workspace \
+    && chown yuki:yuki /workspace
+
+COPY --chown=yuki:yuki . .
+
+USER 10001:10001
+
+EXPOSE 8000
+
+# Mount a persistent, service-owned volume at /workspace.
+# Publish this port only on a private network behind a TLS reverse proxy.
+CMD ["python", "scripts/run_web.py"]
