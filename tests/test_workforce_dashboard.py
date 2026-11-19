@@ -137,7 +137,8 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(lesson["exposures"], 2)
         self.assertEqual(lesson["succeeded_tasks"], 1)
         self.assertEqual(lesson["failed_tasks"], 1)
-        self.assertEqual(lesson["independently_verified_successes"], 1)
+        self.assertEqual(lesson["independently_verified_successes"], 0)
+        self.assertEqual(lesson["attested_deliveries"], 0)
         self.assertIn("association", " ".join(snapshot["knowledge_effectiveness"]["limitations"]))
 
     def test_knowledge_outcomes_separate_unverified_caller_references(self):
@@ -439,7 +440,7 @@ class WorkforceDashboardTests(unittest.TestCase):
             and item["evidence"]["department"] == employee.department
         )
         self.assertEqual(failure_review["evidence"]["failed_tasks"], 2)
-        self.assertEqual(failure_review["evidence"]["failure_rate_denominator"], 2)
+        self.assertEqual(failure_review["evidence"]["failure_rate_denominator"], 3)
         self.assertTrue(failure_review["requires_human_approval"])
         self.assertFalse(failure_review["automatic_action_taken"])
         patterns = snapshot["decision_intelligence"]["failure_patterns"]
