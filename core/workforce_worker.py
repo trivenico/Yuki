@@ -195,6 +195,7 @@ class WorkforceWorker:
             return {"task_id": task_id, "state": rejected["state"], "status": "employee_policy_changed"}
 
         execution_telemetry_started = False
+        execution_telemetry_terminal = False
         try:
             # Experiment telemetry is emitted only after payload, knowledge, and
             # employee policy checks pass, immediately before the executor seam.
@@ -224,6 +225,7 @@ class WorkforceWorker:
                 task_id, "execution_succeeded" if ok else "execution_failed",
                 worker_id=self.worker_id, attempt=task.get("attempts"),
             )
+            execution_telemetry_terminal = True
             review_evidence = None
             if ok and payload["review_required"]:
                 if self.reviewer is None:
@@ -273,7 +275,7 @@ class WorkforceWorker:
             failed = self.engine.fail(task_id, self.worker_id, status)
             return {"task_id": task_id, "state": failed["state"], "status": status}
         except Exception:
-            if execution_telemetry_started:
+            if execution_telemetry_started and not execution_telemetry_terminal:
                 try:
                     self.engine.record_task_experiment_execution_event(
                         task_id, "execution_failed", worker_id=self.worker_id,
