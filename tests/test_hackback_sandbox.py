@@ -39,15 +39,18 @@ class DockerSandboxOutputTests(unittest.TestCase):
 
     @patch("hackback.sandbox.subprocess.Popen")
     def test_timeout_kills_child_and_raises_safe_error(self, popen):
-        popen.side_effect = lambda command, **kwargs: subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(10)"],
-            **kwargs,
-        )
+        children = []
+        def start_child(_command, **kwargs):
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                **kwargs,
+            )
+            children.append(child)
+            return child
+        popen.side_effect = start_child
         with self.assertRaisesRegex(SandboxError, "timed out"):
             self.sandbox.run(IMAGE, ["python", "--version"], timeout=1)
-        popen.return_value.kill.assert_not_called() if hasattr(
-            popen.return_value, "kill"
-        ) else None
+        self.assertTrue(children[0].poll() is not None)
 
     @patch("hackback.sandbox.subprocess.Popen", side_effect=OSError("missing"))
     def test_docker_start_failure_is_sanitized(self, _popen):
