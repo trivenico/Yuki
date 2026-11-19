@@ -22,7 +22,7 @@ class DockerSandboxOutputTests(unittest.TestCase):
 
     @patch("hackback.sandbox.subprocess.Popen")
     def test_output_capture_retains_bounded_tail_and_drains_both_pipes(self, popen):
-        popen.side_effect = lambda command, **kwargs: subprocess.Popen(
+        popen.side_effect = lambda command, **kwargs: _REAL_POPEN(
             [sys.executable, "-c",
              "import sys; sys.stdout.write('A'*500000); "
              "sys.stderr.write('B'*500000)"],
@@ -42,7 +42,7 @@ class DockerSandboxOutputTests(unittest.TestCase):
     def test_timeout_kills_child_and_raises_safe_error(self, popen):
         children = []
         def start_child(_command, **kwargs):
-            child = subprocess.Popen(
+            child = _REAL_POPEN(
                 [sys.executable, "-c", "import time; time.sleep(10)"],
                 **kwargs,
             )
