@@ -36,7 +36,8 @@ class ConversationService:
         if role_engine is not None and not isinstance(role_engine, RoleEngine):
             raise TypeError("role_engine must be a RoleEngine instance.")
         self.agent_loop = agent_loop
-        self.agent_loop_for_owner = agent_loop_for_owner\n        self.knowledge_entries_for_owner = knowledge_entries_for_owner
+        self.agent_loop_for_owner = agent_loop_for_owner
+        self.knowledge_entries_for_owner = knowledge_entries_for_owner
         self.persona = persona
         self.role_engine = role_engine or RoleEngine()
         self._lock = threading.RLock()
