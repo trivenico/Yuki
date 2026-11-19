@@ -203,7 +203,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["state"], "verified")
-        self.assertEqual(body["reviewed_by"], "admin-user")
+        self.assertEqual(body["reviewed_by"], self.admin_session.user.user_id)
         status, body = self.request(
             "/v1/workforce/knowledge", token=self.admin_session.token,
         )
