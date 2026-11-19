@@ -80,7 +80,7 @@ class SQLiteCuratedKnowledge:
             if not isinstance(value, str) or not value.strip() or len(value) > 200:
                 raise ValueError(f"{name} must be non-empty bounded text")
         owner_fingerprint = hashlib.sha256(
-            f"{proposal.kind}\\0{proposal.value}".encode("utf-8")
+            f"{proposal.kind}\0{proposal.value}".encode("utf-8")
         ).hexdigest()
         now = float(self._clock())
         with self._lock, self._connect() as db:
