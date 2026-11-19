@@ -12,7 +12,7 @@ from typing import Any, Sequence
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
 from companion.persona import DEFAULT_PERSONA, Persona
-from core.role_engine import RoleEngine
+from core.role_engine import RoleEngine\nfrom core.curated_knowledge_context import build_curated_knowledge_reference_context
 
 
 class ConversationService:
@@ -22,7 +22,7 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None, persona: Persona = DEFAULT_PERSONA, role_engine: RoleEngine | None = None):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None, knowledge_entries_for_owner=None, persona: Persona = DEFAULT_PERSONA, role_engine: RoleEngine | None = None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
@@ -35,7 +35,7 @@ class ConversationService:
         if role_engine is not None and not isinstance(role_engine, RoleEngine):
             raise TypeError("role_engine must be a RoleEngine instance.")
         self.agent_loop = agent_loop
-        self.agent_loop_for_owner = agent_loop_for_owner
+        self.agent_loop_for_owner = agent_loop_for_owner\n        self.knowledge_entries_for_owner = knowledge_entries_for_owner
         self.persona = persona
         self.role_engine = role_engine or RoleEngine()
         self._lock = threading.RLock()
@@ -209,7 +209,7 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                reference_context = None\n                if self.knowledge_entries_for_owner is not None:\n                    entries = self.knowledge_entries_for_owner(owner_id, user_text)\n                    reference_context = build_curated_knowledge_reference_context(entries)\n                result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, reference_context=reference_context, **kwargs)
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
