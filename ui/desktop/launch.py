@@ -135,7 +135,7 @@ def _build_services():
             runtime, task_db, built_in_agents, authorize=permission_check,
         )
         lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
-        return auth, sessions, provider, coordinator, runtime, lifecycle
+        return auth, sessions, provider, coordinator, runtime, lifecycle, root / "observation-knowledge.sqlite3"
     except Exception:
         # Provider construction is the first potentially long-lived external
         # resource. If any later service fails, release it before propagating
@@ -399,6 +399,8 @@ def run() -> int:
             self.sessions = None
             self.provider = None
             self.lifecycle = None
+            self.observation_review_database = None
+            self.observation_review_service = None
             self.controller = None
             self.voice_session = None
             self.speech_session = None
@@ -567,6 +569,48 @@ def run() -> int:
             task_actions.addWidget(self.task_cancel_button)
             tasks_layout.addLayout(task_actions)
             tabs.addTab(tasks_page, "Tasks")
+            observation_page = QWidget()
+            observation_layout = QVBoxLayout(observation_page)
+            observation_layout.addWidget(QLabel(
+                "Review allowlisted desktop learning candidates. Observation is off by default; "
+                "this screen does not start capture or promote knowledge into active memory."
+            ))
+            self.observation_status = QLabel("No observation capture is running.")
+            self.observation_status.setWordWrap(True)
+            observation_layout.addWidget(self.observation_status)
+            self.observation_proposal_list = QListWidget()
+            self.observation_proposal_list.currentItemChanged.connect(
+                self._show_observation_proposal
+            )
+            observation_layout.addWidget(self.observation_proposal_list, 1)
+            self.observation_proposal_details = QTextEdit()
+            self.observation_proposal_details.setReadOnly(True)
+            self.observation_proposal_details.setMaximumHeight(120)
+            observation_layout.addWidget(self.observation_proposal_details)
+            observation_actions = QHBoxLayout()
+            self.observation_refresh_button = QPushButton("Refresh proposals")
+            self.observation_refresh_button.clicked.connect(self._refresh_observation_proposals)
+            self.observation_approve_button = QPushButton("Approve")
+            self.observation_approve_button.clicked.connect(
+                lambda: self._decide_observation_proposal("approve")
+            )
+            self.observation_reject_button = QPushButton("Reject")
+            self.observation_reject_button.clicked.connect(
+                lambda: self._decide_observation_proposal("reject")
+            )
+            self.observation_delete_button = QPushButton("Delete")
+            self.observation_delete_button.clicked.connect(self._delete_observation_proposal)
+            self.observation_audit_button = QPushButton("View audit")
+            self.observation_audit_button.clicked.connect(self._show_observation_audit)
+            for control in (
+                self.observation_refresh_button, self.observation_approve_button,
+                self.observation_reject_button, self.observation_delete_button,
+                self.observation_audit_button,
+            ):
+                observation_actions.addWidget(control)
+            observation_layout.addLayout(observation_actions)
+            tabs.addTab(observation_page, "Learning")
+
 
             backup_page = QWidget()
             backup_layout = QVBoxLayout(backup_page)
@@ -968,6 +1012,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 (
                     self.auth, self.sessions, self.provider,
                     self.coordinator, self.runtime, self.lifecycle,
+                    self.observation_review_database,
                 ) = _build_services()
                 identity = self.sessions.current_identity()
                 if identity is not None:
@@ -1074,6 +1119,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
             )
+            from ui.desktop.observation_learning import build_desktop_observation_review_service
+            self.observation_review_service = build_desktop_observation_review_service(
+                self.auth, self.sessions, identity, self.observation_review_database,
+            )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
@@ -1081,6 +1130,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.pages.setCurrentIndex(1)
             self._refresh_specialists()
             self._refresh_tasks()
+            self._refresh_observation_proposals()
             self.message.setFocus()
 
         def _set_memory_context(self, enabled: bool):
@@ -1202,6 +1252,133 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self._refresh_tasks()
             except Exception as exc:
                 QMessageBox.warning(self, "Cancellation failed", "The plan could not be cancelled (" + type(exc).__name__ + ").")
+
+
+        def _selected_observation_proposal_id(self):
+            item = self.observation_proposal_list.currentItem()
+            return item.data(256) if item is not None else None
+
+        def _refresh_observation_proposals(self):
+            self.observation_proposal_list.clear()
+            self.observation_proposal_details.clear()
+            self.observation_approve_button.setEnabled(False)
+            self.observation_reject_button.setEnabled(False)
+            self.observation_delete_button.setEnabled(False)
+            service = self.observation_review_service
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            if service is None or identity is None:
+                self.observation_status.setText("Sign in to access learning review.")
+                return
+            try:
+                proposals = service.list_pending(actor_id=identity.actor_id)
+                for proposal in proposals:
+                    item = QListWidgetItem(
+                        f"{proposal.kind}: {proposal.value} — {proposal.status}"
+                    )
+                    item.setData(256, proposal.proposal_id)
+                    self.observation_proposal_list.addItem(item)
+                self.observation_status.setText(
+                    f"{len(proposals)} pending proposal(s). No automatic memory promotion."
+                )
+                self._show_observation_proposal()
+            except PermissionError:
+                self.observation_status.setText(
+                    "Your account does not have permission to view learning proposals."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Learning review unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _show_observation_proposal(self, *_args):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            self.observation_approve_button.setEnabled(False)
+            self.observation_reject_button.setEnabled(False)
+            self.observation_delete_button.setEnabled(False)
+            if not proposal_id or identity is None or service is None:
+                self.observation_proposal_details.clear()
+                return
+            try:
+                proposal = service.get(proposal_id, actor_id=identity.actor_id)
+                if proposal is None:
+                    self.observation_proposal_details.setPlainText("Proposal expired or no longer exists.")
+                    return
+                self.observation_proposal_details.setPlainText(
+                    f"Proposal: {proposal.proposal_id}\n"
+                    f"Kind: {proposal.kind}\nValue: {proposal.value}\n"
+                    f"Summary: {proposal.summary}\nStatus: {proposal.status}\n"
+                    f"Created: {proposal.created_at}"
+                )
+                pending = proposal.status == "pending"
+                self.observation_approve_button.setEnabled(pending)
+                self.observation_reject_button.setEnabled(pending)
+                self.observation_delete_button.setEnabled(True)
+            except Exception as exc:
+                self.observation_proposal_details.setPlainText(
+                    "Proposal unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _decide_observation_proposal(self, decision):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            if not proposal_id or identity is None or service is None:
+                return
+            try:
+                getattr(service, decision)(proposal_id, actor_id=identity.actor_id)
+                self.observation_status.setText("Proposal " + decision + "d and audit recorded.")
+                self._refresh_observation_proposals()
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Review action failed (" + type(exc).__name__ + ")."
+                )
+
+        def _delete_observation_proposal(self):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            if not proposal_id or identity is None or service is None:
+                return
+            answer = QMessageBox.question(
+                self, "Delete learning proposal",
+                "Permanently delete this proposal and its review audit history?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                service.delete(proposal_id, actor_id=identity.actor_id)
+                self.observation_status.setText("Proposal and associated audit history deleted.")
+                self._refresh_observation_proposals()
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Delete failed (" + type(exc).__name__ + ")."
+                )
+
+        def _show_observation_audit(self):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            if not proposal_id or identity is None or service is None:
+                return
+            try:
+                events = service.list_review_events(
+                    proposal_id, actor_id=identity.actor_id,
+                )
+                if not events:
+                    self.observation_status.setText("No review events recorded for this proposal.")
+                    return
+                lines = [
+                    f"{event.decision} by {event.reviewer_id} at {event.created_at}"
+                    for event in events
+                ]
+                QMessageBox.information(self, "Learning review audit", "\n".join(lines))
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Audit history unavailable (" + type(exc).__name__ + ")."
+                )
 
         def _refresh_tasks(self):
             if self.controller is None:
@@ -1663,6 +1840,10 @@ Version: {version}",
             self.specialist_list.clear()
             self.task_list.clear()
             self.task_progress_view.clear()
+            self.observation_proposal_list.clear()
+            self.observation_proposal_details.clear()
+            self.observation_status.setText("Sign in to access learning review.")
+            self.observation_review_service = None
             self.backup_path.clear()
             self.backup_passphrase.clear()
             self.backup_confirmation.clear()
