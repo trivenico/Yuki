@@ -4,7 +4,7 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import AuthenticationError, BuiltInAuthService, workflow_principal_resolver
+from core.auth import (AuthenticationError, BuiltInAuthService, observation_review_authorizer, workflow_principal_resolver)
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -87,6 +87,31 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertEqual(approved.approved_by, admin.user_id)
         with self.assertRaises(AuthenticationError):
             service.approve(run.run_id, request_context="forged-user-token", expected_version=approved.version)
+
+    def test_observation_review_authorization_is_bound_to_live_session_and_actor(self):
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        token = [session.token]
+        authorize = observation_review_authorizer(self.auth, lambda: token[0])
+        self.assertTrue(authorize(admin.user_id, "observation:review:read"))
+        self.assertTrue(authorize(admin.user_id, "observation:review:decide"))
+        self.assertTrue(authorize(admin.user_id, "observation:review:delete"))
+        self.assertFalse(authorize("forged-actor", "observation:review:decide"))
+        self.assertFalse(authorize(admin.user_id, "workflow:approve"))
+        self.auth.revoke_session(session.token)
+        self.assertFalse(authorize(admin.user_id, "observation:review:read"))
+
+    def test_observation_review_roles_are_least_privilege(self):
+        self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        operator = self.auth.create_account("ops.user", "Another secure password 4!")
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
+        operator = next(user for user in self.auth.list_users() if user.user_id == operator.user_id)
+        self.assertIn("observation:review:read", operator.permissions)
+        self.assertIn("observation:review:decide", operator.permissions)
+        self.assertNotIn("observation:review:delete", operator.permissions)
+        regular = self.auth.create_account("normal.user", "Another secure password 5!")
+        self.assertNotIn("observation:review:read", regular.permissions)
 
 
 if __name__ == "__main__":
