@@ -151,8 +151,8 @@ class ObservationLearningWorker:
     ):
         if not isinstance(buffer, ObservationEventBuffer):
             raise TypeError("buffer must be an ObservationEventBuffer")
-        if not isinstance(review, ObservationKnowledgeReview):
-            raise TypeError("review must be an ObservationKnowledgeReview")
+        if not all(callable(getattr(review, name, None)) for name in ("propose", "list_pending", "approve", "reject", "delete")):
+            raise TypeError("review must implement the knowledge review store contract")
         self._buffer = buffer
         self._review = review
 
