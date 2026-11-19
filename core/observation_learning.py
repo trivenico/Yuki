@@ -170,10 +170,13 @@ class ObservationLearningWorker:
         # Pop incrementally: if review storage fills, only the current event
         # fails visibly and the remaining buffered events stay queued.
         for _ in range(limit):
+            # Serialize the stop check with dequeue. Once stop() returns, no
+            # additional queued event can be claimed; an item already claimed
+            # may finish its bounded proposal write.
             with self._stop_lock:
                 if self._stopped:
                     break
-            event = self._buffer.get_nowait()
+                event = self._buffer.get_nowait()
             if event is None:
                 break
             if not isinstance(event, ObservationEvent):
