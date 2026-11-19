@@ -7,12 +7,32 @@ untrusted code safe; use a disposable host/workspace.
 from __future__ import annotations
 
 import subprocess
+import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
 
 class SandboxError(RuntimeError):
     pass
+
+
+_OUTPUT_TAIL_BYTES = 12_000
+_READ_CHUNK_BYTES = 4_096
+
+
+def _drain_bounded_tail(stream, destination: bytearray, limit: int) -> None:
+    """Drain a child pipe completely while retaining only its final limit bytes."""
+    try:
+        while True:
+            chunk = stream.read(_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            destination.extend(chunk)
+            excess = len(destination) - limit
+            if excess > 0:
+                del destination[:excess]
+    finally:
+        stream.close()
 
 
 class DockerSandbox:
@@ -50,12 +70,41 @@ class DockerSandbox:
             "--mount", f"type=bind,src={self.workspace},dst=/workspace,rw",
             "--workdir", "/workspace", image, *argv,
         ]
+        stdout_tail, stderr_tail = bytearray(), bytearray()
         try:
-            result = subprocess.run(command, shell=False, capture_output=True, text=True,
-                                    timeout=timeout, check=False)
-        except subprocess.TimeoutExpired as exc:
-            raise SandboxError("Sandbox process timed out.") from exc
+            process = subprocess.Popen(
+                command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
         except OSError as exc:
             raise SandboxError("Docker could not be started.") from exc
-        return {"returncode": result.returncode, "stdout": result.stdout[-12000:],
-                "stderr": result.stderr[-12000:]}
+
+        readers = [
+            threading.Thread(target=_drain_bounded_tail,
+                             args=(process.stdout, stdout_tail, _OUTPUT_TAIL_BYTES),
+                             daemon=True),
+            threading.Thread(target=_drain_bounded_tail,
+                             args=(process.stderr, stderr_tail, _OUTPUT_TAIL_BYTES),
+                             daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        timed_out = False
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            process.kill()
+            process.wait()
+            for reader in readers:
+                reader.join()
+            raise SandboxError("Sandbox process timed out.") from exc
+        finally:
+            if not timed_out:
+                for reader in readers:
+                    reader.join()
+
+        return {
+            "returncode": returncode,
+            "stdout": stdout_tail.decode("utf-8", errors="replace"),
+            "stderr": stderr_tail.decode("utf-8", errors="replace"),
+        }
