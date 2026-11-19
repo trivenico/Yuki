@@ -164,10 +164,14 @@ class SQLiteObservationKnowledgeReview:
     def get(self, proposal_id: str) -> Optional[KnowledgeProposal]:
         if not isinstance(proposal_id, str) or not proposal_id:
             return None
+        now = float(self._clock())
         with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._purge_expired(db, now)
             row = db.execute("""SELECT proposal_id,kind,value,summary,fingerprint,status,created_at,reviewed_at
                 FROM observation_knowledge_proposals WHERE owner_id=? AND proposal_id=?""",
                 (self._owner, proposal_id)).fetchone()
+            db.execute("COMMIT")
         return self._proposal(row) if row else None
 
     def _review(self, proposal_id: str, decision: str) -> KnowledgeProposal:
