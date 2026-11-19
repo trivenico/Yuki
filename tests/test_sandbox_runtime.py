@@ -100,8 +100,8 @@ class DockerSandboxArgvTests(unittest.TestCase):
                 command=["python", "--version"], artifact_output_directory=str(output),
             )
 
-    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
-    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getgid", return_value=_TEST_GID, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=_TEST_UID, create=True)
     @unittest.skipUnless(os.name == "posix", "artifact directory ownership checks require POSIX UID metadata")
     def test_artifact_output_is_separate_private_writable_mount(self, _uid, _gid):
         import os
