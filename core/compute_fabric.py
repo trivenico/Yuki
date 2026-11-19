@@ -137,7 +137,7 @@ class ComputeScheduler:
             ]
 
     @contextmanager
-    def reserve(self, request: ComputeRequest) -> Iterator[None]:
+    def reserve(self, request: ComputeRequest) -> Iterator[ComputeBackend]:
         if not isinstance(request, ComputeRequest):
             raise TypeError("request must be a ComputeRequest")
         with self._lock:
@@ -157,7 +157,7 @@ class ComputeScheduler:
             self._active[request.backend] = current_active + 1
 
         try:
-            yield
+            yield backend
         finally:
             with self._lock:
                 self._reserved_bytes[request.backend] -= request.memory_bytes
