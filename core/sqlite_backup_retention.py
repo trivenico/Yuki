@@ -121,6 +121,17 @@ def _same_identity(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
+def _same_file_snapshot(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        _same_identity(left, right)
+        and left.st_mode == right.st_mode
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+        and left.st_nlink == right.st_nlink == 1
+    )
+
+
 def prune_sqlite_backup_sets(
     backup_root: str | Path,
     expected_entries: tuple[SQLiteDatabaseEntry, ...],
@@ -165,7 +176,8 @@ def prune_sqlite_backup_sets(
     removed: list[str] = []
     try:
         root_identity = os.fstat(root_fd)
-        if not stat.S_ISDIR(root_identity.st_mode):
+        named_root_identity = os.stat(root, follow_symlinks=False)
+        if not stat.S_ISDIR(root_identity.st_mode) or not _same_identity(root_identity, named_root_identity):
             raise SQLiteBackupRetentionError("backup_root_changed")
         for set_id in approved_set_ids:
             # Recompute eligibility immediately before each destructive action.
@@ -218,7 +230,7 @@ def prune_sqlite_backup_sets(
                         raise SQLiteBackupRetentionError("candidate_inventory_changed")
                     for filename, prior in file_identities.items():
                         current_info = os.stat(filename, dir_fd=quarantined_fd, follow_symlinks=False)
-                        if not _same_identity(prior, current_info) or current_info.st_nlink != 1:
+                        if not _same_file_snapshot(prior, current_info):
                             os.rename(quarantine, set_id, src_dir_fd=root_fd, dst_dir_fd=root_fd)
                             raise SQLiteBackupRetentionError("candidate_file_changed_during_quarantine")
                     # Only the exact, preflighted regular files are unlinked.
