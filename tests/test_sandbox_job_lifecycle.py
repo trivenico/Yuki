@@ -171,6 +171,57 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(restored.cleanup_job(job.job_id).state, JobState.CLEANED)
 
+    def test_promotion_intent_is_durable_before_publication_and_completed(self):
+        job = self.lifecycle.create_job()
+        self.lifecycle.start_job(job.job_id)
+        self.lifecycle.freeze_job(job.job_id)
+        manifest = self.lifecycle.validate_job(job.job_id, allowed_extensions=(".txt",))
+        self.lifecycle.promote_artifact(
+            job.job_id, principal=self.principal,
+            artifact_path="report.txt", destination_path="report.txt",
+        )
+        intent = self.store.get_promotion(job_id=job.job_id, artifact_path="report.txt")
+        self.assertEqual(intent["status"], "completed")
+        self.assertEqual(intent["artifact_sha256"], manifest.files[0].sha256)
+        self.assertEqual(intent["destination_path"], "report.txt")
+
+    def test_promotion_reconciles_published_file_after_crash_before_job_update(self):
+        job = self.lifecycle.create_job()
+        self.lifecycle.start_job(job.job_id)
+        self.lifecycle.freeze_job(job.job_id)
+        self.lifecycle.validate_job(job.job_id, allowed_extensions=(".txt",))
+        # Simulate a crash after the atomic publish and promotion audit, before
+        # the durable job promoted_paths update by invoking the promotion service.
+        digest = self.lifecycle._promotion.promote(
+            principal=self.principal, job_id=job.job_id,
+            staging_directory=job.staging_directory,
+            manifest=job.manifest, artifact_path="report.txt",
+            destination_path="report.txt",
+        )
+        import hashlib, json
+        item = job.manifest.files[0]
+        approval_digest = hashlib.sha256(json.dumps({
+            "job_id": job.job_id, "manifest_digest": job.manifest.digest,
+            "artifact_path": "report.txt", "artifact_sha256": item.sha256,
+            "destination_path": "report.txt",
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        self.assertEqual(digest, approval_digest)
+        self.store.record_promotion_intent(
+            job_id=job.job_id, artifact_path="report.txt", destination_path="report.txt",
+            artifact_sha256=item.sha256, artifact_size=item.size_bytes,
+            approval_digest=approval_digest, actor_id="alice",
+        )
+        self.assertEqual(
+            self.lifecycle.promote_artifact(
+                job.job_id, principal=self.principal,
+                artifact_path="report.txt", destination_path="report.txt",
+            ),
+            approval_digest,
+        )
+        self.assertEqual(self.store.get_promotion(
+            job_id=job.job_id, artifact_path="report.txt"
+        )["status"], "completed")
+
     def test_running_job_must_be_frozen_before_discard(self):
         job = self.lifecycle.create_job()
         self.lifecycle.start_job(job.job_id)
