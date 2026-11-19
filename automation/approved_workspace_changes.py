@@ -29,6 +29,52 @@ _SAFE_MODULE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*
 _BLOCKED_PARTS = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", ".ssh", ".aws", ".azure", ".config"})
 _SECRET_PART = re.compile(r"(^\.env($|\.)|secret|credential|password|token|private.?key|id_rsa|id_ed25519)", re.I)
 
+def _drain_bounded_output(stream, destination: bytearray, limit: int) -> None:
+    """Drain a subprocess pipe while retaining no more than limit bytes."""
+    try:
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                break
+            destination.extend(chunk)
+            excess = len(destination) - limit
+            if excess > 0:
+                del destination[:excess]
+    finally:
+        stream.close()
+
+
+def _run_bounded_test_process(command: Sequence[str], *, cwd: Path, env: Mapping[str, str],
+                              timeout: int) -> tuple[int, bool, str, str]:
+    """Run an allow-listed test command with bounded in-memory output tails."""
+    import threading
+    process = subprocess.Popen(
+        list(command), cwd=str(cwd), env=dict(env), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
+    )
+    stdout_tail, stderr_tail = bytearray(), bytearray()
+    readers = [
+        threading.Thread(target=_drain_bounded_output,
+                         args=(process.stdout, stdout_tail, _MAX_OUTPUT_BYTES), daemon=True),
+        threading.Thread(target=_drain_bounded_output,
+                         args=(process.stderr, stderr_tail, _MAX_OUTPUT_BYTES), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+    timed_out = False
+    try:
+        returncode = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        process.kill()
+        returncode = 124
+        process.wait()
+    for reader in readers:
+        reader.join(timeout=2)
+    return (returncode, timed_out,
+            stdout_tail.decode("utf-8", errors="replace"),
+            stderr_tail.decode("utf-8", errors="replace"))
+
 
 class WorkspaceChangeError(RuntimeError):
     """An approved workspace change could not be safely applied."""
@@ -280,21 +326,13 @@ class ApprovedTestRunner:
                "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
         start = time.monotonic()
         try:
-            result = subprocess.run(
+            exit_code, timed_out, stdout, stderr = _run_bounded_test_process(
                 [sys.executable, "-m", "unittest", test_module, "-v"],
-                cwd=str(self.root), env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=self.timeout_seconds,
-                check=False, shell=False,
+                cwd=self.root, env=env, timeout=self.timeout_seconds,
             )
-            timed_out = False
-            exit_code = result.returncode
-            stdout = result.stdout[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            stderr = result.stderr[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            exit_code = 124
-            stdout = (exc.stdout or b"")[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            stderr = (exc.stderr or b"")[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+        except OSError as exc:
+            self._record(principal.actor_id, "tests.run", "failed_to_start", run_digest, test_module)
+            raise WorkspaceChangeError("test process could not be started.") from exc
         duration = round(time.monotonic() - start, 3)
         self._record(principal.actor_id, "tests.run", "timed_out" if timed_out else ("succeeded" if exit_code == 0 else "failed"), run_digest, test_module)
         return TestRunResult(test_module, exit_code, timed_out, duration, stdout, stderr)
