@@ -76,6 +76,9 @@ class WorkforceImprovementEvaluatorTests(unittest.TestCase):
             "non_integer_task_count",
             [item["code"] for item in result["data_quality"]["issues"]],
         )
+        self.assertEqual(result["status"], "insufficient_observations")
+        self.assertFalse(result["metrics"]["success_rate"]["available"])
+        self.assertFalse(result["metrics"]["failed_tasks"]["available"])
 
     def test_rejects_invalid_threshold_and_snapshot(self):
         with self.assertRaises(ValueError):
