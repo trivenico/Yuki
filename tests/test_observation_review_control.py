@@ -122,6 +122,37 @@ class ObservationKnowledgeReviewServiceTests(unittest.TestCase):
                 proposal.proposal_id, actor_id="admin-1", catalog=catalog
             )
 
+
+    def test_retrieval_is_exact_authorized_and_excludes_deactivated_entries(self):
+        from core.curated_knowledge_store import SQLiteCuratedKnowledge
+
+        proposal = self.store.propose("application", "com.example.editor")
+        self.service.approve(proposal.proposal_id, actor_id="operator-1")
+        self.grants["admin-1"] = {"memory:knowledge:promote", "memory:knowledge:read",
+                                  "memory:knowledge:deactivate"}
+        catalog = SQLiteCuratedKnowledge(
+            str(Path(self.tmp.name) / "curated.sqlite3"), owner_id="owner-1"
+        )
+        entry_id = self.service.promote_approved(
+            proposal.proposal_id, actor_id="admin-1", catalog=catalog
+        )
+        with self.assertRaises(PermissionError):
+            self.service.retrieve_curated(
+                "application", "com.example.editor", actor_id="operator-1", catalog=catalog
+            )
+        found = self.service.retrieve_curated(
+            "application", "com.example.editor", actor_id="admin-1", catalog=catalog
+        )
+        self.assertEqual(found["entry_id"], entry_id)
+        self.assertEqual(found["source_proposal_id"], proposal.proposal_id)
+        self.assertIsNone(self.service.retrieve_curated(
+            "application", "com.example.other", actor_id="admin-1", catalog=catalog
+        ))
+        self.service.deactivate_curated(entry_id, actor_id="admin-1", catalog=catalog)
+        self.assertIsNone(self.service.retrieve_curated(
+            "application", "com.example.editor", actor_id="admin-1", catalog=catalog
+        ))
+
     def test_curated_reads_and_deactivation_require_separate_permissions(self):
         from core.curated_knowledge_store import SQLiteCuratedKnowledge
 
