@@ -1425,6 +1425,19 @@ class DurableTaskEngine:
                      )""",
                 (experiment_id,),
             ).fetchall()
+            exposure_rows = c.execute(
+                """SELECT task_id,attempt,intervention_version,skill_name
+                   FROM workforce_experiment_treatment_exposures
+                   WHERE experiment_id=? ORDER BY exposure_id""",
+                (experiment_id,),
+            ).fetchall()
+            control_exposure_count = c.execute(
+                """SELECT COUNT(*) AS n FROM workforce_experiment_treatment_exposures x
+                   JOIN workforce_experiment_assignments a
+                     ON a.experiment_id=x.experiment_id AND a.task_id=x.task_id
+                   WHERE x.experiment_id=? AND a.assignment!='treatment'""",
+                (experiment_id,),
+            ).fetchone()["n"]
         design = json.loads(experiment["design_json"])
         population = design.get("eligible_population")
         allowed_types = (
@@ -1443,6 +1456,33 @@ class DurableTaskEngine:
         for row in incomplete_execution_rows:
             issues.append({"code": "worker_execution_missing_terminal_event",
                            "task_id": row["task_id"], "attempt": row["attempt"]})
+        exposure_task_attempts = {(row["task_id"], row["attempt"]) for row in exposure_rows}
+        for row in exposure_rows:
+            expected_version = hashlib.sha256(
+                json.loads(experiment["design_json"])["intervention"].encode("utf-8")
+            ).hexdigest()
+            if row["intervention_version"] != expected_version:
+                issues.append({"code": "treatment_intervention_version_mismatch",
+                               "task_id": row["task_id"], "attempt": row["attempt"]})
+        if control_exposure_count:
+            issues.append({"code": "control_arm_has_treatment_exposure",
+                           "count": control_exposure_count})
+        treatment_without_exposure = c.execute(
+            """SELECT a.task_id FROM workforce_experiment_assignments a
+               JOIN workforce_experiment_execution_events e
+                 ON e.experiment_id=a.experiment_id AND e.task_id=a.task_id
+                    AND e.event_type='execution_started'
+               WHERE a.experiment_id=? AND a.assignment='treatment'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM workforce_experiment_treatment_exposures x
+                   WHERE x.experiment_id=a.experiment_id AND x.task_id=a.task_id
+                     AND x.attempt=e.attempt
+                 )""",
+            (experiment_id,),
+        ).fetchall()
+        for row in treatment_without_exposure:
+            issues.append({"code": "treatment_execution_without_skill_exposure",
+                           "task_id": row["task_id"]})
         delivery_counts = {"delivered": 0, "not_delivered": 0, "unknown": 0, "unrecorded": 0}
         for row in rows:
             expected_key = hashlib.sha256(
@@ -1475,6 +1515,8 @@ class DurableTaskEngine:
             "assignments_checked": len(rows),
             "treatment_delivery_attestations": delivery_counts,
             "worker_execution_events": execution_counts,
+            "treatment_exposures": len(exposure_rows),
+            "treatment_exposure_skills": sorted({row["skill_name"] for row in exposure_rows}),
             "issues": issues,
             "issue_count": len(issues),
             "status": "integrity_warnings" if issues else "no_detected_integrity_issues",
@@ -1483,13 +1525,14 @@ class DurableTaskEngine:
                 "Current task-type eligibility against the stored design",
                 "Treatment delivery attestation coverage and arm consistency",
                 "Worker execution lifecycle events emitted by the trusted workforce worker",
+                "Treatment content passed to the selected skill immediately before run_skill invocation",
                 "Repeated execution attempts visible in the execution event stream",
                 "Duplicate task assignment rows visible to this database query",
             ],
             "limitations": [
                 "Database uniqueness prevents normal cross-experiment task reassignment; rejected attempts are not retained as contamination events.",
                 "Worker execution events prove that the workforce worker entered or exited its executor seam, not that a specific treatment was delivered.",
-                "Executor-side intervention exposure still requires explicit, independently verifiable instrumentation.",
+                "Treatment exposure means the approved intervention text was appended to the selected skill argument and the invocation boundary was reached; it does not prove the model attended to, followed, or benefited from the content.",
                 "Operator delivery attestations are not proof of execution.",
                 "A clean report is not proof that no contamination occurred.",
             ],
