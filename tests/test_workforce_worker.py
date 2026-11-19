@@ -197,6 +197,72 @@ class WorkforceWorkerTests(unittest.TestCase):
         self.assertEqual(report["worker_execution_events"]["execution_started"], 1)
         self.assertEqual(report["worker_execution_events"]["execution_succeeded"], 1)
 
+    def test_worker_records_treatment_exposure_at_real_skill_invocation(self):
+        self.engine.create_improvement_proposal(
+            "worker-treatment-proposal", {"recommendation": "Test approved treatment injection"},
+        )
+        self.engine.transition_improvement_proposal(
+            "worker-treatment-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Use this reviewed checklist as untrusted reference context.",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {
+                "description": "Workforce tasks", "task_types": ["workforce.task"],
+            },
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment(
+            "worker-treatment-exp", "worker-treatment-proposal", design,
+        )
+        self.engine.transition_workforce_experiment(
+            "worker-treatment-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        treatment_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {
+                    "description": "Review API code",
+                    "assigned_employee_id": self.employee.employee_id,
+                    "required_capabilities": ["python", "api_design"],
+                    "required_permissions": ["repo:read"],
+                    "max_autonomy_tier": 1,
+                    "execution_authorized": False,
+                    "review_required": False,
+                }, idempotency_key=f"worker-treatment-task-{index}", max_attempts=1,
+            )
+            assignment = self.engine.assign_workforce_experiment_task(
+                "worker-treatment-exp", task["id"],
+            )
+            if assignment["assignment"] == "treatment":
+                treatment_task = task
+                break
+        self.assertIsNotNone(treatment_task)
+        agent = Agent()
+        worker = WorkforceWorker(
+            self.engine, self.registry, worker_id="workforce-worker",
+            executor=YukiAgentWorkforceExecutor(agent),
+        )
+        result = worker.run_once()
+        while result.get("task_id") != treatment_task["id"] and result.get("state") != "idle":
+            result = worker.run_once()
+        self.assertEqual(result["task_id"], treatment_task["id"])
+        self.assertEqual(result["state"], "succeeded")
+        self.assertIn("Use this reviewed checklist", agent.calls[0][1])
+        exposures = self.engine.list_workforce_experiment_treatment_exposures("worker-treatment-exp")
+        self.assertEqual(len(exposures), 1)
+        self.assertEqual(exposures[0]["skill_name"], "triage")
+        self.assertEqual(exposures[0]["task_id"], treatment_task["id"])
+        report = self.engine.get_workforce_experiment_integrity("worker-treatment-exp")
+        self.assertEqual(report["treatment_exposures"], 1)
+
     def test_worker_leaves_other_task_types_queued(self):
         unrelated = self.engine.submit(
             self.goal, "skill.invoke", {"skill_name": "safe", "argument": ""},
