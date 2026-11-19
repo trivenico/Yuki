@@ -114,6 +114,22 @@ class DurableTaskEngine:
               UNIQUE(task_id));
             CREATE INDEX IF NOT EXISTS workforce_experiment_assignments_idx
               ON workforce_experiment_assignments(experiment_id,assignment);
+            CREATE TABLE IF NOT EXISTS workforce_experiment_deliveries(
+              experiment_id TEXT NOT NULL,
+              task_id TEXT NOT NULL,
+              delivery_state TEXT NOT NULL CHECK(delivery_state IN ('delivered','not_delivered','unknown')),
+              intervention_version TEXT,
+              evidence_reference TEXT,
+              actor_id TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              PRIMARY KEY(experiment_id,task_id),
+              FOREIGN KEY(experiment_id,task_id)
+                REFERENCES workforce_experiment_assignments(experiment_id,task_id),
+              CHECK((delivery_state='delivered' AND intervention_version IS NOT NULL)
+                 OR (delivery_state!='delivered' AND intervention_version IS NULL))
+            );
+            CREATE INDEX IF NOT EXISTS workforce_experiment_deliveries_idx
+              ON workforce_experiment_deliveries(experiment_id,delivery_state);
             CREATE TABLE IF NOT EXISTS workforce_knowledge(
               knowledge_id TEXT PRIMARY KEY,
               fingerprint TEXT NOT NULL,
@@ -982,6 +998,97 @@ class DurableTaskEngine:
                 raise TaskNotFound("experiment not found")
             rows = c.execute(
                 "SELECT task_id,assignment,assignment_key,assigned_at FROM workforce_experiment_assignments WHERE experiment_id=? ORDER BY assigned_at,task_id LIMIT ?",
+                (experiment_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_workforce_experiment_delivery(
+        self, experiment_id, task_id, delivery_state, *, actor_id,
+        intervention_version=None, evidence_reference=None,
+    ):
+        """Record an operator attestation; this method does not execute treatment."""
+        for name, value in (("experiment_id", experiment_id), ("task_id", task_id),
+                            ("actor_id", actor_id)):
+            if not isinstance(value, str) or not 1 <= len(value) <= 256 or value.strip() != value:
+                raise ValueError("invalid " + name)
+        if delivery_state not in {"delivered", "not_delivered", "unknown"}:
+            raise ValueError("invalid delivery_state")
+        if delivery_state == "delivered":
+            if (not isinstance(intervention_version, str) or not intervention_version.strip()
+                    or len(intervention_version) > 128):
+                raise ValueError("delivered status requires intervention_version")
+        elif intervention_version is not None:
+            raise ValueError("intervention_version is only valid when delivered")
+        if evidence_reference is not None and (
+            not isinstance(evidence_reference, str) or not evidence_reference.strip()
+            or len(evidence_reference) > 512
+        ):
+            raise ValueError("invalid evidence_reference")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            assignment = c.execute(
+                """SELECT a.assignment,e.state,e.design_json
+                   FROM workforce_experiment_assignments a
+                   JOIN workforce_experiments e ON e.experiment_id=a.experiment_id
+                   WHERE a.experiment_id=? AND a.task_id=?""",
+                (experiment_id, task_id),
+            ).fetchone()
+            if assignment is None:
+                raise TaskNotFound("experiment assignment not found")
+            if assignment["state"] != "approved":
+                raise TaskConflict("experiment must remain approved to record delivery")
+            if assignment["assignment"] != "treatment":
+                raise TaskConflict("delivery attestations are only valid for treatment assignments")
+            existing = c.execute(
+                "SELECT * FROM workforce_experiment_deliveries WHERE experiment_id=? AND task_id=?",
+                (experiment_id, task_id),
+            ).fetchone()
+            requested = (delivery_state, intervention_version, evidence_reference, actor_id)
+            if existing is not None:
+                original = (existing["delivery_state"], existing["intervention_version"],
+                            existing["evidence_reference"], existing["actor_id"])
+                if original != requested:
+                    raise TaskConflict("delivery attestation already recorded with different values")
+                c.commit()
+                return {"created": False, "experiment_id": experiment_id, "task_id": task_id,
+                        "assignment": "treatment", "delivery_state": delivery_state,
+                        "intervention_version": intervention_version,
+                        "evidence_reference": evidence_reference, "actor_id": actor_id,
+                        "attested_at": existing["created_at"], "treatment_executed": False}
+            c.execute(
+                """INSERT INTO workforce_experiment_deliveries
+                   (experiment_id,task_id,delivery_state,intervention_version,
+                    evidence_reference,actor_id,created_at) VALUES(?,?,?,?,?,?,?)""",
+                (experiment_id, task_id, delivery_state, intervention_version,
+                 evidence_reference, actor_id, now),
+            )
+            self._event(c, c.execute("SELECT goal_id FROM tasks WHERE id=?", (task_id,)).fetchone()["goal_id"],
+                        task_id, "experiment.delivery_attested", {
+                            "experiment_id": experiment_id, "delivery_state": delivery_state,
+                            "actor_id": actor_id,
+                        })
+            c.commit()
+        return {"created": True, "experiment_id": experiment_id, "task_id": task_id,
+                "assignment": "treatment", "delivery_state": delivery_state,
+                "intervention_version": intervention_version,
+                "evidence_reference": evidence_reference, "actor_id": actor_id,
+                "attested_at": now, "treatment_executed": False}
+
+    def list_workforce_experiment_deliveries(self, experiment_id, limit=500):
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("limit must be 1..500")
+        with closing(self._connect()) as c:
+            if c.execute("SELECT 1 FROM workforce_experiments WHERE experiment_id=?",
+                         (experiment_id,)).fetchone() is None:
+                raise TaskNotFound("experiment not found")
+            rows = c.execute(
+                """SELECT task_id,delivery_state,intervention_version,evidence_reference,
+                          actor_id,created_at AS attested_at
+                   FROM workforce_experiment_deliveries WHERE experiment_id=?
+                   ORDER BY created_at,task_id LIMIT ?""",
                 (experiment_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]
