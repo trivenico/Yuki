@@ -61,6 +61,19 @@ class DesktopObservationReviewCompositionTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.build()
 
+
+    def test_curated_provider_uses_live_desktop_session(self):
+        from ui.desktop.observation_learning import build_desktop_curated_knowledge_provider
+
+        provider = build_desktop_curated_knowledge_provider(
+            self.auth, self.sessions, self.identity,
+            self.database, Path(self.tmp.name) / "curated.sqlite3",
+        )
+        self.assertEqual(provider(self.user.user_id, "editor"), ())
+        self.sessions.logout()
+        with self.assertRaises(PermissionError):
+            provider(self.user.user_id, "editor")
+
     def test_existing_service_fails_closed_after_logout(self):
         service = self.build()
         self.sessions.logout()
