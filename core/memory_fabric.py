@@ -74,6 +74,7 @@ class MemoryFabric:
         self._lock = threading.RLock()
         self._ram: OrderedDict[tuple[str, str], bytes] = OrderedDict()
         self._ram_bytes = 0
+        self._pending_ram_accesses: dict[tuple[str, str], float] = {}
         self._hits = 0
         self._misses = 0
         self._evictions = 0
@@ -200,6 +201,7 @@ class MemoryFabric:
         previous = self._ram.pop(identity, None)
         if previous is not None:
             self._ram_bytes -= len(previous)
+        self._pending_ram_accesses.pop(identity, None)
 
     def _remember_ram(self, identity: tuple[str, str], payload: bytes) -> None:
         self._remove_ram(identity)
@@ -233,6 +235,13 @@ class MemoryFabric:
             self._ensure_open()
             with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
+                pending_accesses = tuple(self._pending_ram_accesses.items())
+                for (access_namespace, access_key), accessed_at in pending_accesses:
+                    connection.execute(
+                        "UPDATE memory_fabric_entries SET last_access=MAX(last_access,?) "
+                        "WHERE namespace=? AND cache_key=?",
+                        (accessed_at, access_namespace, access_key),
+                    )
                 connection.execute(
                     "DELETE FROM memory_fabric_entries WHERE expires_at IS NOT NULL AND expires_at<=?",
                     (now,),
@@ -268,6 +277,9 @@ class MemoryFabric:
                     """,
                     (namespace, key, sqlite3.Binary(payload), len(payload), digest, expires_at, now, now),
                 )
+            for pending_identity, accessed_at in pending_accesses:
+                if self._pending_ram_accesses.get(pending_identity) == accessed_at:
+                    self._pending_ram_accesses.pop(pending_identity, None)
             if expires_at is None:
                 self._remember_ram(identity, payload)
             else:
@@ -284,6 +296,7 @@ class MemoryFabric:
             cached = self._ram.get(identity)
             if cached is not None:
                 self._ram.move_to_end(identity)
+                self._pending_ram_accesses[identity] = now
                 self._hits += 1
                 return cached
             with self._connection() as connection:
@@ -343,6 +356,7 @@ class MemoryFabric:
             if namespace is None:
                 self._ram.clear()
                 self._ram_bytes = 0
+                self._pending_ram_accesses.clear()
                 with self._connection() as connection:
                     cursor = connection.execute("DELETE FROM memory_fabric_entries")
             else:
