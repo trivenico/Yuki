@@ -216,12 +216,17 @@ class ApprovedArtifactPromotionTests(unittest.TestCase):
 
 
     def test_approval_digest_changes_with_job_identity(self):
-        other_digest = self.service.promote(
+        first_digest = self.service.promote(
+            principal=self.principal, job_id="job_" + "a" * 32,
+            staging_directory=self.staging, manifest=self.manifest,
+            artifact_path="report.txt", destination_path="first.txt",
+        )
+        second_digest = self.service.promote(
             principal=self.principal, job_id="job_" + "b" * 32,
             staging_directory=self.staging, manifest=self.manifest,
-            artifact_path="report.txt", destination_path="other.txt",
+            artifact_path="report.txt", destination_path="second.txt",
         )
-        self.assertNotEqual(other_digest, self.approvals[-1][2] if len(self.approvals) > 1 else "")
+        self.assertNotEqual(first_digest, second_digest)
         self.assertEqual(self.audit_events[-1]["job_id"], "job_" + "b" * 32)
 
     def test_audit_failure_rolls_back_created_file(self):
