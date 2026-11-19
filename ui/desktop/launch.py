@@ -457,31 +457,14 @@ def run() -> int:
             self.pages = QStackedWidget()
             self.setCentralWidget(self.pages)
 
-            login = QWidget()
-            login_layout = QVBoxLayout(login)
-            login_layout.addWidget(QLabel("<h2>Welcome to Yuki</h2>"))
-            login_layout.addWidget(QLabel("Sign in with your local Yuki account."))
-            form = QFormLayout()
-            self.username = QLineEdit()
-            self.username.setPlaceholderText("Username")
-            self.password = QLineEdit()
-            self.password.setEchoMode(QLineEdit.Password)
-            self.password.setPlaceholderText("Password")
-            form.addRow("Username", self.username)
-            form.addRow("Password", self.password)
-            login_layout.addLayout(form)
-            self.login_button = QPushButton("Sign in")
-            self.login_button.clicked.connect(self._login)
-            self.password.returnPressed.connect(self._login)
-            login_layout.addWidget(self.login_button)
-            self.login_status = QLabel(
-                "Your password is never stored. Create the first account with "
-                "'yuki auth bootstrap-admin' in the terminal."
-            )
+            startup = QWidget()
+            startup_layout = QVBoxLayout(startup)
+            startup_layout.addWidget(QLabel("<h2>Yuki</h2>"))
+            self.login_status = QLabel("Opening your private workspace…")
             self.login_status.setWordWrap(True)
-            login_layout.addWidget(self.login_status)
-            login_layout.addStretch(1)
-            self.pages.addWidget(login)
+            startup_layout.addWidget(self.login_status)
+            startup_layout.addStretch(1)
+            self.pages.addWidget(startup)
 
             chat = QWidget()
             chat_layout = QVBoxLayout(chat)
@@ -497,8 +480,9 @@ def run() -> int:
                 "This does not enable automatic memory saving."
             )
             self.memory_toggle.toggled.connect(self._set_memory_context)
-            self.logout_button = QPushButton("Sign out")
-            self.logout_button.clicked.connect(self._logout)
+            self.logout_button = QPushButton("Close Yuki")
+            self.logout_button.setToolTip("Close Yuki safely and release local resources.")
+            self.logout_button.clicked.connect(self.close)
             header.addWidget(self.identity_label)
             header.addWidget(self.observation_global_indicator)
             header.addStretch(1)
@@ -1141,20 +1125,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self.coordinator, self.runtime, self.lifecycle,
                     self.observation_review_database,
                 ) = _build_services()
-                if not self.auth.list_users():
-                    self.login_button.setEnabled(False)
-                    self.login_status.setText(
-                        "First-run setup required. Set YUKI_BOOTSTRAP_ADMIN_USERNAME "
-                        "and YUKI_BOOTSTRAP_ADMIN_PASSWORD (at least 12 characters), "
-                        "then restart Yuki. These values are used only to create the "
-                        "initial local administrator."
-                    )
-                    return
-                identity = self.sessions.current_identity()
-                if identity is not None:
-                    self._open_session(identity)
+                identity = self.sessions.open_local_profile_session()
+                self._open_session(identity)
             except Exception as exc:
-                self.login_button.setEnabled(False)
                 from core.sqlite_recovery import (
                     SQLiteRecoveryRequired, format_sqlite_recovery_report,
                 )
@@ -1162,33 +1135,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self.login_status.setText(format_sqlite_recovery_report(exc.report))
                 else:
                     self.login_status.setText(
-                        "Desktop setup is unavailable (" + type(exc).__name__ + "). "
-                        "Check the OS credential store and local configuration."
+                        "Yuki could not open its private local profile ("
+                        + type(exc).__name__ + "). Check local storage and the OS credential store."
                     )
-
-        def _login(self):
-            if self.sessions is None:
-                return
-            self.login_button.setEnabled(False)
-            username = self.username.text().strip()
-            password = self.password.text()
-            self.password.clear()
-            identity = None
-            try:
-                identity = self.sessions.login(username, password)
-                self._open_session(identity)
-            except Exception as exc:
-                if identity is not None:
-                    try:
-                        self.sessions.logout()
-                    except Exception:
-                        pass
-                self.login_status.setText(
-                    "Sign-in failed (" + type(exc).__name__ + "). Check your credentials "
-                    "and the operating-system credential store."
-                )
-            finally:
-                self.login_button.setEnabled(True)
 
         def _open_session(self, identity):
             # A fresh authenticated session restores the chat controls and tabs
@@ -1227,7 +1176,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.spoken_replies_checkbox.setEnabled(True)
             self.speech_stop_button.setEnabled(False)
             self.voice_status.setText("Microphone off. Spoken replies off. No background listening.")
-            self.logout_button.setText("Sign out")
+            self.logout_button.setText("Close Yuki")
             config = load_config()
             memory = create_desktop_memory(self.sessions.keyring)
             context = build_desktop_context(
@@ -1273,7 +1222,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 memory=context.application.memory,
                 knowledge_entries_for_owner=curated_knowledge_provider,
             )
-            self.identity_label.setText("Signed in · " + identity.actor_id[:12])
+            self.identity_label.setText("Personal workspace")
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
             self.conversation_selector.clear()
