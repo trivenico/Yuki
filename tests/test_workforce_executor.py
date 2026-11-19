@@ -84,9 +84,9 @@ class WorkforceExecutorTests(unittest.TestCase):
 
     def test_oversized_knowledge_context_fails_closed(self):
         context = [{
-            "knowledge_id": "lesson-1", "title": "Long lesson",
-            "lesson": "x" * 1000, "source_task_id": "source-1",
-            "reviewed_by": "curator-1",
+            "knowledge_id": "k" * 256, "title": "t" * 200,
+            "lesson": "x" * 1000, "source_task_id": "s" * 256,
+            "reviewed_by": "r" * 256,
         } for _ in range(5)]
         result = self.execute(knowledge_context=context)
         self.assertFalse(result.ok)
