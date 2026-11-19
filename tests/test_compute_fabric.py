@@ -3,11 +3,13 @@ import unittest
 
 from core.compute_fabric import (
     CPUBackend,
+    ComputeBackendError,
     ComputeCapabilities,
     ComputeCapacityError,
     ComputeFabricError,
     ComputeRequest,
     ComputeScheduler,
+    ModelLifecycleManager,
 )
 
 
