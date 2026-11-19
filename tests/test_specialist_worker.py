@@ -11,6 +11,7 @@ from automation.specialist_worker import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
+from core.compute_fabric import CPUBackend, ComputeRequest, ComputeScheduler
 
 
 class FakeProvider:
@@ -277,6 +278,40 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_workers=17)
         with self.assertRaises(ValueError):
             self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_tasks=101)
+
+    def test_compute_capacity_denial_does_not_claim_or_consume_attempt(self):
+        task_id = self.create_task()
+        scheduler = ComputeScheduler((CPUBackend(memory_capacity_bytes=100, max_concurrency=1),))
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "completed"},
+            compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=60),
+        )
+        with scheduler.reserve(ComputeRequest(memory_bytes=50)):
+            self.assertIsNone(worker.run_once())
+            queued = self.store.get(task_id)
+            self.assertEqual(queued.state, "queued")
+            self.assertEqual(queued.attempts, 0)
+            self.assertIsNone(queued.lease_owner)
+        result = worker.run_once()
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(scheduler.stats()["cpu"], {
+            "reserved_memory_bytes": 0, "active_operations": 0,
+        })
+
+    def test_compute_reservation_is_released_after_handler_failure(self):
+        self.create_task()
+        scheduler = ComputeScheduler((CPUBackend(memory_capacity_bytes=100, max_concurrency=1),))
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (_ for _ in ()).throw(RuntimeError("failure"))},
+            compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=40),
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(scheduler.stats()["cpu"], {
+            "reserved_memory_bytes": 0, "active_operations": 0,
+        })
 
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):
