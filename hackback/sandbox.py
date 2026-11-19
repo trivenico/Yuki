@@ -67,7 +67,7 @@ class DockerSandbox:
             "--security-opt=no-new-privileges", "--pids-limit=64",
             "--memory=512m", "--cpus=1", "--user=65534:65534",
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",
-            "--mount", f"type=bind,src={self.workspace},dst=/workspace,rw",
+            "--mount", f"type=bind,src={self.workspace},dst=/workspace,ro",
             "--workdir", "/workspace", image, *argv,
         ]
         stdout_tail, stderr_tail = bytearray(), bytearray()
