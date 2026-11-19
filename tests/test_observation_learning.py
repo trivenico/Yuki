@@ -86,6 +86,27 @@ class ObservationLearningTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.worker.process_batch(limit=0)
 
+    def test_default_batch_respects_small_buffer_capacity(self):
+        small_buffer = ObservationEventBuffer(capacity=1)
+        worker = ObservationLearningWorker(
+            small_buffer, ObservationKnowledgeReview(capacity=2)
+        )
+        small_buffer(ObservationEvent(
+            "desktop:metadata", "app_activity",
+            {"application_id": "com.example.editor"},
+        ))
+        proposals = worker.process_batch()
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(len(small_buffer), 0)
+
+    def test_explicit_batch_above_capacity_is_rejected(self):
+        small_buffer = ObservationEventBuffer(capacity=1)
+        worker = ObservationLearningWorker(
+            small_buffer, ObservationKnowledgeReview(capacity=2)
+        )
+        with self.assertRaises(ValueError):
+            worker.process_batch(limit=2)
+
     def test_review_backpressure_does_not_drain_the_rest_of_the_batch(self):
         review = ObservationKnowledgeReview(capacity=1)
         worker = ObservationLearningWorker(self.buffer, review)
