@@ -186,7 +186,15 @@ class AuthenticatedWorkforceDashboardAPI:
 
         try:
             query = self._query(scope)
-            if path == "/v1/workforce/dashboard":
+            if re.fullmatch(r"/v1/workforce/tasks/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/knowledge-delivery-integrity", path):
+                if query:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                task_id = path.split("/")[-2]
+                result = await asyncio.to_thread(
+                    self.dashboard.task_engine.get_workforce_knowledge_delivery_integrity,
+                    task_id,
+                )
+            elif path == "/v1/workforce/dashboard":
                 if set(query) - _QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
                 max_goals = self._integer(query.get("max_goals", "100"), "max_goals")
