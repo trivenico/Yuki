@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from core.memory_fabric import (
@@ -94,7 +95,7 @@ class MemoryFabricTests(unittest.TestCase):
             self.path, ram_capacity_bytes=8, disk_capacity_bytes=6
         )
         fabric.put("cache", "existing", b"1111")
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute(
                 "CREATE TRIGGER reject_memory_fabric_insert "
                 "BEFORE INSERT ON memory_fabric_entries "
@@ -113,7 +114,7 @@ class MemoryFabricTests(unittest.TestCase):
     def test_failed_delete_preserves_ram_and_ssd_entry(self):
         fabric = self._make_fabric(self.path, ram_capacity_bytes=8, disk_capacity_bytes=32)
         fabric.put("cache", "entry", b"value")
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute(
                 "CREATE TRIGGER reject_memory_fabric_delete "
                 "BEFORE DELETE ON memory_fabric_entries "
@@ -128,7 +129,7 @@ class MemoryFabricTests(unittest.TestCase):
     def test_failed_namespace_clear_preserves_ram_and_ssd_entries(self):
         fabric = self._make_fabric(self.path, ram_capacity_bytes=8, disk_capacity_bytes=32)
         fabric.put("cache", "entry", b"value")
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute(
                 "CREATE TRIGGER reject_memory_fabric_clear "
                 "BEFORE DELETE ON memory_fabric_entries "
@@ -143,7 +144,7 @@ class MemoryFabricTests(unittest.TestCase):
     def test_failed_global_clear_preserves_ram_and_ssd_entries(self):
         fabric = self._make_fabric(self.path, ram_capacity_bytes=8, disk_capacity_bytes=32)
         fabric.put("cache", "entry", b"value")
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute(
                 "CREATE TRIGGER reject_memory_fabric_global_clear "
                 "BEFORE DELETE ON memory_fabric_entries "
