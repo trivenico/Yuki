@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from core.auth import BuiltInAuthService, observation_review_authorizer
+from core.curated_knowledge_store import SQLiteCuratedKnowledge
+from core.curated_knowledge_provider import CuratedKnowledgeProvider
 from core.observation_knowledge_store import SQLiteObservationKnowledgeReview
 from core.observation_review_control import ObservationKnowledgeReviewService
 from ui.desktop.bootstrap import AuthenticatedDesktopIdentity
@@ -58,4 +60,39 @@ def build_desktop_observation_review_service(
     return ObservationKnowledgeReviewService(store, authorize=authorize)
 
 
-__all__ = ["build_desktop_observation_review_service"]
+def build_desktop_curated_knowledge_provider(
+    auth: BuiltInAuthService,
+    sessions: DesktopSessionManager,
+    identity: AuthenticatedDesktopIdentity,
+    review_database_path: str | Path,
+    catalog_database_path: str | Path,
+    *,
+    capacity: int = 512,
+    retention_seconds: int = 30 * 24 * 60 * 60,
+    catalog_capacity: int = 10000,
+) -> CuratedKnowledgeProvider:
+    """Compose retrieval with live desktop identity and per-request authorization."""
+    review_service = build_desktop_observation_review_service(
+        auth, sessions, identity, review_database_path,
+        capacity=capacity, retention_seconds=retention_seconds,
+    )
+    catalog = SQLiteCuratedKnowledge(
+        str(catalog_database_path), owner_id=identity.actor_id,
+        capacity=catalog_capacity,
+    )
+
+    def current_actor(owner_id: str) -> str:
+        current = sessions.current_identity()
+        if current is None or current.actor_id != owner_id:
+            raise PermissionError("an active matching desktop session is required")
+        return current.actor_id
+
+    return CuratedKnowledgeProvider(
+        review_service, catalog, actor_id_provider=current_actor,
+    )
+
+
+__all__ = [
+    "build_desktop_observation_review_service",
+    "build_desktop_curated_knowledge_provider",
+]
