@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -125,6 +126,19 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         self.assertEqual(owner_a.list_review_events(proposal.proposal_id)[0]["reviewer_id"], "operator-a")
         self.assertTrue(owner_a.delete(proposal.proposal_id))
         self.assertEqual(owner_a.list_review_events(proposal.proposal_id), ())
+
+    def test_expired_review_attempt_commits_retention_cleanup(self):
+        store = self.store(retention_seconds=60)
+        proposal = store.propose("application", "com.example.editor")
+        self.clock[0] += 61
+        with self.assertRaises(KeyError):
+            store.approve(proposal.proposal_id, reviewer_id="operator-1")
+        with sqlite3.connect(self.path) as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM observation_knowledge_proposals WHERE proposal_id=?",
+                (proposal.proposal_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
 
 
 if __name__ == "__main__":
