@@ -133,6 +133,10 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(report["automatic_action"])
         comparison = report["descriptive_comparison"]
         self.assertEqual(comparison["status"], "descriptive_comparison_available")
+        self.assertEqual(comparison["comparison_metric"], "task_success_rate_proxy")
+        self.assertFalse(comparison["primary_metric_evaluated"])
+        self.assertFalse(comparison["guardrails_evaluated"])
+        self.assertEqual(comparison["declared_primary_metric"], "failed_tasks")
         self.assertIsNotNone(comparison["success_rate_difference_treatment_minus_control"])
         self.assertFalse(comparison["causal_inference"])
         self.assertFalse(comparison["statistical_significance_tested"])
