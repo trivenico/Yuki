@@ -216,6 +216,11 @@ class WorkforceWorker:
                 attempt=task.get("attempts"),
             )
             execution_telemetry_started = True
+            # Persist the exact verified lesson context immediately before it is
+            # handed to the executor. Persistence failure aborts execution.
+            self.engine.record_workforce_knowledge_delivery(
+                task_id, self.worker_id, task.get("attempts"), knowledge_context,
+            )
             # This is the only execution seam. The injected executor must perform
             # fresh authorization and obtain any required approval; registry
             # assignment and this worker are never treated as approval.
