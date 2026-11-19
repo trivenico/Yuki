@@ -62,7 +62,18 @@ class SandboxJobCompositionTests(unittest.TestCase):
             self.assertEqual((root / "sandbox-jobs.sqlite3").stat().st_mode & 0o777, 0o600)
             self.assertEqual((root / "sandbox-recovery-audit.sqlite3").stat().st_mode & 0o777, 0o600)
             self.assertEqual(recovery_type.call_args.kwargs["runtime"], runtime)
-            self.assertTrue(callable(recovery_type.call_args.kwargs["audit"]))
+            audit_callback = recovery_type.call_args.kwargs["audit"]
+            self.assertTrue(callable(audit_callback))
+            job_id = "job_" + "b" * 32
+            audit_callback({
+                "action": "sandbox.job.recovery",
+                "job_id": job_id,
+                "outcome": "removed",
+            })
+            from core.recovery_audit import RecoveryAuditLog
+            audit_event = RecoveryAuditLog(root / "sandbox-recovery-audit.sqlite3").recent(1)[0]
+            self.assertEqual(audit_event["action"], "sandbox.recovery." + job_id)
+            self.assertEqual(audit_event["status"], "completed")
 
     def test_production_factory_always_injects_recovery_dependency(self):
         runtime = object()
