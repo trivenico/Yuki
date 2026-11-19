@@ -35,6 +35,9 @@ class DockerSandboxOutputTests(unittest.TestCase):
         self.assertEqual(result["stdout"], "A" * _OUTPUT_TAIL_BYTES)
         self.assertEqual(result["stderr"], "B" * _OUTPUT_TAIL_BYTES)
         self.assertTrue(popen.call_args.kwargs["shell"] is False)
+        command = popen.call_args.args[0]
+        self.assertIn("--name", command)
+        self.assertTrue(command[command.index("--name") + 1].startswith("yuki-sandbox-"))
         self.assertIs(popen.call_args.kwargs["stdout"], subprocess.PIPE)
         self.assertIs(popen.call_args.kwargs["stderr"], subprocess.PIPE)
         mount_index = popen.call_args.args[0].index("--mount")
@@ -52,9 +55,15 @@ class DockerSandboxOutputTests(unittest.TestCase):
             children.append(child)
             return child
         popen.side_effect = start_child
-        with self.assertRaisesRegex(SandboxError, "timed out"):
-            self.sandbox.run(IMAGE, ["python", "--version"], timeout=1)
+        with patch("hackback.sandbox.subprocess.run") as docker_kill:
+            with self.assertRaisesRegex(SandboxError, "timed out"):
+                self.sandbox.run(IMAGE, ["python", "--version"], timeout=1)
         self.assertTrue(children[0].poll() is not None)
+        docker_kill.assert_called_once()
+        kill_command = docker_kill.call_args.args[0]
+        self.assertEqual(kill_command[1], "kill")
+        self.assertTrue(kill_command[2].startswith("yuki-sandbox-"))
+        self.assertIs(docker_kill.call_args.kwargs["shell"], False)
 
     @patch("hackback.sandbox.subprocess.Popen", side_effect=OSError("missing"))
     def test_docker_start_failure_is_sanitized(self, _popen):
