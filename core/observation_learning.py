@@ -157,8 +157,8 @@ class ObservationLearningWorker:
         self._review = review
 
     def process_batch(self, *, limit: int = 16) -> tuple[KnowledgeProposal, ...]:
-        if type(limit) is not int or not 1 <= limit <= 256:
-            raise ValueError("limit must be an integer in 1..256")
+        if type(limit) is not int or not 1 <= limit <= min(256, self._buffer.capacity):
+            raise ValueError("limit must be within the buffer capacity and 1..256")
         proposals = []
         for event in self._buffer.drain(limit=limit):
             if not isinstance(event, ObservationEvent):
