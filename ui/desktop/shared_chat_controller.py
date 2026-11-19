@@ -69,6 +69,18 @@ class SharedDesktopChatController:
             raise RuntimeError("Yuki returned an invalid conversation response.")
         return answer
 
+    def list_conversations(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        self._ensure_open()
+        return self._conversation.list_conversations(limit=limit)
+
+    def select_conversation(self, conversation_id: str) -> dict[str, Any]:
+        self._ensure_open()
+        return self._conversation.select_conversation(conversation_id)
+
+    def history(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        self._ensure_open()
+        return self._conversation.history(limit=limit)
+
     def set_memory_context(self, enabled: bool) -> None:
         self._ensure_open()
         self._conversation.set_memory_context_enabled(enabled)
