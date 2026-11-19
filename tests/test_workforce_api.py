@@ -603,6 +603,10 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         metric = body["changes"]["workforce"]["total_employees"]
         self.assertEqual(metric["delta"], metric["current"] - metric["baseline"])
         self.assertIn("do not establish causation", body["interpretation"])
+        self.assertEqual(body["evaluation"]["status"], "insufficient_observations")
+        self.assertTrue(body["evaluation"]["human_review_required"])
+        self.assertFalse(body["evaluation"]["automatic_action_taken"])
+        self.assertIn("do not establish causation", body["evaluation"]["interpretation"])
 
     def test_recommendation_can_become_idempotent_durable_proposal(self):
         employee = next(item for item in self.dashboard.registry.list_employees() if item.department == "Engineering")
