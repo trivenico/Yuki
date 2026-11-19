@@ -1351,6 +1351,17 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if self.sessions is None or self.observation_review_service is None:
                 self.observation_status.setText("Sign in before enabling observation.")
                 return
+            identity = self.sessions.current_identity()
+            if (
+                identity is None
+                or not self.observation_review_service.can_review(
+                    actor_id=identity.actor_id, decisions=True,
+                )
+            ):
+                self.observation_status.setText(
+                    "Your account needs observation review and decision permissions to enable capture."
+                )
+                return
             if self._observation_controller is not None:
                 self.observation_status.setText("Revoke the current session before starting another.")
                 return
