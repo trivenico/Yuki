@@ -236,6 +236,7 @@ class MemoryFabric:
         digest = hashlib.sha256(payload).hexdigest()
         with self._lock:
             self._ensure_open()
+            evicted_identities = []
             with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 pending_accesses = tuple(self._pending_ram_accesses.items())
@@ -267,11 +268,10 @@ class MemoryFabric:
                         "DELETE FROM memory_fabric_entries WHERE namespace=? AND cache_key=?",
                         (oldest[0], oldest[1]),
                     )
-                    # The RAM tier must never serve an entry whose SSD
-                    # backing record has been evicted for capacity.
-                    self._remove_ram((oldest[0], oldest[1]))
+                    # Defer RAM invalidation and counters until SQLite commits;
+                    # a later SQL failure must leave both tiers unchanged.
+                    evicted_identities.append((oldest[0], oldest[1]))
                     used -= oldest[2]
-                    self._evictions += 1
                 connection.execute(
                     """
                     INSERT INTO memory_fabric_entries
@@ -280,6 +280,9 @@ class MemoryFabric:
                     """,
                     (namespace, key, sqlite3.Binary(payload), len(payload), digest, expires_at, now, now),
                 )
+            for evicted_identity in evicted_identities:
+                self._remove_ram(evicted_identity)
+            self._evictions += len(evicted_identities)
             for pending_identity, accessed_at in pending_accesses:
                 if self._pending_ram_accesses.get(pending_identity) == accessed_at:
                     self._pending_ram_accesses.pop(pending_identity, None)
