@@ -107,6 +107,7 @@ class AgentExecutionLoop:
         history: Sequence[Mapping[str, str]] = (),
         on_text_delta: Callable[[str], None] | None = None,
         cancellation_requested: Callable[[], bool] | None = None,
+        reference_context: str | None = None,
     ) -> AgentExecutionResult:
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
@@ -117,6 +118,11 @@ class AgentExecutionLoop:
             raise ValueError("user_text must be non-empty text of at most 20000 characters.")
         if not isinstance(system_text, str) or len(system_text) > 10_000:
             raise ValueError("system_text must be text of at most 10000 characters.")
+        if reference_context is not None and (
+            not isinstance(reference_context, str) or not reference_context.strip()
+            or len(reference_context) > 8000
+        ):
+            raise ValueError("reference_context must be non-empty text of at most 8000 characters.")
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
         if not isinstance(history, (list, tuple)) or len(history) > 126:
@@ -139,6 +145,7 @@ class AgentExecutionLoop:
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system_text},
             *normalized_history,
+            *([{"role": "user", "content": reference_context}] if reference_context else []),
             {"role": "user", "content": user_text.strip()},
         ]
         turns = 0
