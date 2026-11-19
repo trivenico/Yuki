@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 import os
 import sqlite3
 import tempfile
@@ -15,9 +16,10 @@ from core.sqlite_restore_verify import (
 
 class SQLiteRestoreVerificationTests(unittest.TestCase):
     def _db(self, path, value):
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db:
             db.execute("CREATE TABLE records(value TEXT NOT NULL)")
             db.execute("INSERT INTO records VALUES (?)", (value,))
+            db.commit()
 
     def _fixture(self):
         temporary = tempfile.TemporaryDirectory()
@@ -41,7 +43,7 @@ class SQLiteRestoreVerificationTests(unittest.TestCase):
         def validate(paths):
             if set(paths) != {"authentication"}:
                 return False
-            with sqlite3.connect("file:" + str(paths["authentication"]) + "?mode=ro", uri=True) as db:
+            with closing(sqlite3.connect("file:" + str(paths["authentication"]) + "?mode=ro", uri=True)) as db:
                 return db.execute("SELECT value FROM records").fetchone()[0] == expected
         return validate
 
@@ -57,7 +59,7 @@ class SQLiteRestoreVerificationTests(unittest.TestCase):
             report = json.loads((restored / "restore-report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["sqlite_integrity"], "ok")
             self.assertEqual(report["application_validation"], "passed")
-            with sqlite3.connect(source) as db:
+            with closing(sqlite3.connect(source)) as db:
                 self.assertEqual(db.execute("SELECT value FROM records").fetchone()[0], "production-value")
 
     def test_application_validation_failure_removes_staging_and_publishes_nothing(self):
