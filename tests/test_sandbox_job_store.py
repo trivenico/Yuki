@@ -8,6 +8,7 @@ from pathlib import Path
 from automation.sandbox_job_store import SandboxJobStore, SandboxJobStoreError
 
 
+@unittest.skipUnless(os.name == "posix", "sandbox job storage ownership requires POSIX UID metadata")
 class SandboxJobStoreTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
