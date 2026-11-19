@@ -2131,6 +2131,7 @@ Version: {version}",
             self.observation_status.setText("Sign in to access learning review.")
             self.observation_review_service = None
             self._revoke_observation()
+            self.observation_status.setText("Sign in to access learning review.")
             self.backup_path.clear()
             self.backup_passphrase.clear()
             self.backup_confirmation.clear()
