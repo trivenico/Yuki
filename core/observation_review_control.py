@@ -96,6 +96,33 @@ class ObservationKnowledgeReviewService:
             promoted_by=promoter_id,
         )
 
+    def list_curated(self, *, actor_id: str, catalog: SQLiteCuratedKnowledge,
+                     limit: int = 100):
+        if not isinstance(catalog, SQLiteCuratedKnowledge):
+            raise TypeError("catalog must be a SQLiteCuratedKnowledge")
+        self._require(actor_id, "memory:knowledge:read")
+        if catalog.owner_id != self._store.owner_id:
+            raise PermissionError("knowledge catalog owner does not match the review owner")
+        return catalog.list_active(limit=limit)
+
+    def deactivate_curated(self, entry_id: str, *, actor_id: str,
+                           catalog: SQLiteCuratedKnowledge) -> bool:
+        if not isinstance(catalog, SQLiteCuratedKnowledge):
+            raise TypeError("catalog must be a SQLiteCuratedKnowledge")
+        actor = self._require(actor_id, "memory:knowledge:deactivate")
+        if catalog.owner_id != self._store.owner_id:
+            raise PermissionError("knowledge catalog owner does not match the review owner")
+        return catalog.deactivate(entry_id, actor_id=actor)
+
+    def list_curated_events(self, *, actor_id: str, catalog: SQLiteCuratedKnowledge,
+                            limit: int = 100):
+        if not isinstance(catalog, SQLiteCuratedKnowledge):
+            raise TypeError("catalog must be a SQLiteCuratedKnowledge")
+        self._require(actor_id, "memory:knowledge:read")
+        if catalog.owner_id != self._store.owner_id:
+            raise PermissionError("knowledge catalog owner does not match the review owner")
+        return catalog.list_events(limit=limit)
+
     def delete(self, proposal_id: str, *, actor_id: str) -> bool:
         self._require(actor_id, "observation:review:delete")
         return self._store.delete(proposal_id)
