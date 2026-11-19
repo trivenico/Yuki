@@ -128,6 +128,18 @@ class SQLiteCuratedKnowledge:
                 "approved_by","promoted_by","created_at")
         return tuple(dict(zip(fields,row)) for row in rows)
 
+
+    def list_events(self, *, limit: int = 100):
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer in 1..1000")
+        with self._lock, self._connect() as db:
+            rows = db.execute("""SELECT entry_id,action,actor_id,created_at
+                FROM curated_knowledge_events WHERE owner_id=?
+                ORDER BY created_at DESC,event_id LIMIT ?""",
+                (self._owner, limit)).fetchall()
+        fields = ("entry_id", "action", "actor_id", "created_at")
+        return tuple(dict(zip(fields, row)) for row in rows)
+
     def deactivate(self, entry_id: str, *, actor_id: str) -> bool:
         if not isinstance(entry_id,str) or not entry_id:
             raise ValueError("entry_id is required")
