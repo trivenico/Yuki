@@ -23,8 +23,15 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
-    "operator": frozenset({"workflow:read", "workflow:approve"}),
+    "admin": frozenset({
+        "workflow:read", "workflow:approve", "users:manage",
+        "observation:review:read", "observation:review:decide",
+        "observation:review:delete",
+    }),
+    "operator": frozenset({
+        "workflow:read", "workflow:approve",
+        "observation:review:read", "observation:review:decide",
+    }),
     "user": frozenset({"workflow:read"}),
 }
 
