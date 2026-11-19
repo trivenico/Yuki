@@ -31,3 +31,11 @@ Curated knowledge is now available as bounded, relevance-ranked reference contex
 - Cross-owner or global knowledge.
 - Autonomous promotion, prompt changes, policy changes or model training.
 - Automatic inference of application/browser context from raw page contents.
+
+## Desktop integration follow-up
+
+The desktop Learning tab now exposes an explicit **Promote approved** action. It requires confirmation and calls the authorized review service, which independently enforces `memory:knowledge:promote`. The curated catalog is stored separately from review proposals under the private desktop data root.
+
+The desktop conversation composition now passes the live-session-backed `CuratedKnowledgeProvider` through the shared desktop composition seam into the canonical conversation runtime. Each conversation request therefore performs owner-scoped, live-authorized retrieval before model execution. Sign-out clears desktop references and revokes the session; the provider itself does not cache records.
+
+The UI button is enabled for approved proposals, but the service remains the authorization boundary: accounts without the promotion grant receive a permission failure and cannot promote.
