@@ -155,7 +155,7 @@ class WorkforceWorkerTests(unittest.TestCase):
             "review_required": False,
         }
         return self.engine.submit(
-            self.goal, task_type, body, idempotency_key="workforce-test",
+            self.engine.create_goal(), task_type, body, idempotency_key="workforce-test",
             max_attempts=max_attempts,
         )
 
