@@ -990,6 +990,51 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(report["attestation_records"], 1)
         self.assertEqual(report["findings"][0]["status"], "consistent")
         self.assertEqual(report["findings"][0]["reasons"], [])
+        self.assertEqual(report["max_attempts"], 1)
+        self.assertEqual(report["attempt_coverage"][0]["attempts"], [
+            {"attempt": 1, "status": "attested_consistent"},
+        ])
+
+    def test_knowledge_delivery_integrity_marks_unattested_retry_as_unknown(self):
+        candidate = self._seed_knowledge_candidate()
+        self.engine.transition_knowledge(
+            candidate["knowledge_id"], expected_state="candidate",
+            new_state="verified", actor_id="knowledge-reviewer",
+        )
+        record = self.engine.get_knowledge(candidate["knowledge_id"])
+        context = {
+            "knowledge_id": record["knowledge_id"],
+            "title": record["knowledge"]["title"],
+            "lesson": record["knowledge"]["lesson"],
+            "source_task_id": record["source_task_id"],
+            "reviewed_by": record["reviewed_by"],
+        }
+        goal = self.engine.create_goal()
+        task = self.engine.submit(
+            goal, "workforce.task",
+            {"assigned_employee_id": "retry-integrity-worker", "knowledge_context": [context]},
+            idempotency_key="delivery-integrity-retry-coverage", max_attempts=2,
+        )
+        first = self.engine.claim("retry-integrity-worker")
+        self.engine.record_workforce_knowledge_delivery(
+            task["id"], "retry-integrity-worker", first["attempts"], [context],
+        )
+        self.engine.fail(task["id"], "retry-integrity-worker", "retry this task")
+        second = self.engine.claim("retry-integrity-worker")
+        self.assertEqual(second["attempts"], 2)
+        status, report = self.request(
+            f"/v1/workforce/tasks/{task['id']}/knowledge-delivery-integrity",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(report["task_attempts"], 2)
+        self.assertEqual(report["max_attempts"], 2)
+        self.assertEqual(report["attempt_coverage"][0]["attempts_with_attestation"], [1])
+        self.assertEqual(report["attempt_coverage"][0]["attempts"], [
+            {"attempt": 1, "status": "attested_consistent"},
+            {"attempt": 2, "status": "unknown_no_handoff_attestation"},
+        ])
+        self.assertFalse(report["attempt_coverage"][0]["coverage_is_defect"])
 
     def test_knowledge_delivery_integrity_reports_malformed_context_and_retries(self):
         goal = self.engine.create_goal()
