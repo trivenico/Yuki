@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from core.durable_task_engine import DurableTaskEngine
 from core.workforce import AgentRegistry, default_workforce
@@ -284,6 +285,77 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertIn("do not assign blame", " ".join(
             snapshot["decision_intelligence"]["limitations"]
         ))
+
+    def test_recurring_failure_patterns_report_exact_verified_knowledge_tag_coverage(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        for index in range(3):
+            task = self.engine.submit(
+                goal_id, "workforce.task",
+                {
+                    "assigned_employee_id": employee.employee_id,
+                    "description": f"Capability failure sample {index}",
+                    "required_capabilities": ["python"],
+                },
+                idempotency_key=f"knowledge-capability-failure-{index}", max_attempts=1,
+            )
+            self.engine.claim("knowledge-capability-worker", task_type="workforce.task")
+            if index < 2:
+                self.engine.fail(task["id"], "knowledge-capability-worker", "redacted failure")
+            else:
+                self.engine.complete(task["id"], "knowledge-capability-worker", {
+                    "ok": True, "status": "completed", "employee_id": employee.employee_id,
+                    "review_required": False, "review_evidence": None,
+                })
+
+        verified_records = [
+            {
+                "knowledge_id": "verified-python-lesson",
+                "state": "verified",
+                "knowledge": {
+                    "title": "Python test discipline",
+                    "lesson": "Prefer deterministic tests.",
+                    "domain": "engineering",
+                    "tags": ["python"],
+                },
+            },
+            {
+                "knowledge_id": "verified-unrelated-lesson",
+                "state": "verified",
+                "knowledge": {
+                    "title": "Browser guidance",
+                    "lesson": "Validate browser output.",
+                    "domain": "operations",
+                    "tags": ["browser"],
+                },
+            },
+        ]
+        with patch.object(self.engine, "list_verified_knowledge", return_value=verified_records):
+            snapshot = self.dashboard.snapshot()
+
+        pattern = next(
+            row for row in snapshot["decision_intelligence"]["failure_patterns"]
+            if row["required_capabilities"] == ["python"]
+        )
+        self.assertEqual(pattern["verified_knowledge_ids"], ["verified-python-lesson"])
+        self.assertEqual(pattern["knowledge_coverage"], "verified_tag_match_available")
+        recommendation = next(
+            item for item in snapshot["decision_intelligence"]["improvement_recommendations"]
+            if item["category"] == "recurring_failure_pattern"
+        )
+        self.assertEqual(recommendation["evidence"]["knowledge_coverage"], "verified_tag_match_available")
+        self.assertIn("does not establish lesson applicability", recommendation["recommendation"])
+        self.assertTrue(recommendation["requires_human_approval"])
+        self.assertFalse(recommendation["automatic_action_taken"])
+
+        with patch.object(self.engine, "list_verified_knowledge", return_value=[]):
+            without_lesson = self.dashboard.snapshot()
+        missing_pattern = next(
+            row for row in without_lesson["decision_intelligence"]["failure_patterns"]
+            if row["required_capabilities"] == ["python"]
+        )
+        self.assertEqual(missing_pattern["verified_knowledge_ids"], [])
+        self.assertEqual(missing_pattern["knowledge_coverage"], "no_verified_tag_match")
 
     def test_goal_rows_distinguish_partial_success_from_terminal_completion(self):
         goal_id = self.engine.create_goal()
