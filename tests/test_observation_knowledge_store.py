@@ -27,7 +27,7 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         reopened = self.store()
         loaded = reopened.get(proposal.proposal_id)
         self.assertEqual(loaded, proposal)
-        approved = reopened.approve(proposal.proposal_id)
+        approved = reopened.approve(proposal.proposal_id, reviewer_id="operator-1")
         self.assertEqual(approved.status, "approved")
         self.assertEqual(self.store().get(proposal.proposal_id).status, "approved")
 
@@ -71,11 +71,11 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.propose("application", "C:\\Users\\private")
         proposal = store.propose("application", "com.example.editor")
-        self.assertEqual(store.reject(proposal.proposal_id).status, "rejected")
+        self.assertEqual(store.reject(proposal.proposal_id, reviewer_id="operator-1").status, "rejected")
         with self.assertRaises(RuntimeError):
-            store.approve(proposal.proposal_id)
+            store.approve(proposal.proposal_id, reviewer_id="operator-1")
         with self.assertRaises(KeyError):
-            store.approve("missing")
+            store.approve("missing", reviewer_id="operator-1")
 
     def test_delete_and_clear_are_owner_scoped(self):
         store_a = self.store("user-a")
@@ -96,10 +96,35 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         proposal = store.propose("application", "com.example.editor")
         self.clock[0] += 61
         with self.assertRaises(KeyError):
-            store.approve(proposal.proposal_id)
+            store.approve(proposal.proposal_id, reviewer_id="operator-1")
         with self.assertRaises(KeyError):
-            store.reject(proposal.proposal_id)
+            store.reject(proposal.proposal_id, reviewer_id="operator-1")
         self.assertIsNone(store.get(proposal.proposal_id))
+
+    def test_review_audit_records_reviewer_and_decision(self):
+        store = self.store()
+        proposal = store.propose("application", "com.example.editor")
+        approved = store.approve(proposal.proposal_id, reviewer_id="  operator-42  ")
+        self.assertEqual(approved.status, "approved")
+        events = store.list_review_events(proposal.proposal_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["decision"], "approved")
+        self.assertEqual(events[0]["reviewer_id"], "operator-42")
+        self.assertEqual(events[0]["created_at"], self.clock[0])
+        with self.assertRaises(ValueError):
+            store.reject(proposal.proposal_id, reviewer_id="")
+        with self.assertRaises(TypeError):
+            store.approve(proposal.proposal_id)
+
+    def test_review_audit_is_owner_scoped_and_deleted_with_proposal(self):
+        owner_a = self.store("user-a")
+        owner_b = self.store("user-b")
+        proposal = owner_a.propose("application", "com.example.editor")
+        owner_a.reject(proposal.proposal_id, reviewer_id="operator-a")
+        self.assertEqual(owner_b.list_review_events(proposal.proposal_id), ())
+        self.assertEqual(owner_a.list_review_events(proposal.proposal_id)[0]["reviewer_id"], "operator-a")
+        self.assertTrue(owner_a.delete(proposal.proposal_id))
+        self.assertEqual(owner_a.list_review_events(proposal.proposal_id), ())
 
 
 if __name__ == "__main__":
