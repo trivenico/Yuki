@@ -110,6 +110,42 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
             self.assertTrue(workforce.closed)
+    def test_shutdown_attempts_all_owned_cleanup_when_workforce_close_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                workforce_application=workforce,
+            )
+            application_close = runtime.application.close
+            close_calls = []
+            def fail_workforce_close():
+                raise RuntimeError("workforce shutdown failure")
+            def track_application_close():
+                close_calls.append("application")
+                application_close()
+            workforce.close = fail_workforce_close
+            runtime.application.close = track_application_close
+
+            with self.assertRaisesRegex(RuntimeError, "workforce shutdown failure"):
+                runtime.close()
+            self.assertEqual(close_calls, ["application"])
+            self.assertTrue(runtime.application.closed)
+            self.assertTrue(runtime._closed)
+
+            # A second ASGI shutdown path must not retry partially failed cleanup.
+            runtime.close()
+            self.assertEqual(close_calls, ["application"])
+
     def test_runtime_rejects_dashboard_using_different_workforce_store(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
