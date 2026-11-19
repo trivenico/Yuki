@@ -75,6 +75,7 @@ def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -
 
 
 def _build_services():
+    import os
     from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
     from core.portable_paths import desktop_data_root
@@ -113,6 +114,16 @@ def _build_services():
         ),),
     )
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
+    if not auth.list_users():
+        bootstrap_username = os.environ.get("YUKI_BOOTSTRAP_ADMIN_USERNAME", "").strip()
+        bootstrap_password = os.environ.get("YUKI_BOOTSTRAP_ADMIN_PASSWORD", "")
+        if bool(bootstrap_username) != bool(bootstrap_password):
+            raise RuntimeError(
+                "Set both YUKI_BOOTSTRAP_ADMIN_USERNAME and "
+                "YUKI_BOOTSTRAP_ADMIN_PASSWORD for first-run desktop setup."
+            )
+        if bootstrap_username and bootstrap_password:
+            auth.bootstrap_admin(bootstrap_username, bootstrap_password)
     sessions = DesktopSessionManager(auth, keyring)
     provider = None
     try:
@@ -1115,6 +1126,15 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self.coordinator, self.runtime, self.lifecycle,
                     self.observation_review_database,
                 ) = _build_services()
+                if not self.auth.list_users():
+                    self.login_button.setEnabled(False)
+                    self.login_status.setText(
+                        "First-run setup required. Set YUKI_BOOTSTRAP_ADMIN_USERNAME "
+                        "and YUKI_BOOTSTRAP_ADMIN_PASSWORD (at least 12 characters), "
+                        "then restart Yuki. These values are used only to create the "
+                        "initial local administrator."
+                    )
+                    return
                 identity = self.sessions.current_identity()
                 if identity is not None:
                     self._open_session(identity)
