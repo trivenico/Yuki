@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from pathlib import Path
 from typing import Sequence
 
@@ -15,6 +16,26 @@ class SandboxRuntimeError(RuntimeError):
     """The requested policy cannot safely be enforced by this backend."""
 
 
+def _validate_artifact_output_directory(value: str, *, workspace: Path, uid: int) -> Path:
+    """Accept only a private, service-owned directory outside the trusted workspace."""
+    if not isinstance(value, str) or not os.path.isabs(value):
+        raise SandboxRuntimeError("artifact output directory must be an absolute path")
+    candidate = Path(value)
+    try:
+        info = candidate.lstat()
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise SandboxRuntimeError("artifact output directory must already exist") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise SandboxRuntimeError("artifact output path must be a real directory")
+    if info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
+        raise SandboxRuntimeError("artifact output directory must be service-owned with mode 0700")
+    trusted = workspace.resolve()
+    if resolved == trusted or resolved in trusted.parents or trusted in resolved.parents:
+        raise SandboxRuntimeError("artifact output directory must be isolated from trusted workspace")
+    return resolved
+
+
 def build_docker_argv(
     policy: SandboxPolicy,
     *,
@@ -22,12 +43,14 @@ def build_docker_argv(
     workspace: str,
     command: Sequence[str],
     network_allowlist: Sequence[str] = (),
+    artifact_output_directory: str | None = None,
 ) -> list[str]:
-    """Build a fail-closed Docker command, enforcing workspace capabilities.
+    """Build a fail-closed Docker command with optional isolated artifact output.
 
-    Workspace mounts are read-only unless the policy explicitly grants
-    write_workspace. Network allowlisting remains unsupported without a
-    separately enforced egress gateway.
+    The trusted workspace is always read-only. When supplied, artifact output is
+    a separate, service-owned 0700 directory mounted writable only at /output.
+    The container runs as the service UID/GID so it can write that directory;
+    this is not a general workspace-write capability.
     """
     try:
         policy.validate()
@@ -44,8 +67,8 @@ def build_docker_argv(
     if not isinstance(workspace, str) or not os.path.isabs(workspace):
         raise SandboxRuntimeError("workspace must be an absolute path")
     path = Path(workspace)
-    if not path.exists() or not path.is_dir():
-        raise SandboxRuntimeError("workspace must be an existing directory")
+    if not path.exists() or not path.is_dir() or path.is_symlink():
+        raise SandboxRuntimeError("workspace must be an existing non-symlink directory")
     if policy.network_mode == "none":
         if network_allowlist:
             raise SandboxRuntimeError("allowlist conflicts with disabled networking")
@@ -57,15 +80,30 @@ def build_docker_argv(
     uid, gid = os.getuid(), os.getgid()
     if uid == 0:
         raise SandboxRuntimeError("refusing sandbox launch from a root service")
+    if "write_workspace" in policy.capabilities:
+        raise SandboxRuntimeError("trusted workspace is always mounted read-only")
 
-    workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
+    workspace_source = str(path.resolve())
+    # Docker --mount uses comma-separated key/value fields. Reject commas rather
+    # than allowing a host path to alter the mount specification.
+    if "," in workspace_source:
+        raise SandboxRuntimeError("workspace path cannot contain a comma")
+    mounts = ["--mount", f"type=bind,src={workspace_source},dst=/workspace,ro"]
+    if artifact_output_directory is not None:
+        output = _validate_artifact_output_directory(
+            artifact_output_directory, workspace=path, uid=uid
+        )
+        output_source = str(output)
+        if "," in output_source:
+            raise SandboxRuntimeError("artifact output path cannot contain a comma")
+        mounts.extend(["--mount", f"type=bind,src={output_source},dst=/output,rw"])
+
     return [
-        "docker", "run", "--rm", "--interactive", "--read-only",
+        "docker", "run", "--rm", "--pull=never", "--interactive", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",
         "--pids-limit", str(policy.max_processes), "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges:true",
         "--tmpfs", f"/tmp:rw,noexec,nosuid,nodev,size={min(policy.memory_mb, 256)}m",
-        "--mount", f"type=bind,src={str(path.resolve())},dst=/workspace,{workspace_access}",
-        "--workdir", "/workspace", *network_args, image, *command,
+        *mounts, "--workdir", "/workspace", *network_args, image, *command,
     ]

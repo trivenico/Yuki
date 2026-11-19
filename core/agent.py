@@ -66,7 +66,12 @@ class YukiCoreAgent:
         selected = cards[0]
         return self.run_skill(selected.name, argument)
 
-    def run_skill(self, name: str, argument: str = "") -> AgentResponse:
+    def run_skill(self, name: str, argument: str = "", *, before_invoke=None) -> AgentResponse:
+        if before_invoke is not None and not callable(before_invoke):
+            return AgentResponse(
+                False, "Blocked: invocation observer must be callable.",
+                name if isinstance(name, str) else None, stage="invalid_invocation_observer",
+            )
         if not isinstance(argument, str) or len(argument) > 20000:
             return AgentResponse(
                 False,
@@ -107,12 +112,15 @@ class YukiCoreAgent:
         )
         if needs_guard_approval:
             self.invocation_approvals.approve(name, argument)
+        # The guarded runtime calls this only after final registry/approval
+        # checks and immediately before the selected skill's execute() method.
         result = invoke_registered_skill(
             self.registry,
             name,
             argument,
             approvals=self.invocation_approvals,
             expected_skill=skill,
+            before_execute=before_invoke,
         )
         return AgentResponse(
             result.ok,

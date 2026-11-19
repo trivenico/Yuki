@@ -11,8 +11,11 @@ from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
+from api.workforce import AuthenticatedWorkforceDashboardAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
@@ -24,17 +27,28 @@ from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from core.workforce_dashboard import WorkforceDashboard
+from core.workforce_application_runtime import WorkforceApplicationRuntime
 
 
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(
+        self, app: Any, application: ConversationApplicationRuntime,
+        workforce_application: WorkforceApplicationRuntime | None = None,
+        sandbox_job_recovery: Any | None = None,
+    ):
         self.app = app
-        self.web = YukiWebApplication(app)
         self.application = application
+        self.workforce_application = workforce_application
+        self.sandbox_job_recovery = sandbox_job_recovery
+        self._startup_complete = False
         self.store = application.store
         self._closed = False
+        self.web = YukiWebApplication(
+            app, readiness=lambda: self._startup_complete and not self._closed
+        )
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
@@ -45,18 +59,55 @@ class ConversationRuntime:
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
-                await send({"type": "lifespan.startup.complete"})
+                try:
+                    if self.workforce_application is not None:
+                        recovered = self.workforce_application.engine.recover_expired_leases()
+                        if type(recovered) is not int or recovered < 0:
+                            raise RuntimeError("workforce lease recovery returned an invalid result")
+                    if self.sandbox_job_recovery is not None:
+                        outcomes = self.sandbox_job_recovery.recover_nonterminal()
+                        blocked = [
+                            item for item in outcomes
+                            if item.get("outcome") == "recovery_required"
+                        ]
+                        if blocked:
+                            raise RuntimeError(
+                                f"{len(blocked)} durable sandbox job(s) require manual recovery"
+                            )
+                    self._startup_complete = True
+                    await send({"type": "lifespan.startup.complete"})
+                except Exception as exc:
+                    self.close()
+                    await send({
+                        "type": "lifespan.startup.failed",
+                        "message": f"Yuki startup recovery failed: {type(exc).__name__}",
+                    })
+                    return
             elif message["type"] == "lifespan.shutdown":
                 self.close()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
 
     def close(self) -> None:
-        """Close backend resources once during graceful application shutdown."""
+        """Attempt every owned cleanup exactly once, even when one close fails."""
         if self._closed:
             return
-        self.application.close()
+        # Mark closed before invoking dependencies: a failing close must not
+        # cause a later shutdown signal to repeat partially completed cleanup.
         self._closed = True
+        first_error = None
+        if self.workforce_application is not None:
+            try:
+                self.workforce_application.close()
+            except Exception as exc:
+                first_error = exc
+        try:
+            self.application.close()
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 def build_conversation_runtime(
@@ -78,6 +129,11 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    workforce_dashboard: WorkforceDashboard | None = None,
+    pending_approvals: SQLitePendingApprovalStore | None = None,
+    approval_audit: SQLiteApprovalAuditLog | None = None,
+    workforce_application: WorkforceApplicationRuntime | None = None,
+    sandbox_job_recovery: Any | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -113,6 +169,33 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    if workforce_dashboard is not None and not isinstance(workforce_dashboard, WorkforceDashboard):
+        raise TypeError("workforce_dashboard must be a WorkforceDashboard")
+    if pending_approvals is not None and not isinstance(pending_approvals, SQLitePendingApprovalStore):
+        raise TypeError("pending_approvals must be a SQLitePendingApprovalStore")
+    if approval_audit is not None and not isinstance(approval_audit, SQLiteApprovalAuditLog):
+        raise TypeError("approval_audit must be a SQLiteApprovalAuditLog")
+    if sandbox_job_recovery is not None and not callable(
+        getattr(sandbox_job_recovery, "recover_nonterminal", None)
+    ):
+        raise TypeError("sandbox_job_recovery must provide recover_nonterminal()")
+    if workforce_application is not None and not isinstance(workforce_application, WorkforceApplicationRuntime):
+        raise TypeError("workforce_application must be a WorkforceApplicationRuntime")
+    if workforce_application is not None:
+        if workforce_dashboard is None:
+            workforce_dashboard = WorkforceDashboard(
+                registry=workforce_application.registry,
+                task_engine=workforce_application.engine,
+            )
+        elif (
+            workforce_dashboard.registry is not workforce_application.registry
+            or workforce_dashboard.task_engine is not workforce_application.engine
+        ):
+            raise ValueError(
+                "workforce_dashboard must use the workforce application's registry and task engine"
+            )
+    if (pending_approvals is not None or approval_audit is not None) and workforce_dashboard is None:
+        raise ValueError("approval inbox services require workforce_dashboard")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -155,7 +238,27 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, application)
+        if workforce_dashboard is not None:
+            app = AuthenticatedWorkforceDashboardAPI(
+                app, auth_service, workforce_dashboard,
+                pending_approvals=pending_approvals, approval_audit=approval_audit,
+                workforce_ceo=workforce_application.ceo if workforce_application is not None else None,
+            )
+        return ConversationRuntime(
+            app, application, workforce_application,
+            sandbox_job_recovery=sandbox_job_recovery,
+        )
     except Exception:
-        application.close()
+        # Construction failure must not let one cleanup error prevent the
+        # remaining owned resources from being released. Preserve the original
+        # construction exception rather than replacing it with a close error.
+        if workforce_application is not None:
+            try:
+                workforce_application.close()
+            except Exception:
+                pass
+        try:
+            application.close()
+        except Exception:
+            pass
         raise

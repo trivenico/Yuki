@@ -136,6 +136,10 @@ python -m pip install -r requirements-ui.txt
 python -m pip install -r requirements-email.txt
 ```
 
+### Native desktop companion
+
+For the native PySide6 desktop app, install `requirements-desktop.txt` and follow the [first-use desktop setup guide](docs/PHASE98_FIRST_USE_READINESS.md). The guide covers one-time local administrator bootstrap and provider configuration. The desktop launcher is `python -m ui.desktop.launch`.
+
 To run the authenticated browser chat MVP, install the optional ASGI server and start the local launcher:
 
 ```sh

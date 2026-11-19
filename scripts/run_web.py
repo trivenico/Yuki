@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from api.runtime import build_conversation_runtime
+from api.production_runtime import build_production_conversation_runtime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.config import load_config
@@ -67,7 +67,7 @@ def create_app():
     income_opportunities = SQLiteIncomeOpportunityStore(
         str(workspace / "income-opportunities.sqlite3")
     )
-    return build_conversation_runtime(
+    return build_production_conversation_runtime(
         config, auth_service=auth, agent_loop=agent_loop,
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,

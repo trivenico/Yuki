@@ -1,6 +1,11 @@
+import os
 import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
+
+_TEST_UID = os.getuid() if hasattr(os, "getuid") else 1000
+_TEST_GID = os.getgid() if hasattr(os, "getgid") else 1000
 
 from core.sandbox_policy import SandboxPolicy
 from core.sandbox_runtime import SandboxRuntimeError, build_docker_argv
@@ -11,8 +16,8 @@ class DockerSandboxArgvTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
-    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getgid", return_value=_TEST_GID, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=_TEST_UID, create=True)
     def test_restrictive_flags_and_read_only_workspace_default(self, _uid, _gid):
         command = ["python", "--version"]
         argv = build_docker_argv(SandboxPolicy(), image="python:3.12",
@@ -28,11 +33,11 @@ class DockerSandboxArgvTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
-    def test_write_workspace_capability_is_explicit(self, _uid, _gid):
+    def test_trusted_workspace_write_capability_is_rejected(self, _uid, _gid):
         policy = SandboxPolicy(capabilities=frozenset({"write_workspace"}))
-        argv = build_docker_argv(policy, image="python:3.12",
-            workspace=self.tmp.name, command=["python", "--version"])
-        self.assertTrue(argv[argv.index("--mount") + 1].endswith(",rw"))
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(policy, image="python:3.12",
+                workspace=self.tmp.name, command=["python", "--version"])
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
@@ -68,6 +73,72 @@ class DockerSandboxArgvTests(unittest.TestCase):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
                 workspace="relative/path", command=["python", "--version"])
 
+
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_workspace_mount_path_with_comma_is_rejected(self, _uid, _gid):
+        import os
+        comma_root = Path(self.tmp.name) / "comma,workspace"
+        comma_root.mkdir()
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=str(comma_root),
+                command=["python", "--version"],
+            )
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_artifact_mount_path_with_comma_is_rejected(self, _uid, _gid):
+        import os
+        output = Path(self.tmp.name) / "comma,output"
+        output.mkdir(mode=0o700)
+        os.chmod(output, 0o700)
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                command=["python", "--version"], artifact_output_directory=str(output),
+            )
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=_TEST_GID, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=_TEST_UID, create=True)
+    @unittest.skipUnless(os.name == "posix", "artifact directory ownership checks require POSIX UID metadata")
+    def test_artifact_output_is_separate_private_writable_mount(self, _uid, _gid):
+        import os
+        output = tempfile.TemporaryDirectory()
+        self.addCleanup(output.cleanup)
+        os.chmod(output.name, 0o700)
+        argv = build_docker_argv(
+            SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+            command=["python", "-c", "print('ok')"],
+            artifact_output_directory=output.name,
+        )
+        mounts = [argv[i + 1] for i, value in enumerate(argv[:-1]) if value == "--mount"]
+        self.assertEqual(len(mounts), 2)
+        self.assertTrue(mounts[0].endswith(",ro"))
+        self.assertTrue(mounts[1].endswith(",rw"))
+        self.assertIn("dst=/output,rw", mounts[1])
+        self.assertEqual(argv[argv.index("--user") + 1], f"{_TEST_UID}:{_TEST_GID}")
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_artifact_output_rejects_non_private_or_workspace_directory(self, _uid, _gid):
+        import os
+        from core.sandbox_runtime import SandboxRuntimeError
+        output = tempfile.TemporaryDirectory()
+        self.addCleanup(output.cleanup)
+        os.chmod(output.name, 0o755)
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                command=["python", "--version"], artifact_output_directory=output.name,
+            )
+        os.chmod(output.name, 0o700)
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                command=["python", "--version"], artifact_output_directory=self.tmp.name,
+            )
 
 if __name__ == "__main__":
     unittest.main()

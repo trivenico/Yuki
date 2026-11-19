@@ -17,6 +17,561 @@ class DurableTaskEngineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_measurable_experiment_guardrails_reject_unsupported_or_unsafe_values(self):
+        self.engine.create_improvement_proposal("guardrail-validation-proposal", {"recommendation": "Validate limits"})
+        self.engine.transition_improvement_proposal(
+            "guardrail-validation-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        base = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        invalid = [
+            {"metric": "unknown_metric", "operator": "<=", "threshold": 1,
+             "scope": "both", "severity": "warning"},
+            {"metric": "task_failure_rate", "operator": "==", "threshold": 0.1,
+             "scope": "both", "severity": "warning"},
+            {"metric": "task_success_rate", "operator": ">=", "threshold": 1.1,
+             "scope": "both", "severity": "warning"},
+            {"metric": "failed_tasks", "operator": "<=", "threshold": True,
+             "scope": "both", "severity": "critical"},
+            {"metric": "failed_tasks", "operator": "<=", "threshold": 1,
+             "scope": "all", "severity": "critical"},
+            {"metric": "failed_tasks", "operator": "<=", "threshold": 1,
+             "scope": "both", "severity": "emergency"},
+        ]
+        for index, guardrail in enumerate(invalid):
+            design = dict(base)
+            design["guardrails"] = [guardrail]
+            with self.subTest(guardrail=guardrail), self.assertRaises(ValueError):
+                self.engine.create_workforce_experiment(
+                    f"guardrail-invalid-{index}", "guardrail-validation-proposal", design,
+                )
+
+    def test_randomized_experiment_assignment_is_deterministic_and_exclusive(self):
+        proposal = {"recommendation": "Evaluate queue triage"}
+        self.engine.create_improvement_proposal("assignment-proposal", proposal)
+        self.engine.transition_improvement_proposal(
+            "assignment-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed triage checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": ["No permission changes"],
+            "evaluation_window_days": 14,
+            "minimum_sample_size": 10,
+        }
+        self.engine.create_workforce_experiment("assignment-exp", "assignment-proposal", design)
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("assignment-exp", "missing-task")
+        self.engine.transition_workforce_experiment(
+            "assignment-exp", expected_state="proposed", new_state="approved", actor_id="reviewer-2",
+        )
+        task = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="assignment-task")
+        first = self.engine.assign_workforce_experiment_task("assignment-exp", task["id"])
+        replay = self.engine.assign_workforce_experiment_task("assignment-exp", task["id"])
+        self.assertTrue(first["created"])
+        self.assertFalse(replay["created"])
+        self.assertEqual(first["assignment"], replay["assignment"])
+        self.assertIn(first["assignment"], {"control", "treatment"})
+        self.engine.create_improvement_proposal("second-assignment-proposal", {"recommendation": "Second review"})
+        self.engine.transition_improvement_proposal(
+            "second-assignment-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        self.engine.create_workforce_experiment("second-assignment-exp", "second-assignment-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "second-assignment-exp", expected_state="proposed", new_state="approved", actor_id="reviewer-3",
+        )
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("second-assignment-exp", task["id"])
+        assignments = self.engine.list_workforce_experiment_assignments("assignment-exp")
+        self.assertEqual(len(assignments), 1)
+        self.assertEqual(assignments[0]["task_id"], task["id"])
+        self.assertEqual(self.engine.get_workforce_experiment("assignment-exp")["events"][-1]["event_type"],
+                         "experiment.task_assigned")
+
+    def test_experiment_outcomes_are_derived_from_task_lifecycle(self):
+        self.engine.create_improvement_proposal("outcome-proposal", {"recommendation": "Measure outcomes"})
+        self.engine.transition_improvement_proposal(
+            "outcome-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed triage checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [
+                {"metric": "task_failure_rate", "operator": "<=", "threshold": 0.0,
+                 "scope": "both", "severity": "critical"},
+                {"metric": "task_success_rate", "operator": ">=", "threshold": 0.1,
+                 "scope": "treatment", "severity": "warning"},
+                "No permission changes",
+            ],
+            "evaluation_window_days": 14,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("outcome-exp", "outcome-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "outcome-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        assigned = []
+        for index in range(40):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"outcome-{index}",
+                max_attempts=1,
+            )
+            arm = self.engine.assign_workforce_experiment_task("outcome-exp", task["id"])["assignment"]
+            assigned.append((task, arm))
+        selected = {}
+        for task, arm in assigned:
+            selected.setdefault(arm, []).append(task)
+        self.assertEqual(set(selected), {"control", "treatment"})
+        pending_by_arm = {"control": 0, "treatment": 0}
+        for arm, tasks in selected.items():
+            self.engine.cancel_task(tasks[0]["id"])
+            delayed = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"pending-{arm}",
+                delay_seconds=86400,
+            )
+            delayed_arm = self.engine.assign_workforce_experiment_task("outcome-exp", delayed["id"])["assignment"]
+            pending_by_arm[delayed_arm] += 1
+        outcome_index = {"control": 0, "treatment": 0}
+        while True:
+            claimed = self.engine.claim("outcome-worker")
+            if claimed is None:
+                break
+            arm = next(arm for task, arm in assigned if task["id"] == claimed["id"])
+            if outcome_index[arm] % 2 == 0:
+                self.engine.complete(claimed["id"], "outcome-worker", {"ok": True})
+            else:
+                self.engine.fail(claimed["id"], "outcome-worker", "redacted")
+            outcome_index[arm] += 1
+        report = self.engine.get_workforce_experiment_outcomes("outcome-exp")
+        self.assertEqual(report["total_assigned"], 42)
+        self.assertEqual(report["total_evaluable"], 38)
+        self.assertEqual(report["status"], "descriptive_outcomes_available")
+        for arm in ("control", "treatment"):
+            self.assertEqual(report["arms"][arm]["cancelled"], 1)
+            self.assertEqual(report["arms"][arm]["pending"], pending_by_arm[arm])
+            self.assertEqual(report["arms"][arm]["assigned"], len(selected[arm]) + pending_by_arm[arm])
+            self.assertEqual(report["arms"][arm]["evaluable"], len(selected[arm]) - 1)
+            self.assertGreater(report["arms"][arm]["success_rate"], 0)
+            self.assertLess(report["arms"][arm]["success_rate"], 1)
+        self.assertFalse(report["automatic_action"])
+        comparison = report["descriptive_comparison"]
+        self.assertEqual(comparison["status"], "descriptive_comparison_available")
+        self.assertEqual(comparison["comparison_metric"], "task_success_rate_proxy")
+        self.assertFalse(comparison["primary_metric_evaluated"])
+        self.assertFalse(comparison["guardrails_evaluated"])
+        self.assertEqual(comparison["declared_primary_metric"], "failed_tasks")
+        self.assertIsNotNone(comparison["success_rate_difference_treatment_minus_control"])
+        self.assertFalse(comparison["causal_inference"])
+        self.assertFalse(comparison["statistical_significance_tested"])
+        guardrails = report["guardrail_evaluation"]
+        self.assertEqual(guardrails["status"], "violations_detected")
+        self.assertEqual(guardrails["measurable_guardrails_defined"], 2)
+        self.assertEqual(guardrails["descriptive_guardrails_not_evaluated"], 1)
+        self.assertGreaterEqual(guardrails["critical_violations"], 1)
+        self.assertTrue(all(item["status"] in {"passed", "violated", "not_evaluable"}
+                            for item in guardrails["results"]))
+        self.assertFalse(guardrails["automatic_action"])
+        self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["exposed_tasks"], 0)
+        self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["task_coverage"], 0)
+        self.assertIn("no causal effect", report["interpretation"].lower())
+
+    def test_experiment_worker_execution_telemetry_requires_live_lease_and_is_reported(self):
+        self.engine.create_improvement_proposal("execution-telemetry-proposal", {"recommendation": "Measure worker runs"})
+        self.engine.transition_improvement_proposal(
+            "execution-telemetry-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment(
+            "execution-telemetry-exp", "execution-telemetry-proposal", design,
+        )
+        self.engine.transition_workforce_experiment(
+            "execution-telemetry-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        task = self.engine.submit(
+            self.goal, "workforce.task", {}, idempotency_key="execution-telemetry-task",
+        )
+        self.engine.assign_workforce_experiment_task("execution-telemetry-exp", task["id"])
+        with self.assertRaises(TaskConflict):
+            self.engine.record_task_experiment_execution_event(
+                task["id"], "execution_started", worker_id="worker-1", attempt=1,
+            )
+        claimed = self.engine.claim("worker-1", task_type="workforce.task")
+        self.assertEqual(claimed["id"], task["id"])
+        started = self.engine.record_task_experiment_execution_event(
+            task["id"], "execution_started", worker_id="worker-1", attempt=1,
+        )
+        replay = self.engine.record_task_experiment_execution_event(
+            task["id"], "execution_started", worker_id="worker-1", attempt=1,
+        )
+        self.assertTrue(started["created"])
+        self.assertFalse(replay["created"])
+        terminal = self.engine.record_task_experiment_execution_event(
+            task["id"], "execution_succeeded", worker_id="worker-1", attempt=1,
+        )
+        self.assertTrue(terminal["created"])
+        with self.assertRaises(TaskConflict):
+            self.engine.record_task_experiment_execution_event(
+                task["id"], "execution_failed", worker_id="worker-1", attempt=1,
+            )
+        events = self.engine.list_workforce_experiment_execution_events("execution-telemetry-exp")
+        self.assertEqual([item["event_type"] for item in events],
+                         ["execution_started", "execution_succeeded"])
+        report = self.engine.get_workforce_experiment_integrity("execution-telemetry-exp")
+        self.assertEqual(report["worker_execution_events"]["execution_started"], 1)
+        self.assertEqual(report["worker_execution_events"]["execution_succeeded"], 1)
+        self.assertIn("does not prove the model attended to", " ".join(report["limitations"]))
+
+    def test_treatment_exposure_requires_treatment_arm_and_live_worker_lease(self):
+        self.engine.create_improvement_proposal("treatment-exposure-proposal", {"recommendation": "Verify actual treatment invocation"})
+        self.engine.transition_improvement_proposal(
+            "treatment-exposure-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Use the reviewed triage checklist as reference context",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment(
+            "treatment-exposure-exp", "treatment-exposure-proposal", design,
+        )
+        self.engine.transition_workforce_experiment(
+            "treatment-exposure-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        treatment_task = None
+        control_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"treatment-exposure-{index}",
+            )
+            assignment = self.engine.assign_workforce_experiment_task(
+                "treatment-exposure-exp", task["id"],
+            )
+            if assignment["assignment"] == "treatment":
+                treatment_task = task
+            else:
+                control_task = task
+            if treatment_task and control_task:
+                break
+        self.assertIsNotNone(treatment_task)
+        self.assertIsNotNone(control_task)
+        context = self.engine.get_task_workforce_experiment_context(treatment_task["id"])
+        self.assertEqual(context["assignment"], "treatment")
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_treatment_exposure(
+                "treatment-exposure-exp", control_task["id"], worker_id="worker-1",
+                attempt=1, intervention_version=context["intervention_version"],
+                skill_name="triage",
+            )
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_treatment_exposure(
+                "treatment-exposure-exp", treatment_task["id"], worker_id="worker-1",
+                attempt=1, intervention_version=context["intervention_version"],
+                skill_name="triage",
+            )
+        claimed = self.engine.claim("worker-1", task_type="workforce.task")
+        while claimed is not None and claimed["id"] != treatment_task["id"]:
+            self.engine.reject(claimed["id"], "worker-1", "invalid_payload")
+            claimed = self.engine.claim("worker-1", task_type="workforce.task")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed["id"], treatment_task["id"])
+        self.engine.record_task_experiment_execution_event(
+            treatment_task["id"], "execution_started", worker_id="worker-1", attempt=1,
+        )
+        exposure = self.engine.record_workforce_experiment_treatment_exposure(
+            "treatment-exposure-exp", treatment_task["id"], worker_id="worker-1",
+            attempt=1, intervention_version=context["intervention_version"],
+            skill_name="triage",
+        )
+        replay = self.engine.record_workforce_experiment_treatment_exposure(
+            "treatment-exposure-exp", treatment_task["id"], worker_id="worker-1",
+            attempt=1, intervention_version=context["intervention_version"],
+            skill_name="triage",
+        )
+        self.assertTrue(exposure["created"])
+        self.assertFalse(replay["created"])
+        listed = self.engine.list_workforce_experiment_treatment_exposures("treatment-exposure-exp")
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["skill_name"], "triage")
+        report = self.engine.get_workforce_experiment_integrity("treatment-exposure-exp")
+        self.assertEqual(report["treatment_exposures"], 1)
+        outcomes = self.engine.get_workforce_experiment_outcomes("treatment-exposure-exp")
+        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["exposed_tasks"], 1)
+        self.assertEqual(outcomes["arms"]["treatment"]["runtime_exposure"]["exposure_attempts"], 1)
+        runtime_exposure = outcomes["arms"]["treatment"]["runtime_exposure"]
+        # Deterministic hash assignment is 1:1 in expectation, not block-balanced:
+        # coverage is exposed treatment tasks divided by all treatment assignments.
+        self.assertEqual(
+            runtime_exposure["task_coverage"],
+            runtime_exposure["exposed_tasks"] / outcomes["arms"]["treatment"]["assigned"],
+        )
+        self.assertEqual(runtime_exposure["exposed_tasks"], 1)
+        self.assertEqual(runtime_exposure["skills"][0]["skill_name"], "triage")
+        self.assertNotIn("treatment_execution_without_skill_exposure",
+                         {issue["code"] for issue in report["issues"]})
+
+    def test_experiment_integrity_audit_detects_missing_delivery_and_eligibility_drift(self):
+        self.engine.create_improvement_proposal("integrity-proposal", {"recommendation": "Audit exposure"})
+        self.engine.transition_improvement_proposal(
+            "integrity-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("integrity-exp", "integrity-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "integrity-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        treatment_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"integrity-{index}",
+            )
+            assignment = self.engine.assign_workforce_experiment_task("integrity-exp", task["id"])
+            if assignment["assignment"] == "treatment":
+                treatment_task = task
+                break
+        self.assertIsNotNone(treatment_task)
+        report = self.engine.get_workforce_experiment_integrity("integrity-exp")
+        self.assertEqual(report["status"], "integrity_warnings")
+        self.assertTrue(any(issue["code"] == "treatment_delivery_unrecorded"
+                            for issue in report["issues"]))
+        connection = self.engine._connect()
+        try:
+            connection.execute(
+                "UPDATE tasks SET task_type='billing.refund' WHERE id=?",
+                (treatment_task["id"],),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        report = self.engine.get_workforce_experiment_integrity("integrity-exp")
+        self.assertTrue(any(issue["code"] == "eligibility_drift"
+                            for issue in report["issues"]))
+        self.assertFalse(report["automatic_action"])
+        self.assertTrue(any("not proof" in item for item in report["limitations"]))
+
+    def test_treatment_delivery_attestations_are_append_only_and_reported(self):
+        self.engine.create_improvement_proposal("delivery-proposal", {"recommendation": "Measure delivery"})
+        self.engine.transition_improvement_proposal(
+            "delivery-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("delivery-exp", "delivery-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "delivery-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        treatment_task = None
+        control_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"delivery-{index}",
+            )
+            assignment = self.engine.assign_workforce_experiment_task("delivery-exp", task["id"])
+            if assignment["assignment"] == "treatment" and treatment_task is None:
+                treatment_task = task
+            if assignment["assignment"] == "control" and control_task is None:
+                control_task = task
+            if treatment_task and control_task:
+                break
+        self.assertIsNotNone(treatment_task)
+        self.assertIsNotNone(control_task)
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_delivery(
+                "delivery-exp", control_task["id"], "delivered",
+                actor_id="operator-1", intervention_version="v1",
+            )
+        with self.assertRaises(ValueError):
+            self.engine.record_workforce_experiment_delivery(
+                "delivery-exp", treatment_task["id"], "delivered",
+                actor_id="operator-1",
+            )
+        first = self.engine.record_workforce_experiment_delivery(
+            "delivery-exp", treatment_task["id"], "delivered",
+            actor_id="operator-1", intervention_version="checklist-v1",
+            evidence_reference="review-record-123",
+        )
+        replay = self.engine.record_workforce_experiment_delivery(
+            "delivery-exp", treatment_task["id"], "delivered",
+            actor_id="operator-1", intervention_version="checklist-v1",
+            evidence_reference="review-record-123",
+        )
+        self.assertTrue(first["created"])
+        self.assertFalse(replay["created"])
+        self.assertFalse(first["treatment_executed"])
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_delivery(
+                "delivery-exp", treatment_task["id"], "not_delivered",
+                actor_id="operator-1",
+            )
+        listed = self.engine.list_workforce_experiment_deliveries("delivery-exp")
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["actor_id"], "operator-1")
+        connection = self.engine._connect()
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE workforce_experiment_deliveries SET delivery_state='unknown' "
+                    "WHERE experiment_id=? AND task_id=?",
+                    ("delivery-exp", treatment_task["id"]),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "DELETE FROM workforce_experiment_deliveries WHERE experiment_id=? AND task_id=?",
+                    ("delivery-exp", treatment_task["id"]),
+                )
+        finally:
+            connection.close()
+        report = self.engine.get_workforce_experiment_outcomes("delivery-exp")
+        self.assertEqual(report["arms"]["treatment"]["delivery_attestations"]["delivered"], 1)
+        self.assertEqual(report["arms"]["treatment"]["delivery_attestations"]["unrecorded"],
+                         report["arms"]["treatment"]["assigned"] - 1)
+        self.assertIn("not proof of execution", report["interpretation"])
+
+    def test_randomized_assignment_requires_structured_matching_eligibility(self):
+        self.engine.create_improvement_proposal("eligibility-proposal", {"recommendation": "Scope tasks"})
+        self.engine.transition_improvement_proposal(
+            "eligibility-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        free_text_design = {
+            "hypothesis": "Reduce failures", "intervention": "Checklist",
+            "primary_metric": "failed_tasks", "preferred_direction": "decrease",
+            "design_type": "randomized_controlled", "eligible_population": "Workforce tasks",
+            "guardrails": [], "evaluation_window_days": 7, "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("free-text-eligibility", "eligibility-proposal", free_text_design)
+        self.engine.transition_workforce_experiment(
+            "free-text-eligibility", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        wrong_type = self.engine.submit(
+            self.goal, "billing.refund", {}, idempotency_key="wrong-eligibility",
+        )
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("free-text-eligibility", wrong_type["id"])
+        matching = self.engine.submit(
+            self.goal, "workforce.task", {}, idempotency_key="matching-eligibility",
+        )
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("free-text-eligibility", matching["id"])
+
+        structured_design = dict(free_text_design)
+        structured_design["eligible_population"] = {
+            "description": "Only workforce tasks",
+            "task_types": ["workforce.task"],
+        }
+        self.engine.create_improvement_proposal("structured-eligibility-proposal", {"recommendation": "Scope tasks"})
+        self.engine.transition_improvement_proposal(
+            "structured-eligibility-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-3",
+        )
+        self.engine.create_workforce_experiment(
+            "structured-eligibility", "structured-eligibility-proposal", structured_design,
+        )
+        self.engine.transition_workforce_experiment(
+            "structured-eligibility", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-4",
+        )
+        wrong_type2 = self.engine.submit(
+            self.goal, "billing.refund", {}, idempotency_key="wrong-eligibility-2",
+        )
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("structured-eligibility", wrong_type2["id"])
+        matching2 = self.engine.submit(
+            self.goal, "workforce.task", {}, idempotency_key="matching-eligibility-2",
+        )
+        result = self.engine.assign_workforce_experiment_task("structured-eligibility", matching2["id"])
+        self.assertIn(result["assignment"], {"control", "treatment"})
+
+    def test_pre_post_experiment_cannot_assign_randomized_arms(self):
+        self.engine.create_improvement_proposal("descriptive-proposal", {"recommendation": "Observe"})
+        self.engine.transition_improvement_proposal(
+            "descriptive-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "Observe trend",
+            "intervention": "Document existing process",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "pre_post_descriptive",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 5,
+        }
+        self.engine.create_workforce_experiment("descriptive-exp", "descriptive-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "descriptive-exp", expected_state="proposed", new_state="approved", actor_id="reviewer-2",
+        )
+        task = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="descriptive-task")
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("descriptive-exp", task["id"])
+
     def test_engine_close_is_idempotent_and_blocks_future_operations(self):
         engine = DurableTaskEngine(":memory:")
         goal = engine.create_goal()
@@ -43,6 +598,221 @@ class DurableTaskEngineTests(unittest.TestCase):
         completed = engine.complete(task["id"], "memory-worker", {"done": True})
         self.assertEqual(completed["state"], "succeeded")
         self.assertEqual(engine.get_task(task["id"])["result"], {"done": True})
+
+    def _create_reviewed_source_task(self, key="knowledge-source"):
+        task = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key=key, max_attempts=1)
+        claimed = self.engine.claim("knowledge-test-worker")
+        self.engine.complete(task["id"], "knowledge-test-worker", {
+            "ok": True,
+            "review_required": True,
+            "review_evidence": {
+                "reviewer_id": "independent-reviewer",
+                "status": "approved",
+                "approved": True,
+            },
+        })
+        return task
+
+    def test_knowledge_candidate_requires_independently_reviewed_success(self):
+        unreviewed = self.engine.submit(self.goal, "workforce.task", {}, idempotency_key="unreviewed-source", max_attempts=1)
+        self.engine.claim("knowledge-test-worker")
+        self.engine.complete(unreviewed["id"], "knowledge-test-worker", {
+            "ok": True, "review_required": False, "review_evidence": None,
+        })
+        lesson = {"title": "Prefer bounded retries", "lesson": "Use a single attempt for side-effecting tasks.", "domain": "workforce", "tags": ["reliability"]}
+        with self.assertRaises(TaskConflict):
+            self.engine.create_knowledge_candidate("lesson-unreviewed", unreviewed["id"], lesson)
+
+        failed = self.engine.submit(self.engine.create_goal(), "workforce.task", {}, idempotency_key="failed-source", max_attempts=1)
+        self.engine.claim("knowledge-test-worker")
+        self.engine.fail(failed["id"], "knowledge-test-worker", "redacted failure")
+        with self.assertRaises(TaskConflict):
+            self.engine.create_knowledge_candidate("lesson-failed", failed["id"], lesson)
+
+    def test_knowledge_candidate_is_durable_idempotent_and_requires_human_verification(self):
+        task = self._create_reviewed_source_task()
+        lesson = {
+            "title": "Preserve task idempotency",
+            "lesson": "Use stable idempotency keys when retrying a planned task graph.",
+            "domain": "workforce",
+            "tags": ["reliability", "recovery"],
+        }
+        first = self.engine.create_knowledge_candidate("lesson-idempotency", task["id"], lesson)
+        self.assertTrue(first["created"])
+        self.assertEqual(first["state"], "candidate")
+        self.assertEqual(first["events"][0]["event_type"], "knowledge.proposed")
+        replay = self.engine.create_knowledge_candidate("another-id", task["id"], lesson)
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["knowledge_id"], "lesson-idempotency")
+        self.assertEqual(self.engine.list_verified_knowledge(), [])
+        verified = self.engine.transition_knowledge(
+            "lesson-idempotency", expected_state="candidate", new_state="verified",
+            actor_id="human-reviewer", review_note="Checked against source task and confirmed.",
+        )
+        self.assertEqual(verified["state"], "verified")
+        self.assertEqual(verified["reviewed_by"], "human-reviewer")
+        self.assertEqual(len(self.engine.list_verified_knowledge(domain="workforce")), 1)
+        with self.assertRaises(TaskConflict):
+            self.engine.transition_knowledge(
+                "lesson-idempotency", expected_state="candidate", new_state="verified",
+                actor_id="second-reviewer",
+            )
+        reopened = DurableTaskEngine(self.db)
+        self.assertEqual(reopened.get_knowledge("lesson-idempotency")["state"], "verified")
+
+    def test_knowledge_candidate_rejects_obvious_secrets_and_contact_identifiers(self):
+        task = self._create_reviewed_source_task("knowledge-sensitive-source")
+        base = {"title": "Operational lesson", "lesson": "Use bounded retries.", "domain": "workforce", "tags": []}
+        for value in (
+            "Contact admin@example.com for access.",
+            "password=correct-horse-battery-staple",
+            "Bearer abcdefghijklmnopqrstuvwxyz",
+            "-----BEGIN PRIVATE KEY-----",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.engine.create_knowledge_candidate(
+                        "sensitive-" + str(len(value)), task["id"],
+                        {**base, "lesson": value},
+                    )
+
+    def test_knowledge_candidate_rejects_unbounded_or_extra_fields(self):
+        task = self._create_reviewed_source_task("knowledge-validation")
+        lesson = {"title": "Valid title", "lesson": "Valid lesson", "domain": "workforce", "tags": []}
+        with self.assertRaises(ValueError):
+            self.engine.create_knowledge_candidate("bad-extra", task["id"], {**lesson, "raw_chat": "private"})
+        with self.assertRaises(ValueError):
+            self.engine.create_knowledge_candidate("bad-title", task["id"], {**lesson, "title": " "})
+        with self.assertRaises(ValueError):
+            self.engine.create_knowledge_candidate("bad-tags", task["id"], {**lesson, "tags": ["duplicate", "DUPLICATE"]})
+
+    def test_knowledge_revision_requires_human_approval_and_preserves_history(self):
+        source = self._create_reviewed_source_task("knowledge-revision-source")
+        original = {
+            "title": "Prefer bounded retries",
+            "lesson": "Use bounded retries for transient failures.",
+            "domain": "workforce",
+            "tags": ["reliability"],
+        }
+        self.engine.create_knowledge_candidate("revision-lesson", source["id"], original)
+        self.engine.transition_knowledge(
+            "revision-lesson", expected_state="candidate", new_state="verified",
+            actor_id="initial-curator",
+        )
+        revised = {**original, "lesson": "Use bounded retries with jitter for transient failures."}
+        proposal = self.engine.create_knowledge_revision("revision-lesson", "revision-2", revised)
+        self.assertTrue(proposal["created"])
+        self.assertEqual(proposal["state"], "proposed")
+        self.assertEqual(self.engine.get_knowledge("revision-lesson")["knowledge"], original)
+        self.assertEqual(self.engine.list_verified_knowledge()[0]["knowledge"], original)
+        with self.assertRaises(ValueError):
+            self.engine.transition_knowledge_revision(
+                "revision-2", expected_state="proposed", new_state="approved",
+                actor_id="",
+            )
+        approved = self.engine.transition_knowledge_revision(
+            "revision-2", expected_state="proposed", new_state="approved",
+            actor_id="independent-curator", review_note="Compared both versions and source evidence.",
+        )
+        self.assertEqual(approved["state"], "approved")
+        self.assertEqual(approved["reviewed_by"], "independent-curator")
+        current = self.engine.get_knowledge("revision-lesson")
+        self.assertEqual(current["knowledge"], revised)
+        history = self.engine.list_knowledge_revisions("revision-lesson")
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["version"], 1)
+        self.assertEqual(history[0]["knowledge"], original)
+        self.assertEqual(history[0]["state"], "approved")
+        self.assertEqual(history[1]["version"], 2)
+        replay = self.engine.create_knowledge_revision("revision-lesson", "revision-2", revised)
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["version"], 2)
+
+    def test_knowledge_revision_rejects_stale_or_unverified_parent(self):
+        source = self._create_reviewed_source_task("knowledge-revision-stale-source")
+        lesson = {
+            "title": "Keep evidence",
+            "lesson": "Preserve evidence references.",
+            "domain": "workforce",
+            "tags": [],
+        }
+        self.engine.create_knowledge_candidate("revision-stale-lesson", source["id"], lesson)
+        with self.assertRaises(TaskConflict):
+            self.engine.create_knowledge_revision("revision-stale-lesson", "revision-before-verification", lesson)
+        self.engine.transition_knowledge(
+            "revision-stale-lesson", expected_state="candidate", new_state="verified",
+            actor_id="curator",
+        )
+        self.engine.create_knowledge_revision("revision-stale-lesson", "revision-reject", {**lesson, "lesson": "Alternative lesson."})
+        rejected = self.engine.transition_knowledge_revision(
+            "revision-reject", expected_state="proposed", new_state="rejected",
+            actor_id="curator",
+        )
+        self.assertEqual(rejected["state"], "rejected")
+        self.assertEqual(self.engine.get_knowledge("revision-stale-lesson")["knowledge"], lesson)
+
+    def test_improvement_proposal_lifecycle_is_durable_and_actor_attributed(self):
+        proposal = {
+            "category": "department_backlog",
+            "priority": "medium",
+            "recommendation": "Review queue prioritization",
+            "evidence": {"queued_tasks": 3, "window": "bounded"},
+        }
+        created = self.engine.create_improvement_proposal("proposal-1", proposal)
+        self.assertTrue(created["created"])
+        replay = self.engine.create_improvement_proposal("proposal-1", dict(reversed(list(proposal.items()))))
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["state"], "proposed")
+        with self.assertRaises(TaskConflict):
+            self.engine.create_improvement_proposal("proposal-1", {**proposal, "priority": "high"})
+
+        approved = self.engine.transition_improvement_proposal(
+            "proposal-1", expected_state="proposed", new_state="approved",
+            actor_id="operator-7", decision_note="Reviewed evidence",
+        )
+        self.assertEqual(approved["decided_by"], "operator-7")
+        self.assertEqual(approved["state"], "approved")
+        with self.assertRaises(TaskConflict):
+            self.engine.transition_improvement_proposal(
+                "proposal-1", expected_state="proposed", new_state="rejected",
+                actor_id="operator-8",
+            )
+        completed = self.engine.transition_improvement_proposal(
+            "proposal-1", expected_state="approved", new_state="completed",
+            actor_id="operator-7", outcome={"observed_change": "queue reduced", "causal_claim": False},
+        )
+        self.assertEqual(completed["outcome"]["causal_claim"], False)
+        self.assertEqual([event["actor_id"] for event in completed["events"]], ["system", "operator-7", "operator-7"])
+
+        restarted = DurableTaskEngine(self.db)
+        persisted = restarted.get_improvement_proposal("proposal-1")
+        self.assertEqual(persisted["state"], "completed")
+        self.assertEqual(persisted["outcome"]["observed_change"], "queue reduced")
+
+    def test_improvement_proposal_rejects_invalid_transitions_and_unbounded_fields(self):
+        self.engine.create_improvement_proposal("proposal-2", {"recommendation": "Inspect"})
+        with self.assertRaises(TaskConflict):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="completed",
+                actor_id="operator-1", outcome={"observed_change": "x"},
+            )
+        with self.assertRaises(ValueError):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="approved",
+                actor_id="operator-1", decision_note="x" * 2001,
+            )
+        with self.assertRaises(ValueError):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="rejected",
+                actor_id="operator-1", outcome={"not_allowed": True},
+            )
+        with self.assertRaises(ValueError):
+            self.engine.transition_improvement_proposal(
+                "proposal-2", expected_state="proposed", new_state="approved",
+                actor_id=" ",
+            )
+        with self.assertRaises(ValueError):
+            self.engine.list_improvement_proposals(limit=True)
 
     def test_task_survives_engine_restart_and_emits_events(self):
         task = self.engine.submit(self.goal, "summarize", {"text": "hello"}, idempotency_key="one")
@@ -406,6 +1176,55 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskNotFound):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
 
+
+    def test_owned_goal_creation_is_idempotent_and_owner_scoped(self):
+        first = self.engine.create_owned_goal(
+            "user-a", "request-1", {"goal": "prepare a launch plan"}
+        )
+        replay = self.engine.create_owned_goal(
+            "user-a", "request-1", {"goal": "prepare a launch plan"}
+        )
+        self.assertTrue(first["created"])
+        self.assertFalse(replay["created"])
+        self.assertEqual(first["goal"]["id"], replay["goal"]["id"])
+        self.assertEqual(first["goal"]["owner_id"], "user-a")
+        other_owner = self.engine.create_owned_goal(
+            "user-b", "request-1", {"goal": "prepare a launch plan"}
+        )
+        self.assertNotEqual(first["goal"]["id"], other_owner["goal"]["id"])
+        self.assertEqual(other_owner["goal"]["owner_id"], "user-b")
+
+    def test_owned_goal_rejects_changed_request_for_same_owner_key(self):
+        self.engine.create_owned_goal("user-a", "request-2", {"goal": "first"})
+        with self.assertRaises(TaskConflict):
+            self.engine.create_owned_goal("user-a", "request-2", {"goal": "changed"})
+
+    def test_owned_goal_rejects_invalid_or_oversized_input(self):
+        for owner, key in ((None, "key"), ("", "key"), ("user", ""), ("user", "x" * 257)):
+            with self.subTest(owner=owner, key_length=len(key) if isinstance(key, str) else None):
+                with self.assertRaises(ValueError):
+                    self.engine.create_owned_goal(owner, key, {"goal": "x"})
+        with self.assertRaises(ValueError):
+            self.engine.create_owned_goal("user", "large", {"goal": "x" * 17_000})
+
+    def test_legacy_goals_migrate_with_unknown_owner(self):
+        legacy_db = Path(self.tmp.name) / "legacy-owner.sqlite"
+        conn = sqlite3.connect(legacy_db)
+        try:
+            conn.execute(
+                "CREATE TABLE goals(id TEXT PRIMARY KEY,state TEXT NOT NULL,created_at REAL NOT NULL,updated_at REAL NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO goals VALUES(?,?,?,?)",
+                ("legacy-goal", "active", 1.0, 1.0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        migrated = DurableTaskEngine(legacy_db)
+        self.assertIsNone(migrated.get_goal("legacy-goal")["owner_id"])
+        created = migrated.create_owned_goal("new-user", "new-request", {"goal": "new"})
+        self.assertEqual(created["goal"]["owner_id"], "new-user")
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,24 @@ class SharedDesktopCompositionTests(unittest.TestCase):
         build.assert_called_once()
 
     @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
+    def test_passes_curated_knowledge_provider_to_authenticated_chat(self, build):
+        session = FakeSession()
+        build.return_value = session
+        specialists = SpecialistController()
+        add_specialist_contract(specialists)
+        knowledge_provider = lambda owner, query: ()
+
+        build_shared_desktop_controller(
+            {}, provider=object(), identity=object(), sessions=object(),
+            specialist_controller=specialists,
+            knowledge_entries_for_owner=knowledge_provider,
+        )
+
+        self.assertIs(
+            build.call_args.kwargs["knowledge_entries_for_owner"], knowledge_provider
+        )
+
+    @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
     def test_invalid_specialist_contract_closes_new_conversation_session(self, build):
         session = FakeSession()
         build.return_value = session

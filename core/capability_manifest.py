@@ -263,6 +263,20 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("tests/test_multilingual_voice.py",),
         ("An end-to-end interruptible voice conversation and always-on listener are not verified.",),
     ),
+    CapabilityContract(
+        "compute-fabric", "Bounded hardware-independent compute scheduler", "implemented",
+        "Provides a CPU reference backend, optional PyTorch CUDA and JAX TPU device-context adapters, and process-local admission control for bounded synchronous operations.",
+        ("core/compute_fabric.py",), ("Python standard library", "optional PyTorch for CUDA", "optional JAX for TPU"), (),
+        ("synchronous backend-scoped operation execution and process-local resource reservations",),
+        ("local",), "medium", ("tests/test_compute_fabric.py",),
+        (
+            "CPU, CUDA, and TPU memory budgets are admission estimates; TPU HBM is operator-configured and CUDA free VRAM is a construction-time snapshot.",
+            "Reservations are process-local and do not coordinate multiple Yuki processes or external GPU/TPU workloads.",
+            "Device contexts do not automatically migrate or place existing models and tensors; explicit runtime-specific model integration is required.",
+            "The provider and conversation inference paths are not wired to ComputeScheduler, so end-to-end Yuki model acceleration is not implemented or verified.",
+            "No automatic hardware selection, model offload, checkpoint migration, or CPU fallback policy is implemented.",
+        ),
+    ),
 
 )
 

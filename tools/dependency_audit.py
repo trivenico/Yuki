@@ -32,6 +32,14 @@ def audit_files(paths: list[Path]) -> list[str]:
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue
+            if line.startswith(("-r ", "--requirement ")):
+                include = line.split(None, 1)[1].strip()
+                include_path = Path(include)
+                if not include or include_path.is_absolute() or any(part == ".." for part in include_path.parts):
+                    errors.append(f"{path}:{line_number}: unsafe requirement include: {line}")
+                elif not (path.parent / include_path).is_file():
+                    errors.append(f"{path}:{line_number}: missing requirement include: {line}")
+                continue
             if line.startswith(("-", "git+", "http://", "https://")):
                 errors.append(f"{path}:{line_number}: unsupported requirement directive/URL: {line}")
                 continue

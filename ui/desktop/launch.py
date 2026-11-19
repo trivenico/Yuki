@@ -6,6 +6,7 @@ single background worker; widgets never access provider clients or stores.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -74,6 +75,7 @@ def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -
 
 
 def _build_services():
+    import os
     from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
     from core.portable_paths import desktop_data_root
@@ -112,6 +114,16 @@ def _build_services():
         ),),
     )
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
+    if not auth.list_users():
+        bootstrap_username = os.environ.get("YUKI_BOOTSTRAP_ADMIN_USERNAME", "").strip()
+        bootstrap_password = os.environ.get("YUKI_BOOTSTRAP_ADMIN_PASSWORD", "")
+        if bool(bootstrap_username) != bool(bootstrap_password):
+            raise RuntimeError(
+                "Set both YUKI_BOOTSTRAP_ADMIN_USERNAME and "
+                "YUKI_BOOTSTRAP_ADMIN_PASSWORD for first-run desktop setup."
+            )
+        if bootstrap_username and bootstrap_password:
+            auth.bootstrap_admin(bootstrap_username, bootstrap_password)
     sessions = DesktopSessionManager(auth, keyring)
     provider = None
     try:
@@ -135,7 +147,7 @@ def _build_services():
             runtime, task_db, built_in_agents, authorize=permission_check,
         )
         lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
-        return auth, sessions, provider, coordinator, runtime, lifecycle
+        return auth, sessions, provider, coordinator, runtime, lifecycle, root / "observation-knowledge.sqlite3"
     except Exception:
         # Provider construction is the first potentially long-lived external
         # resource. If any later service fails, release it before propagating
@@ -226,7 +238,7 @@ def run() -> int:
             raise
 
     try:
-        from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+        from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
         from PySide6.QtWidgets import (
             QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
             QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
@@ -248,6 +260,22 @@ def run() -> int:
     class WorkerSignals(QObject):
         finished = Signal(str, object)
         phase = Signal(str)
+
+    class ObservationBatchSignals(QObject):
+        finished = Signal(object, object)
+
+    class ObservationBatchWorker(QRunnable):
+        def __init__(self, worker):
+            super().__init__()
+            self.worker = worker
+            self.signals = ObservationBatchSignals()
+
+        @Slot()
+        def run(self):
+            try:
+                self.signals.finished.emit(self.worker.process_batch(limit=16), None)
+            except Exception as exc:
+                self.signals.finished.emit(None, exc)
 
     class ChatWorker(QRunnable):
         def __init__(self, controller: DesktopCompanionController, message: str):
@@ -395,10 +423,18 @@ def run() -> int:
             self.setMinimumSize(820, 620)
             self.pool = QThreadPool(self)
             self.pool.setMaxThreadCount(1)
+            self._observation_controller = None
+            self._observation_buffer = None
+            self._observation_worker = None
+            self._observation_writer = None
+            self._observation_worker_busy = False
             self.auth = None
             self.sessions = None
             self.provider = None
             self.lifecycle = None
+            self.observation_review_database = None
+            self.observation_review_service = None
+            self.curated_knowledge_catalog = None
             self.controller = None
             self.voice_session = None
             self.speech_session = None
@@ -412,6 +448,9 @@ def run() -> int:
             self.current_plan = None
             self.migration_preview = None
             self._build_ui()
+            self.observation_timer = QTimer(self)
+            self.observation_timer.setInterval(1500)
+            self.observation_timer.timeout.connect(self._poll_observation)
             self._initialize()
 
         def _build_ui(self):
@@ -448,6 +487,10 @@ def run() -> int:
             chat_layout = QVBoxLayout(chat)
             header = QHBoxLayout()
             self.identity_label = QLabel("Signed in")
+            self.observation_global_indicator = QLabel("Observation off")
+            self.observation_global_indicator.setToolTip(
+                "Persistent desktop observation status. Capture is off unless explicitly enabled."
+            )
             self.memory_toggle = QCheckBox("Use saved memory in replies")
             self.memory_toggle.setToolTip(
                 "Allow saved notes to be included in this session's chat context. "
@@ -457,6 +500,7 @@ def run() -> int:
             self.logout_button = QPushButton("Sign out")
             self.logout_button.clicked.connect(self._logout)
             header.addWidget(self.identity_label)
+            header.addWidget(self.observation_global_indicator)
             header.addStretch(1)
             header.addWidget(self.memory_toggle)
             header.addWidget(self.logout_button)
@@ -567,6 +611,118 @@ def run() -> int:
             task_actions.addWidget(self.task_cancel_button)
             tasks_layout.addLayout(task_actions)
             tabs.addTab(tasks_page, "Tasks")
+            observation_page = QWidget()
+            observation_layout = QVBoxLayout(observation_page)
+            observation_layout.addWidget(QLabel(
+                "Review allowlisted desktop learning candidates. Observation is off by default; "
+                "this screen does not start capture or promote knowledge into active memory."
+            ))
+            self.observation_status = QLabel("No observation capture is running.")
+            self.observation_status.setWordWrap(True)
+            observation_layout.addWidget(self.observation_status)
+            observation_layout.addWidget(QLabel(
+                "Application allowlist (one executable.exe=application-id per line). "
+                "Only foreground executable identifiers are sampled; no titles, screenshots, "
+                "page text, clipboard or keystrokes are collected."
+            ))
+            self.observation_allowlist = QPlainTextEdit()
+            self.observation_allowlist.setPlaceholderText(
+                "code.exe=developer-ide\nnotepad.exe=text-editor"
+            )
+            self.observation_allowlist.setMaximumHeight(88)
+            observation_layout.addWidget(self.observation_allowlist)
+            observation_budget_row = QHBoxLayout()
+            observation_budget_row.addWidget(QLabel("Maximum events this session"))
+            self.observation_event_limit = QLineEdit("500")
+            self.observation_event_limit.setMaximumWidth(100)
+            observation_budget_row.addWidget(self.observation_event_limit)
+            observation_budget_row.addStretch(1)
+            observation_layout.addLayout(observation_budget_row)
+            observation_controls = QHBoxLayout()
+            self.observation_start_button = QPushButton("Enable observation…")
+            self.observation_start_button.clicked.connect(self._start_observation)
+            self.observation_pause_button = QPushButton("Pause")
+            self.observation_pause_button.clicked.connect(self._pause_observation)
+            self.observation_resume_button = QPushButton("Resume")
+            self.observation_resume_button.clicked.connect(self._resume_observation)
+            self.observation_revoke_button = QPushButton("Revoke")
+            self.observation_revoke_button.clicked.connect(self._revoke_observation)
+            for control in (
+                self.observation_start_button, self.observation_pause_button,
+                self.observation_resume_button, self.observation_revoke_button,
+            ):
+                observation_controls.addWidget(control)
+            observation_layout.addLayout(observation_controls)
+            if sys.platform != "win32":
+                self.observation_start_button.setEnabled(False)
+                self.observation_status.setText(
+                    "Desktop metadata collection is currently implemented for Windows only."
+                )
+            self.observation_proposal_list = QListWidget()
+            self.observation_proposal_list.currentItemChanged.connect(
+                self._show_observation_proposal
+            )
+            observation_layout.addWidget(self.observation_proposal_list, 1)
+            self.observation_proposal_details = QTextEdit()
+            self.observation_proposal_details.setReadOnly(True)
+            self.observation_proposal_details.setMaximumHeight(120)
+            observation_layout.addWidget(self.observation_proposal_details)
+            observation_actions = QHBoxLayout()
+            self.observation_refresh_button = QPushButton("Refresh proposals")
+            self.observation_refresh_button.clicked.connect(self._refresh_observation_proposals)
+            self.observation_approve_button = QPushButton("Approve")
+            self.observation_approve_button.clicked.connect(
+                lambda: self._decide_observation_proposal("approve")
+            )
+            self.observation_reject_button = QPushButton("Reject")
+            self.observation_reject_button.clicked.connect(
+                lambda: self._decide_observation_proposal("reject")
+            )
+            self.observation_delete_button = QPushButton("Delete")
+            self.observation_delete_button.clicked.connect(self._delete_observation_proposal)
+            self.observation_promote_button = QPushButton("Promote approved")
+            self.observation_promote_button.clicked.connect(self._promote_observation_proposal)
+            self.observation_audit_button = QPushButton("View audit")
+            self.observation_audit_button.clicked.connect(self._show_observation_audit)
+            for control in (
+                self.observation_refresh_button, self.observation_approve_button,
+                self.observation_reject_button, self.observation_delete_button,
+                self.observation_promote_button, self.observation_audit_button,
+            ):
+                observation_actions.addWidget(control)
+            observation_layout.addLayout(observation_actions)
+
+            observation_layout.addWidget(QLabel(
+                "Curated knowledge promoted into Yuki's durable reference catalog. "
+                "Deactivation immediately removes an entry from future retrieval."
+            ))
+            self.curated_knowledge_status = QLabel("Sign in to inspect curated knowledge.")
+            self.curated_knowledge_status.setWordWrap(True)
+            observation_layout.addWidget(self.curated_knowledge_status)
+            self.curated_knowledge_list = QListWidget()
+            self.curated_knowledge_list.currentItemChanged.connect(
+                self._show_curated_knowledge_entry
+            )
+            observation_layout.addWidget(self.curated_knowledge_list, 1)
+            curated_actions = QHBoxLayout()
+            self.curated_refresh_button = QPushButton("Refresh knowledge")
+            self.curated_refresh_button.clicked.connect(self._refresh_curated_knowledge)
+            self.curated_deactivate_button = QPushButton("Deactivate selected")
+            self.curated_deactivate_button.clicked.connect(self._deactivate_curated_knowledge)
+            self.curated_audit_button = QPushButton("View knowledge audit")
+            self.curated_audit_button.clicked.connect(self._show_curated_knowledge_audit)
+            for control in (
+                self.curated_refresh_button, self.curated_deactivate_button,
+                self.curated_audit_button,
+            ):
+                curated_actions.addWidget(control)
+            observation_layout.addLayout(curated_actions)
+            self.curated_knowledge_details = QTextEdit()
+            self.curated_knowledge_details.setReadOnly(True)
+            self.curated_knowledge_details.setMaximumHeight(100)
+            observation_layout.addWidget(self.curated_knowledge_details)
+            tabs.addTab(observation_page, "Learning")
+
 
             backup_page = QWidget()
             backup_layout = QVBoxLayout(backup_page)
@@ -968,7 +1124,17 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 (
                     self.auth, self.sessions, self.provider,
                     self.coordinator, self.runtime, self.lifecycle,
+                    self.observation_review_database,
                 ) = _build_services()
+                if not self.auth.list_users():
+                    self.login_button.setEnabled(False)
+                    self.login_status.setText(
+                        "First-run setup required. Set YUKI_BOOTSTRAP_ADMIN_USERNAME "
+                        "and YUKI_BOOTSTRAP_ADMIN_PASSWORD (at least 12 characters), "
+                        "then restart Yuki. These values are used only to create the "
+                        "initial local administrator."
+                    )
+                    return
                 identity = self.sessions.current_identity()
                 if identity is not None:
                     self._open_session(identity)
@@ -1058,6 +1224,17 @@ MIGRATION COMPLETE — verified manifest written to destination."
             )
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
+            from ui.desktop.observation_learning import build_desktop_observation_review_service
+            from core.curated_knowledge_store import SQLiteCuratedKnowledge
+            self.observation_review_service = build_desktop_observation_review_service(
+                self.auth, self.sessions, identity, self.observation_review_database,
+            )
+            curated_path = Path(self.observation_review_database).with_name(
+                "curated-knowledge.sqlite3"
+            )
+            self.curated_knowledge_catalog = SQLiteCuratedKnowledge(
+                str(curated_path), owner_id=identity.actor_id,
+            )
             specialist_controller = DesktopCompanionController(
                 context.application, context.identity, self.sessions,
                 workspace_path=Path(config["workspace"]),
@@ -1066,6 +1243,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
             # The existing specialist controller remains the authority for task
             # approvals, backups, restore and migration during this cutover.
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
+            from ui.desktop.observation_learning import build_desktop_curated_knowledge_provider
+            curated_knowledge_provider = build_desktop_curated_knowledge_provider(
+                self.auth, self.sessions, identity,
+                self.observation_review_database, curated_path,
+            )
             self.controller = build_shared_desktop_controller(
                 config,
                 provider=self.provider,
@@ -1073,14 +1255,33 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 sessions=self.sessions,
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
+                knowledge_entries_for_owner=curated_knowledge_provider,
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
             self.transcript.clear()
-            self.chat_status.setText("Connected to your configured provider.")
+            availability_check = getattr(self.provider, "is_available", None)
+            provider_ready = None
+            if callable(availability_check):
+                try:
+                    provider_ready = availability_check()
+                except Exception:
+                    provider_ready = None
+            if provider_ready is False:
+                self.chat_status.setText(
+                    "Provider selected but not configured or unavailable. "
+                    "Check OPENAI_API_KEY or your local provider setup before sending."
+                )
+            elif provider_ready is True:
+                self.chat_status.setText("Provider reports ready. Send a message to verify a live response.")
+            else:
+                self.chat_status.setText(
+                    "Provider selected. Yuki will verify availability on the first request."
+                )
             self.pages.setCurrentIndex(1)
             self._refresh_specialists()
             self._refresh_tasks()
+            self._refresh_observation_proposals()
             self.message.setFocus()
 
         def _set_memory_context(self, enabled: bool):
@@ -1202,6 +1403,526 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self._refresh_tasks()
             except Exception as exc:
                 QMessageBox.warning(self, "Cancellation failed", "The plan could not be cancelled (" + type(exc).__name__ + ").")
+
+
+
+        def _parse_observation_allowlist(self):
+            mapping = {}
+            for raw_line in self.observation_allowlist.toPlainText().splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.count("=") != 1:
+                    raise ValueError("Each allowlist line must be executable.exe=application-id.")
+                executable, app_id = (part.strip().lower() for part in line.split("=", 1))
+                if executable in mapping:
+                    raise ValueError("Duplicate executable in observation allowlist.")
+                mapping[executable] = app_id
+            if not mapping:
+                raise ValueError("Add at least one explicitly allowlisted executable.")
+            return mapping
+
+        def _set_observation_indicator(self, active):
+            self.observation_global_indicator.setText(
+                "● OBSERVATION ACTIVE" if active else "Observation off"
+            )
+            self.observation_status.setText(
+                "● OBSERVATION ACTIVE — allowlisted foreground app metadata only."
+                if active else "Observation indicator off."
+            )
+
+        def _start_observation(self):
+            if self.sessions is None or self.observation_review_service is None:
+                self.observation_status.setText("Sign in before enabling observation.")
+                return
+            identity = self.sessions.current_identity()
+            if (
+                identity is None
+                or not self.observation_review_service.can_review(
+                    actor_id=identity.actor_id, decisions=True,
+                )
+            ):
+                self.observation_status.setText(
+                    "Your account needs observation review and decision permissions to enable capture."
+                )
+                return
+            if self._observation_controller is not None:
+                self.observation_status.setText("Revoke the current session before starting another.")
+                return
+            if self._observation_worker_busy:
+                self.observation_status.setText(
+                    "The previous bounded learning batch is still shutting down. Try again shortly."
+                )
+                return
+            try:
+                mapping = self._parse_observation_allowlist()
+                event_limit = int(self.observation_event_limit.text().strip())
+                if not 1 <= event_limit <= 10000:
+                    raise ValueError("Event limit must be between 1 and 10000.")
+            except (TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Observation settings", str(exc))
+                return
+            answer = QMessageBox.question(
+                self, "Enable desktop observation",
+                "Yuki will sample the foreground Windows application every 1.5 seconds. "
+                "Only executable basenames mapped in your allowlist will produce metadata events. "
+                "No window titles, screenshots, browser page text, clipboard, keystrokes, "
+                "credentials or private message content are collected. Events stay local and "
+                "become review proposals; they are not automatically promoted to memory. "
+                f"The session stops after {event_limit} authorized events. "
+                "You can pause or revoke at any time. Enable now?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                from core.desktop_observation_controller import DesktopObservationController
+                from core.observation_policy import ObservationPolicy
+                from core.observation_event_buffer import ObservationEventBuffer
+                from core.observation_learning import ObservationLearningWorker
+                from core.observation_knowledge_store import SQLiteObservationKnowledgeReview
+                identity = self.sessions.current_identity()
+                if identity is None:
+                    raise PermissionError("An active desktop session is required.")
+                policy = ObservationPolicy(
+                    enabled=True, allowed_sources=("desktop:metadata",),
+                )
+                buffer = ObservationEventBuffer(capacity=128)
+                writer = SQLiteObservationKnowledgeReview(
+                    str(self.observation_review_database), owner_id=identity.actor_id,
+                )
+                learner = ObservationLearningWorker(buffer, writer)
+                controller = DesktopObservationController(
+                    policy, mapping, indicator=self._set_observation_indicator,
+                    event_limit=event_limit,
+                )
+                controller.start(consent_granted=True)
+                self._observation_buffer = buffer
+                self._observation_writer = writer
+                self._observation_worker = learner
+                self._observation_controller = controller
+                self.observation_allowlist.setEnabled(False)
+                self.observation_event_limit.setEnabled(False)
+                self.observation_start_button.setEnabled(False)
+                self.observation_pause_button.setEnabled(True)
+                self.observation_resume_button.setEnabled(False)
+                self.observation_revoke_button.setEnabled(True)
+                self.observation_timer.start()
+                self.observation_status.setText(
+                    "Observation active. Local metadata only; event budget: "
+                    + str(event_limit) + "."
+                )
+            except Exception as exc:
+                self._set_observation_indicator(False)
+                self.observation_status.setText(
+                    "Observation could not start (" + type(exc).__name__ + ")."
+                )
+
+        def _poll_observation(self):
+            controller = self._observation_controller
+            buffer = self._observation_buffer
+            if controller is None or buffer is None:
+                return
+            try:
+                controller.poll_once(buffer)
+                status = controller.status
+                if (
+                    not self._observation_worker_busy
+                    and len(buffer) > 0
+                    and self._observation_worker is not None
+                ):
+                    self._observation_worker_busy = True
+                    worker = ObservationBatchWorker(self._observation_worker)
+                    worker.signals.finished.connect(self._observation_batch_finished)
+                    self.pool.start(worker)
+                if status is not None:
+                    self.observation_status.setText(
+                        f"Observation {status.state}; processed {status.processed_events}/"
+                        f"{status.event_limit}; delivered {status.delivered_events}; "
+                        f"delivery failures {status.delivery_failures}; queued {len(buffer)}."
+                    )
+                if controller.state == "limit_reached":
+                    self.observation_timer.stop()
+                    self.observation_pause_button.setEnabled(False)
+                    self.observation_resume_button.setEnabled(False)
+                    self.observation_revoke_button.setEnabled(True)
+                    self.observation_start_button.setEnabled(False)
+            except Exception as exc:
+                self.observation_timer.stop()
+                try:
+                    controller.revoke()
+                except Exception:
+                    pass
+                self.observation_status.setText(
+                    "Observation stopped fail-closed (" + type(exc).__name__ + "). Revoke before restarting."
+                )
+                self.observation_pause_button.setEnabled(False)
+                self.observation_resume_button.setEnabled(False)
+
+        @Slot(object, object)
+        def _observation_batch_finished(self, proposals, error):
+            self._observation_worker_busy = False
+            if error is not None:
+                self.observation_status.setText(
+                    "Learning handoff failed (" + type(error).__name__ + "). Observation has been paused."
+                )
+                self._pause_observation()
+                return
+            if proposals:
+                self._refresh_observation_proposals()
+
+        def _pause_observation(self):
+            controller = self._observation_controller
+            if controller is None:
+                return
+            try:
+                controller.pause()
+                self.observation_timer.stop()
+                self.observation_pause_button.setEnabled(False)
+                self.observation_resume_button.setEnabled(True)
+                self.observation_global_indicator.setText("Observation paused")
+                self.observation_status.setText("Observation paused. No foreground sampling is occurring.")
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Pause failed (" + type(exc).__name__ + "); revoke this session."
+                )
+
+        def _resume_observation(self):
+            controller = self._observation_controller
+            if controller is None:
+                return
+            try:
+                if controller.resume():
+                    self.observation_timer.start()
+                    self.observation_pause_button.setEnabled(True)
+                    self.observation_resume_button.setEnabled(False)
+                    self.observation_status.setText("Observation resumed.")
+            except Exception as exc:
+                self._revoke_observation()
+                self.observation_status.setText(
+                    "Resume failed; observation revoked (" + type(exc).__name__ + ")."
+                )
+
+        def _revoke_observation(self):
+            self.observation_timer.stop()
+            controller = self._observation_controller
+            buffer = self._observation_buffer
+            learner = self._observation_worker
+            error = None
+            if learner is not None:
+                learner.stop()
+            if controller is not None:
+                try:
+                    controller.revoke()
+                except Exception as exc:
+                    error = exc
+            if buffer is not None:
+                buffer.close(clear=True)
+            self._observation_controller = None
+            self._observation_buffer = None
+            self._observation_worker = None
+            self._observation_writer = None
+            self.observation_allowlist.setEnabled(True)
+            self.observation_event_limit.setEnabled(True)
+            self.observation_start_button.setEnabled(sys.platform == "win32")
+            self.observation_pause_button.setEnabled(False)
+            self.observation_resume_button.setEnabled(False)
+            self.observation_revoke_button.setEnabled(False)
+            self._set_observation_indicator(False)
+            self.observation_status.setText(
+                "Observation revoked. A new explicit consent is required."
+                if error is None else
+                "Observation revocation reported an error (" + type(error).__name__ + ")."
+            )
+
+        def _selected_observation_proposal_id(self):
+            item = self.observation_proposal_list.currentItem()
+            return item.data(256) if item is not None else None
+
+        def _refresh_observation_proposals(self):
+            self.observation_proposal_list.clear()
+            self.observation_proposal_details.clear()
+            self.observation_approve_button.setEnabled(False)
+            self.observation_reject_button.setEnabled(False)
+            self.observation_delete_button.setEnabled(False)
+            self.observation_promote_button.setEnabled(False)
+            service = self.observation_review_service
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            if service is None or identity is None:
+                self.observation_status.setText("Sign in to access learning review.")
+                return
+            try:
+                proposals = service.list_recent(actor_id=identity.actor_id)
+                for proposal in proposals:
+                    item = QListWidgetItem(
+                        f"{proposal.kind}: {proposal.value} — {proposal.status}"
+                    )
+                    item.setData(256, proposal.proposal_id)
+                    self.observation_proposal_list.addItem(item)
+                self.observation_status.setText(
+                    f"{len(proposals)} recent proposal(s). No automatic memory promotion."
+                )
+                self._show_observation_proposal()
+                self._refresh_curated_knowledge()
+            except PermissionError:
+                self.observation_status.setText(
+                    "Your account does not have permission to view learning proposals."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Learning review unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _show_observation_proposal(self, *_args):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            self.observation_approve_button.setEnabled(False)
+            self.observation_reject_button.setEnabled(False)
+            self.observation_delete_button.setEnabled(False)
+            self.observation_promote_button.setEnabled(False)
+            if not proposal_id or identity is None or service is None:
+                self.observation_proposal_details.clear()
+                return
+            try:
+                proposal = service.get(proposal_id, actor_id=identity.actor_id)
+                if proposal is None:
+                    self.observation_proposal_details.setPlainText("Proposal expired or no longer exists.")
+                    return
+                self.observation_proposal_details.setPlainText(
+                    f"Proposal: {proposal.proposal_id}\n"
+                    f"Kind: {proposal.kind}\nValue: {proposal.value}\n"
+                    f"Summary: {proposal.summary}\nStatus: {proposal.status}\n"
+                    f"Created: {proposal.created_at}"
+                )
+                pending = proposal.status == "pending"
+                self.observation_approve_button.setEnabled(pending)
+                self.observation_reject_button.setEnabled(pending)
+                self.observation_delete_button.setEnabled(True)
+                self.observation_promote_button.setEnabled(
+                    proposal.status == "approved" and self.curated_knowledge_catalog is not None
+                )
+            except Exception as exc:
+                self.observation_proposal_details.setPlainText(
+                    "Proposal unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _decide_observation_proposal(self, decision):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            if not proposal_id or identity is None or service is None:
+                return
+            try:
+                getattr(service, decision)(proposal_id, actor_id=identity.actor_id)
+                self.observation_status.setText("Proposal " + ("approved" if decision == "approve" else "rejected") + " and audit recorded.")
+                self._refresh_observation_proposals()
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Review action failed (" + type(exc).__name__ + ")."
+                )
+
+        def _promote_observation_proposal(self):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            if not proposal_id or identity is None or service is None or catalog is None:
+                return
+            answer = QMessageBox.question(
+                self, "Promote curated knowledge",
+                "Add this approved observation to Yuki's durable curated knowledge catalog? "
+                "This does not change system instructions, permissions, or model weights.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                entry_id = service.promote_approved(
+                    proposal_id, actor_id=identity.actor_id, catalog=catalog,
+                )
+                self.observation_status.setText(
+                    "Approved proposal promoted to curated knowledge (" + entry_id[:12] + ")."
+                )
+                self._refresh_observation_proposals()
+            except PermissionError:
+                self.observation_status.setText(
+                    "Promotion requires the separate memory:knowledge:promote permission."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Knowledge promotion failed (" + type(exc).__name__ + ")."
+                )
+        def _selected_curated_knowledge_id(self):
+            item = self.curated_knowledge_list.currentItem()
+            return item.data(256) if item is not None else None
+
+        def _refresh_curated_knowledge(self):
+            self.curated_knowledge_list.clear()
+            self.curated_knowledge_details.clear()
+            self.curated_knowledge_status.setText("Sign in to inspect curated knowledge.")
+            self.curated_deactivate_button.setEnabled(False)
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            if service is None or catalog is None or identity is None:
+                self.curated_knowledge_status.setText("Sign in to inspect curated knowledge.")
+                return
+            try:
+                entries = service.list_curated(actor_id=identity.actor_id, catalog=catalog, limit=500)
+                for entry in entries:
+                    item = QListWidgetItem(
+                        f"{entry['kind']}: {entry['value']} — {entry['summary']}"
+                    )
+                    item.setData(256, entry['entry_id'])
+                    self.curated_knowledge_list.addItem(item)
+                self.curated_knowledge_status.setText(
+                    f"{len(entries)} active curated knowledge entr(y/ies)."
+                )
+                self._show_curated_knowledge_entry()
+            except PermissionError:
+                self.curated_knowledge_status.setText(
+                    "Viewing curated knowledge requires memory:knowledge:read."
+                )
+            except Exception as exc:
+                self.curated_knowledge_status.setText(
+                    "Curated knowledge unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _show_curated_knowledge_entry(self, *_args):
+            entry_id = self._selected_curated_knowledge_id()
+            self.curated_deactivate_button.setEnabled(False)
+            if not entry_id:
+                self.curated_knowledge_details.clear()
+                return
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            if service is None or catalog is None or identity is None:
+                return
+            try:
+                entries = service.list_curated(actor_id=identity.actor_id, catalog=catalog, limit=500)
+                entry = next((item for item in entries if item['entry_id'] == entry_id), None)
+                if entry is None:
+                    self.curated_knowledge_details.setPlainText("Entry is no longer active.")
+                    return
+                self.curated_knowledge_details.setPlainText(
+                    "Entry: " + entry['entry_id'] + "\n"
+                    + "Source proposal: " + entry['source_proposal_id'] + "\n"
+                    + "Approved by: " + entry['approved_by'] + "\n"
+                    + "Promoted by: " + entry['promoted_by'] + "\n"
+                    + "Created: " + str(entry['created_at'])
+                )
+                self.curated_deactivate_button.setEnabled(True)
+            except Exception as exc:
+                self.curated_knowledge_details.setPlainText(
+                    "Entry details unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _deactivate_curated_knowledge(self):
+            entry_id = self._selected_curated_knowledge_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            if not entry_id or identity is None or service is None or catalog is None:
+                return
+            answer = QMessageBox.question(
+                self, "Deactivate curated knowledge",
+                "Remove this entry from future retrieval? Its audit history will be retained.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                changed = service.deactivate_curated(
+                    entry_id, actor_id=identity.actor_id, catalog=catalog,
+                )
+                self.observation_status.setText(
+                    "Knowledge entry deactivated." if changed else "Entry was already inactive."
+                )
+                self._refresh_curated_knowledge()
+            except PermissionError:
+                self.observation_status.setText(
+                    "Deactivation requires memory:knowledge:deactivate."
+                )
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Knowledge deactivation failed (" + type(exc).__name__ + ")."
+                )
+
+        def _show_curated_knowledge_audit(self):
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            catalog = self.curated_knowledge_catalog
+            if identity is None or service is None or catalog is None:
+                return
+            try:
+                events = service.list_curated_events(
+                    actor_id=identity.actor_id, catalog=catalog, limit=200,
+                )
+                if not events:
+                    self.curated_knowledge_status.setText("No curated knowledge audit events recorded.")
+                    return
+                lines = [
+                    f"{event['action']} — {event['entry_id']} by {event['actor_id']} at {event['created_at']}"
+                    for event in events
+                ]
+                QMessageBox.information(
+                    self, "Curated knowledge audit", "\n".join(lines)
+                )
+            except PermissionError:
+                self.curated_knowledge_status.setText(
+                    "Knowledge audit viewing requires memory:knowledge:read."
+                )
+            except Exception as exc:
+                self.curated_knowledge_status.setText(
+                    "Knowledge audit unavailable (" + type(exc).__name__ + ")."
+                )
+
+        def _delete_observation_proposal(self):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            if not proposal_id or identity is None or service is None:
+                return
+            answer = QMessageBox.question(
+                self, "Delete learning proposal",
+                "Permanently delete this proposal and its review audit history?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                service.delete(proposal_id, actor_id=identity.actor_id)
+                self.observation_status.setText("Proposal and associated audit history deleted.")
+                self._refresh_observation_proposals()
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Delete failed (" + type(exc).__name__ + ")."
+                )
+
+        def _show_observation_audit(self):
+            proposal_id = self._selected_observation_proposal_id()
+            identity = self.sessions.current_identity() if self.sessions is not None else None
+            service = self.observation_review_service
+            if not proposal_id or identity is None or service is None:
+                return
+            try:
+                events = service.list_review_events(
+                    proposal_id, actor_id=identity.actor_id,
+                )
+                if not events:
+                    self.observation_status.setText("No review events recorded for this proposal.")
+                    return
+                lines = [
+                    f"{event['decision']} by {event['reviewer_id']} at {event['created_at']}"
+                    for event in events
+                ]
+                QMessageBox.information(self, "Learning review audit", "\n".join(lines))
+            except Exception as exc:
+                self.observation_status.setText(
+                    "Audit history unavailable (" + type(exc).__name__ + ")."
+                )
 
         def _refresh_tasks(self):
             if self.controller is None:
@@ -1663,6 +2384,16 @@ Version: {version}",
             self.specialist_list.clear()
             self.task_list.clear()
             self.task_progress_view.clear()
+            self.observation_proposal_list.clear()
+            self.observation_proposal_details.clear()
+            self.curated_knowledge_list.clear()
+            self.curated_knowledge_details.clear()
+            self.curated_deactivate_button.setEnabled(False)
+            self.observation_status.setText("Sign in to access learning review.")
+            self.observation_review_service = None
+            self.curated_knowledge_catalog = None
+            self._revoke_observation()
+            self.observation_status.setText("Sign in to access learning review.")
             self.backup_path.clear()
             self.backup_passphrase.clear()
             self.backup_confirmation.clear()
@@ -1750,6 +2481,7 @@ Version: {version}",
         def _logout(self):
             if self._logout_started or self._shutdown_started:
                 return
+            self._revoke_observation()
             self._logout_started = True
             if self.voice_session is not None:
                 self.voice_session.close()
@@ -1805,6 +2537,7 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            self._revoke_observation()
             if self.voice_session is not None:
                 self.voice_session.close()
             if self.speech_session is not None:

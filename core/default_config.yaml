@@ -26,6 +26,16 @@ security_lab_enabled: false
 recon_allowlisted_targets: []
 sandbox_enabled: false
 sandbox_allowed_images: []
+
+# Durable Docker artifact jobs are a separate, opt-in execution path.
+# Provision the root directory with service-user ownership and mode 0700 before enabling.
+sandbox_jobs_enabled: false
+sandbox_jobs_root: ""
+# Must be an immutable image reference pinned to a lowercase sha256 digest.
+sandbox_jobs_image: ""
+# Host-owned fixed argv; never populated from user or agent task arguments.
+sandbox_jobs_command: []
+sandbox_jobs_docker_binary: docker
 firewall_enabled: false
 firewall_dry_run: true
 web_allowed_hosts: []

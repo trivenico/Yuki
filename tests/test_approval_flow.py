@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
+from core.approval_preview import confirmation_digest
 from core.pending_approvals import SQLitePendingApprovalStore
 
 
@@ -19,7 +20,7 @@ class FakePlanner:
     def __init__(self):
         self.executed = []
 
-    def execute_approved_action(self, action):
+    def execute(self, action):
         self.executed.append(action)
         return SimpleNamespace(ok=True, value="executed")
 
@@ -28,10 +29,14 @@ def action_result(text="safe note"):
     return {"action": {"skill_id": "notes.write", "arguments": {"text": text}}}
 
 
+def action_digest(text="safe note"):
+    return confirmation_digest(action_result(text)["action"])
+
+
 class ApprovalCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.planner = FakePlanner()
-        self.coordinator = ApprovalCoordinator()
+        self.coordinator = ApprovalCoordinator(action_executor=self.planner)
         self.pending = self.coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -40,15 +45,27 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 confirm=lambda _action: True):
         return (coordinator or self.coordinator).approve(
             self.planner, pending_id or self.pending.pending_id, actor=actor,
-            session_id=session_id, confirm=confirm,
+            session_id=session_id, confirmation_digest=action_digest(), confirm=confirm,
         )
+
+    def test_durable_pending_store_requires_audit_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            with self.assertRaisesRegex(ValueError, "require an append-capable audit_log"):
+                ApprovalCoordinator(pending_store=store)
+
+    def test_durable_pending_store_rejects_invalid_audit_adapter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            with self.assertRaisesRegex(ValueError, "require an append-capable audit_log"):
+                ApprovalCoordinator(pending_store=store, audit_log=object())
 
     def test_audit_failure_does_not_leave_pending_request_available(self):
         class BrokenAudit:
             def append(self, **_event):
                 raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        coordinator = ApprovalCoordinator(audit_log=BrokenAudit(), action_executor=self.planner)
         with self.assertRaisesRegex(RuntimeError, "could not be audited"):
             coordinator.record(
                 self.planner, action_result(), actor="owner", session_id="session-a"
@@ -63,7 +80,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
-            coordinator = ApprovalCoordinator(pending_store=store, audit_log=BrokenAudit())
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=BrokenAudit(), action_executor=self.planner)
             with self.assertRaisesRegex(RuntimeError, "could not be audited"):
                 coordinator.record(
                     self.planner, action_result(), actor="owner", session_id="session-a"
@@ -79,13 +96,13 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "approved":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit(), action_executor=self.planner)
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
         outcome = coordinator.approve(
             self.planner, pending.pending_id, actor="owner", session_id="session-a",
-            confirm=lambda _action: True,
+            confirmation_digest=action_digest(), confirm=lambda _action: True,
         )
         self.assertEqual(outcome.status, "audit_unavailable")
         self.assertEqual(self.planner.executed, [])
@@ -96,16 +113,128 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "executed":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit(), action_executor=self.planner)
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
         outcome = coordinator.approve(
             self.planner, pending.pending_id, actor="owner", session_id="session-a",
-            confirm=lambda _action: True,
+            confirmation_digest=action_digest(), confirm=lambda _action: True,
         )
         self.assertEqual(outcome.status, "recovery_required")
         self.assertEqual(len(self.planner.executed), 1)
+
+    def test_planner_executor_method_is_never_discovered(self):
+        class UntrustedPlanner:
+            def __init__(self):
+                self.calls = []
+
+            def execute_approved_action(self, action):
+                self.calls.append(action)
+                return SimpleNamespace(ok=True)
+
+        planner = UntrustedPlanner()
+        coordinator = ApprovalCoordinator()
+        pending = coordinator.record(
+            planner, action_result(), actor="owner", session_id="session-a"
+        )
+        result = coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest=action_digest(), confirm=lambda _action: True,
+        )
+        self.assertEqual(result.status, "execution_unavailable")
+        self.assertEqual(planner.calls, [])
+        self.assertIsNotNone(coordinator._peek(
+            pending.pending_id, actor="owner", session_id="session-a"
+        ))
+
+    def test_missing_execution_runtime_does_not_consume_pending_approval(self):
+        class UnavailablePlanner:
+            def __init__(self):
+                self.legacy_calls = []
+
+            def execute_approved_action(self, action):
+                self.legacy_calls.append(action)
+                raise AssertionError("legacy planner executor must never be called")
+
+        planner = UnavailablePlanner()
+        coordinator = ApprovalCoordinator()
+        pending = coordinator.record(
+            planner, action_result("retry after wiring"), actor="owner", session_id="session-a"
+        )
+        unavailable = coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest=action_digest("retry after wiring"), confirm=lambda _action: True,
+        )
+        self.assertEqual(unavailable.status, "execution_unavailable")
+        self.assertFalse(unavailable.ok)
+        self.assertEqual(planner.legacy_calls, [])
+
+        executed = []
+        class ExplicitExecutor:
+            def execute(self, action):
+                executed.append(action)
+                return SimpleNamespace(ok=True)
+        coordinator.action_executor = ExplicitExecutor()
+        completed = coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest=action_digest("retry after wiring"), confirm=lambda _action: True,
+        )
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(len(executed), 1)
+        self.assertEqual(executed[0]["arguments"]["text"], "retry after wiring")
+
+    def test_missing_confirmation_handler_does_not_consume_pending_approval(self):
+        pending = self.coordinator.record(
+            self.planner, action_result("retry confirmation"), actor="owner", session_id="session-a"
+        )
+        unavailable = self.coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest=action_digest("retry confirmation"), confirm=None,
+        )
+        self.assertEqual(unavailable.status, "confirmation_unavailable")
+        self.assertFalse(unavailable.ok)
+        completed = self.coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest=action_digest("retry confirmation"), confirm=lambda _action: True,
+        )
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(len(self.planner.executed), 1)
+
+    def test_confirmation_callback_failure_preserves_pending_request(self):
+        def unavailable(_action):
+            raise TimeoutError("confirmation UI unavailable")
+
+        outcome = self.approve(confirm=unavailable)
+        self.assertEqual(outcome.status, "confirmation_unavailable")
+        self.assertEqual(self.planner.executed, [])
+        self.assertIsNotNone(self.coordinator._peek(
+            self.pending.pending_id, actor="owner", session_id="session-a"
+        ))
+
+        completed = self.approve()
+        self.assertTrue(completed.ok)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(len(self.planner.executed), 1)
+
+    def test_missing_and_mismatched_digest_preserve_pending_request(self):
+        missing = self.coordinator.approve(
+            self.planner, self.pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest="", confirm=lambda _action: True,
+        )
+        self.assertEqual(missing.status, "confirmation_mismatch")
+        malformed = self.approve_digest("A" * 64)
+        self.assertEqual(malformed.status, "confirmation_mismatch")
+        wrong = self.approve_digest(action_digest("different action"))
+        self.assertEqual(wrong.status, "confirmation_mismatch")
+        self.assertEqual(self.planner.executed, [])
+        self.assertTrue(self.approve().ok)
+
+    def approve_digest(self, digest):
+        return self.coordinator.approve(
+            self.planner, self.pending.pending_id, actor="owner", session_id="session-a",
+            confirmation_digest=digest, confirm=lambda _action: True,
+        )
 
     def test_record_requires_explicit_approval_before_execution(self):
         self.assertEqual(self.pending.status, "pending_approval")
@@ -144,12 +273,13 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             pending_store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
             audit_log = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
-            coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit_log)
+            coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit_log, action_executor=self.planner)
             pending = coordinator.record(
                 self.planner, action_result("persisted"), actor="owner", session_id="session-a"
             )
             outcome = coordinator.approve(
                 self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirmation_digest=action_digest("persisted"),
                 confirm=lambda shown: shown["arguments"]["text"] == "persisted",
             )
             self.assertTrue(outcome.ok)

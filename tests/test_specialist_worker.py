@@ -11,6 +11,7 @@ from automation.specialist_worker import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
+from core.compute_fabric import CPUBackend, ComputeRequest, ComputeScheduler
 
 
 class FakeProvider:
@@ -277,6 +278,128 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_workers=17)
         with self.assertRaises(ValueError):
             self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_tasks=101)
+
+    def test_compute_capacity_denial_does_not_claim_or_consume_attempt(self):
+        task_id = self.create_task()
+        scheduler = ComputeScheduler((CPUBackend(memory_capacity_bytes=100, max_concurrency=1),))
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "completed"},
+            compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=60),
+        )
+        with scheduler.reserve(ComputeRequest(memory_bytes=50)):
+            self.assertIsNone(worker.run_once())
+            queued = self.store.get(task_id)
+            self.assertEqual(queued.state, "queued")
+            self.assertEqual(queued.attempts, 0)
+            self.assertIsNone(queued.lease_owner)
+        result = worker.run_once()
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(scheduler.stats()["cpu"], {
+            "reserved_memory_bytes": 0,
+            "resident_memory_bytes": 0,
+            "transient_memory_bytes": 0,
+            "resident_models": 0,
+            "active_operations": 0,
+        })
+
+    def test_compute_reservation_is_released_after_handler_failure(self):
+        self.create_task()
+        scheduler = ComputeScheduler((CPUBackend(memory_capacity_bytes=100, max_concurrency=1),))
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (_ for _ in ()).throw(RuntimeError("failure"))},
+            compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=40),
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(scheduler.stats()["cpu"], {
+            "reserved_memory_bytes": 0,
+            "resident_memory_bytes": 0,
+            "transient_memory_bytes": 0,
+            "resident_models": 0,
+            "active_operations": 0,
+        })
+
+
+    def test_backend_capacity_error_after_admission_is_not_swallowed(self):
+        from core.compute_fabric import ComputeCapacityError
+
+        class FailingBackend(CPUBackend):
+            def execute(self, operation):
+                raise ComputeCapacityError("backend execution failed")
+
+        task_id = self.create_task()
+        scheduler = ComputeScheduler((FailingBackend(memory_capacity_bytes=100),))
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "completed"},
+            compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=40),
+        )
+        with self.assertRaisesRegex(ComputeCapacityError, "backend execution failed"):
+            worker.run_once()
+        queued = self.store.get(task_id)
+        self.assertEqual(queued.state, "queued")
+        self.assertEqual(queued.attempts, 0)
+        self.assertIsNone(queued.lease_owner)
+        self.assertEqual(scheduler.stats()["cpu"], {
+            "reserved_memory_bytes": 0,
+            "resident_memory_bytes": 0,
+            "transient_memory_bytes": 0,
+            "resident_models": 0,
+            "active_operations": 0,
+        })
+
+    def test_worker_skips_older_task_for_unhandled_specialist(self):
+        other = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="other-specialist-old",
+            name="agent-data-analyst-subtask-1",
+            steps=[{"name": "work", "action": "emit", "argument": "other", "requires_approval": False}],
+        )
+        own = self.create_task()
+        result = self.worker({"code-review": lambda text: "handled: " + text}).run_once()
+        self.assertEqual(result.task_id, own)
+        self.assertEqual(result.state, "succeeded")
+        untouched = self.store.get(other.task_id)
+        self.assertEqual(untouched.state, "queued")
+        self.assertEqual(untouched.attempts, 0)
+        self.assertIsNone(untouched.lease_owner)
+
+    def test_worker_with_no_eligible_task_leaves_queue_untouched(self):
+        other = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="only-other-specialist",
+            name="agent-data-analyst-subtask-1",
+            steps=[{"name": "work", "action": "emit", "argument": "other", "requires_approval": False}],
+        )
+        result = self.worker({"code-review": lambda _: "must not run"}).run_once()
+        self.assertIsNone(result)
+        queued = self.store.get(other.task_id)
+        self.assertEqual(queued.state, "queued")
+        self.assertEqual(queued.attempts, 0)
+        self.assertIsNone(queued.lease_owner)
+
+    def test_store_claim_prefix_filter_is_atomic_and_generic_claim_remains_unfiltered(self):
+        other = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="prefix-other",
+            name="agent-data-analyst-subtask-1",
+            steps=[{"name": "work", "action": "emit", "argument": "other", "requires_approval": False}],
+        )
+        own = self.create_task()
+        claimed = self.store.claim_next(
+            worker_id="filtered-worker",
+            workflow_name_prefixes=("agent-code-review-",),
+        )
+        self.assertEqual(claimed.run_id, own)
+        self.assertEqual(self.store.get(other.task_id).state, "queued")
+        generic = self.store.claim_next(worker_id="generic-worker")
+        self.assertEqual(generic.run_id, other.task_id)
+
+    def test_claim_prefix_filter_rejects_malformed_prefixes(self):
+        self.create_task()
+        invalid = ([], ["agent-code-review-"], (), ("",), ("x", "x"), ("x" * 101,), ("bad\x00prefix",))
+        for prefixes in invalid:
+            with self.subTest(prefixes=prefixes), self.assertRaises(ValueError):
+                self.store.claim_next(worker_id="filtered-worker", workflow_name_prefixes=prefixes)
 
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):

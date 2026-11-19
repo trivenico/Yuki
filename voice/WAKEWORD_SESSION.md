@@ -33,7 +33,7 @@ a selected wake-word model.
 - The `SoundDeviceWakeWordAudioSource` captures engine-sized PCM16 frames
   into a one-frame volatile queue; actual hardware and OS permission behavior
   still need desktop testing.
-- A legally redistributable "Hey Yuki" model.
+- A dedicated, legally redistributable custom model trained for the exact wake phrase **"Yuki"** (not "Hey Yuki"). The adapter can load a user-supplied ONNX model, but the repository does not yet contain a verified Yuki wake-word model or a reproducible training runbook.
 - Desktop settings, OS permission integration, tray indicator, and mute UI.
 - Real-device false-accept/false-reject testing and CPU usage measurements.
 
@@ -42,15 +42,15 @@ a selected wake-word model.
 The openWakeWord **code** is Apache-2.0, but its bundled pre-trained models
 are CC BY-NC-SA 4.0. The default models therefore must not be bundled into a
 commercially distributable Yuki build without resolving those model terms.
-The available pretrained list includes "hey jarvis", not "hey yuki"; English
-is currently the supported language. See the upstream README:
+The available pretrained list includes "hey jarvis" and does not provide the
+requested exact phrase **"Yuki"** as a ready-to-use model. See the upstream README:
 https://github.com/dscripka/openWakeWord
 
-An optional openWakeWord ONNX adapter is now implemented for one explicit
+An optional openWakeWord ONNX adapter is implemented for one explicit
 user-supplied model path. The upstream v0.6.0 runtime code is Apache-2.0, but
-pretrained model assets have separate terms and are not bundled. Yuki will
-train a custom "Hey Yuki" model using the Kaggle runbook at
-`training/wakeword/README.md`. The controller remains engine-agnostic and
+pretrained model assets have separate terms and are not bundled. The next wake-word
+milestone is to create and validate a custom **"Yuki"** model (never "Hey Yuki")
+and document its dataset, training process, evaluation, and licensing. The controller remains engine-agnostic and
 does not download models automatically. Before shipping, record separate
 licenses/provenance for runtime, model, training data and generated asset.
 

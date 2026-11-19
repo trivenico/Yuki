@@ -23,8 +23,16 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
-    "operator": frozenset({"workflow:read", "workflow:approve"}),
+    "admin": frozenset({
+        "workflow:read", "workflow:approve", "users:manage",
+        "observation:review:read", "observation:review:decide",
+        "observation:review:delete", "memory:knowledge:promote",
+        "memory:knowledge:read", "memory:knowledge:deactivate",
+    }),
+    "operator": frozenset({
+        "workflow:read", "workflow:approve",
+        "observation:review:read", "observation:review:decide",
+    }),
     "user": frozenset({"workflow:read"}),
 }
 
@@ -254,6 +262,32 @@ class _Connection:
             self.connection.rollback()
         self.connection.close()
         return False
+
+
+def observation_review_authorizer(auth_service, session_token_provider):
+    """Authorize review operations from the currently authenticated session.
+
+    The caller supplies a trusted token provider (for example, the desktop
+    session manager). Actor IDs supplied by UI controls are never trusted on
+    their own: they must match the account resolved from that live token.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    def authorize(actor_id, permission):
+        if not isinstance(permission, str) or not (permission.startswith("observation:review:") or permission.startswith("memory:knowledge:")):
+            return False
+        token = session_token_provider()
+        user = auth_service.resolve_session(token)
+        return bool(
+            user is not None
+            and user.user_id == actor_id
+            and permission in user.permissions
+        )
+
+    return authorize
 
 
 def workflow_principal_resolver(auth_service):

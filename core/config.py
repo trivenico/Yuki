@@ -161,6 +161,34 @@ def load_config(path=None):
         raise RuntimeError("kokoro_speed must be between 0.5 and 2.0.")
     spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
     if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
+    sandbox_jobs_enabled = _bool_setting(
+        "YUKI_SANDBOX_JOBS_ENABLED", raw, "sandbox_jobs_enabled", False
+    )
+    sandbox_jobs_root_value = raw.get("sandbox_jobs_root", "")
+    if not isinstance(sandbox_jobs_root_value, str) or len(sandbox_jobs_root_value) > 1024:
+        raise RuntimeError("sandbox_jobs_root must be a path string of at most 1024 characters.")
+    sandbox_jobs_root = Path(sandbox_jobs_root_value).expanduser() if sandbox_jobs_root_value else None
+    if sandbox_jobs_root is not None and not sandbox_jobs_root.is_absolute():
+        sandbox_jobs_root = workspace / sandbox_jobs_root
+    sandbox_jobs_image = raw.get("sandbox_jobs_image", "")
+    if not isinstance(sandbox_jobs_image, str) or len(sandbox_jobs_image) > 256:
+        raise RuntimeError("sandbox_jobs_image must be bounded text.")
+    sandbox_jobs_command = raw.get("sandbox_jobs_command", [])
+    if (not isinstance(sandbox_jobs_command, list) or len(sandbox_jobs_command) > 64
+            or any(not isinstance(part, str) or not part or "\x00" in part or len(part) > 500
+                   for part in sandbox_jobs_command)):
+        raise RuntimeError("sandbox_jobs_command must be a list of at most 64 bounded argv strings.")
+    sandbox_jobs_docker_binary = raw.get("sandbox_jobs_docker_binary", "docker")
+    if (not isinstance(sandbox_jobs_docker_binary, str) or not sandbox_jobs_docker_binary
+            or len(sandbox_jobs_docker_binary) > 1024 or "\x00" in sandbox_jobs_docker_binary):
+        raise RuntimeError("sandbox_jobs_docker_binary must be bounded non-empty text.")
+    if sandbox_jobs_enabled:
+        if sandbox_jobs_root is None or not str(sandbox_jobs_root):
+            raise RuntimeError("sandbox_jobs_root is required when sandbox_jobs_enabled is true.")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,180}@sha256:[0-9a-f]{64}", sandbox_jobs_image):
+            raise RuntimeError("sandbox_jobs_image must be pinned to a lowercase sha256 digest.")
+        if not sandbox_jobs_command:
+            raise RuntimeError("sandbox_jobs_command is required when sandbox_jobs_enabled is true.")
     return {
         "name": "Yuki", "workspace": str(workspace.resolve()),
         "storage_backend": storage_backend, "database_url": database_url,
@@ -170,6 +198,11 @@ def load_config(path=None):
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
         "security_lab_enabled": _bool_setting("YUKI_SECURITY_LAB_ENABLED", raw, "security_lab_enabled", False),
         "sandbox_enabled": _bool_setting("YUKI_SANDBOX_ENABLED", raw, "sandbox_enabled", False),
+        "sandbox_jobs_enabled": sandbox_jobs_enabled,
+        "sandbox_jobs_root": str(sandbox_jobs_root) if sandbox_jobs_root is not None else "",
+        "sandbox_jobs_image": sandbox_jobs_image,
+        "sandbox_jobs_command": list(sandbox_jobs_command),
+        "sandbox_jobs_docker_binary": sandbox_jobs_docker_binary,
         "gmail_enabled": _bool_setting("YUKI_GMAIL_ENABLED", raw, "gmail_enabled", False),
         "firewall_enabled": _bool_setting("YUKI_FIREWALL_ENABLED", raw, "firewall_enabled", False),
         "firewall_dry_run": _bool_setting("YUKI_FIREWALL_DRY_RUN", raw, "firewall_dry_run", True),

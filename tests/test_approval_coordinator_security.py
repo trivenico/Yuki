@@ -5,7 +5,9 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
+from core.approval_preview import confirmation_digest
 from core.pending_approvals import SQLitePendingApprovalStore
 
 
@@ -13,7 +15,7 @@ class DummyPlanner:
     def __init__(self):
         self.executed = []
 
-    def execute_approved_action(self, action):
+    def execute(self, action):
         self.executed.append(action)
         return SimpleNamespace(ok=True, result="ok")
 
@@ -23,13 +25,31 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         store = SQLitePendingApprovalStore(str(Path(self.tempdir.name) / "pending.sqlite3"))
-        self.coordinator = ApprovalCoordinator(pending_store=store)
+        audit = SQLiteApprovalAuditLog(str(Path(self.tempdir.name) / "audit.sqlite3"))
         self.planner = DummyPlanner()
+        self.coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit, action_executor=self.planner)
         self.action = {"skill_id": "notes.write", "arguments": {"text": "safe"}}
         result = SimpleNamespace(action=self.action)
         self.outcome = self.coordinator.record(
             self.planner, result, actor="owner", session_id="session-1"
         )
+
+    def test_digest_mismatch_does_not_consume_persistent_request(self):
+        mismatch = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirmation_digest=confirmation_digest({
+                "skill_id": "notes.write", "arguments": {"text": "different"}
+            }), confirm=lambda _: True,
+        )
+        self.assertEqual(mismatch.status, "confirmation_mismatch")
+        self.assertEqual(self.planner.executed, [])
+        confirmed = self.coordinator.approve(
+            self.planner, self.outcome.pending_id, actor="owner",
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
+        )
+        self.assertTrue(confirmed.ok)
+        self.assertEqual(len(self.planner.executed), 1)
 
     def test_confirmation_callback_cannot_mutate_executed_snapshot(self):
         def mutate_for_display(display):
@@ -38,37 +58,42 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
 
         result = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=mutate_for_display,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=mutate_for_display,
         )
         self.assertTrue(result.ok)
         self.assertEqual(self.planner.executed[0]["arguments"]["text"], "safe")
 
-    def test_confirmation_exception_fails_closed_and_consumes_request(self):
+    def test_confirmation_exception_preserves_persistent_request_for_retry(self):
         def broken(_):
             raise RuntimeError("UI unavailable")
 
         result = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=broken,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=broken,
         )
-        self.assertEqual(result.status, "approval_denied")
+        self.assertEqual(result.status, "confirmation_unavailable")
         self.assertEqual(self.planner.executed, [])
         replay = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=lambda _: True,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
         )
-        self.assertEqual(replay.status, "pending_not_found")
-        self.assertEqual(self.planner.executed, [])
+        self.assertTrue(replay.ok)
+        self.assertEqual(len(self.planner.executed), 1)
 
     def test_approval_is_actor_and_session_bound(self):
         wrong_actor = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="intruder",
-            session_id="session-1", confirm=lambda _: True,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
         )
         self.assertEqual(wrong_actor.status, "pending_not_found")
         correct = self.coordinator.approve(
             self.planner, self.outcome.pending_id, actor="owner",
-            session_id="session-1", confirm=lambda _: True,
+            session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+            confirm=lambda _: True,
         )
         self.assertTrue(correct.ok)
         self.assertEqual(len(self.planner.executed), 1)
@@ -82,7 +107,8 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
             barrier.wait()
             result = self.coordinator.approve(
                 self.planner, self.outcome.pending_id, actor="owner",
-                session_id="session-1", confirm=lambda _: True,
+                session_id="session-1", confirmation_digest=confirmation_digest(self.action),
+                confirm=lambda _: True,
             )
             with lock:
                 outcomes.append(result.status)

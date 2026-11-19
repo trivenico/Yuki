@@ -20,9 +20,14 @@ class WebLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(run_web, "load_config", return_value={
                 "workspace": directory, "storage_backend": "sqlite",
-                "provider": "openai",
-            }), patch.object(run_web, "create_provider", return_value=_Provider()):
+                "provider": "openai", "sandbox_jobs_enabled": False,
+            }), patch.object(run_web, "create_provider", return_value=_Provider()), patch.object(
+                run_web, "build_production_conversation_runtime",
+                wraps=run_web.build_production_conversation_runtime,
+            ) as production_factory:
                 app = run_web.create_app()
+            production_factory.assert_called_once()
+            self.assertFalse(production_factory.call_args.args[0]["sandbox_jobs_enabled"])
             self.assertIsInstance(app, ConversationRuntime)
             self.assertTrue((Path(directory) / "auth.sqlite3").exists())
             self.assertTrue(callable(app.app.provider_selector))

@@ -7,12 +7,33 @@ untrusted code safe; use a disposable host/workspace.
 from __future__ import annotations
 
 import subprocess
+import threading
+import uuid
 from pathlib import Path
 from typing import Callable, Sequence
 
 
 class SandboxError(RuntimeError):
     pass
+
+
+_OUTPUT_TAIL_BYTES = 12_000
+_READ_CHUNK_BYTES = 4_096
+
+
+def _drain_bounded_tail(stream, destination: bytearray, limit: int) -> None:
+    """Drain a child pipe completely while retaining only its final limit bytes."""
+    try:
+        while True:
+            chunk = stream.read(_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            destination.extend(chunk)
+            excess = len(destination) - limit
+            if excess > 0:
+                del destination[:excess]
+    finally:
+        stream.close()
 
 
 class DockerSandbox:
@@ -41,21 +62,67 @@ class DockerSandbox:
         self.workspace.mkdir(parents=True, exist_ok=True)
         if self.approver is None or self.approver(f"Run approved image {image} with argv {list(argv)!r}") is not True:
             raise SandboxError("Explicit approval was not granted.")
+        container_name = "yuki-sandbox-" + uuid.uuid4().hex
         command = [
             self.docker_binary, "run", "--rm", "--pull=never",
+            "--name", container_name,
             "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--pids-limit=64",
             "--memory=512m", "--cpus=1", "--user=65534:65534",
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",
-            "--mount", f"type=bind,src={self.workspace},dst=/workspace,rw",
+            "--mount", f"type=bind,src={self.workspace},dst=/workspace,ro",
             "--workdir", "/workspace", image, *argv,
         ]
+        stdout_tail, stderr_tail = bytearray(), bytearray()
         try:
-            result = subprocess.run(command, shell=False, capture_output=True, text=True,
-                                    timeout=timeout, check=False)
-        except subprocess.TimeoutExpired as exc:
-            raise SandboxError("Sandbox process timed out.") from exc
+            process = subprocess.Popen(
+                command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
         except OSError as exc:
             raise SandboxError("Docker could not be started.") from exc
-        return {"returncode": result.returncode, "stdout": result.stdout[-12000:],
-                "stderr": result.stderr[-12000:]}
+
+        readers = [
+            threading.Thread(target=_drain_bounded_tail,
+                             args=(process.stdout, stdout_tail, _OUTPUT_TAIL_BYTES),
+                             daemon=True),
+            threading.Thread(target=_drain_bounded_tail,
+                             args=(process.stderr, stderr_tail, _OUTPUT_TAIL_BYTES),
+                             daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        timed_out = False
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            # Terminate the daemon-side container first: killing only the local
+            # Docker CLI can otherwise leave the workload running in the daemon.
+            try:
+                subprocess.run(
+                    [self.docker_binary, "kill", container_name],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    check=False,
+                    shell=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                # Still reap the local client; the timeout remains a hard failure.
+                pass
+            process.kill()
+            process.wait()
+            for reader in readers:
+                reader.join()
+            raise SandboxError("Sandbox process timed out.") from exc
+        finally:
+            if not timed_out:
+                for reader in readers:
+                    reader.join()
+
+        return {
+            "returncode": returncode,
+            "stdout": stdout_tail.decode("utf-8", errors="replace"),
+            "stderr": stderr_tail.decode("utf-8", errors="replace"),
+        }

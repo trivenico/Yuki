@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
@@ -7,6 +8,8 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
@@ -14,6 +17,14 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.durable_task_engine import DurableTaskEngine
+from core.workforce import AgentRegistry, default_workforce
+from core.workforce_dashboard import WorkforceDashboard
+from core.workforce_application_runtime import build_workforce_application_runtime
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
+from skills.time_skill import TimeSkill
+from api.workforce import AuthenticatedWorkforceDashboardAPI
 
 
 class _NoApprovals:
@@ -29,6 +40,180 @@ def _loop():
 
 
 class ConversationRuntimeTests(unittest.TestCase):
+    def test_runtime_mounts_optional_authenticated_workforce_dashboard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            engine = DurableTaskEngine(str(root / "tasks.sqlite"))
+            dashboard = WorkforceDashboard(
+                registry=AgentRegistry(default_workforce()), task_engine=engine
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), workforce_dashboard=dashboard,
+            )
+            self.assertIsInstance(runtime.app, AuthenticatedWorkforceDashboardAPI)
+            self.assertIs(runtime.app.dashboard, dashboard)
+            runtime.close()
+            engine.close()
+
+    def test_runtime_mounts_optional_approval_inbox_services(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            engine = DurableTaskEngine(str(root / "tasks.sqlite"))
+            dashboard = WorkforceDashboard(
+                registry=AgentRegistry(default_workforce()), task_engine=engine
+            )
+            pending = SQLitePendingApprovalStore(str(root / "pending.sqlite"))
+            audit = SQLiteApprovalAuditLog(str(root / "approval-audit.sqlite"))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), workforce_dashboard=dashboard,
+                pending_approvals=pending, approval_audit=audit,
+            )
+            self.assertIs(runtime.app.pending_approvals, pending)
+            self.assertIs(runtime.app.approval_audit, audit)
+            runtime.close()
+            engine.close()
+
+    def test_runtime_rejects_approval_services_without_workforce_dashboard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            pending = SQLitePendingApprovalStore(str(Path(directory) / "pending.sqlite"))
+            with self.assertRaisesRegex(ValueError, "require workforce_dashboard"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), pending_approvals=pending,
+                )
+
+    def test_runtime_owns_workforce_runtime_and_closes_it_on_shutdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                workforce_application=workforce,
+            )
+            self.assertIs(runtime.workforce_application, workforce)
+            self.assertIsInstance(runtime.app, AuthenticatedWorkforceDashboardAPI)
+            self.assertIs(runtime.app.dashboard.registry, workforce.registry)
+            self.assertIs(runtime.app.dashboard.task_engine, workforce.engine)
+            self.assertFalse(workforce.closed)
+            runtime.close()
+            runtime.close()
+            self.assertTrue(workforce.closed)
+    def test_shutdown_attempts_all_owned_cleanup_when_workforce_close_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                workforce_application=workforce,
+            )
+            application_close = runtime.application.close
+            close_calls = []
+            def fail_workforce_close():
+                raise RuntimeError("workforce shutdown failure")
+            def track_application_close():
+                close_calls.append("application")
+                application_close()
+            workforce.close = fail_workforce_close
+            runtime.application.close = track_application_close
+
+            with self.assertRaisesRegex(RuntimeError, "workforce shutdown failure"):
+                runtime.close()
+            self.assertEqual(close_calls, ["application"])
+            self.assertTrue(runtime.application.closed)
+            self.assertTrue(runtime._closed)
+
+            # A second ASGI shutdown path must not retry partially failed cleanup.
+            runtime.close()
+            self.assertEqual(close_calls, ["application"])
+
+    def test_construction_failure_attempts_all_cleanup_and_preserves_original_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            original_builder = __import__(
+                "api.runtime", fromlist=["build_conversation_application_runtime"]
+            ).build_conversation_application_runtime
+            captured = []
+
+            def capture_application(*args, **kwargs):
+                application = original_builder(*args, **kwargs)
+                captured.append(application)
+                return application
+
+            def fail_workforce_close():
+                raise RuntimeError("workforce close failed")
+
+            workforce.close = fail_workforce_close
+            with patch("api.runtime.build_conversation_application_runtime", side_effect=capture_application), \
+                 patch("api.runtime.YukiConversationAPI", side_effect=ValueError("composition failed")):
+                with self.assertRaisesRegex(ValueError, "composition failed"):
+                    build_conversation_runtime(
+                        {"storage_backend": "sqlite", "workspace": directory},
+                        auth_service=auth, agent_loop=_loop(),
+                        workforce_application=workforce,
+                    )
+
+            self.assertEqual(len(captured), 1)
+            self.assertTrue(captured[0].closed)
+            # The workforce close failure must not mask the original error.
+            workforce.close = lambda: None
+            workforce.close()
+
+    def test_runtime_rejects_dashboard_using_different_workforce_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            workforce = build_workforce_application_runtime(
+                database=root / "workforce.sqlite",
+                agent=YukiCoreAgent(
+                    skills=[TimeSkill()],
+                    permission_gate=PermissionGate(approver=lambda request: True),
+                ),
+            )
+            other_engine = DurableTaskEngine(str(root / "other.sqlite"))
+            dashboard = WorkforceDashboard(
+                registry=workforce.registry, task_engine=other_engine,
+            )
+            try:
+                with self.assertRaisesRegex(ValueError, "workforce_dashboard must use"):
+                    build_conversation_runtime(
+                        {"storage_backend": "sqlite", "workspace": directory},
+                        auth_service=auth, agent_loop=_loop(),
+                        workforce_application=workforce, workforce_dashboard=dashboard,
+                    )
+                self.assertFalse(workforce.closed)
+            finally:
+                other_engine.close()
+                workforce.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -198,6 +383,64 @@ class ConversationRuntimeTests(unittest.TestCase):
                 {"type": "lifespan.shutdown.complete"},
             ])
             self.assertTrue(runtime._closed)
+
+    def test_startup_runs_sandbox_recovery_before_accepting_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            recovery = SimpleNamespace(
+                calls=0,
+                recover_nonterminal=lambda: [{"job_id": "job_x", "outcome": "removed"}],
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), sandbox_job_recovery=recovery,
+            )
+            events = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            import asyncio
+            asyncio.run(runtime({"type": "lifespan"}, receive, send))
+            self.assertEqual(sent[0]["type"], "lifespan.startup.complete")
+            self.assertTrue(runtime._startup_complete)
+
+    def test_startup_fails_closed_when_sandbox_recovery_is_ambiguous(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            recovery = SimpleNamespace(
+                recover_nonterminal=lambda: [
+                    {"job_id": "job_x", "outcome": "recovery_required"}
+                ],
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), sandbox_job_recovery=recovery,
+            )
+            events = [{"type": "lifespan.startup"}]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            import asyncio
+            asyncio.run(runtime({"type": "lifespan"}, receive, send))
+            self.assertEqual(sent, [{
+                "type": "lifespan.startup.failed",
+                "message": "Yuki startup recovery failed: RuntimeError",
+            }])
+            self.assertTrue(runtime._closed)
+            self.assertFalse(runtime._startup_complete)
+
+    def test_runtime_rejects_invalid_sandbox_recovery_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "sandbox_job_recovery"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), sandbox_job_recovery=object(),
+                )
 
     def test_invalid_dependencies_fail_before_store_creation(self):
         with tempfile.TemporaryDirectory() as directory:

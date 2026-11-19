@@ -50,7 +50,11 @@ class YukiWebApplicationTests(unittest.TestCase):
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
-        for path, expected in (("/assets/chat.js", b"sessionStorage"), ("/assets/chat.css", b"color-scheme")):
+        for path, expected in (
+            ("/assets/chat.js", b"sessionStorage"),
+            ("/assets/chat.css", b"color-scheme"),
+            ("/assets/workforce-dashboard.js", b"/v1/workforce/dashboard"),
+        ):
             sent = self.request(app, path)
             self.assertEqual(sent[0]["status"], 200)
             self.assertIn(expected, sent[1]["body"])

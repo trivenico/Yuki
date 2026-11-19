@@ -19,6 +19,7 @@
   const signOut = (notify = true) => {
     state.token = null; state.user = null; state.active = null; state.version = 0;
     sessionStorage.removeItem("yuki_token"); showLogin();
+    window.dispatchEvent(new Event("yuki:session-ended"));
     if (notify) toast("You have signed out.");
   };
   const makeMessage = (role, content) => {
@@ -286,7 +287,7 @@
     try {
       const data = await api("/v1/auth/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) });
       state.token = data.access_token; state.user = data.user; sessionStorage.setItem("yuki_token", state.token);
-      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
+      $("account-label").textContent = data.user.username; showChat(); window.dispatchEvent(new Event("yuki:session-ready")); await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (error) { $("login-error").textContent = error.message === "invalid_credentials" ? "Incorrect username or password." : error.message; }
   });
@@ -329,6 +330,7 @@
       const identity = await api("/v1/auth/me"); state.user = identity.user;
       const data = await api("/v1/conversations"); state.conversations = data.conversations || [];
       showChat(); $("account-label").textContent = state.user.username;
+      window.dispatchEvent(new Event("yuki:session-ready"));
       await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (_) { signOut(false); }

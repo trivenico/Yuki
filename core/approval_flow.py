@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import threading
 from typing import Any, Callable
 
+from core.approval_preview import verify_confirmation_digest
+
 
 @dataclass(frozen=True)
 class ApprovalOutcome:
@@ -15,10 +17,21 @@ class ApprovalOutcome:
 
 
 class ApprovalCoordinator:
-    def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
+    def __init__(self, *, pending_store=None, audit_log=None, action_executor=None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if pending_store is not None:
+            required_store_methods = ("put", "consume", "deny")
+            if any(not callable(getattr(pending_store, name, None)) for name in required_store_methods):
+                raise TypeError("pending_store must implement put(), consume(), and deny().")
+            if audit_log is None or not callable(getattr(audit_log, "append", None)):
+                raise ValueError("Durable pending approvals require an append-capable audit_log.")
+        elif audit_log is not None and not callable(getattr(audit_log, "append", None)):
+            raise TypeError("audit_log must implement append().")
+        if action_executor is not None and not callable(getattr(action_executor, "execute", None)):
+            raise TypeError("action_executor must implement execute(action).")
         self.pending_store = pending_store
+        self.action_executor = action_executor
         self.audit_log = audit_log
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
@@ -88,17 +101,43 @@ class ApprovalCoordinator:
         return ApprovalOutcome(False, "pending_approval", pending_id=pending_id, result=action)
 
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
-                confirm: Callable[[dict], bool]) -> ApprovalOutcome:
+                confirmation_digest: str, confirm: Callable[[dict], bool]) -> ApprovalOutcome:
+        if not callable(confirm):
+            return ApprovalOutcome(
+                False, "confirmation_unavailable",
+                pending_id=pending_id if isinstance(pending_id, str) else None,
+            )
+        # Verify consent against the owner/session-bound snapshot before consuming it.
+        preview = self._peek(pending_id, actor=actor, session_id=session_id)
+        if preview is None:
+            return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
+        if not verify_confirmation_digest(preview["action"], confirmation_digest):
+            return ApprovalOutcome(False, "confirmation_mismatch", pending_id=pending_id)
+
+        executor = self.action_executor
+        if executor is None:
+            # Keep the request pending: missing runtime wiring is not a user denial.
+            return ApprovalOutcome(
+                False, "execution_unavailable",
+                pending_id=pending_id if isinstance(pending_id, str) else None,
+            )
+        # Ask for explicit consent while the request is still pending. A UI
+        # timeout or callback exception is not a user denial and must be retryable.
+        import json
+        display_action = json.loads(json.dumps(preview["action"]))
+        try:
+            confirmed = confirm(display_action) is True
+        except Exception:
+            return ApprovalOutcome(False, "confirmation_unavailable", pending_id=pending_id)
+
+        # Consume only after a definitive user decision. The atomic consume
+        # prevents concurrent approvals from executing the same request twice.
         pending = self._consume(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
         action = pending["action"]
-        import json
-        display_action = json.loads(json.dumps(action))
-        try:
-            confirmed = confirm(display_action) is True
-        except Exception:
-            confirmed = False
+        if not verify_confirmation_digest(action, confirmation_digest):
+            return ApprovalOutcome(False, "confirmation_mismatch", pending_id=pending_id)
         if not confirmed:
             try:
                 self._audit("denied", pending_id, actor, pending["skill_id"])
@@ -112,11 +151,7 @@ class ApprovalCoordinator:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         try:
-            result = (
-                planner.agent.execute_approved_action(action)
-                if hasattr(planner, "agent") and hasattr(planner.agent, "execute_approved_action")
-                else planner.execute_approved_action(action)
-            )
+            result = executor.execute(action)
         except Exception as exc:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
@@ -135,6 +170,28 @@ class ApprovalCoordinator:
                 result={"execution_result": result, "audit": "unavailable"},
             )
         return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
+
+    def _peek(self, pending_id, *, actor, session_id):
+        """Read an approval snapshot without consuming it, bound to its creator."""
+        if not isinstance(pending_id, str) or not pending_id:
+            return None
+        if not isinstance(actor, str) or not isinstance(session_id, str):
+            return None
+        if self.pending_store is not None:
+            getter = getattr(self.pending_store, "get_for_actor_session", None)
+            if not callable(getter):
+                return None
+            item = getter(pending_id, actor=actor, session_id=session_id)
+            if item is None:
+                return None
+            return {"skill_id": item.skill_id, "arguments": item.arguments,
+                    "action": item.action, "actor": actor, "session_id": session_id}
+        with self._pending_lock:
+            item = self._pending.get(pending_id)
+            if item is None or item["actor"] != actor or item["session_id"] != session_id:
+                return None
+            import json
+            return json.loads(json.dumps(item, ensure_ascii=False, allow_nan=False))
 
     def _consume(self, pending_id, *, actor, session_id):
         if not isinstance(pending_id, str) or not pending_id:

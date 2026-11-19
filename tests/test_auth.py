@@ -4,7 +4,7 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import AuthenticationError, BuiltInAuthService, workflow_principal_resolver
+from core.auth import (AuthenticationError, BuiltInAuthService, observation_review_authorizer, workflow_principal_resolver)
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -22,11 +22,24 @@ class BuiltInAuthServiceTests(unittest.TestCase):
     def test_first_admin_bootstrap_is_one_time_and_signup_is_least_privilege(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         self.assertIn("users:manage", admin.permissions)
+        self.assertIn("observation:review:read", admin.permissions)
+        self.assertIn("observation:review:decide", admin.permissions)
+        self.assertIn("observation:review:delete", admin.permissions)
+        operator = self.auth.create_account("ops.user", "Another secure password 4!")
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
+        operator = next(user for user in self.auth.list_users() if user.user_id == operator.user_id)
+        self.assertIn("observation:review:read", operator.permissions)
+        self.assertIn("observation:review:decide", operator.permissions)
+        self.assertNotIn("observation:review:delete", operator.permissions)
         with self.assertRaises(PermissionError):
             self.auth.bootstrap_admin("other.admin", "Correct horse battery staple 9!")
         user = self.auth.create_account("normal.user", "Another secure password 4!")
         self.assertEqual(user.role, "user")
         self.assertNotIn("workflow:approve", user.permissions)
+        self.assertNotIn("observation:review:read", user.permissions)
+        self.assertNotIn("observation:review:decide", user.permissions)
+        self.assertNotIn("observation:review:delete", user.permissions)
 
     def test_login_stores_only_session_hash_and_logout_revokes(self):
         self.auth.create_account("alice.user", "A sufficiently long password 3!")
@@ -74,6 +87,63 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertEqual(approved.approved_by, admin.user_id)
         with self.assertRaises(AuthenticationError):
             service.approve(run.run_id, request_context="forged-user-token", expected_version=approved.version)
+
+    def test_observation_review_authorization_is_bound_to_live_session_and_actor(self):
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        token = [session.token]
+        authorize = observation_review_authorizer(self.auth, lambda: token[0])
+        self.assertTrue(authorize(admin.user_id, "observation:review:read"))
+        self.assertTrue(authorize(admin.user_id, "observation:review:decide"))
+        self.assertTrue(authorize(admin.user_id, "observation:review:delete"))
+        self.assertFalse(authorize("forged-actor", "observation:review:decide"))
+        self.assertFalse(authorize(admin.user_id, "workflow:approve"))
+        self.auth.revoke_session(session.token)
+        self.assertFalse(authorize(admin.user_id, "observation:review:read"))
+
+    def test_knowledge_promotion_permission_is_admin_only_and_session_bound(self):
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        admin_session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        admin_authorize = observation_review_authorizer(self.auth, lambda: admin_session.token)
+        self.assertTrue(admin_authorize(admin.user_id, "memory:knowledge:promote"))
+
+        operator = self.auth.create_account("ops.user", "Another secure password 4!")
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
+        operator = next(user for user in self.auth.list_users() if user.user_id == operator.user_id)
+        operator_session = self.auth.authenticate("ops.user", "Another secure password 4!")
+        operator_authorize = observation_review_authorizer(self.auth, lambda: operator_session.token)
+        self.assertFalse(operator_authorize(operator.user_id, "memory:knowledge:promote"))
+        self.assertFalse(admin_authorize("forged-actor", "memory:knowledge:promote"))
+        self.auth.revoke_session(admin_session.token)
+        self.assertFalse(admin_authorize(admin.user_id, "memory:knowledge:promote"))
+
+    def test_curated_knowledge_permissions_are_admin_only(self):
+        self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        operator = self.auth.create_account("ops.user", "Another secure password 4!")
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
+        operator = next(user for user in self.auth.list_users() if user.user_id == operator.user_id)
+        for permission in ("memory:knowledge:read", "memory:knowledge:promote",
+                           "memory:knowledge:deactivate"):
+            self.assertNotIn(permission, operator.permissions)
+        admin = next(user for user in self.auth.list_users() if user.username == "root.user")
+        self.assertTrue({
+            "memory:knowledge:read", "memory:knowledge:promote",
+            "memory:knowledge:deactivate",
+        }.issubset(admin.permissions))
+
+    def test_observation_review_roles_are_least_privilege(self):
+        self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        operator = self.auth.create_account("ops.user", "Another secure password 4!")
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
+        operator = next(user for user in self.auth.list_users() if user.user_id == operator.user_id)
+        self.assertIn("observation:review:read", operator.permissions)
+        self.assertIn("observation:review:decide", operator.permissions)
+        self.assertNotIn("observation:review:delete", operator.permissions)
+        regular = self.auth.create_account("normal.user", "Another secure password 5!")
+        self.assertNotIn("observation:review:read", regular.permissions)
 
 
 if __name__ == "__main__":

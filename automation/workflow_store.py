@@ -279,23 +279,54 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
-        """Atomically claim the oldest queued run; never steals or replays running work."""
+    def claim_next(
+        self, *, worker_id: str, lease_seconds: int = 60,
+        workflow_name_prefixes: tuple[str, ...] | None = None,
+    ) -> WorkflowRun | None:
+        """Atomically claim the oldest eligible queued run.
+
+        Optional literal workflow-name prefixes partition shared queues without
+        changing the generic worker contract. Prefix filtering is performed in
+        SQL inside the same write transaction as the lease update.
+        """
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if workflow_name_prefixes is not None:
+            if (
+                not isinstance(workflow_name_prefixes, tuple)
+                or not 1 <= len(workflow_name_prefixes) <= 32
+                or any(
+                    not isinstance(prefix, str)
+                    or not prefix
+                    or len(prefix) > _MAX_NAME_CHARS
+                    or "\x00" in prefix
+                    for prefix in workflow_name_prefixes
+                )
+                or len(set(workflow_name_prefixes)) != len(workflow_name_prefixes)
+            ):
+                raise ValueError("workflow_name_prefixes must be a tuple of 1-32 unique bounded prefixes.")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
         with self._connect() as db:
             # Serialize selection and claim so concurrent workers cannot claim
-            # the same queued run.
+            # the same queued run. Prefix filtering is part of this transaction,
+            # so ineligible older work cannot starve an eligible specialist.
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
-            ).fetchall()
+            query = "SELECT * FROM workflow_runs WHERE state='queued'"
+            params: tuple[Any, ...] = ()
+            if workflow_name_prefixes is not None:
+                clauses = []
+                values: list[Any] = []
+                for prefix in workflow_name_prefixes:
+                    clauses.append("substr(workflow_name, 1, ?) = ?")
+                    values.extend((len(prefix), prefix))
+                query += " AND (" + " OR ".join(clauses) + ")"
+                params = tuple(values)
+            query += " ORDER BY created_at, run_id LIMIT 100"
+            rows = db.execute(query, params).fetchall()
             row = next((
                 candidate for candidate in rows
                 if not self._requires_approval(json.loads(candidate["definition_json"]))

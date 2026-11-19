@@ -31,10 +31,12 @@ class ConversationApplicationRuntime:
         """Close persistence exactly once; safe for repeated shutdown paths."""
         if self._closed:
             return
+        # Mark closed before invoking the backend so a failing close is not
+        # retried by a later shutdown signal after partial cleanup.
+        self._closed = True
         close = getattr(self.store, "close", None)
         if callable(close):
             close()
-        self._closed = True
 
 
 def build_conversation_application_runtime(
@@ -44,6 +46,7 @@ def build_conversation_application_runtime(
     owner_id: str | None = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    knowledge_entries_for_owner: Callable[[str, str], Any] | None = None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -63,12 +66,20 @@ def build_conversation_application_runtime(
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
     store = store_factory(config)
     try:
-        conversations = ConversationService(store, agent_loop, agent_loop_for_owner=agent_loop_for_owner)
+        conversations = ConversationService(
+            store, agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+            knowledge_entries_for_owner=knowledge_entries_for_owner,
+        )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,
         )
     except Exception:
+        # Preserve the construction failure; a backend cleanup error must not
+        # hide the exception that prevented the runtime from being composed.
         close = getattr(store, "close", None)
         if callable(close):
-            close()
+            try:
+                close()
+            except Exception:
+                pass
         raise

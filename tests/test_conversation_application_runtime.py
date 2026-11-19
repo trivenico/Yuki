@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -37,6 +38,47 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             # application runtime must not invalidate subsequent store objects.
             reopened = ConversationStore(Path(directory) / "conversations.sqlite3")
             self.assertEqual(reopened.list_conversations(owner_id="local-owner-123"), [])
+
+    def test_close_is_attempted_once_even_when_store_close_fails(self):
+        class FailingStore(ConversationStore):
+            def __init__(self, path):
+                super().__init__(path)
+                self.close_calls = 0
+            def close(self):
+                self.close_calls += 1
+                raise OSError("storage close failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = FailingStore(Path(directory) / "conversations.sqlite3")
+            runtime = build_conversation_application_runtime(
+                {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+            )
+            with self.assertRaisesRegex(OSError, "storage close failed"):
+                runtime.close()
+            runtime.close()
+            self.assertTrue(runtime.closed)
+            self.assertEqual(store.close_calls, 1)
+
+    def test_store_cleanup_failure_does_not_mask_service_construction_error(self):
+        class FailingStore(ConversationStore):
+            def __init__(self, path):
+                super().__init__(path)
+                self.close_calls = 0
+            def close(self):
+                self.close_calls += 1
+                raise OSError("cleanup failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = FailingStore(Path(directory) / "conversations.sqlite3")
+            with patch(
+                "core.conversation_application_runtime.ConversationService",
+                side_effect=ValueError("service construction failed"),
+            ):
+                with self.assertRaisesRegex(ValueError, "service construction failed"):
+                    build_conversation_application_runtime(
+                        {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+                    )
+            self.assertEqual(store.close_calls, 1)
 
     def test_api_runtime_can_leave_owner_resolution_to_authenticated_surface(self):
         with tempfile.TemporaryDirectory() as directory:
