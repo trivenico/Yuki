@@ -237,7 +237,11 @@ class WorkforceDashboardTests(unittest.TestCase):
 
         success = self.engine.submit(
             goal_id, "workforce.task",
-            {"assigned_employee_id": employee.employee_id, "description": "Successful comparison sample"},
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Successful comparison sample",
+                "required_capabilities": ["python"],
+            },
             idempotency_key="improvement-success-sample", max_attempts=1,
         )
         self.engine.claim("improvement-worker", task_type="workforce.task")
