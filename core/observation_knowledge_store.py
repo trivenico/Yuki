@@ -134,8 +134,20 @@ class SQLiteObservationKnowledgeReview:
             (self._owner, now - self._retention),
         )
 
-    def propose(self, kind: str, value: str) -> KnowledgeProposal:
-        kind, summary = self._normalize(kind, value)
+    def propose(
+        self, kind: str, value: str, *, summary: str | None = None
+    ) -> KnowledgeProposal:
+        kind, default_summary = self._normalize(kind, value)
+        if summary is None:
+            summary = default_summary
+        elif (
+            not isinstance(summary, str)
+            or not summary.strip()
+            or len(summary) > 500
+        ):
+            raise ValueError("summary must be non-empty text of at most 500 characters")
+        else:
+            summary = summary.strip()
         value = value.strip().lower()
         fingerprint = self._fingerprint(kind, value)
         now = float(self._clock())
