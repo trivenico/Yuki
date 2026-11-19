@@ -91,7 +91,7 @@ def build_docker_argv(
         mounts.extend(["--mount", f"type=bind,src={str(output)},dst=/output,rw"])
 
     return [
-        "docker", "run", "--rm", "--interactive", "--read-only",
+        "docker", "run", "--rm", "--pull=never", "--interactive", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",
         "--pids-limit", str(policy.max_processes), "--cap-drop", "ALL",
