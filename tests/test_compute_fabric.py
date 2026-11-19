@@ -380,6 +380,26 @@ class ComputeFabricTests(unittest.TestCase):
             )
         self.assertEqual(self.scheduler.stats()["cpu"]["resident_memory_bytes"], 40)
 
+    def test_model_session_identity_is_read_only(self):
+        manager = ModelLifecycleManager(self.scheduler)
+        request = ComputeRequest(memory_bytes=60)
+        session = manager.load(
+            request, model_id="immutable-session",
+            loader=lambda backend: object(),
+        )
+
+        with self.assertRaises(AttributeError):
+            session.model_id = "mutated"
+        with self.assertRaises(AttributeError):
+            session.request = ComputeRequest(memory_bytes=1)
+        with self.assertRaises(AttributeError):
+            session.backend = self.backend
+
+        self.assertEqual(session.model_id, "immutable-session")
+        self.assertIs(session.request, request)
+        self.assertIs(session.backend, self.backend)
+        manager.unload(session, lambda backend, handle: None)
+
     def test_model_unload_failure_blocks_inference_until_reconciliation(self):
         from core.compute_fabric import ModelLifecycleManager, ModelSessionError
 
