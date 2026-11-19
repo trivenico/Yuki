@@ -25,6 +25,18 @@ _STATES = {
 }
 
 
+_ALLOWED_TRANSITIONS = {
+    "created": {"running", "failed", "cancelled"},
+    "running": {"frozen", "failed", "cancelled"},
+    "frozen": {"validated", "failed", "cancelled"},
+    "validated": {"promoted", "failed"},
+    "promoted": {"cleaned"},
+    "failed": {"cleaned"},
+    "cancelled": {"cleaned"},
+    "cleaned": set(),
+}
+
+
 class SandboxJobStoreError(RuntimeError):
     """Durable sandbox job metadata could not be safely accessed or changed."""
 
@@ -176,7 +188,9 @@ class SandboxJobStore:
     ) -> DurableJobRecord:
         self._validate_job_id(job_id)
         expected = tuple(expected_states)
-        if not expected or any(state not in _STATES for state in expected) or new_state not in _STATES:
+        if (not expected or any(state not in _STATES for state in expected)
+                or new_state not in _STATES
+                or any(new_state not in _ALLOWED_TRANSITIONS[state] for state in expected)):
             raise SandboxJobStoreError("invalid state transition contract")
         if container_name is not None and (
             not isinstance(container_name, str) or not _CONTAINER_RE.fullmatch(container_name)
