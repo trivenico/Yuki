@@ -21,6 +21,8 @@ class ObservationSessionStatus:
     indicator_active: bool
     registered_sources: int
     delivered_events: int
+    processed_events: int
+    delivery_failures: int
     event_limit: int
 
 
@@ -31,6 +33,8 @@ class _ManagedSession:
     event_limit: int
     sources: dict = field(default_factory=dict)
     delivered_events: int = 0
+    processed_events: int = 0
+    delivery_failures: int = 0
     state_override: Optional[str] = None
     lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -120,12 +124,27 @@ class ObservationSessionManager:
             source = managed.sources.get(source_id)
             if source is None:
                 raise KeyError("source is not registered")
-            delivered = managed.gateway.poll(source, consumer, timeout=timeout)
-            if delivered:
+            def dispatch(event):
+                # The gateway calls this only after source and policy authorization.
+                # Count the attempt before consumer code can fail.
+                managed.processed_events += 1
+                try:
+                    consumer(event)
+                except Exception:
+                    managed.delivery_failures += 1
+                    raise
                 managed.delivered_events += 1
-                if managed.delivered_events >= managed.event_limit:
+
+            try:
+                delivered = managed.gateway.poll(source, dispatch, timeout=timeout)
+            except Exception:
+                if managed.processed_events >= managed.event_limit:
                     managed.state_override = "limit_reached"
                     self._close_sources(managed)
+                raise
+            if delivered and managed.processed_events >= managed.event_limit:
+                managed.state_override = "limit_reached"
+                self._close_sources(managed)
             return delivered
 
     @staticmethod
@@ -170,5 +189,7 @@ class ObservationSessionManager:
                 indicator_active=state == "active",
                 registered_sources=len(managed.sources),
                 delivered_events=managed.delivered_events,
+                processed_events=managed.processed_events,
+                delivery_failures=managed.delivery_failures,
                 event_limit=managed.event_limit,
             )
