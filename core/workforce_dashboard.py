@@ -87,7 +87,7 @@ class WorkforceDashboard:
                         and evidence["reviewer_id"].strip()
                         and evidence["reviewer_id"].strip() != payload["assigned_employee_id"].strip()
                         and isinstance(evidence.get("status"), str)
-                        and evidence["status"].strip()
+                        and evidence["status"].strip().casefold() == "approved"
                     ):
                         metrics["independently_verified_successes"] += 1
                 elif task["state"] == "failed":
@@ -132,7 +132,7 @@ class WorkforceDashboard:
                             and evidence["reviewer_id"].strip()
                             and evidence["reviewer_id"].strip() != assigned.strip()
                             and isinstance(evidence.get("status"), str)
-                            and evidence["status"].strip()
+                            and evidence["status"].strip().casefold() == "approved"
                         ):
                             employee_tasks[assigned]["independently_verified"] += 1
 
