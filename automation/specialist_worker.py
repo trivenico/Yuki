@@ -12,6 +12,7 @@ from typing import Callable, Mapping
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
+from core.compute_fabric import ComputeCapacityError, ComputeRequest, ComputeScheduler
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -154,6 +155,8 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        compute_scheduler: ComputeScheduler | None = None,
+        compute_request: ComputeRequest | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -173,7 +176,15 @@ class SpecialistTaskWorker:
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
+        if compute_scheduler is not None and not isinstance(compute_scheduler, ComputeScheduler):
+            raise TypeError("compute_scheduler must be a ComputeScheduler.")
+        if compute_request is not None and not isinstance(compute_request, ComputeRequest):
+            raise TypeError("compute_request must be a ComputeRequest.")
+        if (compute_scheduler is None) != (compute_request is None):
+            raise ValueError("compute_scheduler and compute_request must be provided together.")
         self.handlers = validated
+        self.compute_scheduler = compute_scheduler
+        self.compute_request = compute_request
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -202,6 +213,7 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                compute_scheduler=self.compute_scheduler, compute_request=self.compute_request,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -218,7 +230,19 @@ class SpecialistTaskWorker:
         return tuple(results)
 
     def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
+        """Admit resources before claiming; capacity pressure leaves tasks untouched."""
+        if self.compute_scheduler is None:
+            return self._run_once_admitted()
+        try:
+            # Admission must precede the durable claim: a rejected reservation
+            # cannot increment attempts, acquire a lease, or alter task state.
+            with self.compute_scheduler.reserve(self.compute_request) as backend:
+                return backend.execute(self._run_once_admitted)
+        except ComputeCapacityError:
+            return None
+
+    def _run_once_admitted(self) -> TaskRecord | None:
+        """Claim and execute one task while the caller holds any required reservation."""
         claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
         if claimed is None:
             return None
