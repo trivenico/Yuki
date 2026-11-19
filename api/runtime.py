@@ -249,7 +249,16 @@ def build_conversation_runtime(
             sandbox_job_recovery=sandbox_job_recovery,
         )
     except Exception:
+        # Construction failure must not let one cleanup error prevent the
+        # remaining owned resources from being released. Preserve the original
+        # construction exception rather than replacing it with a close error.
         if workforce_application is not None:
-            workforce_application.close()
-        application.close()
+            try:
+                workforce_application.close()
+            except Exception:
+                pass
+        try:
+            application.close()
+        except Exception:
+            pass
         raise
