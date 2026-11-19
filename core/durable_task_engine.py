@@ -738,16 +738,19 @@ class DurableTaskEngine:
             by_id.setdefault(delivery.get("knowledge_id"), []).append(delivery)
         assigned_worker = payload.get("assigned_employee_id") if isinstance(payload, dict) else None
         findings = []
+        if records_truncated:
+            context_errors.append("delivery_records_truncated")
         for knowledge_id, lesson in expected.items():
             records = by_id.get(knowledge_id, [])
-            if records_truncated:
-                context_errors.append("delivery_records_truncated")
             if not records:
                 findings.append({
                     "knowledge_id": knowledge_id,
                     "status": "not_attested",
                     "reason": "no_delivery_record",
-                    "coverage": "unknown_pre_instrumentation_or_missing",
+                    "coverage": (
+                        "unknown_records_truncated" if records_truncated
+                        else "unknown_pre_instrumentation_or_missing"
+                    ),
                 })
                 continue
             for delivery in records:
@@ -803,7 +806,10 @@ class DurableTaskEngine:
                     "status": (
                         "attested_consistent" if record_status == "consistent"
                         else "attested_review_required" if record_status == "review_required"
-                        else "unknown_no_handoff_attestation"
+                        else (
+                            "unknown_delivery_records_truncated" if records_truncated
+                            else "unknown_no_handoff_attestation"
+                        )
                     ),
                 })
             attempt_coverage.append({
