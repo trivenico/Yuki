@@ -89,6 +89,20 @@ class MemoryFabricTests(unittest.TestCase):
         self.assertEqual(fabric.get("cache", "new"), b"2222")
         self.assertEqual(fabric.stats()["disk_used_bytes"], 4)
 
+    def test_ram_hits_refresh_ssd_eviction_recency_on_next_write(self):
+        ticks = iter(float(value) for value in range(1, 20))
+        fabric = self._make_fabric(
+            self.path, ram_capacity_bytes=8, disk_capacity_bytes=8,
+            clock=lambda: next(ticks),
+        )
+        fabric.put("cache", "old", b"1111")
+        fabric.put("cache", "new", b"2222")
+        self.assertEqual(fabric.get("cache", "old"), b"1111")
+        fabric.put("cache", "third", b"3333")
+        self.assertEqual(fabric.get("cache", "old"), b"1111")
+        self.assertIsNone(fabric.get("cache", "new"))
+        self.assertEqual(fabric.get("cache", "third"), b"3333")
+
     def test_ssd_eviction_invalidates_the_corresponding_ram_entry(self):
         fabric = self._make_fabric(
             self.path, ram_capacity_bytes=8, disk_capacity_bytes=6,
