@@ -67,7 +67,16 @@ class DesktopObservationController:
 
     @property
     def state(self):
-        return self._state
+        with self._lock:
+            return self._state
+
+    @property
+    def status(self):
+        """Return the manager's bounded counters for the active observation session."""
+        with self._lock:
+            if self._session_id is None:
+                return None
+            return self._manager.status(self._session_id)
 
     def _set_indicator(self, active: bool) -> None:
         self._indicator_callback(active)
