@@ -248,7 +248,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             )
         claimed = self.engine.claim("worker-1", task_type="workforce.task")
         while claimed is not None and claimed["id"] != treatment_task["id"]:
-            self.engine.reject(claimed["id"], "worker-1", "skip_non_target_test_task")
+            self.engine.reject(claimed["id"], "worker-1", "invalid_payload")
             claimed = self.engine.claim("worker-1", task_type="workforce.task")
         self.assertIsNotNone(claimed)
         self.assertEqual(claimed["id"], treatment_task["id"])
