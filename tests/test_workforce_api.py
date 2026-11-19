@@ -956,6 +956,41 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(missing["error"], "resource_not_found")
 
+    def test_knowledge_delivery_integrity_api_confirms_matching_attestation(self):
+        candidate = self._seed_knowledge_candidate()
+        self.engine.transition_knowledge(
+            candidate["knowledge_id"], expected_state="candidate",
+            new_state="verified", actor_id="knowledge-reviewer",
+        )
+        record = self.engine.get_knowledge(candidate["knowledge_id"])
+        context = {
+            "knowledge_id": record["knowledge_id"],
+            "title": record["knowledge"]["title"],
+            "lesson": record["knowledge"]["lesson"],
+            "source_task_id": record["source_task_id"],
+            "reviewed_by": record["reviewed_by"],
+        }
+        goal = self.engine.create_goal()
+        task = self.engine.submit(
+            goal, "workforce.task",
+            {"assigned_employee_id": "integrity-worker", "knowledge_context": [context]},
+            idempotency_key="delivery-integrity-matching",
+            max_attempts=1,
+        )
+        claimed = self.engine.claim("integrity-worker")
+        self.assertEqual(claimed["id"], task["id"])
+        self.engine.record_workforce_knowledge_delivery(
+            task["id"], "integrity-worker", claimed["attempts"], [context],
+        )
+        status, report = self.request(
+            f"/v1/workforce/tasks/{task['id']}/knowledge-delivery-integrity",
+            token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(report["attestation_records"], 1)
+        self.assertEqual(report["findings"][0]["status"], "consistent")
+        self.assertEqual(report["findings"][0]["reasons"], [])
+
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
         self.assertEqual(status, 404)
