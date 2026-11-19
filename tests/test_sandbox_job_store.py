@@ -45,8 +45,12 @@ class SandboxJobStoreTests(unittest.TestCase):
         )
         self.assertEqual(record.state, "running")
         record = self.store.transition(
+            self.job_id, expected_states=("running",), new_state="frozen"
+        )
+        self.assertEqual(record.state, "frozen")
+        record = self.store.transition(
             self.job_id,
-            expected_states=("running",),
+            expected_states=("frozen",),
             new_state="validated",
             manifest_digest=digest,
             promoted_paths=("report.txt",),
