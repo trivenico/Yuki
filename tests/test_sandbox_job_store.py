@@ -36,8 +36,12 @@ class SandboxJobStoreTests(unittest.TestCase):
         record = self.store.transition(
             self.job_id,
             expected_states=("created",),
-            new_state="running",
+            new_state="launching",
             container_name="yuki-job-" + "a" * 32,
+        )
+        self.assertEqual(record.state, "launching")
+        record = self.store.transition(
+            self.job_id, expected_states=("launching",), new_state="running"
         )
         self.assertEqual(record.state, "running")
         record = self.store.transition(
@@ -89,6 +93,10 @@ class SandboxJobStoreTests(unittest.TestCase):
         with self.assertRaises(SandboxJobStoreError):
             self.store.transition(
                 self.job_id, expected_states=("created",), new_state="promoted"
+            )
+        with self.assertRaises(SandboxJobStoreError):
+            self.store.transition(
+                self.job_id, expected_states=("created",), new_state="running"
             )
         self.assertEqual(self.store.get(self.job_id).state, "created")
 
