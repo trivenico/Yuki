@@ -69,6 +69,28 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._transition_workforce_experiment(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/deliveries", path):
             return await self._record_workforce_experiment_delivery(path, scope, receive, send)
+        if method == "GET" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/integrity", path):
+            principal = await self._principal(scope)
+            if principal is None:
+                return await self._respond(send, 401, {"error": "authentication_required"})
+            user, _ = principal
+            if user.role not in {"admin", "operator"}:
+                return await self._respond(send, 403, {"error": "workforce_access_denied"})
+            try:
+                if self._query(scope):
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                experiment_id = path.split("/")[-2]
+                result = await asyncio.to_thread(
+                    self.dashboard.task_engine.get_workforce_experiment_integrity,
+                    experiment_id,
+                )
+            except TaskNotFound:
+                return await self._respond(send, 404, {"error": "experiment_not_found"})
+            except (TypeError, ValueError):
+                return await self._respond(send, 400, {"error": "invalid_query"})
+            except Exception:
+                return await self._respond(send, 503, {"error": "experiment_integrity_unavailable"})
+            return await self._respond(send, 200, result)
         if method == "GET" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/deliveries", path):
             principal = await self._principal(scope)
             if principal is None:
