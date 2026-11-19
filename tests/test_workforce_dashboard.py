@@ -94,6 +94,11 @@ class WorkforceDashboardTests(unittest.TestCase):
             "knowledge_id": "lesson-observe-1", "title": "Prefer primary evidence",
             "lesson": "Use primary sources.", "source_task_id": "lesson-source",
             "reviewed_by": "human-curator",
+        }, {
+            # Duplicate references in one task must not inflate exposure counts.
+            "knowledge_id": "lesson-observe-1", "title": "Duplicate reference",
+            "lesson": "Duplicate context entry.", "source_task_id": "lesson-source",
+            "reviewed_by": "human-curator",
         }]
         successful = self.engine.submit(
             goal_id, "workforce.task",
@@ -355,7 +360,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertTrue(gap_recommendation["requires_human_approval"])
         self.assertFalse(gap_recommendation["automatic_action_taken"])
         development_plan = next(
-            row for row in intelligence["skill_development_plans"]
+            row for row in snapshot["decision_intelligence"]["skill_development_plans"]
             if row["capability"] == "python"
         )
         self.assertEqual(development_plan["failed_tasks"], 2)
@@ -368,7 +373,7 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertTrue(development_plan["requires_human_approval"])
         self.assertFalse(development_plan["automatic_training_or_assignment_change"])
         development_recommendation = next(
-            item for item in intelligence["improvement_recommendations"]
+            item for item in snapshot["decision_intelligence"]["improvement_recommendations"]
             if item["category"] == "skill_development_review"
         )
         self.assertTrue(development_recommendation["requires_human_approval"])
