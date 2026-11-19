@@ -31,10 +31,12 @@ class ConversationApplicationRuntime:
         """Close persistence exactly once; safe for repeated shutdown paths."""
         if self._closed:
             return
+        # Mark closed before invoking the backend so a failing close is not
+        # retried by a later shutdown signal after partial cleanup.
+        self._closed = True
         close = getattr(self.store, "close", None)
         if callable(close):
             close()
-        self._closed = True
 
 
 def build_conversation_application_runtime(
@@ -68,7 +70,12 @@ def build_conversation_application_runtime(
             conversations=conversations, store=store, owner_id=owner_id,
         )
     except Exception:
+        # Preserve the construction failure; a backend cleanup error must not
+        # hide the exception that prevented the runtime from being composed.
         close = getattr(store, "close", None)
         if callable(close):
-            close()
+            try:
+                close()
+            except Exception:
+                pass
         raise
