@@ -695,6 +695,90 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         status, _ = self.request(path, token=self.admin_session.token, query=b"unexpected=true")
         self.assertEqual(status, 400)
 
+    def test_treatment_delivery_attestation_api_is_authenticated_and_idempotent(self):
+        self.engine.create_improvement_proposal("delivery-api-proposal", {"recommendation": "Measure"})
+        self.engine.transition_improvement_proposal(
+            "delivery-api-proposal", expected_state="proposed", new_state="approved",
+            actor_id=self.admin_session.user.user_id,
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("delivery-api-exp", "delivery-api-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "delivery-api-exp", expected_state="proposed", new_state="approved",
+            actor_id=self.admin_session.user.user_id,
+        )
+        treatment_task = None
+        control_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.engine.create_goal(), "workforce.task", {},
+                idempotency_key=f"delivery-api-{index}",
+            )
+            assignment = self.engine.assign_workforce_experiment_task("delivery-api-exp", task["id"])
+            if assignment["assignment"] == "treatment" and treatment_task is None:
+                treatment_task = task
+            if assignment["assignment"] == "control" and control_task is None:
+                control_task = task
+            if treatment_task and control_task:
+                break
+        self.assertIsNotNone(treatment_task)
+        path = "/v1/workforce/experiments/delivery-api-exp/deliveries"
+        headers = [(b"content-type", b"application/json")]
+        body = json.dumps({
+            "task_id": treatment_task["id"],
+            "delivery_state": "delivered",
+            "intervention_version": "checklist-v1",
+            "evidence_reference": "review-record-456",
+        }).encode()
+        status, _ = self.request(path, method="POST", body=body, extra_headers=headers)
+        self.assertEqual(status, 401)
+        status, _ = self.request(
+            path, method="POST", token=self.user_session.token, body=body, extra_headers=headers,
+        )
+        self.assertEqual(status, 403)
+        status, created = self.request(
+            path, method="POST", token=self.admin_session.token, body=body, extra_headers=headers,
+        )
+        self.assertEqual(status, 201)
+        self.assertFalse(created["treatment_executed"])
+        status, replay = self.request(
+            path, method="POST", token=self.admin_session.token, body=body, extra_headers=headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(replay["created"])
+        conflict_body = json.dumps({
+            "task_id": treatment_task["id"], "delivery_state": "not_delivered",
+        }).encode()
+        status, _ = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=conflict_body, extra_headers=headers,
+        )
+        self.assertEqual(status, 409)
+        status, listing = self.request(
+            path, token=self.admin_session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(listing["deliveries"]), 1)
+        control_body = json.dumps({
+            "task_id": control_task["id"], "delivery_state": "delivered",
+            "intervention_version": "checklist-v1",
+        }).encode()
+        status, _ = self.request(
+            path, method="POST", token=self.admin_session.token,
+            body=control_body, extra_headers=headers,
+        )
+        self.assertEqual(status, 409)
+
     def test_experiment_api_is_authenticated_review_gated_and_non_executing(self):
         self.engine.create_improvement_proposal("experiment-proposal", {"recommendation": "Review queue"})
         self.engine.transition_improvement_proposal(
