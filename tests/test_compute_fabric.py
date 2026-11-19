@@ -37,9 +37,13 @@ class ComputeFabricTests(unittest.TestCase):
             entered.set()
             release.wait(timeout=2)
 
-        worker = threading.Thread(
-            target=lambda: self.scheduler.execute(ComputeRequest(), operation)
-        )
+        def run_worker():
+            try:
+                self.scheduler.execute(ComputeRequest(), operation)
+            except BaseException as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=run_worker)
         worker.start()
         self.assertTrue(entered.wait(timeout=1))
         try:
