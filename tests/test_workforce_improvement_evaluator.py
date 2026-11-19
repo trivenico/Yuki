@@ -78,7 +78,7 @@ class WorkforceImprovementEvaluatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "insufficient_observations")
         self.assertFalse(result["metrics"]["success_rate"]["available"])
-        self.assertFalse(result["metrics"]["failed_tasks"]["available"])
+        self.assertTrue(result["metrics"]["failed_tasks"]["available"])
 
     def test_fractional_failed_count_cannot_enter_success_rate(self):
         baseline = {
