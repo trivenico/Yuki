@@ -692,6 +692,8 @@ class WorkforceDashboard:
                     "raw exposure counts include caller-provided lesson references; currently verified registry matches are reported separately",
                     "current verified status does not prove a lesson was verified at the historical task execution time",
                     "historical verification is checked against task creation time, not the exact worker execution instant",
+                    "attested deliveries prove the exact lesson context was persisted at the worker-to-executor handoff, not that the model attended to or followed it",
+                    "delivery attestations are available only for tasks executed after this instrumentation was deployed",
                     "historical verification requires a matching current lesson content/provenance snapshot; revised records may be conservatively excluded",
                     "verified-registry lookup is bounded to the newest 500 records; missing references are not proof that a lesson never existed",
                     "only independently reviewed successes with consistent persisted evidence count as verified successes",
