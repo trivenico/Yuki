@@ -160,7 +160,12 @@ class ObservationLearningWorker:
         if type(limit) is not int or not 1 <= limit <= min(256, self._buffer.capacity):
             raise ValueError("limit must be within the buffer capacity and 1..256")
         proposals = []
-        for event in self._buffer.drain(limit=limit):
+        # Pop incrementally: if review storage fills, only the current event
+        # fails visibly and the remaining buffered events stay queued.
+        for _ in range(limit):
+            event = self._buffer.get_nowait()
+            if event is None:
+                break
             if not isinstance(event, ObservationEvent):
                 continue
             if event.source != "desktop:metadata":
