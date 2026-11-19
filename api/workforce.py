@@ -67,6 +67,32 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._create_workforce_experiment(scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
             return await self._transition_workforce_experiment(path, scope, receive, send)
+        if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/deliveries", path):
+            return await self._record_workforce_experiment_delivery(path, scope, receive, send)
+        if method == "GET" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/deliveries", path):
+            principal = await self._principal(scope)
+            if principal is None:
+                return await self._respond(send, 401, {"error": "authentication_required"})
+            user, _ = principal
+            if user.role not in {"admin", "operator"}:
+                return await self._respond(send, 403, {"error": "workforce_access_denied"})
+            try:
+                query = self._query(scope)
+                if set(query) - {"limit"}:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                limit = self._integer(query.get("limit", "500"), "limit")
+                experiment_id = path.split("/")[-2]
+                result = await asyncio.to_thread(
+                    self.dashboard.task_engine.list_workforce_experiment_deliveries,
+                    experiment_id, limit=limit,
+                )
+            except TaskNotFound:
+                return await self._respond(send, 404, {"error": "experiment_not_found"})
+            except (TypeError, ValueError):
+                return await self._respond(send, 400, {"error": "invalid_query"})
+            except Exception:
+                return await self._respond(send, 503, {"error": "experiment_delivery_unavailable"})
+            return await self._respond(send, 200, {"deliveries": result})
         if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/assignments", path):
             return await self._assign_workforce_experiment_task(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/knowledge/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/revisions", path):
@@ -464,6 +490,46 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._respond(send, 400, {"error": "invalid_experiment_request"})
         except Exception:
             return await self._respond(send, 503, {"error": "experiment_unavailable"})
+        return await self._respond(send, 201 if result.get("created") else 200, result)
+
+    async def _record_workforce_experiment_delivery(self, path, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _ = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        payload = await self._read_experiment_json(scope, receive, send)
+        if payload is None:
+            return
+        allowed = {"task_id", "delivery_state", "intervention_version", "evidence_reference"}
+        required = {"task_id", "delivery_state"}
+        if (not isinstance(payload, dict) or not required.issubset(payload)
+                or set(payload) - allowed
+                or not isinstance(payload.get("task_id"), str)
+                or not isinstance(payload.get("delivery_state"), str)):
+            return await self._respond(send, 400, {"error": "invalid_delivery_attestation"})
+        if "intervention_version" in payload and payload["intervention_version"] is not None and not isinstance(payload["intervention_version"], str):
+            return await self._respond(send, 400, {"error": "invalid_delivery_attestation"})
+        if "evidence_reference" in payload and payload["evidence_reference"] is not None and not isinstance(payload["evidence_reference"], str):
+            return await self._respond(send, 400, {"error": "invalid_delivery_attestation"})
+        experiment_id = path.split("/")[-2]
+        try:
+            result = await asyncio.to_thread(
+                self.dashboard.task_engine.record_workforce_experiment_delivery,
+                experiment_id, payload["task_id"], payload["delivery_state"],
+                actor_id=user.user_id,
+                intervention_version=payload.get("intervention_version"),
+                evidence_reference=payload.get("evidence_reference"),
+            )
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "delivery_attestation_conflict"})
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "experiment_assignment_not_found"})
+        except (TypeError, ValueError):
+            return await self._respond(send, 400, {"error": "invalid_delivery_attestation"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "experiment_delivery_unavailable"})
         return await self._respond(send, 201 if result.get("created") else 200, result)
 
     async def _assign_workforce_experiment_task(self, path, scope, receive, send):
