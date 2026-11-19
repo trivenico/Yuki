@@ -133,6 +133,80 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(report["automatic_action"])
         self.assertIn("no causal effect", report["interpretation"])
 
+    def test_treatment_delivery_attestations_are_append_only_and_reported(self):
+        self.engine.create_improvement_proposal("delivery-proposal", {"recommendation": "Measure delivery"})
+        self.engine.transition_improvement_proposal(
+            "delivery-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        design = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Human-reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("delivery-exp", "delivery-proposal", design)
+        self.engine.transition_workforce_experiment(
+            "delivery-exp", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        treatment_task = None
+        control_task = None
+        for index in range(20):
+            task = self.engine.submit(
+                self.goal, "workforce.task", {}, idempotency_key=f"delivery-{index}",
+            )
+            assignment = self.engine.assign_workforce_experiment_task("delivery-exp", task["id"])
+            if assignment["assignment"] == "treatment" and treatment_task is None:
+                treatment_task = task
+            if assignment["assignment"] == "control" and control_task is None:
+                control_task = task
+            if treatment_task and control_task:
+                break
+        self.assertIsNotNone(treatment_task)
+        self.assertIsNotNone(control_task)
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_delivery(
+                "delivery-exp", control_task["id"], "delivered",
+                actor_id="operator-1", intervention_version="v1",
+            )
+        with self.assertRaises(ValueError):
+            self.engine.record_workforce_experiment_delivery(
+                "delivery-exp", treatment_task["id"], "delivered",
+                actor_id="operator-1",
+            )
+        first = self.engine.record_workforce_experiment_delivery(
+            "delivery-exp", treatment_task["id"], "delivered",
+            actor_id="operator-1", intervention_version="checklist-v1",
+            evidence_reference="review-record-123",
+        )
+        replay = self.engine.record_workforce_experiment_delivery(
+            "delivery-exp", treatment_task["id"], "delivered",
+            actor_id="operator-1", intervention_version="checklist-v1",
+            evidence_reference="review-record-123",
+        )
+        self.assertTrue(first["created"])
+        self.assertFalse(replay["created"])
+        self.assertFalse(first["treatment_executed"])
+        with self.assertRaises(TaskConflict):
+            self.engine.record_workforce_experiment_delivery(
+                "delivery-exp", treatment_task["id"], "not_delivered",
+                actor_id="operator-1",
+            )
+        listed = self.engine.list_workforce_experiment_deliveries("delivery-exp")
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["actor_id"], "operator-1")
+        report = self.engine.get_workforce_experiment_outcomes("delivery-exp")
+        self.assertEqual(report["arms"]["treatment"]["delivery_attestations"]["delivered"], 1)
+        self.assertEqual(report["arms"]["treatment"]["delivery_attestations"]["unrecorded"],
+                         report["arms"]["treatment"]["assigned"] - 1)
+        self.assertIn("not proof of execution", report["interpretation"])
+
     def test_randomized_assignment_requires_structured_matching_eligibility(self):
         self.engine.create_improvement_proposal("eligibility-proposal", {"recommendation": "Scope tasks"})
         self.engine.transition_improvement_proposal(
