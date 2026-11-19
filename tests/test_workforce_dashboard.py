@@ -274,6 +274,13 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertFalse(pattern["employee_attribution"])
         self.assertFalse(pattern["raw_failure_details_included"])
         self.assertNotIn("redacted failure", str(pattern))
+        recurring = next(
+            item for item in recommendations
+            if item["category"] == "recurring_failure_pattern"
+        )
+        self.assertEqual(recurring["evidence"]["required_capabilities"], ["python"])
+        self.assertTrue(recurring["requires_human_approval"])
+        self.assertFalse(recurring["automatic_action_taken"])
         self.assertIn("do not assign blame", " ".join(
             snapshot["decision_intelligence"]["limitations"]
         ))
