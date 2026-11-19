@@ -1354,6 +1354,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if self._observation_controller is not None:
                 self.observation_status.setText("Revoke the current session before starting another.")
                 return
+            if self._observation_worker_busy:
+                self.observation_status.setText(
+                    "The previous bounded learning batch is still shutting down. Try again shortly."
+                )
+                return
             try:
                 mapping = self._parse_observation_allowlist()
                 event_limit = int(self.observation_event_limit.text().strip())
