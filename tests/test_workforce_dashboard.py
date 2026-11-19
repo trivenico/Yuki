@@ -354,6 +354,25 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(gap_recommendation["priority"], "medium")
         self.assertTrue(gap_recommendation["requires_human_approval"])
         self.assertFalse(gap_recommendation["automatic_action_taken"])
+        development_plan = next(
+            row for row in intelligence["skill_development_plans"]
+            if row["capability"] == "python"
+        )
+        self.assertEqual(development_plan["failed_tasks"], 2)
+        self.assertEqual(development_plan["terminal_tasks"], 3)
+        self.assertEqual(development_plan["evidence_level"], "no_outcome_exposure_in_window")
+        self.assertEqual(
+            [row["knowledge_id"] for row in development_plan["verified_lessons"]],
+            ["verified-python-lesson"],
+        )
+        self.assertTrue(development_plan["requires_human_approval"])
+        self.assertFalse(development_plan["automatic_training_or_assignment_change"])
+        development_recommendation = next(
+            item for item in intelligence["improvement_recommendations"]
+            if item["category"] == "skill_development_review"
+        )
+        self.assertTrue(development_recommendation["requires_human_approval"])
+        self.assertFalse(development_recommendation["automatic_action_taken"])
         recommendation = next(
             item for item in snapshot["decision_intelligence"]["improvement_recommendations"]
             if item["category"] == "recurring_failure_pattern"
