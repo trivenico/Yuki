@@ -63,6 +63,10 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._submit_goal(scope, receive, send)
         if method == "POST" and path == "/v1/workforce/improvement-proposals":
             return await self._create_improvement_proposal(scope, receive, send)
+        if method == "POST" and path == "/v1/workforce/experiments":
+            return await self._create_workforce_experiment(scope, receive, send)
+        if method == "POST" and re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
+            return await self._transition_workforce_experiment(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/knowledge/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/revisions", path):
             return await self._create_knowledge_revision(path, scope, receive, send)
         if method == "POST" and re.fullmatch(r"/v1/workforce/knowledge-revisions/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/transition", path):
@@ -152,6 +156,19 @@ class AuthenticatedWorkforceDashboardAPI:
                     return await self._respond(send, 400, {"error": "invalid_query"})
                 proposal_id = path.rsplit("/", 1)[-1]
                 result = await asyncio.to_thread(self.dashboard.task_engine.get_improvement_proposal, proposal_id)
+            elif path == "/v1/workforce/experiments":
+                if set(query) - {"limit"}:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                limit = self._integer(query.get("limit", "100"), "limit")
+                if not 1 <= limit <= 500:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                experiments = await asyncio.to_thread(self.dashboard.task_engine.list_workforce_experiments, limit=limit)
+                result = {"experiments": experiments, "count": len(experiments)}
+            elif re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", path):
+                if query:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                experiment_id = path.rsplit("/", 1)[-1]
+                result = await asyncio.to_thread(self.dashboard.task_engine.get_workforce_experiment, experiment_id)
             elif path == "/v1/workforce/approvals":
                 if set(query) - _APPROVAL_QUERY_KEYS:
                     return await self._respond(send, 400, {"error": "invalid_query"})
@@ -376,6 +393,96 @@ class AuthenticatedWorkforceDashboardAPI:
             return await self._respond(send, 400, {"error": "invalid_transition_request"})
         except Exception:
             return await self._respond(send, 503, {"error": "improvement_proposal_unavailable"})
+        return await self._respond(send, 200, result)
+
+    async def _read_experiment_json(self, scope, receive, send):
+        headers = {key.lower(): value for key, value in scope.get("headers", []) if isinstance(key, bytes) and isinstance(value, bytes)}
+        if headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower() != b"application/json":
+            await self._respond(send, 415, {"error": "application_json_required"})
+            return None
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message.get("type") != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if not isinstance(chunk, bytes):
+                await self._respond(send, 400, {"error": "invalid_request_body"})
+                return None
+            body.extend(chunk)
+            if len(body) > _MAX_IMPROVEMENT_BODY_BYTES:
+                await self._respond(send, 413, {"error": "request_body_too_large"})
+                return None
+            more_body = bool(message.get("more_body", False))
+        try:
+            return json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            await self._respond(send, 400, {"error": "invalid_json"})
+            return None
+
+    async def _create_workforce_experiment(self, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _ = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        payload = await self._read_experiment_json(scope, receive, send)
+        if payload is None:
+            return
+        if not isinstance(payload, dict) or set(payload) != {"experiment_id", "proposal_id", "design"}:
+            return await self._respond(send, 400, {"error": "invalid_experiment_request"})
+        if not isinstance(payload["experiment_id"], str) or not isinstance(payload["proposal_id"], str) or not isinstance(payload["design"], dict):
+            return await self._respond(send, 400, {"error": "invalid_experiment_request"})
+        try:
+            result = await asyncio.to_thread(
+                self.dashboard.task_engine.create_workforce_experiment,
+                payload["experiment_id"], payload["proposal_id"], payload["design"],
+            )
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "experiment_conflict"})
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "proposal_not_found"})
+        except (TypeError, ValueError):
+            return await self._respond(send, 400, {"error": "invalid_experiment_request"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "experiment_unavailable"})
+        return await self._respond(send, 201 if result.get("created") else 200, result)
+
+    async def _transition_workforce_experiment(self, path, scope, receive, send):
+        principal = await self._principal(scope)
+        if principal is None:
+            return await self._respond(send, 401, {"error": "authentication_required"})
+        user, _ = principal
+        if user.role not in {"admin", "operator"}:
+            return await self._respond(send, 403, {"error": "workforce_access_denied"})
+        payload = await self._read_experiment_json(scope, receive, send)
+        if payload is None:
+            return
+        allowed = {"expected_state", "new_state", "decision_note"}
+        if not isinstance(payload, dict) or not {"expected_state", "new_state"}.issubset(payload) or set(payload) - allowed:
+            return await self._respond(send, 400, {"error": "invalid_experiment_transition"})
+        if not isinstance(payload["expected_state"], str) or not isinstance(payload["new_state"], str):
+            return await self._respond(send, 400, {"error": "invalid_experiment_transition"})
+        note = payload.get("decision_note")
+        if note is not None and not isinstance(note, str):
+            return await self._respond(send, 400, {"error": "invalid_experiment_transition"})
+        experiment_id = path.split("/")[-2]
+        try:
+            result = await asyncio.to_thread(
+                self.dashboard.task_engine.transition_workforce_experiment,
+                experiment_id, expected_state=payload["expected_state"],
+                new_state=payload["new_state"], actor_id=user.user_id, decision_note=note,
+            )
+        except TaskConflict:
+            return await self._respond(send, 409, {"error": "experiment_state_conflict"})
+        except TaskNotFound:
+            return await self._respond(send, 404, {"error": "experiment_not_found"})
+        except (TypeError, ValueError):
+            return await self._respond(send, 400, {"error": "invalid_experiment_transition"})
+        except Exception:
+            return await self._respond(send, 503, {"error": "experiment_unavailable"})
         return await self._respond(send, 200, result)
 
     async def _create_knowledge_revision(self, path, scope, receive, send):
