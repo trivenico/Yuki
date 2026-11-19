@@ -80,6 +80,16 @@ class DesktopSessionManager:
 
     def open_local_profile_session(self) -> AuthenticatedDesktopIdentity:
         """Open Yuki's sole local profile without presenting a sign-in form."""
+        # Replace any prior desktop token before issuing a fresh process session.
+        try:
+            previous = self.keyring.get_password(self.service_name, self.account_name)
+            if previous:
+                self.auth_service.revoke_session(previous)
+                self.keyring.delete_password(self.service_name, self.account_name)
+        except Exception as exc:
+            raise DesktopStartupError(
+                "Yuki could not safely rotate its previous local profile session."
+            ) from exc
         issued = self.auth_service.open_local_profile_session()
         try:
             self.keyring.set_password(self.service_name, self.account_name, issued.token)
