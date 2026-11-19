@@ -172,6 +172,14 @@ class AuthenticatedWorkforceDashboardAPI:
                 experiment_id = path.split("/")[-2]
                 limit = self._integer(query.get("limit", "500"), "limit")
                 result = {"assignments": await asyncio.to_thread(self.dashboard.task_engine.list_workforce_experiment_assignments, experiment_id, limit=limit)}
+            elif re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}/outcomes", path):
+                if query:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                experiment_id = path.split("/")[-2]
+                result = await asyncio.to_thread(
+                    self.dashboard.task_engine.get_workforce_experiment_outcomes,
+                    experiment_id,
+                )
             elif re.fullmatch(r"/v1/workforce/experiments/[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}", path):
                 if query:
                     return await self._respond(send, 400, {"error": "invalid_query"})
