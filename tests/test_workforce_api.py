@@ -1056,6 +1056,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             goal, "workforce.task", {"knowledge_context": [context]},
             idempotency_key="delivery-integrity-truncated", max_attempts=2,
         )
+        self.engine.claim("truncation-audit-worker")
         context_json = self.engine._json(context)
         with sqlite3.connect(self.engine.db_path) as connection:
             connection.executemany(
