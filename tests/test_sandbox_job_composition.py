@@ -68,11 +68,12 @@ class SandboxJobCompositionTests(unittest.TestCase):
             audit_callback({
                 "action": "sandbox.job.recovery",
                 "job_id": job_id,
+                "previous_state": "launching",
                 "outcome": "removed",
             })
             from core.recovery_audit import RecoveryAuditLog
             audit_event = RecoveryAuditLog(root / "sandbox-recovery-audit.sqlite3").recent(1)[0]
-            self.assertEqual(audit_event["action"], "sandbox.recovery." + job_id)
+            self.assertEqual(audit_event["action"], "sandbox.recovery." + job_id + ".launching.removed")
             self.assertEqual(audit_event["status"], "completed")
 
     def test_production_factory_always_injects_recovery_dependency(self):
