@@ -249,7 +249,10 @@ class SpecialistTaskWorker:
 
     def _run_once_admitted(self) -> TaskRecord | None:
         """Claim and execute one task while the caller holds any required reservation."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        prefixes = tuple(f"agent-{agent_id}-" for agent_id in self.handlers)
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id, workflow_name_prefixes=prefixes,
+        )
         if claimed is None:
             return None
 
