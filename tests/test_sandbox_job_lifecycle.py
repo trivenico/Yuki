@@ -129,6 +129,48 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         self.assertEqual(reopened.get(job.job_id).container_name,
                          "yuki-job-" + job.job_id[4:])
 
+    def test_validated_job_is_restored_only_after_manifest_revalidation(self):
+        job = self.lifecycle.create_job()
+        self.lifecycle.start_job(job.job_id)
+        self.lifecycle.freeze_job(job.job_id)
+        manifest = self.lifecycle.validate_job(job.job_id, allowed_extensions=(".txt",))
+        reopened = SandboxJobStore(self.dbroot / "jobs.sqlite3")
+        restored = SandboxJobLifecycle(
+            self.jobs, launcher=self.lifecycle._launcher,
+            freezer=self.lifecycle._freezer, promotion=self.promotion,
+            audit=lambda _event: None, store=reopened,
+        )
+        snapshot = restored.get_job(job.job_id)
+        self.assertEqual(snapshot.state, JobState.VALIDATED)
+        self.assertEqual(snapshot.manifest_digest, manifest.digest)
+
+    def test_validated_restore_rejects_changed_staging_content(self):
+        job = self.lifecycle.create_job()
+        self.lifecycle.start_job(job.job_id)
+        self.lifecycle.freeze_job(job.job_id)
+        self.lifecycle.validate_job(job.job_id, allowed_extensions=(".txt",))
+        Path(job.staging_directory, "report.txt").write_text("tampered", encoding="utf-8")
+        reopened = SandboxJobStore(self.dbroot / "jobs.sqlite3")
+        restored = SandboxJobLifecycle(
+            self.jobs, launcher=self.lifecycle._launcher,
+            freezer=self.lifecycle._freezer, promotion=self.promotion,
+            audit=lambda _event: None, store=reopened,
+        )
+        with self.assertRaises(SandboxJobError):
+            restored.get_job(job.job_id)
+
+    def test_cleanup_recovers_after_directory_removed_before_state_commit(self):
+        job = self.lifecycle.create_job()
+        self.lifecycle.discard_job(job.job_id)
+        Path(job.staging_directory).rmdir()
+        reopened = SandboxJobStore(self.dbroot / "jobs.sqlite3")
+        restored = SandboxJobLifecycle(
+            self.jobs, launcher=self.lifecycle._launcher,
+            freezer=self.lifecycle._freezer, promotion=self.promotion,
+            audit=lambda _event: None, store=reopened,
+        )
+        self.assertEqual(restored.cleanup_job(job.job_id).state, JobState.CLEANED)
+
     def test_running_job_must_be_frozen_before_discard(self):
         job = self.lifecycle.create_job()
         self.lifecycle.start_job(job.job_id)
