@@ -954,7 +954,7 @@ class WorkforceDashboardAPITests(unittest.TestCase):
             token=self.admin_session.token,
         )
         self.assertEqual(status, 404)
-        self.assertEqual(missing["error"], "task_not_found")
+        self.assertEqual(missing["error"], "resource_not_found")
 
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
