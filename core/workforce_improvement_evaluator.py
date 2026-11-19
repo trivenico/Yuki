@@ -33,7 +33,8 @@ def evaluate_improvement_snapshots(baseline, current, *, minimum_completed_obser
     def completed(snapshot):
         succeeded = _number(snapshot, ("tasks", "succeeded"))
         failed = _number(snapshot, ("tasks", "failed"))
-        if succeeded is None or failed is None:
+        if (succeeded is None or failed is None
+                or not float(succeeded).is_integer() or not float(failed).is_integer()):
             return None
         return succeeded + failed
 
@@ -78,7 +79,13 @@ def evaluate_improvement_snapshots(baseline, current, *, minimum_completed_obser
             baseline_succeeded = _number(baseline, ("tasks", "succeeded"))
             current_succeeded = _number(current, ("tasks", "succeeded"))
             if ((baseline_succeeded is not None and before is not None and before > baseline_succeeded)
-                    or (current_succeeded is not None and after is not None and after > current_succeeded)):
+                    or (current_succeeded is not None and after is not None and after > current_succeeded)
+                    or (before is not None and not float(before).is_integer())
+                    or (after is not None and not float(after).is_integer())):
+                before = after = None
+        elif name in {"failed_tasks", "queued_tasks"}:
+            if ((before is not None and not float(before).is_integer())
+                    or (after is not None and not float(after).is_integer())):
                 before = after = None
         if before is None or after is None:
             metrics[name] = {"available": False, "status": "unavailable"}
