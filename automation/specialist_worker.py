@@ -233,13 +233,19 @@ class SpecialistTaskWorker:
         """Admit resources before claiming; capacity pressure leaves tasks untouched."""
         if self.compute_scheduler is None:
             return self._run_once_admitted()
-        try:
-            # Admission must precede the durable claim: a rejected reservation
-            # cannot increment attempts, acquire a lease, or alter task state.
-            with self.compute_scheduler.reserve(self.compute_request) as backend:
-                return backend.execute(self._run_once_admitted)
-        except ComputeCapacityError:
-            return None
+        # Catch capacity errors only while acquiring the reservation. Backend
+        # execution happens after admission and must not be mistaken for a
+        # pre-claim rejection if it raises the same exception type.
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            try:
+                backend = stack.enter_context(
+                    self.compute_scheduler.reserve(self.compute_request)
+                )
+            except ComputeCapacityError:
+                return None
+            return backend.execute(self._run_once_admitted)
 
     def _run_once_admitted(self) -> TaskRecord | None:
         """Claim and execute one task while the caller holds any required reservation."""
