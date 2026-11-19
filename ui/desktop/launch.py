@@ -1192,6 +1192,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
             # The existing specialist controller remains the authority for task
             # approvals, backups, restore and migration during this cutover.
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
+            from ui.desktop.observation_learning import build_desktop_curated_knowledge_provider
+            curated_knowledge_provider = build_desktop_curated_knowledge_provider(
+                self.auth, self.sessions, identity,
+                self.observation_review_database, curated_path,
+            )
             self.controller = build_shared_desktop_controller(
                 config,
                 provider=self.provider,
@@ -1199,6 +1204,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 sessions=self.sessions,
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
+                knowledge_entries_for_owner=curated_knowledge_provider,
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
