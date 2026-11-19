@@ -338,6 +338,57 @@ class SpecialistWorkerTests(unittest.TestCase):
             "reserved_memory_bytes": 0, "active_operations": 0,
         })
 
+    def test_worker_skips_older_task_for_unhandled_specialist(self):
+        other = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="other-specialist-old",
+            name="agent-data-analyst-subtask-1",
+            steps=[{"name": "work", "action": "emit", "argument": "other", "requires_approval": False}],
+        )
+        own = self.create_task()
+        result = self.worker({"code-review": lambda text: "handled: " + text}).run_once()
+        self.assertEqual(result.task_id, own)
+        self.assertEqual(result.state, "succeeded")
+        untouched = self.store.get(other.task_id)
+        self.assertEqual(untouched.state, "queued")
+        self.assertEqual(untouched.attempts, 0)
+        self.assertIsNone(untouched.lease_owner)
+
+    def test_worker_with_no_eligible_task_leaves_queue_untouched(self):
+        other = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="only-other-specialist",
+            name="agent-data-analyst-subtask-1",
+            steps=[{"name": "work", "action": "emit", "argument": "other", "requires_approval": False}],
+        )
+        result = self.worker({"code-review": lambda _: "must not run"}).run_once()
+        self.assertIsNone(result)
+        queued = self.store.get(other.task_id)
+        self.assertEqual(queued.state, "queued")
+        self.assertEqual(queued.attempts, 0)
+        self.assertIsNone(queued.lease_owner)
+
+    def test_store_claim_prefix_filter_is_atomic_and_generic_claim_remains_unfiltered(self):
+        other = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="prefix-other",
+            name="agent-data-analyst-subtask-1",
+            steps=[{"name": "work", "action": "emit", "argument": "other", "requires_approval": False}],
+        )
+        own = self.create_task()
+        claimed = self.store.claim_next(
+            worker_id="filtered-worker",
+            workflow_name_prefixes=("agent-code-review-",),
+        )
+        self.assertEqual(claimed.run_id, own)
+        self.assertEqual(self.store.get(other.task_id).state, "queued")
+        generic = self.store.claim_next(worker_id="generic-worker")
+        self.assertEqual(generic.run_id, other.task_id)
+
+    def test_claim_prefix_filter_rejects_malformed_prefixes(self):
+        self.create_task()
+        invalid = ([], ["agent-code-review-"], (), ("",), ("x", "x"), ("x" * 101,), ("bad\x00prefix",))
+        for prefixes in invalid:
+            with self.subTest(prefixes=prefixes), self.assertRaises(ValueError):
+                self.store.claim_next(worker_id="filtered-worker", workflow_name_prefixes=prefixes)
+
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):
             self.worker({})
