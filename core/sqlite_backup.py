@@ -65,7 +65,7 @@ def backup_sqlite_database(source: str | Path, destination: str | Path) -> Path:
 
         if os.name == "posix":
             os.chmod(temporary_path, 0o600)
-        with temporary_path.open("rb") as snapshot:
+        with temporary_path.open("rb+") as snapshot:
             os.fsync(snapshot.fileno())
         os.replace(temporary_path, destination_path)
         temporary_path = None
