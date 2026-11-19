@@ -1,3 +1,4 @@
+import os
 import subprocess
 import tempfile
 import unittest
@@ -34,6 +35,7 @@ class FakeDockerRunner:
         return subprocess.CompletedProcess(argv, 0, b"", b"")
 
 
+@unittest.skipUnless(os.name == "posix", "Docker sandbox ownership requires POSIX UID/GID metadata")
 class DockerJobRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
