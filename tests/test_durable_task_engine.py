@@ -189,7 +189,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         report = self.engine.get_workforce_experiment_integrity("execution-telemetry-exp")
         self.assertEqual(report["worker_execution_events"]["execution_started"], 1)
         self.assertEqual(report["worker_execution_events"]["execution_succeeded"], 1)
-        self.assertIn("not that a specific treatment was delivered", " ".join(report["limitations"]))
+        self.assertIn("does not prove the model attended to", " ".join(report["limitations"]))
 
     def test_treatment_exposure_requires_treatment_arm_and_live_worker_lease(self):
         self.engine.create_improvement_proposal("treatment-exposure-proposal", {"recommendation": "Verify actual treatment invocation"})
