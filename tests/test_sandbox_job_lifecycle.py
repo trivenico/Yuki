@@ -8,6 +8,7 @@ from automation.sandbox_job_store import SandboxJobStore
 import os
 
 
+@unittest.skipUnless(os.name == "posix", "sandbox job lifecycle ownership requires POSIX UID metadata")
 class SandboxJobLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
