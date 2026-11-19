@@ -313,6 +313,31 @@ class SpecialistWorkerTests(unittest.TestCase):
             "reserved_memory_bytes": 0, "active_operations": 0,
         })
 
+
+    def test_backend_capacity_error_after_admission_is_not_swallowed(self):
+        from core.compute_fabric import ComputeCapacityError
+
+        class FailingBackend(CPUBackend):
+            def execute(self, operation):
+                raise ComputeCapacityError("backend execution failed")
+
+        task_id = self.create_task()
+        scheduler = ComputeScheduler((FailingBackend(memory_capacity_bytes=100),))
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "completed"},
+            compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=40),
+        )
+        with self.assertRaisesRegex(ComputeCapacityError, "backend execution failed"):
+            worker.run_once()
+        queued = self.store.get(task_id)
+        self.assertEqual(queued.state, "queued")
+        self.assertEqual(queued.attempts, 0)
+        self.assertIsNone(queued.lease_owner)
+        self.assertEqual(scheduler.stats()["cpu"], {
+            "reserved_memory_bytes": 0, "active_operations": 0,
+        })
+
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):
             self.worker({})
