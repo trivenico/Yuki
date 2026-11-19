@@ -51,6 +51,7 @@ class BackupInventoryTests(unittest.TestCase):
             root = Path(directory)
             workspace = self._workspace(root, [
                 "auth.sqlite3", "inference.sqlite3", "income-opportunities.sqlite3",
+                "conversations.sqlite3",
             ])
             external = root / "workforce.sqlite3"
             with sqlite3.connect(external) as db:
