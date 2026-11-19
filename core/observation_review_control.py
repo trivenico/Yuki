@@ -1,8 +1,8 @@
 """Authorized application service for owner-scoped observation knowledge review.
 
 UI layers receive this service, never the SQLite store. Every operation checks
-an application-supplied actor authorization callback; this layer does not grant
-permissions or promote approved proposals into active memory.
+an application-supplied actor authorization callback. Promotion, retrieval,
+and deactivation each require separate permissions.
 """
 from __future__ import annotations
 
