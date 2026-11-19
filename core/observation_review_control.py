@@ -96,6 +96,17 @@ class ObservationKnowledgeReviewService:
             promoted_by=promoter_id,
         )
 
+
+    def retrieve_curated(self, kind: str, value: str, *, actor_id: str,
+                         catalog: SQLiteCuratedKnowledge):
+        """Return an exact active match with provenance; never executes stored text."""
+        if not isinstance(catalog, SQLiteCuratedKnowledge):
+            raise TypeError("catalog must be a SQLiteCuratedKnowledge")
+        self._require(actor_id, "memory:knowledge:read")
+        if catalog.owner_id != self._store.owner_id:
+            raise PermissionError("knowledge catalog owner does not match the review owner")
+        return catalog.find_active(kind, value)
+
     def list_curated(self, *, actor_id: str, catalog: SQLiteCuratedKnowledge,
                      limit: int = 100):
         if not isinstance(catalog, SQLiteCuratedKnowledge):
