@@ -37,6 +37,23 @@ def evaluate_improvement_snapshots(baseline, current, *, minimum_completed_obser
             return None
         return succeeded + failed
 
+    data_quality_issues = []
+    for label, snapshot in (("baseline", baseline), ("current", current)):
+        succeeded = _number(snapshot, ("tasks", "succeeded"))
+        failed = _number(snapshot, ("tasks", "failed"))
+        queued = _number(snapshot, ("tasks", "queued"))
+        verified = _number(snapshot, ("performance", "independently_verified_successes"))
+        for metric_name, value in (("succeeded", succeeded), ("failed", failed), ("queued", queued),
+                                   ("independently_verified_successes", verified)):
+            if value is not None and not float(value).is_integer():
+                data_quality_issues.append({
+                    "snapshot": label, "metric": metric_name, "code": "non_integer_task_count",
+                })
+        if succeeded is not None and verified is not None and verified > succeeded:
+            data_quality_issues.append({
+                "snapshot": label, "metric": "independently_verified_successes",
+                "code": "verified_successes_exceed_succeeded_tasks",
+            })
     baseline_n = completed(baseline)
     current_n = completed(current)
     enough = (
@@ -57,6 +74,12 @@ def evaluate_improvement_snapshots(baseline, current, *, minimum_completed_obser
                 before_total, after_total = before + before_den, after + after_den
                 before = before / before_total if before_total else None
                 after = after / after_total if after_total else None
+        if name == "independently_verified_successes":
+            baseline_succeeded = _number(baseline, ("tasks", "succeeded"))
+            current_succeeded = _number(current, ("tasks", "succeeded"))
+            if ((baseline_succeeded is not None and before is not None and before > baseline_succeeded)
+                    or (current_succeeded is not None and after is not None and after > current_succeeded)):
+                before = after = None
         if before is None or after is None:
             metrics[name] = {"available": False, "status": "unavailable"}
             continue
@@ -82,6 +105,11 @@ def evaluate_improvement_snapshots(baseline, current, *, minimum_completed_obser
         "baseline_completed_observations": baseline_n,
         "current_completed_observations": current_n,
         "metrics": metrics,
+        "data_quality": {
+            "status": "warnings" if data_quality_issues else "no_detected_count_inconsistencies",
+            "issues": data_quality_issues,
+            "note": "Count consistency checks are partial; unavailable metrics are not inferred or repaired.",
+        },
         "interpretation": (
             "Directional differences between bounded snapshots only. They do not establish "
             "causation, intervention effectiveness, statistical significance, or durable improvement. "
