@@ -57,6 +57,7 @@ def build_authenticated_desktop_conversation(
     sessions: Any,
     memory: Any = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    knowledge_entries_for_owner: Callable[[str, str], Any] | None = None,
 ) -> DesktopConversationSession:
     """Compose a live-session-checked durable chat for one authenticated owner.
 
@@ -78,6 +79,7 @@ def build_authenticated_desktop_conversation(
         provider=provider,
         owner_id=actor_id,
         store_factory=store_factory,
+        knowledge_entries_for_owner=knowledge_entries_for_owner,
     )
     try:
         facade = AuthenticatedDesktopConversation(
