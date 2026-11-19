@@ -1,3 +1,4 @@
+import os
 import tempfile
 from pathlib import Path
 import unittest
@@ -12,8 +13,8 @@ class DockerSandboxArgvTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
-    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getgid", return_value=os.getgid(), create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=os.getuid(), create=True)
     def test_restrictive_flags_and_read_only_workspace_default(self, _uid, _gid):
         command = ["python", "--version"]
         argv = build_docker_argv(SandboxPolicy(), image="python:3.12",
@@ -113,7 +114,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
         self.assertTrue(mounts[0].endswith(",ro"))
         self.assertTrue(mounts[1].endswith(",rw"))
         self.assertIn("dst=/output,rw", mounts[1])
-        self.assertEqual(argv[argv.index("--user") + 1], "1000:1000")
+        self.assertEqual(argv[argv.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
