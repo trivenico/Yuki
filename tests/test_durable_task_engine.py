@@ -17,6 +17,45 @@ class DurableTaskEngineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_measurable_experiment_guardrails_reject_unsupported_or_unsafe_values(self):
+        self.engine.create_improvement_proposal("guardrail-validation-proposal", {"recommendation": "Validate limits"})
+        self.engine.transition_improvement_proposal(
+            "guardrail-validation-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        base = {
+            "hypothesis": "A checklist reduces failures",
+            "intervention": "Reviewed checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "randomized_controlled",
+            "eligible_population": {"description": "Tasks", "task_types": ["workforce.task"]},
+            "guardrails": [],
+            "evaluation_window_days": 7,
+            "minimum_sample_size": 2,
+        }
+        invalid = [
+            {"metric": "unknown_metric", "operator": "<=", "threshold": 1,
+             "scope": "both", "severity": "warning"},
+            {"metric": "task_failure_rate", "operator": "==", "threshold": 0.1,
+             "scope": "both", "severity": "warning"},
+            {"metric": "task_success_rate", "operator": ">=", "threshold": 1.1,
+             "scope": "both", "severity": "warning"},
+            {"metric": "failed_tasks", "operator": "<=", "threshold": True,
+             "scope": "both", "severity": "critical"},
+            {"metric": "failed_tasks", "operator": "<=", "threshold": 1,
+             "scope": "all", "severity": "critical"},
+            {"metric": "failed_tasks", "operator": "<=", "threshold": 1,
+             "scope": "both", "severity": "emergency"},
+        ]
+        for index, guardrail in enumerate(invalid):
+            design = dict(base)
+            design["guardrails"] = [guardrail]
+            with self.subTest(guardrail=guardrail), self.assertRaises(ValueError):
+                self.engine.create_workforce_experiment(
+                    f"guardrail-invalid-{index}", "guardrail-validation-proposal", design,
+                )
+
     def test_randomized_experiment_assignment_is_deterministic_and_exclusive(self):
         proposal = {"recommendation": "Evaluate queue triage"}
         self.engine.create_improvement_proposal("assignment-proposal", proposal)
