@@ -45,6 +45,7 @@ The default must be conservative: no GPU memory operations without a backend tha
 - Bound all inputs, cache sizes, TTLs, and namespace quotas.
 - Cache entries are disposable. Cache loss must not corrupt authoritative Yuki data.
 - Use SQLite transactions and a process/thread-safe connection strategy; do not share SQLite connections across threads.
+- A database path is single-process-owned in this MVP: do not open the same YMF database from multiple processes. The RAM tier is process-local and cross-process invalidation is not implemented; use a separate database path per process until a coordinated shared-cache design is introduced.
 - Surface disk-full, permission, and corruption failures clearly; do not silently claim a successful SSD write.
 - Do not silently replace OS swap/pagefile settings. OS virtual memory remains the operating system's responsibility.
 
