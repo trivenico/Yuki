@@ -9,7 +9,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
-import hmac
 import re
 import sqlite3
 import threading
@@ -24,7 +23,6 @@ _APP_ID = re.compile(r"[a-z0-9][a-z0-9_.:-]{0,127}\Z")
 _DOMAIN = re.compile(
     r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\Z"
 )
-_STATUSES = frozenset({"pending", "approved", "rejected"})
 
 
 @dataclass(frozen=True)
@@ -221,12 +219,5 @@ class SQLiteObservationKnowledgeReview:
                 (self._owner,),
             )
             return cursor.rowcount
-
-    def verify_owner_isolation(self, other: "SQLiteObservationKnowledgeReview") -> bool:
-        """Diagnostic helper: this store never exposes records from another owner."""
-        return isinstance(other, SQLiteObservationKnowledgeReview) and not hmac.compare_digest(
-            self._owner.encode("utf-8"), other._owner.encode("utf-8")
-        )
-
 
 __all__ = ["KnowledgeProposal", "SQLiteObservationKnowledgeReview"]
