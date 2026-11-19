@@ -177,8 +177,14 @@ def validate_artifact_directory(
 
 
 def _safe_relative_path(value: str) -> Path:
-    if not isinstance(value, str) or not value.strip() or len(value) > 1000 or "\x00" in value or "\\\\" in value:
-    if not isinstance(value, str) or not value.strip() or len(value) > 1000 or "\x00" in value or "\\" in value:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value) > 1000
+        or "\x00" in value
+        or "\\" in value
+    ):
+        raise ArtifactValidationError("destination must be bounded relative text")
     relative = Path(value)
     if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
         raise ArtifactValidationError("absolute paths and traversal are not allowed")
