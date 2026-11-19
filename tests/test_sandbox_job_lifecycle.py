@@ -137,7 +137,9 @@ class SandboxJobLifecycleTests(unittest.TestCase):
         self.audit_fails = True
         with self.assertRaises(SandboxJobError):
             self.lifecycle.create_job()
-        self.assertEqual(list(self.jobs.iterdir()), [])
+        self.assertEqual(len(list(self.jobs.iterdir())), 1)
+        record = self.store.list_nonterminal()[0]
+        self.assertEqual(record.state, "created")
 
     def test_start_audit_failure_stops_launched_runtime(self):
         job = self.lifecycle.create_job()
@@ -146,6 +148,7 @@ class SandboxJobLifecycleTests(unittest.TestCase):
             self.lifecycle.start_job(job.job_id)
         self.assertEqual(self.freeze_calls, [{"container": job.job_id}])
         self.assertEqual(self.lifecycle.get_job(job.job_id).state, JobState.FAILED)
+        self.assertEqual(self.store.get(job.job_id).state, "failed")
 
 
 if __name__ == "__main__":
