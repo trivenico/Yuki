@@ -167,6 +167,57 @@ class BuiltInAuthService:
             )
         return AuthenticatedUser(user_id, username, "admin", _ROLE_PERMISSIONS["admin"])
 
+    def open_local_profile_session(self):
+        """Issue a local-desktop session for the sole OS-owned Yuki profile.
+
+        This is deliberately not an API authentication path. Desktop callers
+        must keep this method behind the local process boundary and protect
+        the resulting opaque token with the operating-system credential store.
+        A first launch creates one administrator with an unguessable,
+        discarded password; subsequent launches require exactly one enabled
+        local account. Multi-user databases fail closed and require migration.
+        """
+        now = _utcnow()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM auth_users ORDER BY created_at, user_id"
+            ).fetchall()
+            if not rows:
+                username = "yuki-local"
+                password = secrets.token_urlsafe(48)
+                salt = secrets.token_bytes(16)
+                digest = self._password_digest(password, salt)
+                user_id = secrets.token_urlsafe(18)
+                db.execute(
+                    """INSERT INTO auth_users
+                       (user_id, username, password_salt, password_hash,
+                        password_iterations, role, created_at)
+                       VALUES (?, ?, ?, ?, ?, 'admin', ?)""",
+                    (user_id, username, salt, digest, self.password_iterations,
+                     _timestamp(now)),
+                )
+                row = db.execute(
+                    "SELECT * FROM auth_users WHERE user_id=?", (user_id,)
+                ).fetchone()
+            elif len(rows) != 1 or rows[0]["disabled"]:
+                raise RuntimeError(
+                    "Sign-in-free desktop mode requires exactly one enabled local account. "
+                    "Migrate the existing accounts before starting Yuki."
+                )
+            else:
+                row = rows[0]
+            token = secrets.token_urlsafe(_SESSION_BYTES)
+            expires = now + timedelta(seconds=self.session_ttl_seconds)
+            db.execute(
+                """INSERT INTO auth_sessions
+                   (token_hash, user_id, created_at, expires_at)
+                   VALUES (?, ?, ?, ?)""",
+                (hashlib.sha256(token.encode("ascii")).hexdigest(),
+                 row["user_id"], _timestamp(now), _timestamp(expires)),
+            )
+            return IssuedSession(token, self._user(row), _timestamp(expires))
+
     def authenticate(self, username, password):
         if not isinstance(username, str) or len(username) > 128 or not isinstance(password, str) or len(password) > _MAX_PASSWORD_LENGTH:
             raise AuthenticationError("Invalid username or password.")
