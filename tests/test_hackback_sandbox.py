@@ -1,0 +1,59 @@
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from hackback.sandbox import DockerSandbox, SandboxError, _OUTPUT_TAIL_BYTES
+
+
+IMAGE = "python:3.11-slim@sha256:" + ("a" * 64)
+
+
+class DockerSandboxOutputTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.sandbox = DockerSandbox(
+            self.tmp.name, allowed_images=[IMAGE], enabled=True,
+            approver=lambda _reason: True,
+        )
+
+    @patch("hackback.sandbox.subprocess.Popen")
+    def test_output_capture_retains_bounded_tail_and_drains_both_pipes(self, popen):
+        popen.side_effect = lambda command, **kwargs: subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys; sys.stdout.write('A'*500000); "
+             "sys.stderr.write('B'*500000)"],
+            **kwargs,
+        )
+        result = self.sandbox.run(IMAGE, ["python", "--version"])
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(len(result["stdout"].encode("utf-8")), _OUTPUT_TAIL_BYTES)
+        self.assertEqual(len(result["stderr"].encode("utf-8")), _OUTPUT_TAIL_BYTES)
+        self.assertEqual(result["stdout"], "A" * _OUTPUT_TAIL_BYTES)
+        self.assertEqual(result["stderr"], "B" * _OUTPUT_TAIL_BYTES)
+        self.assertTrue(popen.call_args.kwargs["shell"] is False)
+        self.assertIs(popen.call_args.kwargs["stdout"], subprocess.PIPE)
+        self.assertIs(popen.call_args.kwargs["stderr"], subprocess.PIPE)
+
+    @patch("hackback.sandbox.subprocess.Popen")
+    def test_timeout_kills_child_and_raises_safe_error(self, popen):
+        popen.side_effect = lambda command, **kwargs: subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            **kwargs,
+        )
+        with self.assertRaisesRegex(SandboxError, "timed out"):
+            self.sandbox.run(IMAGE, ["python", "--version"], timeout=1)
+        popen.return_value.kill.assert_not_called() if hasattr(
+            popen.return_value, "kill"
+        ) else None
+
+    @patch("hackback.sandbox.subprocess.Popen", side_effect=OSError("missing"))
+    def test_docker_start_failure_is_sanitized(self, _popen):
+        with self.assertRaisesRegex(SandboxError, "could not be started"):
+            self.sandbox.run(IMAGE, ["python", "--version"])
+
+
+if __name__ == "__main__":
+    unittest.main()
