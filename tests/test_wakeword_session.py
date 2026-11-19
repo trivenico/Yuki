@@ -181,9 +181,11 @@ class WakeWordSessionTests(unittest.TestCase):
         detector = FakeDetector()
         errors = []
         error_reported = threading.Event()
+
         def on_error(error):
             errors.append(error)
             error_reported.set()
+
         session = self.make_session(source, detector, on_error=on_error)
         session.start()
         self.assertTrue(error_reported.wait(2))
@@ -223,45 +225,38 @@ class WakeWordSessionTests(unittest.TestCase):
         with self.assertRaises(WakeWordError):
             session.start()
 
-    def test_odd_byte_pcm_frames_are_rejected(self):
-        source = FakeAudioSource([b"abc"])
-        detector = FakeDetector()
+    def _assert_worker_failure(self, source, detector):
         errors = []
-        session = self.make_session(source, detector, on_error=errors.append)
+        error_reported = threading.Event()
+
+        def on_error(error):
+            errors.append(error)
+            error_reported.set()
+
+        session = self.make_session(source, detector, on_error=on_error)
         session.start()
+        self.assertTrue(error_reported.wait(2))
         worker = session._thread
-        worker.join(2)
+        if worker is not None:
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
         self.assertEqual(session.state, "failed")
         self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], WakeWordError)
         self.assertTrue(source.closed)
         self.assertTrue(detector.closed)
 
+    def test_odd_byte_pcm_frames_are_rejected(self):
+        self._assert_worker_failure(FakeAudioSource([b"abc"]), FakeDetector())
+
     def test_detector_must_return_a_boolean(self):
-        source = FakeAudioSource([b"frame!"])
         detector = FakeDetector()
         detector.process = lambda frame: 1
-        errors = []
-        session = self.make_session(source, detector, on_error=errors.append)
-        session.start()
-        worker = session._thread
-        worker.join(2)
-        self.assertEqual(session.state, "failed")
-        self.assertEqual(len(errors), 1)
-        self.assertTrue(source.closed)
-        self.assertTrue(detector.closed)
+        self._assert_worker_failure(FakeAudioSource([b"frame!"]), detector)
 
     def test_oversized_frames_are_rejected(self):
         source = FakeAudioSource([b"x" * (WakeWordSession.MAX_FRAME_BYTES + 1)])
-        detector = FakeDetector()
-        errors = []
-        session = self.make_session(source, detector, on_error=errors.append)
-        session.start()
-        worker = session._thread
-        worker.join(2)
-        self.assertEqual(session.state, "failed")
-        self.assertEqual(len(errors), 1)
-        self.assertTrue(source.closed)
-        self.assertTrue(detector.closed)
+        self._assert_worker_failure(source, FakeDetector())
 
 
 if __name__ == "__main__":
