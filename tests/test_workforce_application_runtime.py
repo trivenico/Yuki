@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import threading
 from pathlib import Path
 
 from core.agent import YukiCoreAgent
@@ -52,6 +53,73 @@ class WorkforceApplicationRuntimeTests(unittest.TestCase):
             report = runtime.ceo.report(execution)
             self.assertTrue(report["complete"])
             self.assertEqual(report["counts"], {"succeeded": 1})
+
+    def test_shutdown_waits_for_active_run_and_keeps_engine_open_on_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = build_workforce_application_runtime(
+                database=Path(directory) / "workforce.sqlite3",
+                agent=self._agent(),
+                registry=self._registry(),
+                planner=TimeTaskPlanner(),
+            )
+            entered = threading.Event()
+            release = threading.Event()
+
+            def blocked_run():
+                entered.set()
+                release.wait(2)
+                return {"state": "succeeded", "status": "completed"}
+
+            runtime.worker.run_once = blocked_run
+            results = []
+            thread = threading.Thread(target=lambda: results.append(runtime.run_once()))
+            thread.start()
+            self.assertTrue(entered.wait(1))
+
+            self.assertFalse(runtime.shutdown(timeout_seconds=0.01))
+            self.assertFalse(runtime.closed)
+            self.assertIsNotNone(runtime.engine.create_goal())
+            self.assertEqual(
+                runtime.run_once(),
+                {"state": "stopping", "status": "shutdown_requested"},
+            )
+
+            release.set()
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(results, [{"state": "succeeded", "status": "completed"}])
+            self.assertTrue(runtime.shutdown(timeout_seconds=0.1))
+            runtime.close()
+            self.assertTrue(runtime.closed)
+
+    def test_close_refuses_to_close_engine_while_run_is_active(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = build_workforce_application_runtime(
+                database=Path(directory) / "workforce.sqlite3",
+                agent=self._agent(),
+                registry=self._registry(),
+                planner=TimeTaskPlanner(),
+            )
+            entered = threading.Event()
+            release = threading.Event()
+
+            def blocked_run():
+                entered.set()
+                release.wait(2)
+                return {"state": "idle", "status": "no_task"}
+
+            runtime.worker.run_once = blocked_run
+            thread = threading.Thread(target=runtime.run_once)
+            thread.start()
+            self.assertTrue(entered.wait(1))
+            with self.assertRaisesRegex(RuntimeError, "execution is active"):
+                runtime.close()
+            self.assertFalse(runtime.closed)
+            release.set()
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
+            runtime.close()
+            self.assertTrue(runtime.closed)
 
     def test_requires_persistent_database(self):
         with self.assertRaisesRegex(ValueError, "persistent SQLite"):
