@@ -30,7 +30,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             "primary_metric": "failed_tasks",
             "preferred_direction": "decrease",
             "design_type": "randomized_controlled",
-            "eligible_population": "Workforce tasks",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
             "guardrails": ["No permission changes"],
             "evaluation_window_days": 14,
             "minimum_sample_size": 10,
@@ -77,7 +77,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             "primary_metric": "failed_tasks",
             "preferred_direction": "decrease",
             "design_type": "randomized_controlled",
-            "eligible_population": "Workforce tasks",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
             "guardrails": [],
             "evaluation_window_days": 14,
             "minimum_sample_size": 2,
@@ -133,6 +133,62 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(report["automatic_action"])
         self.assertIn("no causal effect", report["interpretation"])
 
+    def test_randomized_assignment_requires_structured_matching_eligibility(self):
+        self.engine.create_improvement_proposal("eligibility-proposal", {"recommendation": "Scope tasks"})
+        self.engine.transition_improvement_proposal(
+            "eligibility-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-1",
+        )
+        free_text_design = {
+            "hypothesis": "Reduce failures", "intervention": "Checklist",
+            "primary_metric": "failed_tasks", "preferred_direction": "decrease",
+            "design_type": "randomized_controlled", "eligible_population": "Workforce tasks",
+            "guardrails": [], "evaluation_window_days": 7, "minimum_sample_size": 2,
+        }
+        self.engine.create_workforce_experiment("free-text-eligibility", "eligibility-proposal", free_text_design)
+        self.engine.transition_workforce_experiment(
+            "free-text-eligibility", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-2",
+        )
+        wrong_type = self.engine.submit(
+            self.goal, "billing.refund", {}, idempotency_key="wrong-eligibility",
+        )
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("free-text-eligibility", wrong_type["id"])
+        matching = self.engine.submit(
+            self.goal, "workforce.task", {}, idempotency_key="matching-eligibility",
+        )
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("free-text-eligibility", matching["id"])
+
+        structured_design = dict(free_text_design)
+        structured_design["eligible_population"] = {
+            "description": "Only workforce tasks",
+            "task_types": ["workforce.task"],
+        }
+        self.engine.create_improvement_proposal("structured-eligibility-proposal", {"recommendation": "Scope tasks"})
+        self.engine.transition_improvement_proposal(
+            "structured-eligibility-proposal", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-3",
+        )
+        self.engine.create_workforce_experiment(
+            "structured-eligibility", "structured-eligibility-proposal", structured_design,
+        )
+        self.engine.transition_workforce_experiment(
+            "structured-eligibility", expected_state="proposed", new_state="approved",
+            actor_id="reviewer-4",
+        )
+        wrong_type2 = self.engine.submit(
+            self.goal, "billing.refund", {}, idempotency_key="wrong-eligibility-2",
+        )
+        with self.assertRaises(TaskConflict):
+            self.engine.assign_workforce_experiment_task("structured-eligibility", wrong_type2["id"])
+        matching2 = self.engine.submit(
+            self.goal, "workforce.task", {}, idempotency_key="matching-eligibility-2",
+        )
+        result = self.engine.assign_workforce_experiment_task("structured-eligibility", matching2["id"])
+        self.assertIn(result["assignment"], {"control", "treatment"})
+
     def test_pre_post_experiment_cannot_assign_randomized_arms(self):
         self.engine.create_improvement_proposal("descriptive-proposal", {"recommendation": "Observe"})
         self.engine.transition_improvement_proposal(
@@ -145,7 +201,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             "primary_metric": "failed_tasks",
             "preferred_direction": "decrease",
             "design_type": "pre_post_descriptive",
-            "eligible_population": "Workforce tasks",
+            "eligible_population": {"description": "Workforce tasks", "task_types": ["workforce.task"]},
             "guardrails": [],
             "evaluation_window_days": 7,
             "minimum_sample_size": 5,
