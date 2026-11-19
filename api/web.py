@@ -23,8 +23,9 @@ _SECURITY_HEADERS = [
 class YukiWebApplication:
     """Serve the allowlisted static chat shell and delegate API traffic."""
 
-    def __init__(self, api):
+    def __init__(self, api, *, readiness=None):
         self.api = api
+        self.readiness = readiness or (lambda: True)
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
@@ -35,6 +36,15 @@ class YukiWebApplication:
         if path == "/healthz" and method in {"GET", "HEAD"}:
             body = json.dumps({"status": "ok", "service": "yuki"}).encode("utf-8")
             await self._respond(send, 200, body, "application/json; charset=utf-8", method)
+            return
+        if path == "/readyz" and method in {"GET", "HEAD"}:
+            ready = bool(self.readiness())
+            status = 200 if ready else 503
+            body = json.dumps({
+                "status": "ready" if ready else "not_ready",
+                "service": "yuki",
+            }).encode("utf-8")
+            await self._respond(send, status, body, "application/json; charset=utf-8", method)
             return
         callback = re.fullmatch(
             r"/oauth/callback/([A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127})", path
