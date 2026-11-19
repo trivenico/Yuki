@@ -1438,6 +1438,14 @@ class DurableTaskEngine:
                    WHERE x.experiment_id=? AND a.assignment!='treatment'""",
                 (experiment_id,),
             ).fetchone()["n"]
+            treatment_started_rows = c.execute(
+                """SELECT a.task_id,e.attempt FROM workforce_experiment_assignments a
+                   JOIN workforce_experiment_execution_events e
+                     ON e.experiment_id=a.experiment_id AND e.task_id=a.task_id
+                        AND e.event_type='execution_started'
+                   WHERE a.experiment_id=? AND a.assignment='treatment'""",
+                (experiment_id,),
+            ).fetchall()
         design = json.loads(experiment["design_json"])
         population = design.get("eligible_population")
         allowed_types = (
@@ -1467,22 +1475,10 @@ class DurableTaskEngine:
         if control_exposure_count:
             issues.append({"code": "control_arm_has_treatment_exposure",
                            "count": control_exposure_count})
-        treatment_without_exposure = c.execute(
-            """SELECT a.task_id FROM workforce_experiment_assignments a
-               JOIN workforce_experiment_execution_events e
-                 ON e.experiment_id=a.experiment_id AND e.task_id=a.task_id
-                    AND e.event_type='execution_started'
-               WHERE a.experiment_id=? AND a.assignment='treatment'
-                 AND NOT EXISTS (
-                   SELECT 1 FROM workforce_experiment_treatment_exposures x
-                   WHERE x.experiment_id=a.experiment_id AND x.task_id=a.task_id
-                     AND x.attempt=e.attempt
-                 )""",
-            (experiment_id,),
-        ).fetchall()
-        for row in treatment_without_exposure:
-            issues.append({"code": "treatment_execution_without_skill_exposure",
-                           "task_id": row["task_id"]})
+        for row in treatment_started_rows:
+            if (row["task_id"], row["attempt"]) not in exposure_task_attempts:
+                issues.append({"code": "treatment_execution_without_skill_exposure",
+                               "task_id": row["task_id"], "attempt": row["attempt"]})
         delivery_counts = {"delivered": 0, "not_delivered": 0, "unknown": 0, "unrecorded": 0}
         for row in rows:
             expected_key = hashlib.sha256(
