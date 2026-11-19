@@ -40,8 +40,11 @@ def build_web_sqlite_inventory(
     workspace_value = config.get("workspace")
     if not isinstance(workspace_value, str) or not workspace_value.strip():
         raise BackupInventoryError("workspace_not_configured")
-    workspace = Path(workspace_value).expanduser().resolve(strict=True)
-    if not workspace.is_dir() or workspace.is_symlink():
+    workspace_input = Path(workspace_value).expanduser()
+    if workspace_input.is_symlink():
+        raise BackupInventoryError("workspace_must_be_existing_directory")
+    workspace = workspace_input.resolve(strict=True)
+    if not workspace.is_dir():
         raise BackupInventoryError("workspace_must_be_existing_directory")
 
     backend = config.get("storage_backend", "sqlite")
