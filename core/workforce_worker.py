@@ -196,7 +196,7 @@ class WorkforceWorker:
 
         execution_telemetry_started = False
         execution_telemetry_terminal = False
-        experiment_context = self.engine.get_task_workforce_experiment_context(task_id)
+        experiment_context = None
         def record_treatment_exposure(*, skill_name):
             if experiment_context is None or experiment_context.get("assignment") != "treatment":
                 return None
@@ -207,6 +207,7 @@ class WorkforceWorker:
                 skill_name=skill_name,
             )
         try:
+            experiment_context = self.engine.get_task_workforce_experiment_context(task_id)
             # Experiment telemetry is emitted only after payload, knowledge, and
             # employee policy checks pass, immediately before the executor seam.
             # It records worker invocation, not proof of treatment delivery.
