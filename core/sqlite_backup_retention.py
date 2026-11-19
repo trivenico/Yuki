@@ -106,3 +106,140 @@ def plan_sqlite_backup_retention(
         retained_set_ids=retained_ids,
         eligible_set_ids=eligible_ids,
     )
+
+
+def _open_directory_at(parent_fd: int, name: str) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    return os.open(name, flags, dir_fd=parent_fd)
+
+
+def _same_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and stat.S_IFMT(left.st_mode) == stat.S_IFMT(right.st_mode)
+    )
+
+
+def prune_sqlite_backup_sets(
+    backup_root: str | Path,
+    expected_entries: tuple[SQLiteDatabaseEntry, ...],
+    *,
+    workspace_root: str | Path,
+    keep_last: int,
+    approved_set_ids: tuple[str, ...],
+    explicit_approval: bool,
+    pinned_set_ids: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Delete only explicitly approved, freshly re-verified eligible sets.
+
+    This destructive API is POSIX-only and requires dir_fd/no-follow support.
+    The caller must obtain human/operator approval for the exact set IDs and
+    pass explicit_approval=True. No scheduling or implicit approval exists.
+    """
+    if explicit_approval is not True:
+        raise SQLiteBackupRetentionError("explicit_approval_required")
+    if not isinstance(approved_set_ids, tuple) or not approved_set_ids:
+        raise SQLiteBackupRetentionError("nonempty_approved_set_ids_required")
+    if any(not isinstance(item, str) or not _SET_ID.fullmatch(item) for item in approved_set_ids):
+        raise SQLiteBackupRetentionError("invalid_approved_set_id")
+    if len(set(approved_set_ids)) != len(approved_set_ids):
+        raise SQLiteBackupRetentionError("duplicate_approved_set_id")
+    if os.name != "posix" or os.open not in os.supports_dir_fd or os.rename not in os.supports_dir_fd or os.unlink not in os.supports_dir_fd or os.rmdir not in os.supports_dir_fd:
+        raise SQLiteBackupRetentionError("safe_dir_fd_deletion_unsupported")
+
+    initial_plan = plan_sqlite_backup_retention(
+        backup_root, expected_entries, workspace_root=workspace_root,
+        keep_last=keep_last, pinned_set_ids=pinned_set_ids,
+    )
+    if not set(approved_set_ids).issubset(initial_plan.eligible_set_ids):
+        raise SQLiteBackupRetentionError("approved_set_not_eligible")
+
+    root = Path(backup_root).expanduser().resolve(strict=True)
+    root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        root_fd = os.open(root, root_flags)
+    except OSError as exc:
+        raise SQLiteBackupRetentionError("backup_root_open_failed") from exc
+
+    removed: list[str] = []
+    try:
+        root_identity = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_identity.st_mode):
+            raise SQLiteBackupRetentionError("backup_root_changed")
+        for set_id in approved_set_ids:
+            # Recompute eligibility immediately before each destructive action.
+            current_plan = plan_sqlite_backup_retention(
+                root, expected_entries, workspace_root=workspace_root,
+                keep_last=keep_last, pinned_set_ids=pinned_set_ids,
+            )
+            if set_id not in current_plan.eligible_set_ids:
+                raise SQLiteBackupRetentionError("approved_set_no_longer_eligible")
+
+            candidate = root / set_id
+            try:
+                manifest = verify_sqlite_backup_set(candidate, expected_entries)
+                expected_files = {"manifest.json"} | {
+                    entry.name + ".sqlite3" for entry in expected_entries
+                }
+                if {item["filename"] for item in manifest["databases"]} != expected_files - {"manifest.json"}:
+                    raise SQLiteBackupRetentionError("backup_inventory_changed")
+                candidate_fd = _open_directory_at(root_fd, set_id)
+            except SQLiteBackupRetentionError:
+                raise
+            except Exception as exc:
+                raise SQLiteBackupRetentionError("candidate_revalidation_failed") from exc
+
+            quarantine = ".yuki-prune-" + __import__("uuid").uuid4().hex
+            try:
+                opened_identity = os.fstat(candidate_fd)
+                named_identity = os.stat(set_id, dir_fd=root_fd, follow_symlinks=False)
+                if not _same_identity(opened_identity, named_identity):
+                    raise SQLiteBackupRetentionError("candidate_identity_changed")
+
+                file_identities = {}
+                for filename in expected_files:
+                    info = os.stat(filename, dir_fd=candidate_fd, follow_symlinks=False)
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise SQLiteBackupRetentionError("candidate_file_type_or_link_changed")
+                    if info.st_mode & 0o077:
+                        raise SQLiteBackupRetentionError("candidate_file_permissions_changed")
+                    file_identities[filename] = info
+
+                os.rename(set_id, quarantine, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+                quarantined_fd = _open_directory_at(root_fd, quarantine)
+                try:
+                    if not _same_identity(opened_identity, os.fstat(quarantined_fd)):
+                        os.rename(quarantine, set_id, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+                        raise SQLiteBackupRetentionError("candidate_replaced_during_quarantine")
+                    actual_names = set(os.listdir(quarantined_fd))
+                    if actual_names != expected_files:
+                        os.rename(quarantine, set_id, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+                        raise SQLiteBackupRetentionError("candidate_inventory_changed")
+                    for filename, prior in file_identities.items():
+                        current_info = os.stat(filename, dir_fd=quarantined_fd, follow_symlinks=False)
+                        if not _same_identity(prior, current_info) or current_info.st_nlink != 1:
+                            os.rename(quarantine, set_id, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+                            raise SQLiteBackupRetentionError("candidate_file_changed_during_quarantine")
+                    # Only the exact, preflighted regular files are unlinked.
+                    for filename, prior in file_identities.items():
+                        current_info = os.stat(filename, dir_fd=quarantined_fd, follow_symlinks=False)
+                        if not _same_identity(prior, current_info) or current_info.st_nlink != 1:
+                            raise SQLiteBackupRetentionError("candidate_file_changed_before_unlink")
+                        os.unlink(filename, dir_fd=quarantined_fd)
+                    os.close(quarantined_fd)
+                    quarantined_fd = -1
+                    os.rmdir(quarantine, dir_fd=root_fd)
+                    removed.append(set_id)
+                finally:
+                    if quarantined_fd >= 0:
+                        os.close(quarantined_fd)
+            except SQLiteBackupRetentionError:
+                raise
+            except Exception as exc:
+                raise SQLiteBackupRetentionError("candidate_prune_failed") from exc
+            finally:
+                os.close(candidate_fd)
+        return tuple(removed)
+    finally:
+        os.close(root_fd)
