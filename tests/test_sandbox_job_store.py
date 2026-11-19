@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import stat
 import tempfile
 import unittest
@@ -63,6 +64,41 @@ class SandboxJobStoreTests(unittest.TestCase):
         self.store.transition(self.job_id, expected_states=("created",), new_state="launching")
         with self.assertRaises(SandboxJobStoreError):
             self.store.transition(self.job_id, expected_states=("created",), new_state="frozen")
+
+    def test_migrates_legacy_schema_without_losing_jobs(self):
+        database = self.root / "legacy.sqlite3"
+        connection = sqlite3.connect(database)
+        connection.execute("""
+            CREATE TABLE sandbox_jobs (
+                job_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL CHECK(state IN (
+                    'created','running','frozen','validated','promoted',
+                    'failed','cancelled','cleaned'
+                )),
+                staging_directory TEXT NOT NULL,
+                container_name TEXT,
+                manifest_digest TEXT,
+                promoted_paths_json TEXT NOT NULL DEFAULT '[]',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
+        connection.execute(
+            "INSERT INTO sandbox_jobs VALUES(?,?,?,?,?,?,?,?)",
+            (self.job_id, "created", "/srv/yuki/jobs/" + self.job_id,
+             None, None, "[]", 1.0, 1.0),
+        )
+        connection.commit()
+        connection.close()
+
+        migrated = SandboxJobStore(database)
+        record = migrated.get(self.job_id)
+        self.assertEqual(record.state, "created")
+        launched = migrated.transition(
+            self.job_id, expected_states=("created",), new_state="launching",
+            container_name="yuki-job-" + "a" * 32,
+        )
+        self.assertEqual(launched.state, "launching")
 
     def test_rejects_symlink_database_and_permissive_parent(self):
         other = self.root / "actual.sqlite3"
