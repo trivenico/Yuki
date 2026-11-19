@@ -26,17 +26,17 @@ The adapter must reject a handle from another adapter, a changed model identity,
 
 The current ComputeScheduler reserves caller-estimated memory for the duration of one synchronous operation. That is insufficient to account for model weights that remain resident between inference calls.
 
-Before integrating model loading, Yuki must add a **model residency lease** (or an equivalent explicit allocation object) whose reservation remains held from before model load until successful unload. Inference calls use that already-admitted resident model and separately enforce bounded transient-memory/concurrency limits. Releasing a request's transient reservation must never release the model's resident-memory reservation.
+Compute Fabric now exposes `ComputeScheduler.reserve_model(ComputeRequest, model_id=...)`, returning a `ModelResidencyLease`. Its reservation remains held from before model load until successful unload. Inference calls use that already-admitted resident model and separately enforce bounded transient-memory/concurrency limits through `reserve()`. Releasing a request's transient reservation never releases the model's resident-memory reservation. The scheduler reports resident and transient accounting separately.
 
 The admission path must be:
 
 1. Validate model/runtime/device compatibility without allocating weights.
 2. Acquire bounded resident-memory and model-slot admission.
 3. Load and place the model.
-4. On load failure, release all admission and runtime resources.
+4. On load failure, clean up any partial runtime allocation and release the lease if cleanup is confirmed.
 5. For each inference, acquire bounded transient-memory/concurrency admission.
 6. Execute, synchronize, collect host outputs, and release transient admission in all outcomes.
-7. On unload, release model resources first, then release resident admission in a finally-safe path.
+7. On confirmed unload, release model resources first, then call `lease.release()`. If unload/cleanup is uncertain, call `lease.mark_unload_failed()`; the poisoned lease retains its reservation and rejects normal release. After runtime/operator reconciliation confirms the allocation is gone, call `scheduler.confirm_model_unloaded(lease)`.
 
 All reservations are currently process-local. They do not protect against other processes, external GPU jobs, or another host. CUDA free VRAM is a construction-time snapshot and TPU HBM is operator-configured; neither is a live guarantee. Runtime OOM remains possible even after scheduler admission.
 
@@ -46,7 +46,7 @@ All reservations are currently process-local. They do not protect against other 
 - **No automatic retry on another device:** retry only when the adapter can prove the failed operation had no externally visible side effects and the target runtime is explicitly configured.
 - **CPU fallback:** opt-in per model and operation. Re-load/validate the model on CPU under a separate CPU residency lease; never pretend that changing a device context migrates model weights.
 - **Cancellation:** check before dispatch and at supported runtime boundaries. Do not release residency while asynchronous device work may still reference model memory.
-- **Cleanup failure:** preserve the primary inference/load error and record cleanup failure separately; do not report resources as safely released when that is unknown.
+- **Cleanup failure:** preserve the primary inference/load error and record cleanup failure separately; do not report resources as safely released when that is unknown. A poisoned residency lease remains charged until explicit reconciliation.
 - **Concurrency:** serialize non-thread-safe runtime/model operations or expose a documented, tested concurrency capability. Bound queues and reject overload rather than growing unbounded work.
 
 ## Runtime-specific obligations
