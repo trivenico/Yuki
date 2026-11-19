@@ -196,6 +196,16 @@ class WorkforceWorker:
 
         execution_telemetry_started = False
         execution_telemetry_terminal = False
+        experiment_context = self.engine.get_task_workforce_experiment_context(task_id)
+        def record_treatment_exposure(*, skill_name):
+            if experiment_context is None or experiment_context.get("assignment") != "treatment":
+                return None
+            return self.engine.record_workforce_experiment_treatment_exposure(
+                experiment_context["experiment_id"], task_id,
+                worker_id=self.worker_id, attempt=task.get("attempts"),
+                intervention_version=experiment_context["intervention_version"],
+                skill_name=skill_name,
+            )
         try:
             # Experiment telemetry is emitted only after payload, knowledge, and
             # employee policy checks pass, immediately before the executor seam.
@@ -216,6 +226,8 @@ class WorkforceWorker:
                 max_autonomy_tier=payload["max_autonomy_tier"],
                 task_id=task_id,
                 knowledge_context=knowledge_context,
+                experiment_context=experiment_context,
+                record_treatment_exposure=record_treatment_exposure,
             )
             ok = getattr(outcome, "ok", None)
             status = getattr(outcome, "status", None)
