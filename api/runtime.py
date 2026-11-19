@@ -83,15 +83,25 @@ class ConversationRuntime:
                 return
 
     def close(self) -> None:
-        """Close backend resources once during graceful application shutdown."""
+        """Attempt every owned cleanup exactly once, even when one close fails."""
         if self._closed:
             return
-        try:
-            if self.workforce_application is not None:
+        # Mark closed before invoking dependencies: a failing close must not
+        # cause a later shutdown signal to repeat partially completed cleanup.
+        self._closed = True
+        first_error = None
+        if self.workforce_application is not None:
+            try:
                 self.workforce_application.close()
-        finally:
+            except Exception as exc:
+                first_error = exc
+        try:
             self.application.close()
-            self._closed = True
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 def build_conversation_runtime(
