@@ -8,7 +8,7 @@ from core.curated_knowledge_store import SQLiteCuratedKnowledge
 from core.observation_review_control import ObservationKnowledgeReviewService
 
 
-_TOKEN = re.compile(r"[a-z0-9][a-z0-9._-]{1,127}", re.IGNORECASE)
+_TOKEN = re.compile(r"[a-z0-9]{2,128}", re.IGNORECASE)
 _STOP_WORDS = {
     "about", "after", "also", "and", "are", "can", "for", "from", "help",
     "how", "into", "its", "me", "my", "the", "this", "that", "with", "you",
