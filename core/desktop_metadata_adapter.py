@@ -7,6 +7,7 @@ keystrokes, page text, process arguments, or file paths.
 from __future__ import annotations
 
 import re
+from itertools import islice
 from typing import Optional
 
 from core.observation_sources import FakeObservationSource, ObservationEvent
@@ -19,7 +20,8 @@ def _bounded_allowlist(values, label):
     if isinstance(values, (str, bytes)):
         raise ValueError(f"{label} must be a collection of identifiers")
     try:
-        items = tuple(values)
+        iterator = iter(values)
+        items = tuple(islice(iterator, 257))
     except TypeError as exc:
         raise ValueError(f"{label} must be iterable") from exc
     if len(items) > 256:
@@ -52,16 +54,13 @@ class DesktopMetadataAdapter:
         capacity: int = 64,
     ):
         self._apps = _bounded_allowlist(allowed_app_ids, "allowed_app_ids")
+        raw_domains = _bounded_allowlist(allowed_browser_domains, "allowed_browser_domains")
         domains = []
-        for domain in allowed_browser_domains:
-            if not isinstance(domain, str):
-                raise ValueError("browser domains must be text")
-            normalized = domain.strip().lower().rstrip(".")
+        for domain in raw_domains:
+            normalized = domain.rstrip(".")
             if not _DOMAIN.fullmatch(normalized):
                 raise ValueError("browser domain allowlist contains an invalid domain")
             domains.append(normalized)
-        if len(domains) > 256:
-            raise ValueError("allowed_browser_domains may contain at most 256 entries")
         self._domains = frozenset(domains)
         self._queue = FakeObservationSource(self.source_id, capacity=capacity)
         self._closed = False
