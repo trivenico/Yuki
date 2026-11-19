@@ -140,6 +140,41 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(lesson["independently_verified_successes"], 1)
         self.assertIn("association", " ".join(snapshot["knowledge_effectiveness"]["limitations"]))
 
+    def test_knowledge_review_evidence_rejects_owner_alias_and_mismatched_result_employee(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        for index, reviewer_id, result_employee in (
+            (0, f"  {employee.employee_id}  ", employee.employee_id),
+            (1, "INDEPENDENT-QA", "different-employee"),
+        ):
+            task = self.engine.submit(
+                goal_id, "workforce.task",
+                {
+                    "assigned_employee_id": employee.employee_id,
+                    "description": f"Invalid review evidence {index}",
+                    "review_required": True,
+                    "knowledge_context": [{"knowledge_id": "lesson-invalid-review"}],
+                },
+                idempotency_key=f"knowledge-invalid-review-{index}", max_attempts=1,
+            )
+            self.engine.claim("knowledge-invalid-review-worker", task_type="workforce.task")
+            self.engine.complete(task["id"], "knowledge-invalid-review-worker", {
+                "ok": True,
+                "status": "completed:reviewed",
+                "employee_id": result_employee,
+                "review_required": True,
+                "review_evidence": {
+                    "reviewer_id": reviewer_id,
+                    "status": "approved",
+                    "approved": True,
+                },
+            })
+
+        lesson = self.dashboard.snapshot()["knowledge_effectiveness"]["lessons"][0]
+        self.assertEqual(lesson["exposures"], 2)
+        self.assertEqual(lesson["succeeded_tasks"], 2)
+        self.assertEqual(lesson["independently_verified_successes"], 0)
+
     def test_repeated_knowledge_associated_failures_create_review_prompt_only(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
