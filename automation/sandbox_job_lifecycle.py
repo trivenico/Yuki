@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -270,14 +271,83 @@ class SandboxJobLifecycle:
                 raise SandboxJobError("job must have a validated manifest before promotion")
             if artifact_path in job.promoted_paths:
                 raise SandboxJobError("artifact has already been promoted for this job")
-            digest = self._promotion.promote(
-                principal=principal,
-                job_id=job.job_id,
-                staging_directory=job.staging_directory,
-                manifest=job.manifest,
-                artifact_path=artifact_path,
-                destination_path=destination_path,
-            )
+            item = next((entry for entry in job.manifest.files if entry.path == artifact_path), None)
+            if item is None:
+                raise SandboxJobError("artifact is not part of the validated manifest")
+            approval_data = {
+                "job_id": job.job_id,
+                "manifest_digest": job.manifest.digest,
+                "artifact_path": artifact_path,
+                "artifact_sha256": item.sha256,
+                "destination_path": destination_path,
+            }
+            approval_digest = hashlib.sha256(
+                json.dumps(approval_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            try:
+                intent = self._store.record_promotion_intent(
+                    job_id=job.job_id,
+                    artifact_path=artifact_path,
+                    destination_path=destination_path,
+                    artifact_sha256=item.sha256,
+                    artifact_size=item.size_bytes,
+                    approval_digest=approval_digest,
+                    actor_id=principal.actor_id,
+                )
+            except Exception as exc:
+                raise SandboxJobError("promotion intent could not be durably recorded") from exc
+
+            destination = self._promotion.root / destination_path
+            try:
+                destination_parent = destination.parent.resolve(strict=True)
+                destination_parent.relative_to(self._promotion.root)
+                if destination.is_symlink():
+                    raise SandboxJobError("promotion destination is a symlink")
+                if destination.exists():
+                    info = destination.lstat()
+                    if not os.path.isfile(destination) or info.st_nlink != 1 or info.st_size != item.size_bytes:
+                        raise SandboxJobError("existing promotion destination is not the expected regular file")
+                    digest_check = hashlib.sha256()
+                    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                    descriptor = os.open(str(destination), flags)
+                    try:
+                        while True:
+                            chunk = os.read(descriptor, 1024 * 1024)
+                            if not chunk:
+                                break
+                            digest_check.update(chunk)
+                    finally:
+                        os.close(descriptor)
+                    if digest_check.hexdigest() != item.sha256:
+                        raise SandboxJobError("existing promotion destination does not match approved artifact")
+                    if intent["status"] != "completed":
+                        self._store.complete_promotion(
+                            job_id=job.job_id, artifact_path=artifact_path,
+                            approval_digest=approval_digest,
+                        )
+                    digest = approval_digest
+                else:
+                    if intent["status"] == "completed":
+                        raise SandboxJobError("completed promotion destination is missing; manual reconciliation required")
+                    digest = self._promotion.promote(
+                        principal=principal,
+                        job_id=job.job_id,
+                        staging_directory=job.staging_directory,
+                        manifest=job.manifest,
+                        artifact_path=artifact_path,
+                        destination_path=destination_path,
+                    )
+                    if digest != approval_digest:
+                        raise SandboxJobError("promotion service returned an unexpected approval digest")
+                    self._store.complete_promotion(
+                        job_id=job.job_id, artifact_path=artifact_path,
+                        approval_digest=approval_digest,
+                    )
+            except SandboxJobError:
+                raise
+            except Exception as exc:
+                raise SandboxJobError("promotion requires reconciliation; durable intent retained") from exc
+
             next_paths = set(job.promoted_paths)
             next_paths.add(artifact_path)
             final_state = "promoted" if len(next_paths) == len(job.manifest.files) else "validated"
