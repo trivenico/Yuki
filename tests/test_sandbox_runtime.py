@@ -72,6 +72,31 @@ class DockerSandboxArgvTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_workspace_mount_path_with_comma_is_rejected(self, _uid, _gid):
+        import os
+        comma_root = Path(self.tmp.name) / "comma,workspace"
+        comma_root.mkdir()
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=str(comma_root),
+                command=["python", "--version"],
+            )
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_artifact_mount_path_with_comma_is_rejected(self, _uid, _gid):
+        import os
+        output = Path(self.tmp.name) / "comma,output"
+        output.mkdir(mode=0o700)
+        os.chmod(output, 0o700)
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image="python:3.12", workspace=self.tmp.name,
+                command=["python", "--version"], artifact_output_directory=str(output),
+            )
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     def test_artifact_output_is_separate_private_writable_mount(self, _uid, _gid):
         import os
         output = tempfile.TemporaryDirectory()
