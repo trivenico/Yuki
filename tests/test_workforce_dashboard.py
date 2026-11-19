@@ -205,6 +205,48 @@ class WorkforceDashboardTests(unittest.TestCase):
         self.assertEqual(lesson["historically_verified_before_task_creation_exposures"], 0)
         self.assertEqual(lesson["unverified_reference_exposures"], 1)
 
+    def test_historical_knowledge_verification_requires_matching_event_actor(self):
+        goal_id = self.engine.create_goal()
+        employee = self.registry.recommend({"python"}, limit=1)[0]
+        task = self.engine.submit(
+            goal_id, "workforce.task",
+            {
+                "assigned_employee_id": employee.employee_id,
+                "description": "Task references reviewed lesson",
+                "review_required": False,
+                "knowledge_context": [{
+                    "knowledge_id": "lesson-reviewer-provenance",
+                    "title": "Lesson title",
+                    "lesson": "Lesson body",
+                    "source_task_id": "source-task",
+                    "reviewed_by": "trusted-reviewer",
+                }],
+            },
+            idempotency_key="knowledge-reviewer-provenance", max_attempts=1,
+        )
+        record = {
+            "knowledge_id": "lesson-reviewer-provenance",
+            "state": "verified",
+            "source_task_id": "source-task",
+            "reviewed_by": "trusted-reviewer",
+            "knowledge": {"title": "Lesson title", "lesson": "Lesson body"},
+            "events": [{
+                "event_type": "knowledge.verified",
+                "actor_id": "different-actor",
+                "created_at": task["created_at"] - 1,
+            }],
+        }
+        with patch.object(self.engine, "get_knowledge", return_value=record):
+            mismatched = self.dashboard.snapshot()
+        lesson = mismatched["knowledge_effectiveness"]["lessons"][0]
+        self.assertEqual(lesson["historically_verified_before_task_creation_exposures"], 0)
+
+        record["events"][0]["actor_id"] = "trusted-reviewer"
+        with patch.object(self.engine, "get_knowledge", return_value=record):
+            matching = self.dashboard.snapshot()
+        lesson = matching["knowledge_effectiveness"]["lessons"][0]
+        self.assertEqual(lesson["historically_verified_before_task_creation_exposures"], 1)
+
     def test_knowledge_review_evidence_rejects_owner_alias_and_mismatched_result_employee(self):
         goal_id = self.engine.create_goal()
         employee = self.registry.recommend({"python"}, limit=1)[0]
