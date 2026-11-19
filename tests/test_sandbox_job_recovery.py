@@ -13,7 +13,7 @@ class SandboxJobRecoveryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.jobs = self.root / "jobs"
+        self.jobs = (self.root / "jobs").resolve()
         self.jobs.mkdir(mode=0o700)
         os.chmod(self.jobs, 0o700)
         self.dbroot = self.root / "db"
