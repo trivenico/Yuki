@@ -65,8 +65,10 @@ class Agent:
         self.registry = SkillRegistry()
         self.calls = []
 
-    def run_skill(self, name, argument):
+    def run_skill(self, name, argument, *, before_invoke=None):
         self.calls.append((name, argument))
+        if before_invoke is not None:
+            before_invoke()
         return Outcome(True, "completed")
 
 
