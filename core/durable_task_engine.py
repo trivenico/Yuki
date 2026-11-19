@@ -694,42 +694,50 @@ class DurableTaskEngine:
         """Audit one task's lesson handoff records without repairing or inferring execution."""
         if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 256:
             raise ValueError("invalid task_id")
-        task = self.get_task(task_id)
-        if task.get("task_type") != "workforce.task":
-            raise ValueError("task is not a workforce task")
-        payload = task.get("payload")
-        raw_context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
-        context_errors = []
-        if not isinstance(raw_context, list):
-            context_errors.append("knowledge_context_not_a_list")
-            context = []
-        else:
-            context = raw_context
-            if len(context) > 5:
-                context_errors.append("knowledge_context_exceeds_delivery_limit")
-                context = context[:5]
-        expected = {}
-        duplicate_ids = []
-        for index, item in enumerate(context):
-            if (not isinstance(item, dict)
-                    or set(item) != {"knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"}
-                    or any(not isinstance(item.get(key), str) or not item[key].strip()
-                           for key in ("knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"))):
-                context_errors.append("invalid_knowledge_context_item_" + str(index))
-                continue
-            knowledge_id = item["knowledge_id"].strip()
-            if not knowledge_id:
-                continue
-            if knowledge_id in expected:
-                duplicate_ids.append(knowledge_id)
-            else:
-                expected[knowledge_id] = item
 
-        # Pin delivery records and current knowledge versions to one SQLite read
-        # snapshot. Otherwise a concurrent lesson revision could make a single audit
-        # compare attestations against a mixture of pre- and post-revision state.
+        # Read task metadata, immutable delivery records, and current knowledge
+        # versions from one SQLite snapshot. This prevents a concurrent retry or
+        # reassignment from making the audit compare evidence with stale task data.
         with closing(self._connect()) as c:
             c.execute("BEGIN")
+            task_row = c.execute(
+                "SELECT * FROM tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+            if task_row is None:
+                raise TaskNotFound("task not found")
+            task = self._decode(task_row)
+            if task.get("task_type") != "workforce.task":
+                raise ValueError("task is not a workforce task")
+
+            payload = task.get("payload")
+            raw_context = payload.get("knowledge_context", []) if isinstance(payload, dict) else []
+            context_errors = []
+            if not isinstance(raw_context, list):
+                context_errors.append("knowledge_context_not_a_list")
+                context = []
+            else:
+                context = raw_context
+                if len(context) > 5:
+                    context_errors.append("knowledge_context_exceeds_delivery_limit")
+                    context = context[:5]
+            expected = {}
+            duplicate_ids = []
+            for index, item in enumerate(context):
+                if (not isinstance(item, dict)
+                        or set(item) != {"knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"}
+                        or any(not isinstance(item.get(key), str) or not item[key].strip()
+                               for key in ("knowledge_id", "title", "lesson", "source_task_id", "reviewed_by"))):
+                    context_errors.append("invalid_knowledge_context_item_" + str(index))
+                    continue
+                knowledge_id = item["knowledge_id"].strip()
+                if not knowledge_id:
+                    continue
+                if knowledge_id in expected:
+                    duplicate_ids.append(knowledge_id)
+                else:
+                    expected[knowledge_id] = item
+
             delivery_count_row = c.execute(
                 "SELECT COUNT(*) AS record_count FROM workforce_knowledge_deliveries WHERE task_id=?",
                 (task_id,),
@@ -750,6 +758,7 @@ class DurableTaskEngine:
                     tuple(expected),
                 ).fetchall()
             c.execute("COMMIT")
+
         deliveries = [{
             "task_id": row["task_id"], "attempt": row["attempt"],
             "worker_id": row["worker_id"], "knowledge_id": row["knowledge_id"],
