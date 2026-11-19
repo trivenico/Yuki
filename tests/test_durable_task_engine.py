@@ -131,6 +131,13 @@ class DurableTaskEngineTests(unittest.TestCase):
             self.assertGreater(report["arms"][arm]["success_rate"], 0)
             self.assertLess(report["arms"][arm]["success_rate"], 1)
         self.assertFalse(report["automatic_action"])
+        comparison = report["descriptive_comparison"]
+        self.assertEqual(comparison["status"], "descriptive_comparison_available")
+        self.assertIsNotNone(comparison["success_rate_difference_treatment_minus_control"])
+        self.assertFalse(comparison["causal_inference"])
+        self.assertFalse(comparison["statistical_significance_tested"])
+        self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["exposed_tasks"], 0)
+        self.assertEqual(report["arms"]["treatment"]["runtime_exposure"]["task_coverage"], 0)
         self.assertIn("no causal effect", report["interpretation"])
 
     def test_experiment_worker_execution_telemetry_requires_live_lease_and_is_reported(self):
