@@ -129,6 +129,24 @@ class SQLiteCuratedKnowledge:
         return tuple(dict(zip(fields,row)) for row in rows)
 
 
+
+    def find_active(self, kind: str, value: str):
+        if kind not in {"application", "browser_domain"}:
+            raise ValueError("unsupported knowledge kind")
+        if not isinstance(value, str) or not value.strip() or len(value) > 512:
+            raise ValueError("value must be non-empty bounded text")
+        with self._lock, self._connect() as db:
+            row = db.execute("""SELECT entry_id,source_proposal_id,kind,value,summary,
+                approved_by,promoted_by,created_at FROM curated_knowledge
+                WHERE owner_id=? AND active=1 AND kind=? AND value=?
+                ORDER BY created_at DESC,entry_id LIMIT 1""",
+                (self._owner, kind, value.strip())).fetchone()
+        if row is None:
+            return None
+        fields=("entry_id","source_proposal_id","kind","value","summary",
+                "approved_by","promoted_by","created_at")
+        return dict(zip(fields,row))
+
     def list_events(self, *, limit: int = 100):
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("limit must be an integer in 1..1000")
