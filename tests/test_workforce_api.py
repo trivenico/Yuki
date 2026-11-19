@@ -657,6 +657,92 @@ class WorkforceDashboardAPITests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body["error"], "invalid_proposal_request")
 
+    def test_experiment_api_is_authenticated_review_gated_and_non_executing(self):
+        self.engine.create_improvement_proposal("experiment-proposal", {"recommendation": "Review queue"})
+        self.engine.transition_improvement_proposal(
+            "experiment-proposal", expected_state="proposed", new_state="approved",
+            actor_id=self.admin_session.user.user_id,
+        )
+        path = "/v1/workforce/experiments"
+        headers = [(b"content-type", b"application/json")]
+        design = {
+            "hypothesis": "A focused queue review reduces task failures",
+            "intervention": "Introduce a human-reviewed queue triage checklist",
+            "primary_metric": "failed_tasks",
+            "preferred_direction": "decrease",
+            "design_type": "pre_post_descriptive",
+            "eligible_population": "Engineering workforce tasks",
+            "guardrails": ["Do not change permissions", "No automatic dispatch changes"],
+            "evaluation_window_days": 14,
+            "minimum_sample_size": 10,
+        }
+        payload = {
+            "experiment_id": "queue-triage-01",
+            "proposal_id": "experiment-proposal",
+            "design": design,
+        }
+        body = json.dumps(payload).encode()
+        status, _ = self.request(path, method="POST", body=body, extra_headers=headers)
+        self.assertEqual(status, 401)
+        status, _ = self.request(path, method="POST", token=self.user_session.token, body=body, extra_headers=headers)
+        self.assertEqual(status, 403)
+        status, created = self.request(
+            path, method="POST", token=self.admin_session.token, body=body, extra_headers=headers,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(created["state"], "proposed")
+        self.assertEqual(created["design"], design)
+        self.assertNotIn("execution", created)
+        status, listing = self.request(path, token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(listing["count"], 1)
+        status, detail = self.request(path + "/queue-triage-01", token=self.admin_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["events"][0]["event_type"], "experiment.created")
+        transition_path = path + "/queue-triage-01/transition"
+        status, approved = self.request(
+            transition_path, method="POST", token=self.admin_session.token,
+            body=b'{"expected_state":"proposed","new_state":"approved","actor_id":"spoofed"}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 400)
+        status, approved = self.request(
+            transition_path, method="POST", token=self.admin_session.token,
+            body=b'{"expected_state":"proposed","new_state":"approved","decision_note":"Design reviewed"}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(approved["state"], "approved")
+        self.assertEqual(approved["decided_by"], self.admin_session.user.user_id)
+        self.assertEqual(approved["events"][-1]["actor_id"], self.admin_session.user.user_id)
+        self.assertNotIn("execution", approved)
+        status, _ = self.request(
+            transition_path, method="POST", token=self.admin_session.token,
+            body=b'{"expected_state":"proposed","new_state":"rejected"}',
+            extra_headers=headers,
+        )
+        self.assertEqual(status, 409)
+
+    def test_experiment_api_requires_approved_proposal_and_exact_schema(self):
+        self.engine.create_improvement_proposal("unapproved-experiment-proposal", {"recommendation": "Review"})
+        payload = {
+            "experiment_id": "blocked-experiment",
+            "proposal_id": "unapproved-experiment-proposal",
+            "design": {},
+        }
+        status, body = self.request(
+            "/v1/workforce/experiments", method="POST", token=self.admin_session.token,
+            body=json.dumps(payload).encode(), extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "experiment_conflict")
+        status, body = self.request(
+            "/v1/workforce/experiments", method="POST", token=self.admin_session.token,
+            body=b'{"experiment_id":"x","proposal_id":"unapproved-experiment-proposal","design":{},"actor_id":"spoof"}',
+            extra_headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(status, 400)
+
     def test_non_workforce_paths_are_delegated(self):
         status, body = self.request("/v1/conversations", token=self.admin_session.token)
         self.assertEqual(status, 404)
