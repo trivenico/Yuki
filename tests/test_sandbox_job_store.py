@@ -83,5 +83,14 @@ class SandboxJobStoreTests(unittest.TestCase):
             )
 
 
+
+    def test_rejects_transition_outside_state_machine(self):
+        self.store.create(job_id=self.job_id, staging_directory="/srv/yuki/jobs/" + self.job_id)
+        with self.assertRaises(SandboxJobStoreError):
+            self.store.transition(
+                self.job_id, expected_states=("created",), new_state="promoted"
+            )
+        self.assertEqual(self.store.get(self.job_id).state, "created")
+
 if __name__ == "__main__":
     unittest.main()
