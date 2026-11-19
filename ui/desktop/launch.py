@@ -1331,6 +1331,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
             if self.controller is None:
                 return
             try:
+                previous_selection = self.conversation_selector.currentData()
+                desired_selection = select_id or previous_selection
                 conversations = self.controller.list_conversations(limit=100)
                 self.conversation_selector.blockSignals(True)
                 self.conversation_selector.clear()
@@ -1342,12 +1344,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
                         continue
                     label = title if isinstance(title, str) and title.strip() else "Untitled conversation"
                     self.conversation_selector.addItem(label[:100], conversation_id)
-                    if conversation_id == select_id:
+                    if conversation_id == desired_selection:
                         selected_index = self.conversation_selector.count() - 1
                 if selected_index >= 0:
                     self.conversation_selector.setCurrentIndex(selected_index)
-                elif self.conversation_selector.count():
-                    self.conversation_selector.setCurrentIndex(0)
                 self.conversation_selector.blockSignals(False)
             except Exception as exc:
                 self.conversation_selector.blockSignals(False)
@@ -2457,9 +2457,10 @@ Version: {version}",
             )
             self.memory_toggle.setEnabled(True)
             self.plan_propose_button.setEnabled(True)
-            self.conversation_selector.setEnabled(True)
-            self.new_conversation_button.setEnabled(True)
-            self.refresh_conversations_button.setEnabled(True)
+            history_controls_enabled = self.controller is not None
+            self.conversation_selector.setEnabled(history_controls_enabled)
+            self.new_conversation_button.setEnabled(history_controls_enabled)
+            self.refresh_conversations_button.setEnabled(history_controls_enabled)
             if error is not None:
                 self.chat_status.setText("Request failed (" + type(error).__name__ + ").")
                 if isinstance(error, PermissionError):
