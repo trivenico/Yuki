@@ -35,6 +35,7 @@ class KnowledgeProposal:
     status: str
     created_at: float
     reviewed_at: Optional[float] = None
+    reviewed_by: Optional[str] = None
 
 
 class SQLiteObservationKnowledgeReview:
@@ -76,6 +77,16 @@ class SQLiteObservationKnowledgeReview:
                 reviewed_at REAL,
                 UNIQUE(owner_id, fingerprint)
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS observation_knowledge_review_events (
+                event_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                proposal_id TEXT NOT NULL,
+                decision TEXT NOT NULL CHECK(decision IN ('approved','rejected')),
+                reviewer_id TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_observation_review_events_owner_proposal
+                ON observation_knowledge_review_events(owner_id, proposal_id, created_at)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_observation_proposals_owner_status
                 ON observation_knowledge_proposals(owner_id, status, created_at)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_observation_proposals_expiry
@@ -110,6 +121,11 @@ class SQLiteObservationKnowledgeReview:
         return KnowledgeProposal(*row)
 
     def _purge_expired(self, db, now: float) -> None:
+        db.execute("""DELETE FROM observation_knowledge_review_events
+            WHERE owner_id=? AND proposal_id IN (
+                SELECT proposal_id FROM observation_knowledge_proposals
+                WHERE owner_id=? AND created_at<=?
+            )""", (self._owner, self._owner, now - self._retention))
         db.execute(
             "DELETE FROM observation_knowledge_proposals WHERE owner_id=? AND created_at<=?",
             (self._owner, now - self._retention),
@@ -174,9 +190,12 @@ class SQLiteObservationKnowledgeReview:
             db.execute("COMMIT")
         return self._proposal(row) if row else None
 
-    def _review(self, proposal_id: str, decision: str) -> KnowledgeProposal:
+    def _review(self, proposal_id: str, decision: str, *, reviewer_id: str) -> KnowledgeProposal:
         if not isinstance(proposal_id, str) or not proposal_id:
             raise ValueError("proposal_id is required")
+        if not isinstance(reviewer_id, str) or not reviewer_id.strip() or len(reviewer_id) > 200:
+            raise ValueError("reviewer_id must be non-empty bounded text")
+        reviewer_id = reviewer_id.strip()
         now = float(self._clock())
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -191,26 +210,44 @@ class SQLiteObservationKnowledgeReview:
                     if exists:
                         raise RuntimeError("knowledge proposal has already been reviewed")
                     raise KeyError("knowledge proposal not found")
+                db.execute("""INSERT INTO observation_knowledge_review_events
+                    (event_id,owner_id,proposal_id,decision,reviewer_id,created_at)
+                    VALUES (?,?,?,?,?,?)""",
+                    (uuid.uuid4().hex, self._owner, proposal_id, decision, reviewer_id, now))
                 row = db.execute("""SELECT proposal_id,kind,value,summary,fingerprint,status,created_at,reviewed_at
                     FROM observation_knowledge_proposals WHERE owner_id=? AND proposal_id=?""",
                     (self._owner, proposal_id)).fetchone()
                 db.execute("COMMIT")
-                return self._proposal(row)
+                return KnowledgeProposal(*row, reviewer_id)
             except Exception:
                 db.execute("ROLLBACK")
                 raise
 
-    def approve(self, proposal_id: str) -> KnowledgeProposal:
-        """Record approval only; does not install memory or change behavior."""
-        return self._review(proposal_id, "approved")
+    def approve(self, proposal_id: str, *, reviewer_id: str) -> KnowledgeProposal:
+        """Record approval and reviewer audit; does not install memory or change behavior."""
+        return self._review(proposal_id, "approved", reviewer_id=reviewer_id)
 
-    def reject(self, proposal_id: str) -> KnowledgeProposal:
-        return self._review(proposal_id, "rejected")
+    def reject(self, proposal_id: str, *, reviewer_id: str) -> KnowledgeProposal:
+        return self._review(proposal_id, "rejected", reviewer_id=reviewer_id)
+
+    def list_review_events(self, proposal_id: str, *, limit: int = 100) -> tuple[dict, ...]:
+        if not isinstance(proposal_id, str) or not proposal_id:
+            raise ValueError("proposal_id is required")
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer in 1..1000")
+        with self._lock, self._connect() as db:
+            rows = db.execute("""SELECT decision,reviewer_id,created_at
+                FROM observation_knowledge_review_events
+                WHERE owner_id=? AND proposal_id=? ORDER BY created_at,event_id LIMIT ?""",
+                (self._owner, proposal_id, limit)).fetchall()
+        return tuple({"decision": row[0], "reviewer_id": row[1], "created_at": row[2]} for row in rows)
 
     def delete(self, proposal_id: str) -> bool:
         if not isinstance(proposal_id, str) or not proposal_id:
             raise ValueError("proposal_id is required")
         with self._lock, self._connect() as db:
+            db.execute("DELETE FROM observation_knowledge_review_events WHERE owner_id=? AND proposal_id=?",
+                       (self._owner, proposal_id))
             cursor = db.execute(
                 "DELETE FROM observation_knowledge_proposals WHERE owner_id=? AND proposal_id=?",
                 (self._owner, proposal_id),
@@ -219,6 +256,7 @@ class SQLiteObservationKnowledgeReview:
 
     def clear(self) -> int:
         with self._lock, self._connect() as db:
+            db.execute("DELETE FROM observation_knowledge_review_events WHERE owner_id=?", (self._owner,))
             cursor = db.execute(
                 "DELETE FROM observation_knowledge_proposals WHERE owner_id=?",
                 (self._owner,),
