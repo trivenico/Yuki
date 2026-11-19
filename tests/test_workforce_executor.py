@@ -135,7 +135,6 @@ class WorkforceExecutorTests(unittest.TestCase):
 
     def test_skill_policy_metadata_drift_fails_closed(self):
         self.skill.permissions = ("repo:write",)
-        self.executor = YukiAgentWorkforceExecutor(self.agent)
         result = self.execute()
         self.assertFalse(result.ok)
         self.assertEqual(result.status, "skill_registry_changed")
@@ -151,6 +150,7 @@ class WorkforceExecutorTests(unittest.TestCase):
 
     def test_permission_scope_mismatch_fails_closed(self):
         self.skill.permissions = ("repo:write",)
+        self.executor = YukiAgentWorkforceExecutor(self.agent)
         result = self.execute()
         self.assertFalse(result.ok)
         self.assertEqual(result.status, "no_scope_compatible_skill")
