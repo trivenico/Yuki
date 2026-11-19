@@ -163,7 +163,11 @@ class ObservationLearningWorker:
         with self._stop_lock:
             self._stopped = True
 
-    def process_batch(self, *, limit: int = 16) -> tuple[KnowledgeProposal, ...]:
+    def process_batch(self, *, limit: int | None = None) -> tuple[KnowledgeProposal, ...]:
+        # A default batch must remain valid for deliberately small buffers.
+        # Explicit caller limits are still rejected rather than silently clamped.
+        if limit is None:
+            limit = min(16, self._buffer.capacity)
         if type(limit) is not int or not 1 <= limit <= min(256, self._buffer.capacity):
             raise ValueError("limit must be within the buffer capacity and 1..256")
         proposals = []
