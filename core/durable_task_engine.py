@@ -966,6 +966,77 @@ class DurableTaskEngine:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_workforce_experiment_outcomes(self, experiment_id):
+        """Return read-only lifecycle outcomes for assigned tasks, grouped by arm.
+
+        Task state is the source of truth; callers cannot submit outcome claims.
+        Retried/non-terminal tasks remain pending. Cancellation is reported
+        separately and excluded from the succeeded/failed success-rate denominator.
+        """
+        if not isinstance(experiment_id, str) or not 1 <= len(experiment_id) <= 256:
+            raise ValueError("invalid experiment_id")
+        with closing(self._connect()) as c:
+            experiment = c.execute(
+                "SELECT design_json,state FROM workforce_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if experiment is None:
+                raise TaskNotFound("experiment not found")
+            rows = c.execute(
+                """SELECT a.assignment, t.state, COUNT(*) AS task_count
+                   FROM workforce_experiment_assignments a
+                   JOIN tasks t ON t.id=a.task_id
+                   WHERE a.experiment_id=?
+                   GROUP BY a.assignment,t.state""",
+                (experiment_id,),
+            ).fetchall()
+        arms = {}
+        for arm in ("control", "treatment"):
+            counts = {"succeeded": 0, "failed": 0, "cancelled": 0, "pending": 0}
+            for row in rows:
+                if row["assignment"] != arm:
+                    continue
+                state = row["state"]
+                bucket = state if state in {"succeeded", "failed", "cancelled"} else "pending"
+                counts[bucket] += row["task_count"]
+            terminal_evaluable = counts["succeeded"] + counts["failed"]
+            total = sum(counts.values())
+            arms[arm] = {
+                "assigned": total,
+                **counts,
+                "evaluable": terminal_evaluable,
+                "success_rate": (
+                    counts["succeeded"] / terminal_evaluable
+                    if terminal_evaluable else None
+                ),
+            }
+        design = json.loads(experiment["design_json"])
+        minimum = design.get("minimum_sample_size")
+        evaluable_total = sum(arm["evaluable"] for arm in arms.values())
+        enough_observations = (
+            isinstance(minimum, int) and not isinstance(minimum, bool)
+            and evaluable_total >= minimum
+        )
+        return {
+            "experiment_id": experiment_id,
+            "experiment_state": experiment["state"],
+            "design_type": design.get("design_type"),
+            "primary_metric": design.get("primary_metric"),
+            "minimum_sample_size": minimum,
+            "arms": arms,
+            "total_assigned": sum(arm["assigned"] for arm in arms.values()),
+            "total_evaluable": evaluable_total,
+            "status": "descriptive_outcomes_available" if enough_observations
+                      else "insufficient_observations",
+            "interpretation": (
+                "Lifecycle outcome counts only; no causal effect, statistical "
+                "significance, treatment delivery, eligibility, or contamination "
+                "is established. Cancelled and pending tasks are not included "
+                "in the success-rate denominator."
+            ),
+            "automatic_action": False,
+        }
+
     def get_task_by_idempotency(self, goal_id, idempotency_key):
         """Return a task and its persisted dependency IDs for safe DAG recovery."""
         if not isinstance(goal_id, str) or not goal_id.strip():
