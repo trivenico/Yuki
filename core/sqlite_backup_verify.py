@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -42,7 +43,7 @@ def _regular_private_file(path: Path) -> None:
         raise SQLiteBackupVerificationError("backup_file_missing") from exc
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise SQLiteBackupVerificationError("backup_file_must_be_single_link_regular_file")
-    if __import__("os").name == "posix" and info.st_mode & 0o077:
+    if os.name == "posix" and info.st_mode & 0o077:
         raise SQLiteBackupVerificationError("backup_file_permissions_too_broad")
 
 
@@ -103,7 +104,7 @@ def verify_sqlite_backup_set(
     if not stat.S_ISDIR(set_info.st_mode) or not _SET_ID.fullmatch(resolved_set.name):
         raise SQLiteBackupVerificationError("invalid_backup_set_directory")
     if __import__("os").name == "posix":
-        if set_info.st_uid != __import__("os").getuid() or set_info.st_mode & 0o077:
+        if set_info.st_uid != os.getuid() or set_info.st_mode & 0o077:
             raise SQLiteBackupVerificationError("backup_set_permissions_too_broad")
 
     manifest_path = resolved_set / "manifest.json"
