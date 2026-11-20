@@ -183,8 +183,8 @@ class OllamaAgentChatTests(unittest.TestCase):
 
     def test_closing_consumer_closes_underlying_ndjson_response(self):
         opener = FakeNDJSONOpener([
-            json.dumps({"message": {"content": "first"}, "done": False}) + "\\n",
-            json.dumps({"message": {"content": "second"}, "done": False}) + "\\n",
+            json.dumps({"message": {"content": "first"}, "done": False}) + "\n",
+            json.dumps({"message": {"content": "second"}, "done": False}) + "\n",
         ], self.requests)
         with patch("providers.ollama.urllib.request.build_opener", return_value=opener):
             stream = self.provider.generate_chat_stream(messages=self.messages, tools=self.tools)
