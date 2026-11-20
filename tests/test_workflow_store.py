@@ -123,6 +123,23 @@ class WorkflowRunStoreTests(unittest.TestCase):
             self.store.transition(run.run_id, expected_version=run.version, to_state="running", lease_owner="worker-a")
         self.assertEqual(self.store.get(run.run_id).state, "queued")
 
+    def test_worker_claim_can_require_the_exact_approval_session(self):
+        run = self.create(key="approval-session-claim-filter")
+        approved = self.store.approve(run.run_id, actor_id="reviewer-1",
+                                      session_id="session-one", expected_version=run.version)
+        other_hash = __import__("hashlib").sha256(b"session-two").hexdigest()
+        self.assertIsNone(self.store.claim_next(worker_id="worker-other",
+                                               approval_session_hash=other_hash))
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+        current_hash = __import__("hashlib").sha256(b"session-one").hexdigest()
+        claimed = self.store.claim_next(worker_id="worker-current",
+                                        approval_session_hash=current_hash)
+        self.assertEqual(claimed.run_id, approved.run_id)
+        self.assertEqual(claimed.state, "running")
+
+    def test_worker_claim_rejects_malformed_approval_session_hash(self):
+        with self.assertRaises(ValueError):
+            self.store.claim_next(worker_id="worker", approval_session_hash="not-a-digest")
     def test_approval_is_versioned_and_allows_claim(self):
         run = self.create(key="approval-versioned")
         approved = self.store.approve(run.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=run.version)
