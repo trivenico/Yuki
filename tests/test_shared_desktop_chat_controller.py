@@ -107,6 +107,41 @@ class SharedDesktopChatControllerTests(unittest.TestCase):
         except Exception as exc:
             errors.append(exc)
 
+    def test_logout_waits_until_active_worker_finishes_before_closing_store(self):
+        entered = threading.Event()
+        release = threading.Event()
+        class SlowCancellationConversation(Conversation):
+            def send(self, message, **kwargs):
+                entered.set()
+                self.assert_cancelled = kwargs["cancellation_requested"]
+                release.wait(timeout=2)
+                return {"status": "cancelled", "answer": ""}
+
+        session = Session()
+        session.conversation = SlowCancellationConversation()
+        controller = SharedDesktopChatController(session)
+        worker_errors = []
+        worker = threading.Thread(
+            target=lambda: self._capture_error(
+                worker_errors, lambda: controller.respond("Slow active turn")
+            )
+        )
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        logout_done = threading.Event()
+        logout = threading.Thread(target=lambda: (controller.logout(), logout_done.set()))
+        logout.start()
+        self.assertFalse(logout_done.wait(timeout=0.05))
+        self.assertEqual(session.close_count, 0)
+        release.set()
+        worker.join(timeout=1)
+        logout.join(timeout=1)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(logout.is_alive())
+        self.assertTrue(logout_done.is_set())
+        self.assertEqual(session.close_count, 1)
+        self.assertTrue(worker_errors)
+
     def test_non_completed_turn_is_not_presented_as_success(self):
         class FailedConversation(Conversation):
             def send(self, message, **kwargs):
