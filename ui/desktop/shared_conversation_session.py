@@ -58,6 +58,7 @@ def build_authenticated_desktop_conversation(
     identity: Any,
     sessions: Any,
     memory: Any = None,
+    learning: Any = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
 ) -> DesktopConversationSession:
     """Compose a live-session-checked durable chat for one authenticated owner.
@@ -65,7 +66,8 @@ def build_authenticated_desktop_conversation(
     The owner is taken only from identity.actor_id and verified by the session
     manager before the runtime is created. Provider shutdown remains with the
     outer desktop lifecycle, so callers must register this returned session and
-    provider as separate, uniquely owned resources.
+    provider as separate, uniquely owned resources. An optional learning session
+    is owned by the authenticated facade and invalidated during this session's close.
     """
     actor_id = getattr(identity, "actor_id", None)
     if not isinstance(actor_id, str) or not actor_id.strip():
@@ -75,17 +77,29 @@ def build_authenticated_desktop_conversation(
     if sessions.current_identity() != identity:
         raise PermissionError("The desktop session is no longer authenticated.")
 
-    runtime = build_desktop_conversation_runtime(
-        config,
-        provider=provider,
-        owner_id=actor_id,
-        store_factory=store_factory,
-    )
+    runtime = None
     try:
+        runtime = build_desktop_conversation_runtime(
+            config,
+            provider=provider,
+            owner_id=actor_id,
+            store_factory=store_factory,
+        )
         facade = AuthenticatedDesktopConversation(
             runtime, identity=identity, sessions=sessions, memory=memory,
+            learning=learning,
         )
         return DesktopConversationSession(runtime, facade)
     except Exception:
-        runtime.close()
+        if runtime is not None:
+            try:
+                runtime.close()
+            except Exception:
+                pass
+        close_learning = getattr(learning, "close", None)
+        if callable(close_learning):
+            try:
+                close_learning()
+            except Exception:
+                pass
         raise

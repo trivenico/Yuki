@@ -15,7 +15,10 @@ from ui.desktop.conversation_adapter import DesktopConversationAdapter
 class AuthenticatedDesktopConversation:
     """Session-checked facade for one authenticated desktop account."""
 
-    def __init__(self, application: Any, *, identity: Any, sessions: Any, memory: Any = None) -> None:
+    def __init__(
+        self, application: Any, *, identity: Any, sessions: Any,
+        memory: Any = None, learning: Any = None,
+    ) -> None:
         actor_id = getattr(identity, "actor_id", None)
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 128:
             raise ValueError("identity must contain a valid authenticated actor_id.")
@@ -30,7 +33,7 @@ class AuthenticatedDesktopConversation:
         self._lifecycle = Condition(RLock())
         self._active_sends = 0
         self._conversation = DesktopConversationAdapter(
-            application, owner_id=actor_id, memory=memory,
+            application, owner_id=actor_id, memory=memory, learning=learning,
         )
 
     @property
@@ -102,6 +105,17 @@ class AuthenticatedDesktopConversation:
                 self._active_sends -= 1
                 self._lifecycle.notify_all()
 
+    def submit_correction(
+        self, *, messages: list[dict[str, str]], source_reference: str, task_type: str,
+    ) -> str:
+        """Stage one exact turn selected by the authenticated desktop user."""
+        self._require_live_session()
+        return self._conversation.submit_correction(
+            messages=messages,
+            source_reference=source_reference,
+            task_type=task_type,
+        )
+
     def set_memory_context_enabled(self, enabled: bool) -> None:
         """Apply explicit, session-scoped consent to memory retrieval."""
         self._require_live_session()
@@ -155,7 +169,7 @@ class AuthenticatedDesktopConversation:
         except Exception as exc:
             errors.append(exc)
         try:
-            self._conversation.clear_selection()
+            self._conversation.close()
         except Exception as exc:
             errors.append(exc)
         if errors:

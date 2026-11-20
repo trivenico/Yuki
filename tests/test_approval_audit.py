@@ -67,6 +67,41 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertNotIn(b"secret-actor-123", handle.read())
 
+    def test_latest_event_is_actor_and_correlation_bound_and_verifies_chain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "audit.sqlite3")
+            audit = SQLiteApprovalAuditLog(path)
+            audit.append(event_type="approved", pending_id="consent:learning", actor="owner-a",
+                         skill_id="yuki.learning.consent.learning")
+            audit.append(event_type="approved", pending_id="proposal-123", actor="owner-a",
+                         skill_id="yuki.learning.example")
+            audit.append(event_type="denied", pending_id="consent:learning", actor="owner-a",
+                         skill_id="yuki.learning.consent.learning")
+            self.assertEqual(
+                audit.latest_event(pending_id="consent:learning", actor="owner-a",
+                                   skill_id="yuki.learning.consent.learning"),
+                "denied",
+            )
+            self.assertEqual(
+                audit.latest_event(pending_id="proposal-123", actor="owner-a",
+                                   skill_id="yuki.learning.example"),
+                "approved",
+            )
+            self.assertIsNone(
+                audit.latest_event(pending_id="proposal-123", actor="owner-b",
+                                   skill_id="yuki.learning.example"),
+            )
+            import sqlite3
+            db = sqlite3.connect(path)
+            try:
+                db.execute("UPDATE approval_audit_events SET event_type='executed' WHERE event_id=1")
+                db.commit()
+            finally:
+                db.close()
+            with self.assertRaisesRegex(RuntimeError, "chain"):
+                audit.latest_event(pending_id="proposal-123", actor="owner-a",
+                                   skill_id="yuki.learning.example")
+
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))

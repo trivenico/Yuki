@@ -85,5 +85,7 @@ jobs:
           python -m pip install --requirement requirements-desktop.txt
       - name: Validate dependency consistency
         run: python -m pip check
+      - name: Test the consent-gated Learning Center panel
+        run: python -m unittest discover -s tests -p "test_learning_center.py" -v
       - name: Launch the native Qt runtime without a display server
         run: python -m ui.desktop.launch --smoke-test

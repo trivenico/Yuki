@@ -52,7 +52,7 @@ include-package-data = true
 where = ["."]
 include = [
   "automation*", "companion*", "core*", "defense*", "evaluation*",
-  "hackback*", "knowledge*", "providers*", "skills*", "ui*", "voice*",
+  "hackback*", "knowledge*", "providers*", "skills*", "training*", "ui*", "voice*",
 ]
 exclude = ["tests*", "benchmarks*", "scripts*"]
 
