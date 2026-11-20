@@ -338,6 +338,24 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit(None, exc, self.session, self)
 
+    class WorkerCycleSignals(QObject):
+        finished = Signal(object, object)
+
+    class WorkerCycleWorker(QRunnable):
+        """Run one owner-approved finite worker cycle away from the Qt thread."""
+
+        def __init__(self, service):
+            super().__init__()
+            self.service = service
+            self.signals = WorkerCycleSignals()
+
+        @Slot()
+        def run(self):
+            try:
+                self.signals.finished.emit(self.service.run_cycle(), None)
+            except Exception as exc:
+                self.signals.finished.emit(None, exc)
+
     class PlanWorkerSignals(QObject):
         finished = Signal(object, object)
 
@@ -441,6 +459,8 @@ def run() -> int:
             self.observation_review_service = None
             self.curated_knowledge_catalog = None
             self.controller = None
+            self.worker_runtime = None
+            self.worker_cycle_worker = None
             self.voice_session = None
             self.speech_session = None
             self.speech_worker = None
@@ -556,8 +576,8 @@ def run() -> int:
             workforce_page = QWidget()
             workforce_layout = QVBoxLayout(workforce_page)
             workforce_layout.addWidget(QLabel(
-                "Yuki workforce overview. This dashboard is read-only; worker execution "
-                "remains stopped until the authenticated desktop runtime is safely composed."
+                "Workers use the same owner task queue. Starting opens admission only; "
+                "each execution cycle requires a separate explicit action."
             ))
             self.workforce_status = QLabel("Workforce status unavailable until the workspace opens.")
             self.workforce_status.setWordWrap(True)
@@ -568,6 +588,24 @@ def run() -> int:
             self.workforce_tasks = QLabel("Task queue: not loaded")
             self.workforce_tasks.setWordWrap(True)
             workforce_layout.addWidget(self.workforce_tasks)
+            workforce_actions = QHBoxLayout()
+            self.workforce_start_button = QPushButton("Start")
+            self.workforce_start_button.clicked.connect(self._start_workforce)
+            self.workforce_pause_button = QPushButton("Pause")
+            self.workforce_pause_button.clicked.connect(self._pause_workforce)
+            self.workforce_resume_button = QPushButton("Resume")
+            self.workforce_resume_button.clicked.connect(self._resume_workforce)
+            self.workforce_cycle_button = QPushButton("Run one cycle")
+            self.workforce_cycle_button.clicked.connect(self._run_workforce_cycle)
+            self.workforce_stop_button = QPushButton("Stop")
+            self.workforce_stop_button.clicked.connect(self._stop_workforce)
+            for control in (
+                self.workforce_start_button, self.workforce_pause_button,
+                self.workforce_resume_button, self.workforce_cycle_button,
+                self.workforce_stop_button,
+            ):
+                workforce_actions.addWidget(control)
+            workforce_layout.addLayout(workforce_actions)
             workforce_refresh = QPushButton("Refresh workforce")
             workforce_refresh.clicked.connect(self._refresh_workforce_dashboard)
             workforce_layout.addWidget(workforce_refresh)
@@ -1214,6 +1252,15 @@ MIGRATION COMPLETE — verified manifest written to destination."
             )
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
+            from automation.local_worker_runtime import build_session_worker_runtime
+            self.worker_runtime = build_session_worker_runtime(
+                self.runtime, self.provider,
+                owner_actor_id=identity.actor_id,
+                approval_session_id=identity.session_id,
+                max_tasks_per_cycle=3,
+                max_workers=2,
+            )
+            self.lifecycle.add_resource(self.worker_runtime.service)
             from ui.desktop.observation_learning import build_desktop_observation_review_service
             from core.curated_knowledge_store import SQLiteCuratedKnowledge
             self.observation_review_service = build_desktop_observation_review_service(
@@ -1228,6 +1275,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             specialist_controller = DesktopCompanionController(
                 context.application, context.identity, self.sessions,
                 workspace_path=Path(config["workspace"]),
+                worker_service=self.worker_runtime.service,
             )
             # Durable chat uses the canonical owner-scoped conversation runtime.
             # The existing specialist controller remains the authority for task
@@ -1387,8 +1435,77 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.chat_status.setText("Session unavailable (" + type(exc).__name__ + ").")
                 self._return_to_login()
 
+        def _start_workforce(self):
+            if self.worker_runtime is None:
+                return
+            try:
+                self.worker_runtime.service.start()
+                self.chat_status.setText("Workforce started. No task executes until you run a cycle.")
+                self._refresh_workforce_dashboard()
+            except Exception as exc:
+                self.chat_status.setText("Workforce start failed (" + type(exc).__name__ + ").")
+
+        def _pause_workforce(self):
+            if self.worker_runtime is None:
+                return
+            try:
+                self.worker_runtime.service.pause()
+                self._refresh_workforce_dashboard()
+            except Exception as exc:
+                self.chat_status.setText("Workforce pause failed (" + type(exc).__name__ + ").")
+
+        def _resume_workforce(self):
+            if self.worker_runtime is None:
+                return
+            try:
+                self.worker_runtime.service.resume()
+                self._refresh_workforce_dashboard()
+            except Exception as exc:
+                self.chat_status.setText("Workforce resume failed (" + type(exc).__name__ + ").")
+
+        def _stop_workforce(self):
+            if self.worker_runtime is None:
+                return
+            try:
+                stopped = self.worker_runtime.service.stop(timeout=0)
+                self.chat_status.setText(
+                    "Workforce stopped." if stopped
+                    else "Workforce stopping; the active finite cycle is draining."
+                )
+                self._refresh_workforce_dashboard()
+            except Exception as exc:
+                self.chat_status.setText("Workforce stop failed (" + type(exc).__name__ + ").")
+
+        def _run_workforce_cycle(self):
+            if (
+                self.worker_runtime is None or self.worker_cycle_worker is not None
+                or self.worker_runtime.service.status.state != "running"
+            ):
+                return
+            worker = WorkerCycleWorker(self.worker_runtime.service)
+            worker.signals.finished.connect(self._workforce_cycle_finished)
+            self.worker_cycle_worker = worker
+            self.workforce_cycle_button.setEnabled(False)
+            self.chat_status.setText("Running one bounded workforce cycle…")
+            self.pool.start(worker)
+
+        @Slot(object, object)
+        def _workforce_cycle_finished(self, report, error):
+            self.worker_cycle_worker = None
+            self.workforce_cycle_button.setEnabled(True)
+            if error is not None:
+                self.chat_status.setText(
+                    "Workforce cycle failed (" + type(error).__name__ + ")."
+                )
+            else:
+                self.chat_status.setText(
+                    f"Workforce cycle finished: {report.processed_count} processed, "
+                    f"{report.succeeded_count} succeeded, {report.failed_count} failed."
+                )
+            self._refresh_workforce_dashboard()
+
         def _refresh_workforce_dashboard(self):
-            """Render a read-only workforce snapshot from the authenticated facade."""
+            """Render workforce status and task counts from the live owner session."""
             if self.controller is None:
                 return
             try:
@@ -1414,11 +1531,32 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.workforce_tasks.setText(
                     f"Recent tasks ({len(tasks)} of up to 100): {summary}"
                 )
-                self.workforce_status.setText(
-                    f"Specialist profiles: {len(specialists)}. "
-                    "Managed worker service: not attached to the desktop session. "
-                    "Execution: disabled; no background workers are running."
+                service_status = (
+                    self.worker_runtime.service.status
+                    if self.worker_runtime is not None else None
                 )
+                if service_status is None:
+                    worker_text = "Worker service unavailable."
+                else:
+                    worker_text = (
+                        f"Worker service: {service_status.state}; "
+                        f"cycle active: {'yes' if service_status.cycle_active else 'no'}; "
+                        f"completed cycles: {service_status.completed_cycles}; "
+                        f"failed cycles: {service_status.failed_cycles}."
+                    )
+                self.workforce_status.setText(
+                    f"Specialist profiles: {len(specialists)}. {worker_text}"
+                )
+                if service_status is not None:
+                    state = service_status.state
+                    self.workforce_start_button.setEnabled(state == "stopped")
+                    self.workforce_pause_button.setEnabled(state == "running")
+                    self.workforce_resume_button.setEnabled(state == "paused")
+                    self.workforce_cycle_button.setEnabled(
+                        state == "running" and not service_status.cycle_active
+                        and self.worker_cycle_worker is None
+                    )
+                    self.workforce_stop_button.setEnabled(state in {"running", "paused", "stopping"})
             except Exception as exc:
                 self.workforce_status.setText(
                     "Workforce overview unavailable (" + type(exc).__name__ + ")."
