@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.sandbox_policy import SandboxPolicy
-from core.sandbox_runtime import SandboxRuntimeError, build_docker_argv
+from core.sandbox_runtime import (\n    SandboxRuntimeError, SandboxUnavailable, SandboxRuntimeCapabilities,\n    build_docker_argv, validate_runtime_capabilities,\n)
 
 
 IMAGE = "python@sha256:" + "a" * 64
@@ -102,6 +102,46 @@ class DockerSandboxArgvTests(unittest.TestCase):
             with self.assertRaises(SandboxRuntimeError):
                 build_docker_argv(SandboxPolicy(), image=IMAGE,
                     workspace=unsafe, command=["python", "--version"])
+
+
+class SandboxRuntimeCapabilityTests(unittest.TestCase):
+    def setUp(self):
+        self.policy = SandboxPolicy().validate()
+        self.capabilities = SandboxRuntimeCapabilities(
+            runtime_name="rootless-oci", runtime_version="1.0",
+            rootless=True,
+            namespaces=frozenset({"user", "pid", "mount", "ipc", "network"}),
+            seccomp=True, mandatory_access_control="apparmor",
+            cgroups_v2=True, network_isolation=True, read_only_mounts=True,
+            host_secret_exclusion=True, resource_limits=True,
+            ephemeral_cleanup=True, verified_backend=True,
+        )
+
+    def test_all_required_capabilities_are_accepted(self):
+        validate_runtime_capabilities(self.policy, self.capabilities)
+
+    def test_unverified_backend_fails_closed(self):
+        values = dict(self.capabilities.__dict__)
+        values["verified_backend"] = False
+        with self.assertRaises(SandboxUnavailable):
+            validate_runtime_capabilities(
+                self.policy, SandboxRuntimeCapabilities(**values)
+            )
+
+    def test_missing_isolation_control_fails_closed(self):
+        values = dict(self.capabilities.__dict__)
+        values["network_isolation"] = False
+        values["host_secret_exclusion"] = False
+        with self.assertRaises(SandboxUnavailable):
+            validate_runtime_capabilities(
+                self.policy, SandboxRuntimeCapabilities(**values)
+            )
+
+    def test_mutable_namespace_collection_is_rejected(self):
+        values = dict(self.capabilities.__dict__)
+        values["namespaces"] = set(values["namespaces"])
+        with self.assertRaises(SandboxRuntimeError):
+            SandboxRuntimeCapabilities(**values)
 
 
 if __name__ == "__main__":
