@@ -104,7 +104,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
             self.assertEqual(provider.generate("hello"), "ok")
 
         self.assertTrue(write_started.is_set())
-        self.assertFalse(allow_write_to_finish.is_set() is False)
+        self.assertTrue(allow_write_to_finish.is_set())
 
     def test_prompt_pipe_failure_stops_spawned_process(self):
         provider = GeminiCLIProvider()
