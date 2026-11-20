@@ -197,11 +197,11 @@ class WorkerSupervisorTests(unittest.TestCase):
         )
         service = ManagedWorkerService(WorkerSupervisor(self.runtime, worker))
         service.start()
-        with self.assertRaises(Exception):
-            service.run_cycle()
+        report = service.run_cycle()
         self.assertEqual(service.status.state, "running")
-        self.assertEqual(service.status.failed_cycles, 1)
-        self.assertEqual(service.status.last_error, "ExceptionGroup")
+        self.assertEqual(service.status.completed_cycles, 1)
+        self.assertEqual(service.status.failed_cycles, 0)
+        self.assertEqual(report.failed_count, 1)
         self.assertEqual(self.store.get(task_id).state, "failed")
         self.assertTrue(service.stop())
 
