@@ -83,6 +83,7 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    owner_id: str | None
 
 
 class WorkflowRunStore:
@@ -118,9 +119,21 @@ class WorkflowRunStore:
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "owner_id"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
+            # Existing rows remain owner_id=NULL and are quarantined from account
+            # scoped reads. Never infer an owner from event actors or approvals.
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_runs_owner_state_created "
+                "ON workflow_runs(owner_id, state, created_at DESC)"
+            )
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS workflow_owner_immutable
+                BEFORE UPDATE OF owner_id ON workflow_runs
+                WHEN OLD.owner_id IS NOT NEW.owner_id
+                BEGIN SELECT RAISE(ABORT, 'workflow owner is immutable'); END
+            """)
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_state_updated "
                 "ON workflow_runs(state, updated_at)"
@@ -204,9 +217,13 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            owner_id=row["owner_id"] if "owner_id" in row.keys() else None,
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(
+        self, *, idempotency_key: str, workflow_name: str,
+        definition: list[dict[str, Any]], owner_id: str | None = None,
+    ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -215,11 +232,17 @@ class WorkflowRunStore:
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or len(owner_id) > 200 or any(ord(ch) < 32 or ord(ch) == 127 for ch in owner_id)
+        ):
+            raise ValueError("owner_id must be non-empty bounded text when provided.")
+        owner = owner_id.strip() if owner_id is not None else None
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
         digest = hashlib.sha256(
-            (name + "\n" + definition_json).encode("utf-8")
+            ((owner or "<legacy-unowned>") + "\n" + name + "\n" + definition_json).encode("utf-8")
         ).hexdigest()
         now = _now()
         with self._connect() as db:
@@ -230,6 +253,8 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
             ).fetchone()
             if existing:
+                if existing["owner_id"] != owner:
+                    raise WorkflowConflict("idempotency key is unavailable for this account.")
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
                 return self._row(existing)
@@ -237,9 +262,9 @@ class WorkflowRunStore:
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now))
+                    definition_json, state, created_at, updated_at, owner_id
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, owner))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -366,6 +391,43 @@ class WorkflowRunStore:
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             return self._row(row) if row else None
 
+    def get_for_owner(self, run_id: str, *, owner_id: str) -> WorkflowRun | None:
+        """Fetch a task only when its immutable owner matches the authenticated account."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be non-empty bounded text.")
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id must be non-empty text.")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=? AND owner_id=?",
+                (run_id, owner_id.strip()),
+            ).fetchone()
+            return self._row(row) if row else None
+
+    def list_runs_for_owner(
+        self, owner_id: str, *, state: str | None = None, limit: int = 50,
+    ) -> list[WorkflowRun]:
+        """List only tasks owned by one account; unowned legacy rows stay quarantined."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be non-empty bounded text.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        if state is not None and state not in _STATES:
+            raise ValueError("Unknown workflow state.")
+        with self._connect() as db:
+            if state is None:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                    (owner_id.strip(), limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE owner_id=? AND state=? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (owner_id.strip(), state, limit),
+                ).fetchall()
+            return [self._row(row) for row in rows]
+
     def list_runs(self, *, state: str | None = None, limit: int = 50) -> list[WorkflowRun]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
@@ -384,7 +446,7 @@ class WorkflowRunStore:
             return [self._row(row) for row in rows]
 
     def list_queued_approved_by_session(
-        self, session_hash: str, *, limit: int = 100,
+        self, session_hash: str, *, owner_id: str, limit: int = 100,
         after: tuple[str, str] | None = None,
     ) -> list[WorkflowRun]:
         """Page queued tasks approved by one exact session without exposing other tasks."""
@@ -392,6 +454,8 @@ class WorkflowRunStore:
             char not in "0123456789abcdef" for char in session_hash
         ):
             raise ValueError("session_hash must be a lowercase SHA-256 digest.")
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be non-empty bounded text.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         if after is not None and (
@@ -402,18 +466,18 @@ class WorkflowRunStore:
         with self._connect() as db:
             if after is None:
                 rows = db.execute(
-                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    "SELECT * FROM workflow_runs WHERE owner_id=? AND state='queued' "
                     "AND approved_session_hash=? AND approved_by IS NOT NULL "
                     "ORDER BY created_at, run_id LIMIT ?",
-                    (session_hash, limit),
+                    (owner_id.strip(), session_hash, limit),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    "SELECT * FROM workflow_runs WHERE owner_id=? AND state='queued' "
                     "AND approved_session_hash=? AND approved_by IS NOT NULL "
                     "AND (created_at>? OR (created_at=? AND run_id>?)) "
                     "ORDER BY created_at, run_id LIMIT ?",
-                    (session_hash, after[0], after[0], after[1], limit),
+                    (owner_id.strip(), session_hash, after[0], after[0], after[1], limit),
                 ).fetchall()
             return [self._row(row) for row in rows]
 
