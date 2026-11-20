@@ -31,6 +31,22 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_openai_factory_uses_configured_model_and_timeout(self):
+        provider = create_provider(
+            {"openai_model": "configured-model", "provider_timeout_seconds": 23},
+            environ={},
+        )
+        self.assertEqual(provider.model, "configured-model")
+        self.assertEqual(provider.timeout, 23)
+
+    def test_openai_timeout_environment_override_is_validated(self):
+        provider = create_provider({}, environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "12.5"})
+        self.assertEqual(provider.timeout, 12.5)
+        with self.assertRaisesRegex(ValueError, "YUKI_PROVIDER_TIMEOUT_SECONDS"):
+            create_provider({}, environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "not-a-number"})
+        with self.assertRaisesRegex(ValueError, "Timeout"):
+            create_provider({}, environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "121"})
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
