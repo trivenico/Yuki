@@ -209,3 +209,9 @@ The collector remains diagnostic only: its procfs root and process identity are 
 `core/linux_lsm_evidence.py` records the kernel's reported active LSM names, a process's current security context, the AppArmor profile/mode when identifiable, and SELinux's global enforcing flag when available. Inputs are bounded, ASCII-validated, and opened without following a final-component symlink. PID start time is checked before and after collection.
 
 These observations do not prove that the reported policy is complete, loaded correctly, or denies a malicious workload. SELinux's enforcing flag is global; an AppArmor label is not a behavioral policy test. Caller-selected procfs/sysfs roots and non-atomic observations remain untrusted. Missing kernel files are recorded as unavailable, not treated as evidence of safety. The report is diagnostic-only and always has `attested=False` and `verified=False`.
+
+### Linux network-namespace diagnostic observer
+
+`core/linux_network_evidence.py` reads bounded `/proc/<pid>/net` interface counters, IPv4 routes, and IPv4 TCP listener tables. It validates interface names and counters, route masks/metrics, socket endpoints and table shape, enforces count/size limits, rejects symlinked records, and checks process start time before and after collection.
+
+This is a snapshot of kernel-reported tables, not a connectivity test or egress policy verifier. It does not inspect IPv6 routes/listeners, UDP, Unix sockets, raw sockets, firewall rules, DNS/proxy behavior, loopback reachability, or host-service access. An absent IPv4 default route does not prove network isolation. Caller-selected procfs roots and non-atomic observations remain untrusted; the result is always diagnostic-only with `attested=False` and `verified=False`.
