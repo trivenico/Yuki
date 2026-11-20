@@ -121,6 +121,13 @@ class OsintGraphTests(unittest.TestCase):
         with self.assertRaises(OsintImportError):
             parse_graphml(document.replace(b">false</", b">true</", 1))
 
+
+    def test_graphml_import_rejects_non_utf8_dtd_and_deep_structure(self):
+        with self.assertRaises(OsintImportError):
+            parse_graphml("<!DOCTYPE x>".encode("utf-16"))
+        with self.assertRaises(OsintImportError):
+            parse_graphml(b"<graphml><a><b><c><d><e><f><g><h><i/></h></g></f></e></d></c></b></a></graphml>")
+
     def test_rejects_non_bytes_and_invalid_limits(self):
         with self.assertRaises(OsintImportError):
             parse_osint_jsonl(bytearray(b"{}"))
