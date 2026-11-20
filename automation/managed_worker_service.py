@@ -130,7 +130,11 @@ class ManagedWorkerService:
         Returns False on timeout. The service remains in stopping state and
         transitions to stopped when the active cycle exits; stop may be retried.
         """
-        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0):
+        if timeout is not None and (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or timeout < 0
+        ):
             raise ValueError("timeout must be a non-negative number or None.")
         deadline = None if timeout is None else monotonic() + timeout
         with self._condition:
