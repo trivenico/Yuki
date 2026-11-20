@@ -79,24 +79,17 @@ def build_session_worker_runtime(
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4.")
 
-    base_authorize = runtime.authorize
-
-    def authorize(actor_id: str, action: str, task_id: str) -> bool:
-        if actor_id == WORKER_SERVICE_ACTOR:
-            if action not in _WORKER_ACTIONS:
-                return False
-            try:
-                return runtime.verify_session(owner_actor_id, approval_session_id) is True
-            except Exception:
-                return False
+    def authorize_worker(actor_id: str, action: str, _task_id: str) -> bool:
+        if actor_id != WORKER_SERVICE_ACTOR or action not in _WORKER_ACTIONS:
+            return False
         try:
-            return base_authorize(actor_id, action, task_id) is True
+            return runtime.verify_session(owner_actor_id, approval_session_id) is True
         except Exception:
             return False
 
-    # TaskRuntime is the shared authorization boundary for all operations. Keep
-    # the owner authorizer intact and add only the private worker principal.
-    runtime.authorize = authorize
+    # Keep owner permissions unchanged. Internal worker actions are evaluated
+    # through a distinct, fail-closed authorization callback on the same runtime.
+    runtime.internal_authorize = authorize_worker
     handlers = build_provider_specialist_handlers(provider)
     worker = SpecialistTaskWorker(
         runtime,
