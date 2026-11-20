@@ -207,3 +207,60 @@ def parse_osint_jsonl(payload: bytes, *, max_bytes: int = _MAX_BYTES,
     ordered_observations = tuple(sorted(observations, key=lambda item: (item.node, item.evidence_id)))
     return OsintGraph(tuple(sorted(nodes)), edges, tuple(evidence[key] for key in sorted(evidence)),
                       ordered_observations, skipped)
+
+def export_graphml(graph: OsintGraph, *, max_bytes: int = 4 * 1024 * 1024) -> bytes:
+    """Serialize a bounded graph to deterministic GraphML; no claims are upgraded.
+
+    Node and edge identifiers are generated from sorted graph order. Evidence IDs,
+    relationship names, and unverified status are retained as GraphML data fields.
+    """
+    import xml.etree.ElementTree as ET
+
+    if type(graph) is not OsintGraph:
+        raise OsintImportError("graph must be an OsintGraph")
+    if type(max_bytes) is not int or not 1 <= max_bytes <= 4 *  1024 * 1024:
+        raise OsintImportError("invalid GraphML byte limit")
+    if len(graph.nodes) > 10_000 or len(graph.edges) > 20_000 or len(graph.evidence) > 20_000:
+        raise OsintImportError("graph exceeds export limits")
+    if tuple(sorted(set(graph.nodes))) != graph.nodes:
+        raise OsintImportError("graph nodes must be unique and sorted")
+    if tuple(sorted(graph.edges, key=lambda edge: (edge.source, edge.relationship, edge.target))) != graph.edges:
+        raise OsintImportError("graph edges must be sorted")
+    node_set = set(graph.nodes)
+    if any(edge.source not in node_set or edge.target not in node_set for edge in graph.edges):
+        raise OsintImportError("edge references an unknown node")
+    evidence_ids = {item.evidence_id for item in graph.evidence}
+    if any(not set(edge.evidence_ids).issubset(evidence_ids) for edge in graph.edges):
+        raise OsintImportError("edge references unknown evidence")
+
+    namespace = "http://graphml.graphdrawing.org/xmlns"
+    ET.register_namespace("", namespace)
+    q = lambda name: f"{{{namespace}}}{name}"
+    root = ET.Element(q("graphml"))
+    key_specs = (
+        ("node_type", "node", "indicator_type"),
+        ("node_value", "node", "value"),
+        ("edge_relationship", "edge", "relationship"),
+        ("edge_evidence", "edge", "evidence_ids"),
+        ("edge_verified", "edge", "verified"),
+    )
+    for key_id, scope, name in key_specs:
+        ET.SubElement(root, q("key"), {"id": key_id, "for": scope, "attr.name": name, "attr.type": "string"})
+    graph_element = ET.SubElement(root, q("graph"), {"id": "asset_observations", "edgedefault": "directed"})
+    node_ids = {node: f"n{index}" for index, node in enumerate(graph.nodes)}
+    for node in graph.nodes:
+        element = ET.SubElement(graph_element, q("node"), {"id": node_ids[node]})
+        ET.SubElement(element, q("data"), {"key": "node_type"}).text = node.indicator_type
+        ET.SubElement(element, q("data"), {"key": "node_value"}).text = node.value
+    for index, edge in enumerate(graph.edges):
+        element = ET.SubElement(graph_element, q("edge"), {
+            "id": f"e{index}", "source": node_ids[edge.source], "target": node_ids[edge.target],
+        })
+        ET.SubElement(element, q("data"), {"key": "edge_relationship"}).text = edge.relationship
+        ET.SubElement(element, q("data"), {"key": "edge_evidence"}).text = ",".join(edge.evidence_ids)
+        ET.SubElement(element, q("data"), {"key": "edge_verified"}).text = "false"
+    output = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    if len(output) > max_bytes:
+        raise OsintImportError("GraphML output exceeds byte limit")
+    return output
+
