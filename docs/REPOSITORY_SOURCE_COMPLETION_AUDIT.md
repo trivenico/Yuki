@@ -76,7 +76,7 @@ These may be valuable later, but they must not block the first dependable local 
 
 | PR | Scope | Current integration concern |
 |---|---|---|
-| #1050 | 100-agent workforce registry | 207 files; draft; 951 commits ahead / 584 behind `main`; keep deferred |
+| #1050 | 100-agent workforce registry | 207 files; draft; 951 commits ahead / 601 behind `main`; keep deferred |
 | #1049 | SFT/few-shot learning foundations | Draft; learning pipeline is not MVP-critical |
 | #1048 | system-prompt-aware model evaluation | Draft; useful later for model quality |
 | #1047 | prompt-first fine-tuning gates | Docs; no model training completed |
