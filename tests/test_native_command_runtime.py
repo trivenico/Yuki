@@ -28,7 +28,7 @@ class NativeCommandRuntimeTests(unittest.TestCase):
             ),
             audit_log=self.audit,
             authorize_capability=lambda actor, capability: actor == "owner-1",
-            status_provider=lambda actor: {"ready": True, "actor": actor},
+            status_provider=lambda actor: {"ready": True, "actor": actor, "api_key": "never expose"},
         )
 
     def tearDown(self):
@@ -39,6 +39,8 @@ class NativeCommandRuntimeTests(unittest.TestCase):
         status_result = self.runtime.dispatch(authenticated_actor_id="owner-1", text="/status")
         self.assertIn("/task list", help_result.output)
         self.assertTrue(json.loads(status_result.output)["ready"])
+        self.assertNotIn("api_key", status_result.output)
+        self.assertNotIn("actor", status_result.output)
         self.assertEqual(len(self.audit.list_events()), 2)
         self.assertTrue(self.audit.verify_chain())
 
