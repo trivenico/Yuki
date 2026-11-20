@@ -10,6 +10,7 @@ from core.sandbox_runtime import SandboxRuntimeError
 def make_fixture(root: Path):
     proc = root / "proc"
     cgroup = root / "cgroup"
+    cgroup.mkdir()
     process = proc / "123"
     ns = process / "ns"
     ns.mkdir(parents=True)
