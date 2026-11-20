@@ -171,6 +171,32 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
                 self.provider.generate_with_tools("prompt", tools)
         self.assertEqual(self.requests, [])
 
+    def test_malformed_choice_envelopes_are_rejected_across_all_paths(self):
+        invalid_bodies = [
+            [],
+            {"choices": {}},
+            {"choices": []},
+            {"choices": [[]]},
+        ]
+        for body in invalid_bodies:
+            for method in ("generate_with_tools", "generate_chat"):
+                opener = FakeOpener(body, self.requests)
+                with self.subTest(body=body, method=method), patch(
+                    "providers.openai_compatible.urllib.request.build_opener", return_value=opener
+                ), self.assertRaises(RuntimeError):
+                    if method == "generate_with_tools":
+                        self.provider.generate_with_tools("Find", self.tools)
+                    else:
+                        self.provider.generate_chat(
+                            messages=[{"role": "user", "content": "Find"}], tools=self.tools)
+
+        event = {"choices": [[]]}
+        opener = FakeStreamOpener(["data: " + json.dumps(event) + "\\n", "data: [DONE]\\n"], self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "malformed stream event"):
+                list(self.provider.generate_chat_stream(
+                    messages=[{"role": "user", "content": "Find"}], tools=self.tools))
+
     def test_missing_credentials_fail_before_network(self):
         provider = OpenAICompatibleProvider("test-model", environ={})
         with self.assertRaises(RuntimeError):
