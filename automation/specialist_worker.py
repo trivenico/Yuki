@@ -12,6 +12,7 @@ from typing import Callable, Mapping
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
+from automation.specialist_result import SpecialistResult
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -250,10 +251,11 @@ class SpecialistTaskWorker:
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
+            envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
             return self.runtime.complete(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
-                result={"specialist": agent_id, "output": output, "execution": "text-only"},
+                result=envelope,
             )
         except Exception:
             # Redact provider/handler details; never persist secrets or prompt contents
