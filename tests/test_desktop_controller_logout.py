@@ -17,6 +17,8 @@ class DesktopControllerLogoutTests(unittest.TestCase):
         )
         controller.sessions = Mock()
         controller.sessions.logout.return_value = True
+        controller._task_session_fenced = False
+        controller._auth_session_revoked = False
         controller.application.memory.disable = Mock()
         controller.application.reset_conversation = Mock()
         return controller
@@ -46,6 +48,26 @@ class DesktopControllerLogoutTests(unittest.TestCase):
         self.assertEqual(events, ["task-fence", "auth-revoke"])
         controller.application.reset_conversation.assert_called_once_with()
         controller.application.memory.disable.assert_called_once_with()
+
+
+    def test_cleanup_retry_does_not_repeat_completed_security_phases(self):
+        controller = self._controller()
+        controller.application.reset_conversation.side_effect = [
+            OSError("temporary conversation cleanup failure"), None,
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "could not complete every logout"):
+            controller.logout()
+
+        self.assertTrue(controller._task_session_fenced)
+        self.assertTrue(controller._auth_session_revoked)
+        self.assertEqual(controller.application.revoke_session_tasks.call_count, 1)
+        self.assertEqual(controller.sessions.logout.call_count, 1)
+
+        self.assertFalse(controller.logout())
+        self.assertEqual(controller.application.revoke_session_tasks.call_count, 1)
+        self.assertEqual(controller.sessions.logout.call_count, 1)
+        controller.application.reset_conversation.assert_called_with()
 
 
 if __name__ == "__main__":
