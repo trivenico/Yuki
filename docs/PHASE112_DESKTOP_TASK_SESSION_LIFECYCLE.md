@@ -35,7 +35,10 @@ does not revoke the authentication credential. The desktop action gate remains
 closed, but the live session is retained solely so cleanup can retry the durable
 task fence. Only after that fence commits does logout revoke authentication and
 continue cleanup. If authentication revocation then fails, the task fence is
-already durable, so retrying credential revocation is safe.
+already durable, so retrying credential revocation is safe. The desktop
+controller records successful task-fence and credential-revocation phases in
+memory, so a later cleanup retry does not attempt to re-verify an already
+revoked session or repeat a completed security transition.
 
 ## Worker boundary
 
