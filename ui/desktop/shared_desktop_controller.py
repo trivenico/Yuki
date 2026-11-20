@@ -32,7 +32,7 @@ class SharedDesktopControllerBridge:
     )
 
     def __init__(self, chat: Any, specialist_controller: Any) -> None:
-        for name in ("respond", "set_memory_context", "memory_context_enabled", "logout"):
+        for name in ("respond", "list_conversations", "select_conversation", "history", "set_memory_context", "memory_context_enabled", "logout"):
             if not callable(getattr(chat, name, None)):
                 raise TypeError("chat controller does not implement the shared chat contract.")
         for name in self._SPECIALIST_METHODS:
@@ -51,6 +51,30 @@ class SharedDesktopControllerBridge:
         self._ensure_open()
         try:
             return self._chat.respond(message, **kwargs)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def list_conversations(self, *, limit: int = 50) -> Any:
+        self._ensure_open()
+        try:
+            return self._chat.list_conversations(limit=limit)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def select_conversation(self, conversation_id: str) -> Any:
+        self._ensure_open()
+        try:
+            return self._chat.select_conversation(conversation_id)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def history(self, *, limit: int = 100) -> Any:
+        self._ensure_open()
+        try:
+            return self._chat.history(limit=limit)
         except PermissionError:
             self._close_after_authorization_failure()
             raise
