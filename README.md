@@ -6,6 +6,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Native intelligence direction
+
+Yuki owns its identity, memory, planning, permissions, task execution, and local workflows. External model providers are optional adapters rather than the authority for core behavior. See [Native intelligence architecture](docs/NATIVE_INTELLIGENCE_ARCHITECTURE.md) for the decision, degraded-operation requirements, and acceptance criteria. This is an architectural direction; Yuki does not yet claim to contain a trained foundation model.
+
 ## Release readiness and progress
 
 See [release readiness and progress](docs/RELEASE_READINESS.md) for the current estimated completion, what is usable today, and the explicit gates for a practical personal MVP. The percentage is an engineering estimate, not a test-derived score.
