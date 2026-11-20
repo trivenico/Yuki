@@ -173,5 +173,55 @@ class ConversationStoreTests(unittest.TestCase):
             owner_id=self.other_owner, conversation_id=self.conversation["conversation_id"]
         ), [])
 
+
+    def test_generation_lease_rejects_concurrent_claim_and_releases_by_token(self):
+        conversation_id = self.conversation["conversation_id"]
+        first = self.store.acquire_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-one", ttl_seconds=30,
+        )
+        self.assertGreater(first["expires_at"], 0)
+        with self.assertRaises(ConversationConflict):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="worker-two", ttl_seconds=30,
+            )
+        self.assertFalse(self.store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-two",
+        ))
+        self.assertTrue(self.store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-one",
+        ))
+        self.assertFalse(self.store.release_generation_lease(
+            owner_id=self.owner, conversation_id=conversation_id,
+            lease_token="worker-one",
+        ))
+
+    def test_expired_lease_can_be_reclaimed_without_old_token_releasing_new_lease(self):
+        from unittest.mock import patch
+
+        conversation_id = self.conversation["conversation_id"]
+        with patch("core.conversation_store.time.time", return_value=100.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="stale-worker", ttl_seconds=5,
+            )
+        with patch("core.conversation_store.time.time", return_value=106.0):
+            replacement = self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker", ttl_seconds=30,
+            )
+            self.assertEqual(replacement["expires_at"], 136.0)
+            self.assertFalse(self.store.release_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="stale-worker",
+            ))
+            self.assertTrue(self.store.release_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="replacement-worker",
+            ))
+
 if __name__ == "__main__":
     unittest.main()
