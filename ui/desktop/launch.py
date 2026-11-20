@@ -1197,19 +1197,13 @@ MIGRATION COMPLETE — verified manifest written to destination."
             # remains governed by the existing profile-wide role permissions.
             from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
-            from core.auth import task_permission_authorizer
-            native_task_authorize = task_permission_authorizer(
-                self.auth,
-                session_token_provider=lambda: (
-                    self.sessions.current_identity().session_id
-                    if self.sessions.current_identity() is not None else ""
-                ),
-            )
+
             def authorize_native(actor_id, capability):
-                if actor_id != context.identity.actor_id:
-                    return False
-                if capability in {"task:list", "task:read"}:
-                    return native_task_authorize(actor_id, capability, "")
+                # Workflow records are currently profile-wide, not account-owned.
+                # Role permission alone cannot isolate one authenticated account
+                # from another account using the same desktop profile. Keep every
+                # task and memory capability denied until their stores enforce
+                # immutable account ownership at the persistence boundary.
                 return False
             def resolve_actor_memory(actor_id):
                 if actor_id != context.identity.actor_id:
