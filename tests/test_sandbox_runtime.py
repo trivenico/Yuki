@@ -6,7 +6,7 @@ from unittest.mock import patch
 from core.sandbox_policy import SandboxPolicy
 from core.sandbox_runtime import (
     SandboxRuntimeError, SandboxUnavailable, SandboxRuntimeCapabilities,
-    build_docker_argv, validate_runtime_capabilities,
+    build_docker_argv, validate_runtime_capabilities, parse_docker_info,
 )
 
 
@@ -116,6 +116,36 @@ class DockerSandboxArgvTests(unittest.TestCase):
                 build_docker_argv(SandboxPolicy(), image=IMAGE,
                     workspace=unsafe, command=["python", "--version"])
 
+
+
+class DockerDaemonDiagnosticsTests(unittest.TestCase):
+    def test_parses_reported_daemon_metadata_without_claiming_attestation(self):
+        report = parse_docker_info(
+            '{"ServerVersion":"27.1.0","SecurityOptions":'
+            '["name=seccomp,profile=builtin","name=apparmor","name=rootless"],'
+            '"CgroupVersion":"2"}'
+        )
+        self.assertEqual(report.server_version, "27.1.0")
+        self.assertTrue(report.rootless_reported)
+        self.assertTrue(report.seccomp_reported)
+        self.assertTrue(report.apparmor_reported)
+        self.assertFalse(report.selinux_reported)
+        self.assertTrue(report.cgroups_v2_reported)
+        self.assertIn("network egress isolation", report.unsupported_controls)
+        self.assertIn("trusted runtime probe provenance", report.unsupported_controls)
+
+    def test_rejects_malformed_or_oversized_payload(self):
+        for payload in ("not-json", "[]", "{}", " " * 262_145):
+            with self.subTest(payload=payload[:20]), self.assertRaises(SandboxRuntimeError):
+                parse_docker_info(payload)
+
+    def test_rejects_untrusted_field_shapes(self):
+        payload = (
+            '{"ServerVersion":"27.1.0","SecurityOptions":[true],'
+            '"CgroupVersion":"2"}'
+        )
+        with self.assertRaises(SandboxRuntimeError):
+            parse_docker_info(payload)
 
 class SandboxRuntimeCapabilityTests(unittest.TestCase):
     def setUp(self):
