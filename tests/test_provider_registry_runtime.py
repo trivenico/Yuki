@@ -35,6 +35,16 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
+    def test_native_core_exposes_bounded_agent_model_without_provider_selection(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        manager = ProviderManager(environ={})
+        model = manager.create_selected_agent_model()
+        self.assertIsInstance(model, ProviderAgentAdapter)
+        self.assertIn("native mode", model(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[], tool_choice="auto",
+        )["text"])
+
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
         manager = ProviderManager(environ={"YUKI_PROVIDER": "openai", "OPENAI_API_KEY": "test-key"})
