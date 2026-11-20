@@ -72,7 +72,7 @@ def _text(value: object, field: str, limit: int = _MAX_TEXT) -> str:
 
 def normalize_indicator(kind: str, value: str) -> str:
     """Normalize one supported technical asset indicator; never resolves names."""
-    if kind not in _TYPES:
+    if not isinstance(kind, str) or kind not in _TYPES:
         raise OsintImportError("unsupported indicator type")
     raw = _text(value, "indicator value", 2048)
     if kind == "ip":
@@ -121,6 +121,15 @@ def normalize_indicator(kind: str, value: str) -> str:
     return raw.lower()
 
 
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise OsintImportError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def parse_osint_jsonl(payload: bytes, *, max_bytes: int = _MAX_BYTES,
                       max_records: int = _MAX_LINES) -> OsintGraph:
     """Build a graph from JSONL asset observations; input is data, never instructions."""
@@ -152,7 +161,7 @@ def parse_osint_jsonl(payload: bytes, *, max_bytes: int = _MAX_BYTES,
         if len(line.encode("utf-8")) > _MAX_LINE_BYTES:
             raise OsintImportError("record line exceeds byte limit")
         try:
-            row = json.loads(line)
+            row = json.loads(line, object_pairs_hook=_unique_object)
         except (json.JSONDecodeError, RecursionError) as exc:
             raise OsintImportError("malformed JSON record") from exc
         if not isinstance(row, dict) or set(row) - {
