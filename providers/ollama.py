@@ -92,7 +92,7 @@ class OllamaProvider:
             normalized_messages.append({"role": role, "content": content})
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
-        if tool_choice not in {"auto", "none", "required"}:
+        if tool_choice not in ("auto", "none", "required"): 
             raise ValueError("tool_choice is invalid.")
         if tool_choice == "required" and not tools:
             raise ValueError("At least one tool is required.")
@@ -181,7 +181,7 @@ class OllamaProvider:
             if not isinstance(item, dict) or set(item) != {"role", "content"}:
                 raise ValueError("Each message must contain only role and content.")
             role, content = item["role"], item["content"]
-            if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+            if not isinstance(role, str) or role not in {"system", "user", "assistant"} or not isinstance(content, str):
                 raise ValueError("Message role or content is invalid.")
             total_chars += len(content)
             if total_chars > 100_000:
