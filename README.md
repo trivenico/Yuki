@@ -293,6 +293,7 @@ Python 3.10+ is required. From a source checkout, install the declared package a
 python -m pip install .
 yuki doctor
 yuki provider-status
+yuki provider-test
 yuki ask "Hello, Yuki"
 yuki chat
 ```
