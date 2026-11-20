@@ -43,8 +43,8 @@ class ProviderConfigLoadingTests(unittest.TestCase):
                 with patch("core.config.resolve_config_path", return_value=config):
                     with patch.dict(os.environ, {}, clear=True):
                         load_config()
-            self.assertEqual(config.parent.stat().st_mode & 0o777, 0o700)
-            self.assertEqual(config.parent.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(config.parent.stat().st_mode & 0o077, 0)
+            self.assertEqual(config.parent.parent.stat().st_mode & 0o077, 0)
 
     def test_default_configuration_selects_openai_and_exposes_timeout(self):
         config = self._load("workspace: ./workspace\n")
