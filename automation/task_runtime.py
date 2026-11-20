@@ -131,7 +131,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:list", ""):
             raise PermissionError("task listing is not authorized.")
-        runs = self.store.list_runs(state=state, limit=limit)
+        runs = self.store.list_runs_for_owner(actor, state=state, limit=limit)
         return [
             TaskSummary(
                 task_id=run.run_id,
@@ -214,6 +214,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:read", task_id):
             raise PermissionError("task event read is not authorized.")
+        self._owned_run(actor, task_id)
         return self.store.list_task_events(
             task_id, after_sequence=after_sequence, limit=limit,
         )
