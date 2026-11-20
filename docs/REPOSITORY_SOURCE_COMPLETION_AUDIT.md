@@ -118,7 +118,7 @@ This is a history/integration discrepancy, not a reason to blindly merge the old
 | #568/#574/#575/#576 | Atomic resource reservations and job/reservation fencing | Open; no inference dispatch before reservation ownership is atomic and recoverable |
 | #565/#566/#563/#564 | Device revocation, enrollment and heartbeat safety | Open; complete owner-authenticated pairing and immediate revocation semantics |
 | #347 | Desktop app and guided onboarding | P0 product work |
-| #338/#339 | Local persistence concurrency/failure semantics | P0 reliability work |
+| #338/#339 | Local persistence concurrency/failure semantics | Cross-process JSON locking/atomic writes now cover core local memory, reminders, evolution, task, learning and metadata-audit stores; remaining feature stores and exact-head CI still pending |
 | #269 | Auth database permissions | P0 security hardening |
 | #368 | Agent Skills repository install/update lifecycle | P1 extensibility |
 | #367 | Windows/Linux desktop packaging and release smoke tests | P0/P1 delivery gate; issue explicitly excludes macOS |
