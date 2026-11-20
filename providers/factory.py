@@ -25,10 +25,15 @@ def create_provider(config=None, *, environ=None):
         return MockProvider()
     if selected == "openai":
         model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
+        try:
+            timeout = float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", cfg.get("provider_timeout_seconds", 45)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("YUKI_PROVIDER_TIMEOUT_SECONDS must be a number from 1 to 120.") from exc
         return OpenAICompatibleProvider(
             model,
             api_key_env="OPENAI_API_KEY",
             base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
+            timeout=timeout,
             environ=env,
         )
     if selected == "gemini":
