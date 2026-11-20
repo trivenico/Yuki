@@ -19,6 +19,8 @@ class DesktopControllerLogoutTests(unittest.TestCase):
         controller.sessions.logout.return_value = True
         controller._task_session_fenced = False
         controller._auth_session_revoked = False
+        controller.worker_service = None
+        controller._worker_service_stopped = False
         controller.application.memory.disable = Mock()
         controller.application.reset_conversation = Mock()
         return controller
@@ -68,6 +70,31 @@ class DesktopControllerLogoutTests(unittest.TestCase):
         self.assertEqual(controller.application.revoke_session_tasks.call_count, 1)
         self.assertEqual(controller.sessions.logout.call_count, 1)
         controller.application.reset_conversation.assert_called_with()
+
+
+    def test_worker_is_drained_before_task_fence_and_auth_revocation(self):
+        controller = self._controller()
+        events = []
+        controller.worker_service = Mock()
+        controller.worker_service.stop.side_effect = lambda timeout: events.append("worker-drain") or True
+        controller.application.revoke_session_tasks.side_effect = lambda **_: events.append("task-fence")
+        controller.sessions.logout.side_effect = lambda: events.append("auth-revoke") or True
+
+        self.assertTrue(controller.logout())
+
+        self.assertEqual(events, ["worker-drain", "task-fence", "auth-revoke"])
+        controller.worker_service.stop.assert_called_once_with(timeout=30)
+
+    def test_worker_drain_failure_prevents_task_and_auth_revocation(self):
+        controller = self._controller()
+        controller.worker_service = Mock()
+        controller.worker_service.stop.return_value = False
+
+        with self.assertRaisesRegex(RuntimeError, "still draining"):
+            controller.logout()
+
+        controller.application.revoke_session_tasks.assert_not_called()
+        controller.sessions.logout.assert_not_called()
 
 
 if __name__ == "__main__":
