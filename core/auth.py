@@ -174,6 +174,7 @@ class BuiltInAuthService:
                 invalid = True
             else:
                 locked = False
+                lockout_expired = bool(row["locked_until"])
                 if row["locked_until"]:
                     try:
                         locked = datetime.fromisoformat(row["locked_until"]) > now
@@ -184,7 +185,8 @@ class BuiltInAuthService:
                 else:
                     candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), row["password_salt"], row["password_iterations"])
                     if not hmac.compare_digest(candidate, row["password_hash"]):
-                        failures = row["failed_logins"] + 1
+                        # A completed lockout starts a fresh failure window.
+                        failures = (0 if lockout_expired else row["failed_logins"]) + 1
                         locked_until = _timestamp(now + timedelta(seconds=self.lockout_seconds)) if failures >= self.max_failed_logins else None
                         # Do not raise inside this transaction: that would roll back the lockout counter.
                         db.execute("UPDATE auth_users SET failed_logins=?,locked_until=? WHERE user_id=?", (failures, locked_until, row["user_id"]))
