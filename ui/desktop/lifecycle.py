@@ -24,6 +24,17 @@ class DesktopServiceLifecycle:
         with self._lock:
             return self._closed
 
+    def add_resource(self, resource: Any) -> None:
+        """Register a newly composed resource before shutdown begins."""
+        if resource is None:
+            raise ValueError("resource must not be None.")
+        with self._lock:
+            if self._closed or self._before_close_complete:
+                raise RuntimeError("cannot add a resource after shutdown has begun.")
+            if any(existing is resource for existing in self._resources):
+                return
+            self._resources = self._resources + (resource,)
+
     def close(self, *, before_close: Callable[[], Any] | None = None) -> None:
         with self._lock:
             if self._closed:
