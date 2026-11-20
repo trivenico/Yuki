@@ -11,7 +11,7 @@ import yaml
 from core.portable_paths import REPOSITORY_ROOT, config_path, ensure_private_directory, user_config_path
 
 
-PROVIDERS = {"openai", "ollama", "gemini"}
+PROVIDERS = {"native", "openai", "ollama", "gemini"}
 
 
 def _contains_secret_field(value: object, _seen: set[int] | None = None) -> bool:
@@ -39,7 +39,7 @@ def save_provider_preferences(path: str | Path, provider: str, model: str = "") 
     """Atomically save non-secret provider preferences to a private user config."""
     provider = str(provider).strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("Choose openai, ollama, or gemini.")
+        raise ValueError("Choose native, openai, ollama, or gemini.")
     model = str(model).strip()
     if len(model) > 120 or (provider in {"openai", "ollama"} and not model):
         raise ValueError("Model must be non-empty and at most 120 characters.")
@@ -112,9 +112,9 @@ def run_provider_setup(
 ) -> int:
     """Prompt for provider/model only; credentials stay in the OS environment."""
     try:
-        provider = input_fn("Provider [openai/ollama/gemini] (default openai): ").strip().lower() or "openai"
+        provider = input_fn("Provider [native/openai/ollama/gemini] (default native): ").strip().lower() or "native"
         if provider not in PROVIDERS:
-            output_fn("Yuki setup: choose openai, ollama, or gemini.")
+            output_fn("Yuki setup: choose native, openai, ollama, or gemini.")
             return 2
         model = ""
         if provider == "openai":
@@ -136,7 +136,10 @@ def run_provider_setup(
         return 2
 
     output_fn(f"Yuki provider preferences saved to {target}.")
-    if provider == "openai":
+    if provider == "native":
+        output_fn("Yuki native core is selected. No API key, model download, or network connection is required.")
+        output_fn("Free-form language generation is not available until Yuki's own language model is built.")
+    elif provider == "openai":
         output_fn("Set OPENAI_API_KEY in your shell or secret manager; setup never asks for it.")
     elif provider == "ollama":
         output_fn("Ensure Ollama is running and the selected model is installed.")
