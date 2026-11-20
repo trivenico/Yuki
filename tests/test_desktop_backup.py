@@ -17,6 +17,60 @@ from ui.desktop.backup import BackupError, create_encrypted_backup, restore_encr
 
 @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
 class DesktopBackupTests(unittest.TestCase):
+    def test_interrupted_backup_does_not_publish_partial_archive(self):
+        from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+        class BrokenAESGCM:
+            def __init__(self, key):
+                pass
+
+            def encrypt(self, nonce, plaintext, associated_data):
+                raise OSError("simulated encryption interruption")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            (source / "profile.json").write_text('{"owner": true}', encoding="utf-8")
+            destination = root / "interrupted.yukibak"
+            with patch("ui.desktop.backup._crypto", return_value=(BrokenAESGCM, Scrypt)):
+                with self.assertRaisesRegex(OSError, "simulated encryption interruption"):
+                    create_encrypted_backup(
+                        source, destination, "a sufficiently long passphrase",
+                    )
+            self.assertFalse(destination.exists())
+            self.assertEqual(
+                [path.name for path in root.iterdir()],
+                ["data"],
+                "interrupted backup must not leave a published or temporary artifact",
+            )
+
+    def test_interrupted_restore_cleans_staging_and_preserves_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            (source / "profile.json").write_text('{"owner": true}', encoding="utf-8")
+            backup = root / "complete.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+            )
+            destination = root / "restored"
+            with patch(
+                "ui.desktop.backup.shutil.copyfileobj",
+                side_effect=OSError("simulated restore interruption"),
+            ):
+                with self.assertRaisesRegex(BackupError, "contents are invalid"):
+                    restore_encrypted_backup(
+                        backup, destination, "a sufficiently long passphrase",
+                    )
+            self.assertFalse(destination.exists())
+            self.assertEqual(
+                {path.name for path in root.iterdir()},
+                {"data", "complete.yukibak"},
+                "interrupted restore must clean its staging directory",
+            )
+
     def test_encrypted_backup_restores_files_and_preserves_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
