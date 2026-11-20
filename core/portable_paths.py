@@ -57,6 +57,33 @@ def desktop_data_root() -> Path:
     return (data_root() / ".yuki").resolve()
 
 
+def ensure_private_directory(path: str | Path) -> Path:
+    """Create missing directory components with owner-only POSIX permissions.
+
+    Existing directories are deliberately left unchanged. Creating each
+    missing component separately avoids pathlib's parents=True behavior, which
+    can create intermediate directories using the process default mode.
+    """
+    target = Path(path).expanduser().resolve()
+    missing: list[Path] = []
+    current = target
+    while not current.exists():
+        missing.append(current)
+        parent = current.parent
+        if parent == current:
+            raise OSError("Cannot find an existing ancestor for the private directory.")
+        current = parent
+    if not current.is_dir():
+        raise NotADirectoryError(str(current))
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            if not directory.is_dir():
+                raise
+    return target
+
+
 def user_config_path() -> Path:
     """Return the per-user configuration path, independent of checkout files."""
     return (_user_config_root() / "config.yaml").resolve()
