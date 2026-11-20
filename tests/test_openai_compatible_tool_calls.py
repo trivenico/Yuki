@@ -290,7 +290,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
                 "name": ["lookup"], "arguments": "{}",
             },
         }]}, "finish_reason": "tool_calls"}]}
-        opener = FakeStreamOpener(["data: " + json.dumps(chunk) + "\\n", "data: [DONE]\\n"], self.requests)
+        opener = FakeStreamOpener(["data: " + json.dumps(chunk) + "\n", "data: [DONE]\\n"], self.requests)
         with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(RuntimeError, "invalid tool name"):
                 list(self.provider.generate_chat_stream(
