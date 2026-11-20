@@ -203,3 +203,9 @@ The supplied baseline is not inherently trusted: a caller-selected PID and procf
 `core/linux_userns_evidence.py` records bounded UID/GID mapping ranges and the optional `setgroups` policy from a process procfs entry. It validates numeric bounds, nonzero lengths, inside/outside overlap, map line counts, process start-time stability, and rejects symlinked mapping files. This provides useful diagnostics about identity translation.
 
 The collector remains diagnostic only: its procfs root and process identity are caller supplied, mappings do not establish the host-side authority or effective privilege boundary, and observations are not atomic with other collectors. It always reports `attested=False` and `verified=False`; it must not be used to authorize execution.
+
+### Linux LSM diagnostic observer
+
+`core/linux_lsm_evidence.py` records the kernel's reported active LSM names, a process's current security context, the AppArmor profile/mode when identifiable, and SELinux's global enforcing flag when available. Inputs are bounded, ASCII-validated, and opened without following a final-component symlink. PID start time is checked before and after collection.
+
+These observations do not prove that the reported policy is complete, loaded correctly, or denies a malicious workload. SELinux's enforcing flag is global; an AppArmor label is not a behavioral policy test. Caller-selected procfs/sysfs roots and non-atomic observations remain untrusted. Missing kernel files are recorded as unavailable, not treated as evidence of safety. The report is diagnostic-only and always has `attested=False` and `verified=False`.
