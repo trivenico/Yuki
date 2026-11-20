@@ -40,9 +40,10 @@ def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
     return None
 
 
-def _close_startup_resources(resources) -> None:
-    """Best-effort reverse-order cleanup for partially composed desktop startup."""
+def _close_startup_resources(resources) -> tuple[Any, ...]:
+    """Best-effort reverse-order cleanup; return resources needing retry."""
     seen: set[int] = set()
+    failed = []
     for resource in reversed(tuple(resources)):
         if resource is None or id(resource) in seen:
             continue
@@ -52,9 +53,10 @@ def _close_startup_resources(resources) -> None:
             try:
                 close()
             except Exception:
-                # Preserve the startup exception; later resources still get a
-                # cleanup attempt, and normal shutdown reports aggregated errors.
-                continue
+                # Keep a strong reference so the caller can report/retry cleanup;
+                # never silently lose the only handle to a failed resource.
+                failed.append(resource)
+    return tuple(failed)
 
 
 def _restrict_session_to_logout_retry(
@@ -170,11 +172,13 @@ def _build_services():
         startup_resources.append(coordinator)
         lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
         return auth, sessions, provider, coordinator, runtime, lifecycle
-    except Exception:
+    except Exception as startup_error:
         # Release every successfully constructed resource in reverse order.
-        # This includes the workflow store/runtime if coordinator or lifecycle
-        # construction fails after the provider has already been created.
-        _close_startup_resources(startup_resources)
+        # Retain failed handles on the original exception for the window's
+        # startup-failure path to report and retry during closeEvent.
+        cleanup_failures = _close_startup_resources(startup_resources)
+        if cleanup_failures:
+            startup_error.yuki_cleanup_failures = cleanup_failures
         raise
 
 
