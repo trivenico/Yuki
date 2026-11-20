@@ -122,9 +122,11 @@ def _parse_routes(payload: str) -> tuple[LinuxIpv4Route, ...]:
         fields = line.split()
         if len(fields) != 11 or not _IFACE_RE.fullmatch(fields[0]):
             raise SandboxRuntimeError("IPv4 route record has malformed fields")
-        if not _HEX8.fullmatch(fields[1]) or not _HEX8.fullmatch(fields[2]) or not _HEX4.fullmatch(fields[3]):
+        if (not _HEX8.fullmatch(fields[1]) or not _HEX8.fullmatch(fields[2])
+                or not _HEX4.fullmatch(fields[3]) or not _HEX8.fullmatch(fields[7])):
             raise SandboxRuntimeError("IPv4 route record has malformed hexadecimal fields")
-        if any(not item.isascii() or not item.isdecimal() for item in fields[4:]):
+        if any(not fields[index].isascii() or not fields[index].isdecimal()
+               for index in (4, 5, 6, 8, 9, 10)):
             raise SandboxRuntimeError("IPv4 route metrics are malformed")
         flags = int(fields[3], 16)
         routes.append(LinuxIpv4Route(
@@ -132,7 +134,7 @@ def _parse_routes(payload: str) -> tuple[LinuxIpv4Route, ...]:
             destination_hex=fields[1].lower(),
             gateway_hex=fields[2].lower(),
             flags=flags,
-            is_default=fields[1] == "00000000" and fields[7] == "00000000",
+            is_default=fields[1].lower() == "00000000" and fields[7].lower() == "00000000",
         ))
         if len(routes) > _MAX_ROUTES:
             raise SandboxRuntimeError("IPv4 route count exceeds limit")
