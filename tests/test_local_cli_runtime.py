@@ -39,6 +39,27 @@ class LocalOwnerIdentityTests(unittest.TestCase):
 
 
 class LocalCliRuntimeTests(unittest.TestCase):
+    def test_invalid_agent_step_limit_is_rejected_before_provider_initialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            initialized = []
+            with self.assertRaisesRegex(ValueError, "max_agent_steps"):
+                build_local_conversation_runtime(
+                    {"max_agent_steps": True, "workspace": directory},
+                    provider_factory=lambda config: initialized.append(True),
+                    owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+                )
+            self.assertEqual(initialized, [])
+
+    def test_invalid_owner_identity_is_rejected_before_provider_initialization(self):
+        initialized = []
+        with self.assertRaisesRegex(ValueError, "owner identity"):
+            build_local_conversation_runtime(
+                {},
+                provider_factory=lambda config: initialized.append(True),
+                owner_id_factory=lambda: " ",
+            )
+        self.assertEqual(initialized, [])
+
     def test_runtime_uses_guarded_agent_loop_and_persists_conversation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
