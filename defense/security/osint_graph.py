@@ -292,10 +292,16 @@ def parse_graphml(payload: bytes, *, max_bytes: int = 4 * 1024 * 1024) -> OsintG
 
     if not isinstance(payload, bytes) or type(max_bytes) is not int or not 1 <= max_bytes <= 4 * 1024 * 1024:
         raise OsintImportError("invalid GraphML input or byte limit")
-    if len(payload) > max_bytes or b"<!DOCTYPE" in payload.upper() or b"<!ENTITY" in payload.upper():
-        raise OsintImportError("GraphML exceeds limits or contains prohibited declarations")
+    if len(payload) > max_bytes:
+        raise OsintImportError("GraphML exceeds byte limit")
     try:
-        root = ET.fromstring(payload)
+        xml_text = payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise OsintImportError("GraphML must be UTF-8") from exc
+    if "<!DOCTYPE" in xml_text.upper() or "<!ENTITY" in xml_text.upper():
+        raise OsintImportError("GraphML contains prohibited declarations")
+    try:
+        root = ET.fromstring(xml_text)
     except (ET.ParseError, RecursionError) as exc:
         raise OsintImportError("malformed GraphML") from exc
 
@@ -309,6 +315,14 @@ def parse_graphml(payload: bytes, *, max_bytes: int = 4 * 1024 * 1024) -> OsintG
     }
     if root.tag != q("graphml") or len(root) != 8:
         raise OsintImportError("unsupported GraphML document")
+    stack = [(root, 1)]
+    element_count = 0
+    while stack:
+        element, depth = stack.pop()
+        element_count += 1
+        if depth > 8 or element_count > 100_000:
+            raise OsintImportError("GraphML structure exceeds limits")
+        stack.extend((child, depth + 1) for child in element)
     keys, graphs = {}, []
     for child in root:
         if child.tag == q("key"):
