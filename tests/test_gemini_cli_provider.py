@@ -172,6 +172,32 @@ class GeminiCLIProviderTests(unittest.TestCase):
         stop_process.assert_called_once_with(fake_process)
         fake_process.wait.assert_not_called()
 
+    def test_writer_start_failure_joins_only_started_reader(self):
+        provider = GeminiCLIProvider()
+        fake_process = MagicMock()
+        fake_process.pid = 12345
+        fake_process.stdout = io.BytesIO(b"")
+
+        real_thread = __import__("threading").Thread
+        start_calls = []
+
+        def fail_second_start(thread):
+            start_calls.append(thread)
+            if len(start_calls) == 2:
+                raise RuntimeError("thread unavailable")
+            return real_thread.start(thread)
+
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \\
+             patch("providers.gemini_cli.threading.Thread.start", autospec=True, side_effect=fail_second_start), \\
+             patch.object(provider, "_stop_process") as stop_process:
+            with self.assertRaisesRegex(RuntimeError, "I/O workers could not be started"):
+                provider.generate("hello")
+
+        self.assertEqual(len(start_calls), 2)
+        stop_process.assert_called_once_with(fake_process)
+        fake_process.wait.assert_not_called()
+
     def test_unexpected_wait_failure_stops_spawned_process(self):
         provider = GeminiCLIProvider()
         fake_process = MagicMock()
