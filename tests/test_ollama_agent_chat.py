@@ -70,6 +70,18 @@ class OllamaAgentChatTests(unittest.TestCase):
         }]
         self.requests = []
 
+    def test_availability_probe_rejects_redirects(self):
+        fake = FakeOpener({"models": [{"name": "test-model:latest"}]}, self.requests)
+        with patch("providers.ollama.urllib.request.urlopen") as legacy_urlopen, \
+             patch("providers.ollama.urllib.request.build_opener", return_value=fake) as build_opener:
+            self.assertTrue(self.provider.is_available())
+        legacy_urlopen.assert_not_called()
+        handler = build_opener.call_args.args[0]
+        self.assertIsInstance(handler, urllib.request.HTTPRedirectHandler)
+        self.assertIsNone(handler.redirect_request(None, None, 302, "Found", {}, "https://attacker.example/collect"))
+        self.assertEqual(self.requests[0][0].full_url, "http://127.0.0.1:11434/api/tags")
+        self.assertEqual(self.requests[0][1], 5)
+
     def test_generate_rejects_redirects(self):
         fake = FakeOpener({"response": "Hello"}, self.requests)
         with patch("providers.ollama.urllib.request.urlopen") as legacy_urlopen, \
