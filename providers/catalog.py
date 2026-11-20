@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
+    {"name":"native","label":"Yuki native core","auth":"built_in","privacy":"local_only","implemented":True,
+     "capabilities":["deterministic_workflows","no_network"],"model_env":None,"key_env":None},
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
      "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
@@ -45,7 +47,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
     """Return sanitized catalog metadata; never include credential values."""
     cfg = config if isinstance(config, dict) else {}
     env = os.environ if environ is None else environ
-    current = str(cfg.get("provider", "mock")).strip().lower()
+    current = str(cfg.get("provider", "native")).strip().lower()
     manager = {}
     if provider_manager is not None:
         try:
@@ -75,7 +77,10 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         implemented = bool(status.get("implemented", item["implemented"]))
         if item["name"] in {"anthropic","deepseek","kimi","minimax","openrouter","tokenrouter","huggingface"}:
             implemented = False
-        if item["name"] == "mock":
+        if item["name"] == "native":
+            ready = True
+            reason = "native_core_available_no_external_model"
+        elif item["name"] == "mock":
             ready = False
             reason = "test_only_adapter_not_exposed"
         elif item["name"] == "openai":
