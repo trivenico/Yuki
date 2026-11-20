@@ -7,6 +7,7 @@ should receive the operator controls.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hmac
 from pathlib import Path
 from secrets import token_urlsafe
 
@@ -74,9 +75,19 @@ def build_local_worker_runtime(
         return False
 
     database_path = str(root / "yuki_tasks.sqlite3")
+    approval_session_id = token_urlsafe(32)
+
+    def verify_approval_session(actor_id: str, session_id: str) -> bool:
+        return (
+            actor_id == LOCAL_OPERATOR_ACTOR
+            and isinstance(session_id, str)
+            and hmac.compare_digest(session_id, approval_session_id)
+        )
+
     runtime = TaskRuntime(
         WorkflowRunStore(database_path),
         authorize=authorize,
+        verify_session=verify_approval_session,
     )
     coordinator = SpecialistAgentCoordinator(
         runtime,
@@ -122,5 +133,5 @@ def build_local_worker_runtime(
         supervisor=supervisor,
         coordinator=coordinator,
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
-        approval_session_id=token_urlsafe(32),
+        approval_session_id=approval_session_id,
     )
