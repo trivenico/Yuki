@@ -89,6 +89,10 @@ def build_readiness_report(
     """Build a deterministic, side-effect-free report of locally detectable features."""
     env = os.environ if environ is None else environ
     capabilities: dict[str, Capability] = {
+        "yuki_native_core": Capability(
+            "available",
+            "Deterministic local core is available without a model, API key, or network; free-form generation is not included.",
+        ),
         "python_runtime": Capability("detected", sys.version.split()[0]),
         "ollama_cli": (
             Capability("detected", "Ollama executable is on PATH; server/model not verified.")
