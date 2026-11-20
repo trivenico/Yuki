@@ -87,13 +87,14 @@ class TaskRuntime:
 
     def _allowed(self, actor: str, action: str, task_id: str) -> bool:
         # Internal principals are composed by trusted local runtime wiring and
-        # remain separate from owner-facing permissions. Any callback failure
-        # is fail-closed; a denied internal principal falls through to the
-        # ordinary authorizer, never to implicit allow.
+        # remain separate from owner-facing permissions. The callback returns
+        # None only for actors outside its namespace; True/False are authoritative
+        # allow/deny decisions. Exceptions fail closed.
         if self.internal_authorize is not None:
             try:
-                if self.internal_authorize(actor, action, task_id) is True:
-                    return True
+                internal_decision = self.internal_authorize(actor, action, task_id)
+                if internal_decision is not None:
+                    return internal_decision is True
             except Exception:
                 return False
         if self.authorize is None:
