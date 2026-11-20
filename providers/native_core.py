@@ -37,10 +37,10 @@ class NativeCoreAdapter(BaseProvider):
         if normalized in {"help", "/help", "capabilities", "what can you do"}:
             return self._HELP
         return (
-            "Yuki native mode is active. I have not yet built Yuki's own "
-            "free-form language model, so I won't invent an answer. Use the "
-            "available local commands and workflows, or explicitly configure "
-            "an optional model adapter for natural-language generation."
+            "Yuki native mode is active. General free-form language generation is "
+            "not available because Yuki's own language model has not yet been built. "
+            "I won't invent an answer; use the supported local commands and workflows "
+            "or explicitly configure an optional model adapter."
         )
 
     def generate_chat(
