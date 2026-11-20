@@ -59,7 +59,13 @@ def prepare_regression_test_plan(
         impact.parse_errors,
     ):
         if not isinstance(group, tuple) or any(
-            not isinstance(path, str) or not path or len(path) > 1000 or "\x00" in path
+            not isinstance(path, str)
+            or not path
+            or len(path) > 1000
+            or "\x00" in path
+            or chr(92) in path
+            or path.startswith("/")
+            or any(part in {"", ".", ".."} for part in path.split("/"))
             for path in group
         ):
             raise ValueError("impact contains invalid or unbounded path metadata.")
