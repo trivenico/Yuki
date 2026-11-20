@@ -41,7 +41,7 @@ def prepare_regression_test_plan(
     reasons_by_path: dict[str, set[str]] = {}
     for path in impact.test_candidates:
         if path in available:
-            reasons_by_path.setdefault(path, set()).add("directly identified by impact analysis")
+            reasons_by_path.setdefault(path, set()).add("identified by impact analysis")
     for path in impact.direct_importers:
         if path in available:
             reasons_by_path.setdefault(path, set()).add("direct importer of a changed module")
@@ -52,8 +52,7 @@ def prepare_regression_test_plan(
     candidates = []
     for path, reasons in reasons_by_path.items():
         priority = "high" if (
-            "directly identified by impact analysis" in reasons
-            or "direct importer of a changed module" in reasons
+            "direct importer of a changed module" in reasons
         ) else "normal"
         candidates.append(RegressionTestCandidate(
             path=path,
