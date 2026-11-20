@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,6 +33,7 @@ def make_fixture(root: Path):
     return proc, cgroup
 
 
+@unittest.skipUnless(os.name == "posix", "Linux diagnostic fixture requires POSIX filesystem semantics")
 class LinuxSandboxEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
