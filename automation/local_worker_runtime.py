@@ -39,6 +39,87 @@ class LocalWorkerRuntime:
     approval_session_id: str
 
 
+@dataclass(frozen=True)
+class SessionWorkerRuntime:
+    """Worker service bound to an existing owner-authorized task runtime."""
+
+    runtime: TaskRuntime
+    supervisor: WorkerSupervisor
+    service: ManagedWorkerService
+    owner_actor_id: str
+    approval_session_id: str
+
+
+def build_session_worker_runtime(
+    runtime: TaskRuntime,
+    provider,
+    *,
+    owner_actor_id: str,
+    approval_session_id: str,
+    max_tasks_per_cycle: int = 3,
+    max_workers: int = 2,
+) -> SessionWorkerRuntime:
+    """Attach a bounded worker to the caller's existing store and live owner session.
+
+    Unlike build_local_worker_runtime(), this function never creates a database,
+    operator identity, approval token, or parallel coordinator. Worker-only
+    actions are authorized only while the exact approving owner session remains
+    live. The caller must stop/drain this service before revoking that session.
+    """
+    if not isinstance(runtime, TaskRuntime):
+        raise TypeError("runtime must be a TaskRuntime.")
+    if not isinstance(owner_actor_id, str) or not owner_actor_id.strip() or len(owner_actor_id) > 200:
+        raise ValueError("owner_actor_id must be bounded non-empty text.")
+    if not isinstance(approval_session_id, str) or not approval_session_id.strip() or len(approval_session_id) > 512:
+        raise ValueError("approval_session_id must be bounded non-empty text.")
+    if not callable(runtime.authorize) or not callable(runtime.verify_session):
+        raise ValueError("the existing task runtime must have authorization and session verification.")
+    if type(max_tasks_per_cycle) is not int or not 1 <= max_tasks_per_cycle <= 10:
+        raise ValueError("max_tasks_per_cycle must be between 1 and 10.")
+    if type(max_workers) is not int or not 1 <= max_workers <= 4:
+        raise ValueError("max_workers must be between 1 and 4.")
+
+    base_authorize = runtime.authorize
+
+    def authorize(actor_id: str, action: str, task_id: str) -> bool:
+        if actor_id == WORKER_SERVICE_ACTOR:
+            if action not in _WORKER_ACTIONS:
+                return False
+            try:
+                return runtime.verify_session(owner_actor_id, approval_session_id) is True
+            except Exception:
+                return False
+        try:
+            return base_authorize(actor_id, action, task_id) is True
+        except Exception:
+            return False
+
+    # TaskRuntime is the shared authorization boundary for all operations. Keep
+    # the owner authorizer intact and add only the private worker principal.
+    runtime.authorize = authorize
+    handlers = build_provider_specialist_handlers(provider)
+    worker = SpecialistTaskWorker(
+        runtime,
+        worker_id="yuki-desktop-worker",
+        service_actor_id=WORKER_SERVICE_ACTOR,
+        handlers=handlers,
+        approval_session_id=approval_session_id,
+    )
+    supervisor = WorkerSupervisor(
+        runtime, worker,
+        max_tasks_per_cycle=max_tasks_per_cycle,
+        recovery_limit=10,
+        max_workers=max_workers,
+    )
+    return SessionWorkerRuntime(
+        runtime=runtime,
+        supervisor=supervisor,
+        service=ManagedWorkerService(supervisor),
+        owner_actor_id=owner_actor_id,
+        approval_session_id=approval_session_id,
+    )
+
+
 def build_local_worker_runtime(
     workspace: str | Path,
     provider=None,
