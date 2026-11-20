@@ -6,6 +6,7 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Lock
 from typing import Callable, Mapping
@@ -157,6 +158,7 @@ class SpecialistTaskWorker:
         handlers: Mapping[str, Callable[[str], str]],
         compute_scheduler: ComputeScheduler | None = None,
         compute_request: ComputeRequest | None = None,
+        approval_session_id: str | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -176,6 +178,15 @@ class SpecialistTaskWorker:
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
+        if approval_session_id is not None and (
+            not isinstance(approval_session_id, str) or not approval_session_id.strip()
+            or len(approval_session_id) > 512 or chr(0) in approval_session_id
+        ):
+            raise ValueError("approval_session_id must be bounded non-empty text.")
+        self.approval_session_hash = (
+            hashlib.sha256(approval_session_id.encode("utf-8")).hexdigest()
+            if approval_session_id is not None else None
+        )
         if compute_scheduler is not None and not isinstance(compute_scheduler, ComputeScheduler):
             raise TypeError("compute_scheduler must be a ComputeScheduler.")
         if compute_request is not None and not isinstance(compute_request, ComputeRequest):
@@ -252,6 +263,7 @@ class SpecialistTaskWorker:
         prefixes = tuple(f"agent-{agent_id}-" for agent_id in self.handlers)
         claimed = self.runtime.store.claim_next(
             worker_id=self.worker_id, workflow_name_prefixes=prefixes,
+            approval_session_hash=self.approval_session_hash,
         )
         if claimed is None:
             return None
