@@ -24,6 +24,7 @@ def snapshot(pid, identities, start=100):
     )
 
 
+@unittest.skipUnless(os.name == "posix", "Linux diagnostic fixture requires POSIX filesystem semantics")
 class LinuxNamespaceComparisonTests(unittest.TestCase):
     def test_reports_shared_and_distinct_namespace_types(self):
         baseline = snapshot(1, {
