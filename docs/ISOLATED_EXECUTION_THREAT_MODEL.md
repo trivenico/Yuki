@@ -197,3 +197,9 @@ These are procfs-reported observations only. A reported `ro` flag does not prove
 `core/linux_namespace_comparison.py` compares the observed user, PID, mount, IPC, and network namespace identities from two process snapshots. It explicitly classifies equal identities as shared namespaces and differing identities as distinct namespace identifiers. It rejects incomplete or duplicate namespace records and identical process identities.
 
 The supplied baseline is not inherently trusted: a caller-selected PID and procfs root do not prove that the baseline is the host. Distinct inode labels do not prove effective isolation, correct UID/GID mappings, or resistance to namespace entry. The comparison is diagnostic only and always reports `attested=False` and `verified=False`; it cannot authorize execution.
+
+### Linux user-namespace ID-map observer
+
+`core/linux_userns_evidence.py` records bounded UID/GID mapping ranges and the optional `setgroups` policy from a process procfs entry. It validates numeric bounds, nonzero lengths, inside/outside overlap, map line counts, process start-time stability, and rejects symlinked mapping files. This provides useful diagnostics about identity translation.
+
+The collector remains diagnostic only: its procfs root and process identity are caller supplied, mappings do not establish the host-side authority or effective privilege boundary, and observations are not atomic with other collectors. It always reports `attested=False` and `verified=False`; it must not be used to authorize execution.
