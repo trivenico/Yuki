@@ -86,8 +86,10 @@ def build_session_worker_runtime(
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4.")
 
-    def authorize_worker(actor_id: str, action: str, _task_id: str) -> bool:
-        if actor_id != WORKER_SERVICE_ACTOR or action not in _WORKER_ACTIONS:
+    def authorize_worker(actor_id: str, action: str, _task_id: str) -> bool | None:
+        if actor_id != WORKER_SERVICE_ACTOR:
+            return None
+        if action not in _WORKER_ACTIONS:
             return False
         try:
             return runtime.verify_session(owner_actor_id, approval_session_id) is True
