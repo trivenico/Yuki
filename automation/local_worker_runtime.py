@@ -24,7 +24,7 @@ from automation.workflow_store import WorkflowRunStore
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
 
-_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve", "task:cancel"})
+_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve", "task:cancel", "task:session:revoke"})
 _WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
 
 
