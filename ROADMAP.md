@@ -26,6 +26,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 
 - [x] Add a bounded workflow state machine for perception-to-report lifecycle tracking.
 - [x] Add a machine-readable catalog for 100 planned specialist capabilities with stable IDs and safe discovery.
+- [x] Add read-only discovery that matches catalog proposals to explicitly registered, enabled runtime agents by exact capability ID.
 - [ ] Connect catalog entries to reviewed runtime handlers; catalog presence must never imply execution readiness.
 - [x] Connect plan preparation, required-tool policy checks, approval requests, and lifecycle events in a non-executing orchestrator.
 - [ ] Connect the workflow to explicit plans, steps, deadlines, and budgets.
