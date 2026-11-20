@@ -105,18 +105,25 @@ class GeminiCLIProvider(BaseProvider):
             except OSError as exc:
                 raise RuntimeError("Gemini CLI could not be started.") from exc
 
-            try:
-                if process.stdin is None:
-                    raise OSError("Gemini CLI input pipe was unavailable.")
-                process.stdin.write(prompt.encode("utf-8"))
-                process.stdin.close()
-            except (OSError, ValueError) as exc:
-                self._stop_process(process)
-                raise RuntimeError("Gemini CLI prompt could not be delivered safely.") from exc
-
             captured = bytearray()
             reader_errors = []
+            writer_errors = []
             capture_limit = self.max_output_chars * 4 + 4
+
+            def deliver_prompt():
+                stream = process.stdin
+                if stream is None:
+                    writer_errors.append(True)
+                    return
+                try:
+                    stream.write(prompt.encode("utf-8"))
+                except Exception:
+                    writer_errors.append(True)
+                finally:
+                    try:
+                        stream.close()
+                    except Exception:
+                        writer_errors.append(True)
 
             def drain_stdout():
                 stream = process.stdout
@@ -142,24 +149,38 @@ class GeminiCLIProvider(BaseProvider):
                         reader_errors.append(True)
 
             reader = threading.Thread(target=drain_stdout, name="yuki-gemini-output", daemon=True)
+            writer = threading.Thread(target=deliver_prompt, name="yuki-gemini-input", daemon=True)
             try:
                 reader.start()
+                writer.start()
             except Exception as exc:
                 self._stop_process(process)
-                raise RuntimeError("Gemini CLI output reader could not be started.") from exc
+                reader.join(timeout=5)
+                writer.join(timeout=5)
+                raise RuntimeError("Gemini CLI I/O workers could not be started.") from exc
             try:
+                # Start the deadline immediately; neither a blocked stdin write
+                # nor a child that stops consuming input can bypass this wait.
                 return_code = process.wait(timeout=self.timeout)
             except subprocess.TimeoutExpired as exc:
                 self._stop_process(process)
                 reader.join(timeout=5)
+                writer.join(timeout=5)
                 raise TimeoutError(f"Gemini CLI exceeded the {self.timeout:g}-second deadline.") from exc
             except BaseException:
                 # Interruptions and unexpected wait failures must not orphan a
-                # child process or leave its pipe-draining thread behind.
+                # child process or leave its pipe workers behind.
                 self._stop_process(process)
                 reader.join(timeout=5)
+                writer.join(timeout=5)
                 raise
             reader.join(timeout=5)
+            writer.join(timeout=5)
+            if writer.is_alive():
+                self._stop_process(process)
+                raise RuntimeError("Gemini CLI input stream did not close cleanly.")
+            if writer_errors:
+                raise RuntimeError("Gemini CLI prompt could not be delivered safely.")
             if reader.is_alive():
                 self._stop_process(process)
                 raise RuntimeError("Gemini CLI output stream did not close cleanly.")
