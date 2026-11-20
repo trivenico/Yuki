@@ -3,7 +3,7 @@ import unittest
 
 from ui.desktop.launch import (
     _close_expired_controller, _close_startup_resources,
-    _shutdown_desktop_services,
+    _shutdown_desktop_services, _close_voice_session,
 )
 
 
@@ -114,6 +114,44 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         self.assertEqual(logout.text, "Retry sign out")
         self.assertTrue(logout.enabled)
         self.assertTrue(status.enabled)
+
+    def test_microphone_close_failure_is_reported_and_does_not_escape(self):
+        class VoiceSession:
+            def close(self):
+                raise OSError("audio device busy")
+
+        class Status:
+            value = None
+            def setText(self, value):
+                self.value = value
+
+        status = Status()
+        error = _close_voice_session(VoiceSession(), status)
+        self.assertIsInstance(error, OSError)
+        self.assertEqual(
+            status.value, "Warning: microphone cleanup failed (OSError).",
+        )
+
+    def test_microphone_close_success_returns_no_error(self):
+        class VoiceSession:
+            closed = False
+            def close(self):
+                self.closed = True
+
+        class Status:
+            def setText(self, value):
+                raise AssertionError("successful cleanup must not show a warning")
+
+        session = VoiceSession()
+        self.assertIsNone(_close_voice_session(session, Status()))
+        self.assertTrue(session.closed)
+
+    def test_missing_microphone_session_is_a_noop(self):
+        class Status:
+            def setText(self, value):
+                raise AssertionError("missing session must not show a warning")
+
+        self.assertIsNone(_close_voice_session(None, Status()))
 
     def test_no_controller_is_a_noop(self):
         self.assertIsNone(_close_expired_controller(None))
