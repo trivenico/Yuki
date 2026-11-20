@@ -54,6 +54,14 @@ class NucleiReportImportTests(unittest.TestCase):
         self.assertEqual(finding.severity, "unknown")
         self.assertEqual(finding.protocol, "unknown")
 
+    def test_normalizes_null_severity_and_protocol(self):
+        item = row()
+        item["info"]["severity"] = None
+        item["type"] = None
+        finding = parse_nuclei_jsonl(json.dumps(item).encode()).findings[0]
+        self.assertEqual(finding.severity, "unknown")
+        self.assertEqual(finding.protocol, "unknown")
+
     def test_rejects_invalid_json_utf8_and_duplicate_keys(self):
         for payload in (b"{bad}\n", b"\xff", b'{"template-id":"a","template-id":"b"}'):
             with self.subTest(payload=payload), self.assertRaises(NucleiReportError):
