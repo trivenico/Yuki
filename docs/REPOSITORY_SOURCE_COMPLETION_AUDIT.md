@@ -11,9 +11,9 @@ This is a repository inventory, not a release certification. Counts are from the
 
 | Area | Count / observation |
 |---|---:|
-| Tracked files on `main` | 833 |
-| Python test files | 255 |
-| Documentation files | 158 |
+| Tracked files on `main` | 837 |
+| Python test files | 257 |
+| Documentation files | 159 |
 | Open pull requests | 620 |
 | Open issues | 31 |
 | Open PRs marked draft | 488 |
@@ -76,7 +76,7 @@ These may be valuable later, but they must not block the first dependable local 
 
 | PR | Scope | Current integration concern |
 |---|---|---|
-| #1050 | 100-agent workforce registry | 207 files; draft; large, divergent integration; keep deferred |
+| #1050 | 100-agent workforce registry | 207 files; draft; 951 commits ahead / 584 behind `main`; keep deferred |
 | #1049 | SFT/few-shot learning foundations | Draft; learning pipeline is not MVP-critical |
 | #1048 | system-prompt-aware model evaluation | Draft; useful later for model quality |
 | #1047 | prompt-first fine-tuning gates | Docs; no model training completed |
@@ -86,7 +86,9 @@ These may be valuable later, but they must not block the first dependable local 
 | #1040 | desktop security dashboard integration | Open and ready; useful optional defensive UI, not core onboarding |
 | #1033 | dry-run-only firewall hardening | Draft; remains plan-only |
 | #1029/#1027/#1011 | wake-word controls/training/voice state | Stacked or model-training-dependent; physical-device acceptance remains |
-| #1000/#999 | desktop canonical/shared conversation integration | Stacked on other feature branches; reconcile against current main before integration |
+| #1000 | desktop canonical conversation runtime | 82 files / 8,411 additions; 320 commits; targets `feat/desktop-architecture-foundation`, not `main` |
+| #999 | desktop shared conversation adapter | 18 files / 2,289 additions; 63 commits; targets `feat/owner-agent-execution-component`, not `main` |
+| #946 | owner-scoped persistent conversation memory | 16 files / 1,322 additions; 52 commits; targets `test/concurrent-approved-action-claim`, not `main` |
 | #998–#990 | memory backup, provenance, retention and storage | Multi-PR dependency chain; review as one coherent memory lifecycle |
 | #538 | remote inference worker transport | 55 commits, 29 files, about 2,500 additions; based on `feature/distributed-model-placement`, explicitly not production-ready |
 | #574 | atomic device resource reservations | Draft; dependent on inference scheduling and claim fencing |
@@ -129,7 +131,18 @@ This is a history/integration discrepancy, not a reason to blindly merge the old
 | #499 | Hugging Face model metadata update | Informational; optional model scouting |
 | #9 | Historical Phase 9 CI issue | Re-evaluate against current source; likely stale historical issue |
 
-## 6. Recent commit-history themes
+## 6. Recent source-completion work
+
+Since the initial inventory, the following source-only changes have been pushed to `main`:
+
+- `core/json_file_store.py` adds process/thread locking and durable atomic JSON replacement.
+- Companion memory, reminders, evolution state, legacy tasks, learning history and the legacy metadata audit log now serialize read-modify-write transactions.
+- Stale task-list snapshots are rejected instead of overwriting concurrent updates.
+- Regression tests cover independent store instances, stale task snapshots, lock-file symlinks, local data ignore rules, and concurrent learning/audit writes. These tests have not yet been run.
+- Authentication lockout expiry fix and regression test are present; verification remains pending.
+- Private SQLite path protections and `.gitignore` coverage are documented; cross-platform and backup acceptance remain pending.
+
+## 7. Recent commit-history themes
 
 The latest 100 commits on `main` were reviewed. Recent work is concentrated in:
 
@@ -140,7 +153,7 @@ The latest 100 commits on `main` were reviewed. Recent work is concentrated in:
 
 The native-only provider work is not yet consistent across every entry point. The next code work must converge the installed CLI, API and desktop onto a provider-optional core rather than adding another parallel assistant runtime.
 
-## 7. Completion plan
+## 8. Completion plan
 
 1. Finish the core source audit and map each user-facing feature to its canonical module and entry point.
 2. Make the application start without an external provider on CLI, API and desktop.
@@ -150,7 +163,7 @@ The native-only provider work is not yet consistent across every entry point. Th
 6. Reconcile only the PRs required for those MVP workstreams; defer experimental and stacked branches.
 7. Once source completion is stable, run the focused test suite, full cross-platform CI, runtime acceptance and packaging/release checks.
 
-## 8. Verification discipline
+## 9. Verification discipline
 
 - No local test run is claimed from GitHub connector inspection.
 - No CI pass is inferred from a PR being closed or marked merged.
