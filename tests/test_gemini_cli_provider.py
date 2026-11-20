@@ -109,9 +109,9 @@ class GeminiCLIProviderTests(unittest.TestCase):
         fake_process.pid = 12345
         fake_process.stdout = io.BytesIO(b"")
 
-        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
-             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \\
-             patch("providers.gemini_cli.threading.Thread.start", side_effect=RuntimeError("thread unavailable")), \\
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \
+             patch("providers.gemini_cli.threading.Thread.start", side_effect=RuntimeError("thread unavailable")), \
              patch.object(provider, "_stop_process") as stop_process:
             with self.assertRaisesRegex(RuntimeError, "output reader"):
                 provider.generate("hello")
@@ -126,8 +126,8 @@ class GeminiCLIProviderTests(unittest.TestCase):
         fake_process.stdout = io.BytesIO(b"")
         fake_process.wait.side_effect = OSError("wait failed")
 
-        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
-             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \\
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \
              patch.object(provider, "_stop_process") as stop_process:
             with self.assertRaisesRegex(OSError, "wait failed"):
                 provider.generate("hello")
