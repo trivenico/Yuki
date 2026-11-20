@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
-from threading import BoundedSemaphore, Lock
+from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Callable, Mapping
 from uuid import uuid4
 
@@ -155,6 +155,8 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        lease_seconds: int = 60,
+        heartbeat_interval_seconds: float | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -171,10 +173,22 @@ class SpecialistTaskWorker:
             if not callable(handler):
                 raise TypeError("each specialist handler must be callable.")
             validated[agent_id] = handler
+        if type(lease_seconds) is not int or not 2 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 2 to 3600.")
+        if heartbeat_interval_seconds is None:
+            heartbeat_interval_seconds = lease_seconds / 3
+        if (
+            isinstance(heartbeat_interval_seconds, bool)
+            or not isinstance(heartbeat_interval_seconds, (int, float))
+            or not 0 < heartbeat_interval_seconds < lease_seconds
+        ):
+            raise ValueError("heartbeat_interval_seconds must be positive and shorter than the lease.")
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        self.lease_seconds = lease_seconds
+        self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -219,8 +233,10 @@ class SpecialistTaskWorker:
         return tuple(results)
 
     def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        """Claim and execute one task while renewing its lease during handler work."""
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id, lease_seconds=self.lease_seconds,
+        )
         if claimed is None:
             return None
 
@@ -233,41 +249,77 @@ class SpecialistTaskWorker:
                 error_code="unknown_specialist",
             )
 
-        try:
-            if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
-                raise ValueError("unsupported specialist task definition.")
-            argument = claimed.definition[0].get("argument", "")
-            output = handler(argument)
-            # A running handler may not be interruptible (for example, an in-flight
-            # provider request). If an operator cancels while it runs, do not try to
-            # complete the now-terminal task or turn cancellation into a pool error.
-            current = self.runtime.store.get(claimed.run_id)
-            if current is None:
-                raise RuntimeError("claimed task disappeared.")
-            if current.state == "cancelled":
-                return self.runtime._record(current)
-            if current.state != "running" or current.lease_owner != self.worker_id:
-                raise RuntimeError("task is no longer owned by this worker.")
-            if not isinstance(output, str) or not output.strip():
-                raise ValueError("specialist returned an empty result.")
-            output = output[:_MAX_OUTPUT_CHARS]
-            envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
-            return self.runtime.complete(
-                actor_id=self.service_actor_id, task_id=claimed.run_id,
-                expected_version=claimed.version, worker_id=self.worker_id,
-                result=envelope,
-            )
-        except Exception:
-            # Redact provider/handler details; never persist secrets or prompt contents
-            # from exception messages into task error state.
-            current = self.runtime.store.get(claimed.run_id)
-            if current is None or current.state != "running" or current.lease_owner != self.worker_id:
-                raise
+        version = [claimed.version]
+        version_lock = Lock()
+        stop_heartbeat = Event()
+        lease_lost = Event()
+
+        def renew_lease() -> None:
+            while not stop_heartbeat.wait(self.heartbeat_interval_seconds):
+                try:
+                    with version_lock:
+                        renewed = self.runtime.renew_lease(
+                            actor_id=self.service_actor_id,
+                            task_id=claimed.run_id,
+                            worker_id=self.worker_id,
+                            expected_version=version[0],
+                            lease_seconds=self.lease_seconds,
+                        )
+                        version[0] = renewed.version
+                except Exception:
+                    # Fail closed: once renewal cannot prove ownership, this
+                    # worker must never publish a result or overwrite task state.
+                    lease_lost.set()
+                    stop_heartbeat.set()
+                    return
+
+        if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
-                expected_version=current.version, worker_id=self.worker_id,
+                expected_version=claimed.version, worker_id=self.worker_id,
                 error_code="specialist_handler_failed",
             )
+
+        heartbeat = Thread(
+            target=renew_lease, name="yuki-task-lease-heartbeat", daemon=True,
+        )
+        heartbeat.start()
+        output = None
+        handler_failed = False
+        try:
+            argument = claimed.definition[0].get("argument", "")
+            output = handler(argument)
+        except Exception:
+            # Handler details may contain prompts, credentials, or provider data.
+            handler_failed = True
+        finally:
+            stop_heartbeat.set()
+            heartbeat.join()
+
+        current = self.runtime.store.get(claimed.run_id)
+        if current is None:
+            raise RuntimeError("claimed task disappeared.")
+        if current.state == "cancelled":
+            return self.runtime._record(current)
+        if lease_lost.is_set() or current.state != "running" or current.lease_owner != self.worker_id:
+            # The handler may still have completed locally, but its output is
+            # untrusted once lease ownership is uncertain.
+            return self.runtime._record(current)
+        with version_lock:
+            expected_version = version[0]
+        if handler_failed or not isinstance(output, str) or not output.strip():
+            return self.runtime.fail(
+                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                expected_version=expected_version, worker_id=self.worker_id,
+                error_code="specialist_handler_failed",
+            )
+        output = output[:_MAX_OUTPUT_CHARS]
+        envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
+        return self.runtime.complete(
+            actor_id=self.service_actor_id, task_id=claimed.run_id,
+            expected_version=expected_version, worker_id=self.worker_id,
+            result=envelope,
+        )
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:
