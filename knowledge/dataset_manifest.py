@@ -76,7 +76,7 @@ def create_dataset_manifest(
     group_splits: dict[str, str] = {}
     for asset_id in sorted(asset_ids):
         split = split_assignments[asset_id]
-        if split not in SPLITS:
+        if not isinstance(split, str) or split not in SPLITS:
             raise DatasetManifestError(f"unsupported split for asset {asset_id}")
         group = _identifier(groups.get(asset_id, asset_id), "leakage_group", 256)
         previous = group_splits.setdefault(group, split)
