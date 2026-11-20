@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import yaml
 
-from core.portable_paths import REPOSITORY_ROOT, config_path
+from core.portable_paths import REPOSITORY_ROOT, config_path, user_config_path
 
 
 PROVIDERS = {"openai", "ollama", "gemini"}
@@ -100,7 +100,10 @@ def run_provider_setup(
             if not model:
                 output_fn("Yuki setup: enter the name of an installed Ollama model.")
                 return 2
-        target = save_provider_preferences(path or config_path(), provider, model)
+        target = save_provider_preferences(
+            path or (config_path() if os.environ.get("YUKI_CONFIG", "").strip() else user_config_path()),
+            provider, model,
+        )
     except (EOFError, KeyboardInterrupt):
         output_fn("Yuki setup cancelled; configuration was not changed.")
         return 2
