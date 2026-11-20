@@ -15,6 +15,7 @@ from core.auth import BuiltInAuthService
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
+from core.provider_setup import run_provider_setup
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
+    sub.add_parser("setup", help="Choose a provider and save non-secret preferences")
     sub.add_parser("provider-status", help="Check the configured provider")
     sub.add_parser("provider-test", help="Send a minimal live request to verify provider connectivity")
 
@@ -176,6 +178,9 @@ def run_cli(
         except Exception as exc:
             output_fn(f"Yuki owner setup failed ({type(exc).__name__}).")
             return 2
+
+    if args.command == "setup":
+        return run_provider_setup(input_fn=input_fn, output_fn=output_fn)
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()
