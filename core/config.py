@@ -72,9 +72,31 @@ def load_config(path=None):
         # config atomically without overwriting a file created by another process.
         template = Path(__file__).with_name("default_config.yaml")
         try:
-            selected_config_path.parent.mkdir(parents=True, exist_ok=True)
-            with selected_config_path.open("x", encoding="utf-8") as target:
-                target.write(template.read_text(encoding="utf-8"))
+            selected_config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # Exclusive creation prevents concurrent first-run processes from
+            # replacing one another's config. Restrict the file even when the
+            # user's umask is permissive; preserve permissions on an existing
+            # parent directory rather than silently changing shared directories.
+            descriptor = os.open(
+                selected_config_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+                    target.write(template.read_text(encoding="utf-8"))
+                    target.flush()
+                    os.fsync(target.fileno())
+                if os.name == "posix":
+                    selected_config_path.chmod(0o600)
+                    directory_fd = os.open(selected_config_path.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+            except Exception:
+                selected_config_path.unlink(missing_ok=True)
+                raise
         except FileExistsError:
             pass
         except OSError as exc:
