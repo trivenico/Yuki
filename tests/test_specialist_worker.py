@@ -148,6 +148,18 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(outcome["result"].state, "succeeded")
 
+    def test_heartbeat_start_failure_fails_claimed_task(self):
+        from unittest.mock import patch
+
+        task_id = self.create_task()
+        with patch("automation.specialist_worker.Thread") as thread_type:
+            thread_type.return_value.start.side_effect = RuntimeError("thread unavailable")
+            result = self.worker({"code-review": lambda _: "must not run"}).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "lease_heartbeat_unavailable")
+        self.assertEqual(self.store.get(task_id).state, "failed")
+
     def test_failed_lease_renewal_discards_handler_output(self):
         task_id = self.create_task()
         started = Event()
