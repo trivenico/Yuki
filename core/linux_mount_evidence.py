@@ -43,9 +43,12 @@ class LinuxMountSnapshot:
 
 def _decode_mount_field(value: str) -> str:
     # Reject unescaped backslashes before decoding valid procfs octal escapes.
-    if re.search(r"\\\\(?![0-7]{3})", value):
+    if re.search(r"\\(?!040|011|012|134)", value):
         raise SandboxRuntimeError("mountinfo contains an invalid escape sequence")
-    return _ESCAPE_RE.sub(lambda match: chr(int(match.group(1), 8)), value)
+    decoded = _ESCAPE_RE.sub(lambda match: chr(int(match.group(1), 8)), value)
+    if any(ord(char) < 32 or ord(char) == 127 for char in decoded):
+        raise SandboxRuntimeError("mountinfo escape decodes to a control character")
+    return decoded
 
 def _options(value: str, label: str) -> tuple[str, ...]:
     items = tuple(value.split(","))
