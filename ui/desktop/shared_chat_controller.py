@@ -24,6 +24,7 @@ class SharedDesktopChatController:
         self._lock = RLock()
         self._condition = Condition(self._lock)
         self._active_cancellations: set[Event] = set()
+        self._active_operations = 0
         self._session_close_started = False
         self._session_close_complete = False
 
@@ -40,6 +41,7 @@ class SharedDesktopChatController:
         with self._lock:
             self._ensure_open()
             self._active_cancellations.add(cancellation)
+            self._active_operations += 1
 
         def should_cancel() -> bool:
             if cancellation.is_set():
@@ -64,6 +66,7 @@ class SharedDesktopChatController:
         finally:
             with self._condition:
                 self._active_cancellations.discard(cancellation)
+                self._active_operations -= 1
                 self._condition.notify_all()
         if not isinstance(result, dict) or result.get("status") != "completed":
             status = result.get("status", "unknown") if isinstance(result, dict) else "invalid"
@@ -74,24 +77,39 @@ class SharedDesktopChatController:
         return answer
 
     def list_conversations(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        self._ensure_open()
-        return self._conversation.list_conversations(limit=limit)
+        self._begin_operation()
+        try:
+            return self._conversation.list_conversations(limit=limit)
+        finally:
+            self._end_operation()
 
     def select_conversation(self, conversation_id: str) -> dict[str, Any]:
-        self._ensure_open()
-        return self._conversation.select_conversation(conversation_id)
+        self._begin_operation()
+        try:
+            return self._conversation.select_conversation(conversation_id)
+        finally:
+            self._end_operation()
 
     def history(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        self._ensure_open()
-        return self._conversation.history(limit=limit)
+        self._begin_operation()
+        try:
+            return self._conversation.history(limit=limit)
+        finally:
+            self._end_operation()
 
     def set_memory_context(self, enabled: bool) -> None:
-        self._ensure_open()
-        self._conversation.set_memory_context_enabled(enabled)
+        self._begin_operation()
+        try:
+            self._conversation.set_memory_context_enabled(enabled)
+        finally:
+            self._end_operation()
 
     def memory_context_enabled(self) -> bool:
-        self._ensure_open()
-        return self._conversation.memory_context_enabled()
+        self._begin_operation()
+        try:
+            return self._conversation.memory_context_enabled()
+        finally:
+            self._end_operation()
 
     def logout(self) -> None:
         """Invalidate the authenticated facade and close its runtime exactly once."""
@@ -105,7 +123,7 @@ class SharedDesktopChatController:
             # Never close the durable store underneath a provider call that may
             # still persist its interrupted-generation state. The active worker
             # observes cancellation and signals this condition in its finally.
-            while self._active_cancellations:
+            while self._active_operations:
                 self._condition.wait()
             while self._session_close_started:
                 self._condition.wait()
@@ -125,6 +143,16 @@ class SharedDesktopChatController:
             self._condition.notify_all()
 
     close = logout
+
+    def _begin_operation(self) -> None:
+        with self._lock:
+            self._ensure_open()
+            self._active_operations += 1
+
+    def _end_operation(self) -> None:
+        with self._condition:
+            self._active_operations -= 1
+            self._condition.notify_all()
 
     def _ensure_open(self) -> None:
         # Call while holding _lock when racing with logout.
