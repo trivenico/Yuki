@@ -476,6 +476,10 @@ class OpenAICompatibleProvider:
             parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
         except ValueError as exc:
             raise RuntimeError("Cloud provider returned tool calls outside Yuki's protocol limits.") from exc
+        if tool_choice == "none" and normalized_calls:
+            raise RuntimeError("Cloud provider returned tool calls when tool_choice was none.")
+        if tool_choice == "required" and not normalized_calls:
+            raise RuntimeError("Cloud provider did not return a required tool call.")
         return {
             "tool_calls": envelope,
             "text": message.get("content") if isinstance(message.get("content"), str) else "",
