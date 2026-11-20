@@ -142,6 +142,48 @@ class DesktopBackupTests(unittest.TestCase):
             sync.assert_called_once()
             self.assertEqual((destination / ".yuki" / "nested" / "notes.txt").read_text(), "durable")
 
+    def test_restore_rejects_hard_linked_backup_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            (source / "private.txt").write_text("private")
+            backup = root / "backup.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+            )
+            alias = root / "backup-alias.yukibak"
+            try:
+                os.link(backup, alias)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"hard links are unavailable: {exc}")
+            with self.assertRaisesRegex(BackupError, "no hard links"):
+                restore_encrypted_backup(
+                    alias, root / "restored", "a sufficiently long passphrase",
+                )
+            self.assertFalse((root / "restored").exists())
+
+    def test_restore_rejects_symbolic_link_backup_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            (source / "private.txt").write_text("private")
+            backup = root / "backup.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+            )
+            alias = root / "backup-link.yukibak"
+            try:
+                alias.symlink_to(backup)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symbolic links are unavailable: {exc}")
+            with self.assertRaisesRegex(BackupError, "must not be symbolic links"):
+                restore_encrypted_backup(
+                    alias, root / "restored", "a sufficiently long passphrase",
+                )
+            self.assertFalse((root / "restored").exists())
+
     def test_wrong_passphrase_does_not_create_destination(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
