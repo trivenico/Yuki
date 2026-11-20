@@ -163,7 +163,7 @@ class ConversationService:
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
-        on_text_delta=None, cancellation_requested=None,
+        on_text_delta=None, cancellation_requested=None, lease_lost=None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
