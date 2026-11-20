@@ -17,6 +17,7 @@ class _Flow:
     next_sequence: int
     pending: dict[int, bytes] = field(default_factory=dict)
     pending_bytes: int = 0
+    observed_bytes: int = 0
     last_timestamp: float = 0.0
 
 
@@ -144,6 +145,9 @@ class TcpStreamReassembler:
                 return TcpReassemblyResult(flow_key, b"", flow.next_sequence, self._buffered_bytes, True)
             raise TcpReassemblyError("segment overlaps already delivered stream bytes")
         if distance == 0:
+            if flow.observed_bytes + len(payload) > self.max_flow_bytes:
+                raise TcpReassemblyError("per-flow payload limit exceeded")
+            flow.observed_bytes += len(payload)
             output = bytearray(payload)
             flow.next_sequence = (flow.next_sequence + len(payload)) & 0xFFFFFFFF
             while flow.next_sequence in flow.pending:
@@ -167,11 +171,12 @@ class TcpStreamReassembler:
                 raise TcpReassemblyError("overlapping TCP segments are ambiguous")
         if len(flow.pending) >= self.max_pending_segments:
             raise TcpReassemblyError("maximum pending TCP segment count exceeded")
-        if flow.pending_bytes + len(payload) > self.max_flow_bytes:
-            raise TcpReassemblyError("per-flow buffer limit exceeded")
+        if flow.observed_bytes + len(payload) > self.max_flow_bytes:
+            raise TcpReassemblyError("per-flow payload limit exceeded")
         if self._buffered_bytes + len(payload) > self.max_buffered_bytes:
             raise TcpReassemblyError("global TCP buffer limit exceeded")
         flow.pending[sequence] = payload
         flow.pending_bytes += len(payload)
+        flow.observed_bytes += len(payload)
         self._buffered_bytes += len(payload)
         return TcpReassemblyResult(flow_key, b"", flow.next_sequence, self._buffered_bytes)
