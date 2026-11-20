@@ -72,17 +72,28 @@ def create_dataset_manifest(
     if not isinstance(groups, Mapping) or set(groups) - asset_ids:
         raise DatasetManifestError("leakage groups may only reference dataset assets")
 
+    hashes_by_asset: dict[str, set[str]] = {asset_id: set() for asset_id in asset_ids}
+    for annotation in dataset.annotations:
+        if annotation.asset_sha256 is not None:
+            hashes_by_asset[annotation.asset_id].add(annotation.asset_sha256)
+    if any(len(values) > 1 for values in hashes_by_asset.values()):
+        raise DatasetManifestError("one asset_id cannot refer to multiple asset SHA-256 fingerprints")
+
     entries = []
     group_splits: dict[str, str] = {}
     for asset_id in sorted(asset_ids):
         split = split_assignments[asset_id]
         if not isinstance(split, str) or split not in SPLITS:
             raise DatasetManifestError(f"unsupported split for asset {asset_id}")
-        group = _identifier(groups.get(asset_id, asset_id), "leakage_group", 256)
-        previous = group_splits.setdefault(group, split)
-        if previous != split:
-            raise DatasetManifestError("assets in the same leakage group cannot cross dataset splits")
-        entries.append(AssetSplit(asset_id=asset_id, split=split, leakage_group=group))
+        explicit_group = _identifier(groups.get(asset_id, asset_id), "leakage_group", 256)
+        fingerprint_groups = {"sha256:" + value for value in hashes_by_asset[asset_id]}
+        constraint_groups = {explicit_group, *fingerprint_groups}
+        for group_key in constraint_groups:
+            previous = group_splits.setdefault(group_key, split)
+            if previous != split:
+                raise DatasetManifestError("assets in the same leakage group or with identical SHA-256 fingerprints cannot cross dataset splits")
+        recorded_group = next(iter(fingerprint_groups), explicit_group)
+        entries.append(AssetSplit(asset_id=asset_id, split=split, leakage_group=recorded_group))
 
     annotation_payload = [asdict(item) for item in sorted(dataset.annotations, key=lambda item: item.annotation_id)]
     evidence_payload = [asdict(item) for item in sorted(dataset.evidence, key=lambda item: item.evidence_id)]
