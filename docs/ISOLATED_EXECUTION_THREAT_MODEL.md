@@ -179,3 +179,9 @@ Containers share a host kernel; kernel vulnerabilities and runtime escapes remai
 Until the acceptance gates are met, Yuki must not execute untrusted generated code on the host. The developer workflow may continue to analyze source, prepare diffs, recommend tests, and request review, but execution remains unavailable for untrusted workloads.
 
 **Release decision:** sandboxed developer execution is blocked. Do not mark this capability complete based only on an adapter, a policy object, or a container launch succeeding.
+
+### Combined Linux diagnostic evidence envelope
+
+`core/linux_sandbox_evidence.py` combines the existing process snapshot and cgroup-v2 leaf observations into a frozen schema-version-1 report. It binds the observations to the same reported cgroup membership, records wall-clock start/end and monotonic collection duration, rejects missing or ambiguous membership and unexpected attestation flags, and deduplicates explicit unknown controls.
+
+This is a sequential diagnostic envelope, not an atomic snapshot or trusted host attestation. Both roots are caller-supplied paths; the process may exit, be reused, or migrate cgroups between reads; controller enablement and effective enforcement remain unverified. The report always has `evidence_class="diagnostic_only"`, `attested=False`, and `verified=False`. It must never authorize execution.
