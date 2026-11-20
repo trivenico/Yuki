@@ -87,6 +87,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
         provider = GeminiCLIProvider(timeout=1)
         fake_process = MagicMock()
         fake_process.pid = 12345
+        fake_process.stdout = io.BytesIO(b"")
         fake_process.wait.side_effect = [subprocess.TimeoutExpired("gemini", 1), 0]
         with patch("providers.gemini_cli.shutil.which", return_value="gemini.exe" if os.name == "nt" else "/usr/bin/gemini"), \
              patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
