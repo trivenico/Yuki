@@ -64,6 +64,10 @@ This is the target layout, not a claim that the migration is already complete.
 6. Reorganize tests without losing coverage; validate Windows and Linux clean installs, real Ollama inference, persistence, and rollback.
 7. Remove compatibility facades only when import search and CI prove no supported consumer relies on them.
 
+## Isolated developer execution
+
+The threat model and backend acceptance gates for running generated code are documented in [Isolated execution threat model](docs/ISOLATED_EXECUTION_THREAT_MODEL.md). The current allow-listed test runner executes on the host and is not a sandbox; the regression-plan adapter rejects host execution until a separately validated isolated backend is available. Do not run untrusted generated code through the host runner.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
