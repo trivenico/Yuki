@@ -127,7 +127,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         return ""
     if command == "/status":
         current = providers.current()
-        return f"Agent status: {agent.status()} Selected provider: {current.name if current else 'none'}."
+        return f"Agent status: {agent.status()} Selected provider: {current.name if current else 'native'}."
     if command == "/provider" or command.startswith("/provider "):
         parts = command.split(maxsplit=2)
         if len(parts) != 3 or parts[1] != "select":
