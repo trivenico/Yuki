@@ -45,6 +45,8 @@ class SharedDesktopControllerBridge:
         self._closed = False
         self._logout_complete = False
         self._logout_in_progress = False
+        self._specialist_logout_complete = False
+        self._chat_logout_complete = False
         self._active_specialist_operations = 0
         self._logout_condition = Condition(RLock())
 
@@ -194,14 +196,18 @@ class SharedDesktopControllerBridge:
         errors: list[Exception] = []
         revoked = False
         try:
-            try:
-                revoked = bool(self._specialists.logout())
-            except Exception as exc:
-                errors.append(exc)
-            try:
-                self._chat.logout()
-            except Exception as exc:
-                errors.append(exc)
+            if not self._specialist_logout_complete:
+                try:
+                    revoked = bool(self._specialists.logout())
+                    self._specialist_logout_complete = True
+                except Exception as exc:
+                    errors.append(exc)
+            if not self._chat_logout_complete:
+                try:
+                    self._chat.logout()
+                    self._chat_logout_complete = True
+                except Exception as exc:
+                    errors.append(exc)
             if errors:
                 raise RuntimeError(
                     "Desktop logout could not complete every controller cleanup step."
