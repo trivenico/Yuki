@@ -55,6 +55,23 @@ class LinuxTcpListener:
 
 
 @dataclass(frozen=True)
+class LinuxSocketEndpoint:
+    family: str
+    protocol: str
+    local_address_hex: str
+    local_port: int
+    state: str
+
+
+@dataclass(frozen=True)
+class LinuxUnixSocket:
+    socket_type: int
+    state: int
+    inode: int
+    path: str | None
+
+
+@dataclass(frozen=True)
 class LinuxNetworkSnapshot:
     pid: int
     start_time_ticks: int
@@ -62,6 +79,10 @@ class LinuxNetworkSnapshot:
     ipv4_routes: tuple[LinuxIpv4Route, ...]
     ipv6_routes: tuple[LinuxIpv6Route, ...]
     tcp_listeners: tuple[LinuxTcpListener, ...]
+    tcp6_listeners: tuple[LinuxSocketEndpoint, ...]
+    udp_sockets: tuple[LinuxSocketEndpoint, ...]
+    udp6_sockets: tuple[LinuxSocketEndpoint, ...]
+    unix_sockets: tuple[LinuxUnixSocket, ...]
     has_up_default_route: bool
     has_up_ipv6_default_route: bool
     observed_sources: tuple[str, ...]
@@ -192,6 +213,66 @@ def _parse_ipv6_routes(payload: str) -> tuple[LinuxIpv6Route, ...]:
     return tuple(routes)
 
 
+def _parse_socket_endpoints(payload: str, *, family: str, protocol: str) -> tuple[LinuxSocketEndpoint, ...]:
+    address_length = 8 if family == "ipv4" else 32
+    address_pattern = re.compile(rf"^[0-9a-fA-F]{{{address_length}}}$")
+    lines = payload.splitlines()
+    if not lines or not lines[0].lstrip().startswith("sl"):
+        raise SandboxRuntimeError("socket table header is malformed")
+    result = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        fields = line.split()
+        if len(fields) < 10 or not fields[0].endswith(":"):
+            raise SandboxRuntimeError("socket record has malformed fields")
+        endpoint = fields[1].split(":")
+        if (len(endpoint) != 2 or not address_pattern.fullmatch(endpoint[0])
+                or not _HEX4.fullmatch(endpoint[1]) or not _HEX2.fullmatch(fields[3])):
+            raise SandboxRuntimeError("socket local endpoint or state is malformed")
+        state = fields[3].lower()
+        if protocol == "tcp" and state != "0a":
+            continue
+        result.append(LinuxSocketEndpoint(
+            family=family,
+            protocol=protocol,
+            local_address_hex=endpoint[0].lower(),
+            local_port=int(endpoint[1], 16),
+            state=state,
+        ))
+        if len(result) > _MAX_LISTENERS:
+            raise SandboxRuntimeError("socket endpoint count exceeds limit")
+    return tuple(result)
+
+
+def _parse_unix_sockets(payload: str) -> tuple[LinuxUnixSocket, ...]:
+    lines = payload.splitlines()
+    if not lines or not lines[0].lstrip().startswith("Num"):
+        raise SandboxRuntimeError("Unix socket table header is malformed")
+    result = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        fields = line.split(maxsplit=7)
+        if len(fields) < 7:
+            raise SandboxRuntimeError("Unix socket record has malformed fields")
+        if (not re.fullmatch(r"[0-9a-fA-F]+:", fields[0])
+                or any(not re.fullmatch(r"[0-9a-fA-F]+", value) for value in fields[1:6])):
+            raise SandboxRuntimeError("Unix socket record contains malformed numeric fields")
+        path = fields[7] if len(fields) == 8 else None
+        if path is not None and (len(path) > 4096 or "\\x00" in path):
+            raise SandboxRuntimeError("Unix socket path is invalid or too long")
+        result.append(LinuxUnixSocket(
+            socket_type=int(fields[4], 16),
+            state=int(fields[5], 16),
+            inode=int(fields[6], 10),
+            path=path or None,
+        ))
+        if len(result) > _MAX_LISTENERS:
+            raise SandboxRuntimeError("Unix socket count exceeds limit")
+    return tuple(result)
+
+
 def _ipv4_from_proc_hex(value: str) -> str:
     raw = bytes.fromhex(value)
     return ".".join(str(part) for part in raw[::-1])
@@ -253,6 +334,11 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
     ipv6_route_payload = _read_proc_net(net / "ipv6_route", required=False)
     ipv6_routes = _parse_ipv6_routes(ipv6_route_payload or "")
     tcp = _parse_tcp_listeners(_read_proc_net(net / "tcp"))
+    tcp6 = _parse_socket_endpoints(_read_proc_net(net / "tcp6", required=False) or "", family="ipv6", protocol="tcp")
+    udp = _parse_socket_endpoints(_read_proc_net(net / "udp", required=False) or "", family="ipv4", protocol="udp")
+    udp6 = _parse_socket_endpoints(_read_proc_net(net / "udp6", required=False) or "", family="ipv6", protocol="udp")
+    unix_payload = _read_proc_net(net / "unix", required=False)
+    unix_sockets = _parse_unix_sockets(unix_payload) if unix_payload is not None else ()
     second_start = _parse_start_time(_read_proc_net(process / "stat"))
     if first_start != second_start:
         raise SandboxRuntimeError("process identity changed during network observation")
@@ -264,11 +350,22 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
         ipv4_routes=routes,
         ipv6_routes=ipv6_routes,
         tcp_listeners=tcp,
+        tcp6_listeners=tcp6,
+        udp_sockets=udp,
+        udp6_sockets=udp6,
+        unix_sockets=unix_sockets,
         has_up_default_route=any(route.is_default and route.flags & 1 for route in routes),
         has_up_ipv6_default_route=any(route.is_default and route.flags & 1 for route in ipv6_routes),
         observed_sources=(
             "procfs:net/dev", "procfs:net/route", "procfs:net/tcp", "procfs:stat"
-        ) + (("procfs:net/ipv6_route",) if ipv6_route_payload is not None else ()),
+        ) + (("procfs:net/ipv6_route",) if ipv6_route_payload is not None else ()) + tuple(
+            f"procfs:net/{name}" for name, present in (
+                ("tcp6", (net / "tcp6").exists()),
+                ("udp", (net / "udp").exists()),
+                ("udp6", (net / "udp6").exists()),
+                ("unix", unix_payload is not None),
+            ) if present
+        ),
         unknown_controls=(
             "procfs root and process identity are caller supplied and not independently attested",
             "route presence does not prove reachability or permitted egress",
@@ -276,7 +373,9 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
             "missing IPv6 route table is recorded as unavailable and is not proof IPv6 is disabled",
             "IPv6 routes are kernel-reported hexadecimal records; policy and reachability are not tested",
             "loopback, Unix sockets, raw sockets, netfilter, DNS, proxy, and host services are not tested",
-            "TCP listener table is an instantaneous IPv4-only view and does not inspect UDP or TCP6",
+            "socket tables are instantaneous observations and do not prove peer reachability or host isolation",
+            "IPv6 socket addresses remain raw kernel hexadecimal values; byte-order normalization is intentionally deferred",
+            "Unix socket paths and inodes do not prove whether another namespace can access those sockets",
             "interfaces and routes may change immediately after observation",
             "network namespace identity is not compared to a trusted host baseline",
             "cgroup, mount, LSM, seccomp, device, and host-secret isolation remain unverified",
