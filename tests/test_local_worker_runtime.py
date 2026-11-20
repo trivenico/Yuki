@@ -120,6 +120,30 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(approved.state, "queued")
             self.assertEqual(approved.version, task.version + 1)
+    def test_approval_from_previous_process_cannot_be_claimed_after_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = build_local_worker_runtime(directory, FakeProvider())
+            plan = first.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="approval-session-restart",
+                subtasks=[SubtaskSpec("research", "Collect public sources", ("research",))],
+            )
+            plan = first.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            task_id = plan.subtasks[0].task_id
+            task = first.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id)
+            first.runtime.approve(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id,
+                                  session_id=first.approval_session_id, expected_version=task.version)
+            second = build_local_worker_runtime(directory, FakeProvider())
+            self.assertIsNone(second.supervisor.worker.run_once())
+            queued = second.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id)
+            self.assertEqual(queued.state, "queued")
+            reapproved = second.runtime.approve(
+                actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id,
+                session_id=second.approval_session_id, expected_version=queued.version,
+            )
+            self.assertIsNotNone(second.supervisor.worker.run_once())
+            self.assertEqual(second.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id).state, "succeeded")
+            self.assertEqual(reapproved.version, queued.version + 1)
     def test_local_operator_can_cancel_a_plan_through_authorized_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider())
