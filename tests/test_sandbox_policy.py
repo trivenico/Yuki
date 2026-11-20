@@ -15,6 +15,16 @@ class SandboxPolicyTests(unittest.TestCase):
         self.assertTrue(policy.read_only_root)
         self.assertTrue(policy.run_as_non_root)
 
+    def test_mutable_capability_collection_is_rejected_at_construction(self):
+        with self.assertRaises(SandboxPolicyError):
+            SandboxPolicy(capabilities={"write_workspace"})
+
+    def test_policy_capabilities_cannot_be_mutated_after_validation(self):
+        policy = default_sandbox_policy()
+        with self.assertRaises(AttributeError):
+            policy.capabilities.add("write_workspace")
+        self.assertEqual(policy.capabilities, frozenset())
+
     def test_network_requires_explicit_allowlist_capability(self):
         with self.assertRaises(SandboxPolicyError):
             SandboxPolicy(network_mode="allowlist").validate()
