@@ -11,6 +11,7 @@ Python 3.10+ is required. The project now declares a stable `yuki` console comma
 
 ```sh
 python -m pip install .
+yuki setup
 yuki doctor
 yuki provider-status
 yuki ask "Hello, Yuki"
@@ -28,6 +29,12 @@ python -m unittest discover -s tests -v
 ```
 
 The Windows and macOS/Linux installer scripts create a virtual environment, install the declared dependencies and project package, then run the test suite. Use `run_yuki_windows.bat` or `./run_yuki_unix.sh` to start the installed CLI.
+
+## Guided provider setup
+
+Run `yuki setup` to choose OpenAI, Ollama, or Gemini and save non-secret provider preferences. OpenAI and Ollama ask for a model name; Gemini uses the installed CLI's own model/authentication configuration. Setup never asks for, reads, or stores API keys.
+
+The setup command writes configuration atomically to the selected user configuration path and applies owner-only permissions on POSIX systems. When running from a source checkout, set `YUKI_CONFIG` to a private user-owned path first; setup deliberately refuses to modify repository files. For OpenAI, set `OPENAI_API_KEY` separately in your shell or secret manager. After setup, run `yuki provider-status`; run `yuki provider-test` only when you consent to sending its fixed probe to the selected provider.
 
 ## Verify a real provider request
 
