@@ -137,9 +137,15 @@ class NativeCommandRuntime:
         status = self._status_provider(actor_id)
         if not isinstance(status, dict):
             raise TypeError("status provider must return a dictionary.")
-        # Keep status output compact and JSON serializable; never expose credentials.
+        # Expose only an explicit non-sensitive status allowlist.
         import json
-        return json.dumps(status, ensure_ascii=False, separators=(",", ":"), default=str)[:4000]
+        allowed = {"ready", "state", "version", "uptime_seconds", "active_tasks", "queued_tasks"}
+        safe = {}
+        for key in allowed.intersection(status):
+            value = status[key]
+            if isinstance(value, (str, int, float, bool)):
+                safe[key] = value if not isinstance(value, str) else value[:160]
+        return json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
 
 
 __all__ = ["NativeCommandRuntime"]
