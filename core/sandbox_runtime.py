@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
@@ -13,6 +14,84 @@ _IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,200}@sha256:[0-9a-f]{64
 
 class SandboxRuntimeError(RuntimeError):
     """The requested policy cannot safely be enforced by this backend."""
+
+
+class SandboxUnavailable(SandboxRuntimeError):
+    """No trusted runtime satisfies the requested isolation contract."""
+
+
+_REQUIRED_NAMESPACES = frozenset({"user", "pid", "mount", "ipc", "network"})
+_ALLOWED_MAC = frozenset({"apparmor", "selinux"})
+
+
+@dataclass(frozen=True)
+class SandboxRuntimeCapabilities:
+    """Runtime claims supplied by a trusted, reviewed backend adapter.
+
+    This record is not a host probe and cannot independently prove enforcement.
+    """
+    runtime_name: str
+    runtime_version: str
+    rootless: bool
+    namespaces: frozenset[str]
+    seccomp: bool
+    mandatory_access_control: str
+    cgroups_v2: bool
+    network_isolation: bool
+    read_only_mounts: bool
+    host_secret_exclusion: bool
+    resource_limits: bool
+    ephemeral_cleanup: bool
+    verified_backend: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.runtime_name) is not str or not self.runtime_name.strip() or len(self.runtime_name) > 80:
+            raise SandboxRuntimeError("runtime_name must be bounded non-empty text")
+        if type(self.runtime_version) is not str or not self.runtime_version.strip() or len(self.runtime_version) > 80:
+            raise SandboxRuntimeError("runtime_version must be bounded non-empty text")
+        if type(self.namespaces) is not frozenset or not self.namespaces <= _REQUIRED_NAMESPACES:
+            raise SandboxRuntimeError("namespaces must be a frozenset of recognized namespace names")
+        if self.mandatory_access_control not in _ALLOWED_MAC:
+            raise SandboxRuntimeError("mandatory access control must be apparmor or selinux")
+        for field in (
+            "rootless", "seccomp", "cgroups_v2", "network_isolation",
+            "read_only_mounts", "host_secret_exclusion", "resource_limits",
+            "ephemeral_cleanup", "verified_backend",
+        ):
+            if type(getattr(self, field)) is not bool:
+                raise SandboxRuntimeError(f"{field} must be a boolean")
+
+
+def validate_runtime_capabilities(
+    policy: SandboxPolicy,
+    capabilities: SandboxRuntimeCapabilities,
+) -> None:
+    """Fail closed unless a reviewed backend reports all required controls."""
+    if not isinstance(policy, SandboxPolicy):
+        raise TypeError("policy must be a SandboxPolicy")
+    policy.validate()
+    if not isinstance(capabilities, SandboxRuntimeCapabilities):
+        raise TypeError("capabilities must be SandboxRuntimeCapabilities")
+    missing = []
+    if not capabilities.verified_backend:
+        missing.append("trusted reviewed backend adapter")
+    if not capabilities.rootless:
+        missing.append("rootless runtime")
+    if not _REQUIRED_NAMESPACES <= capabilities.namespaces:
+        missing.append("user/pid/mount/ipc/network namespaces")
+    for field, label in (
+        ("seccomp", "seccomp"),
+        ("cgroups_v2", "cgroups v2"),
+        ("network_isolation", "enforced network isolation"),
+        ("read_only_mounts", "read-only mounts"),
+        ("host_secret_exclusion", "host secret exclusion"),
+        ("resource_limits", "hard resource limits"),
+        ("ephemeral_cleanup", "ephemeral cleanup"),
+    ):
+        if not getattr(capabilities, field):
+            missing.append(label)
+    if missing:
+        raise SandboxUnavailable("runtime missing required controls: " + ", ".join(missing))
 
 
 def build_docker_argv(
