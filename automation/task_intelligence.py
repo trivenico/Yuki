@@ -6,8 +6,7 @@ dispatch work, approve actions, or execute tools.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable
+from dataclasses import dataclass, replace
 
 from automation.agent_coordinator import (
     AgentPlan,
@@ -63,11 +62,18 @@ def prepare_task_plan(
         raise ValueError("subtasks must be an immutable tuple.")
     if not request.subtasks:
         raise ValueError("at least one explicit subtask is required.")
-    # The goal is retained in every subtask description context by callers;
-    # coordinator remains the single authority for DAG, routing, permissions,
-    # idempotency, and persistence validation.
+    # Preserve the parent goal in every worker task so downstream specialists
+    # receive the objective even though the coordinator stores subtask records.
+    contextual = tuple(
+        replace(item, description=f"Overall goal: {request.goal.strip()}\\nSubtask: {item.description}")
+        for item in request.subtasks
+    )
+    if any(len(item.description) > 2000 for item in contextual):
+        raise ValueError("goal plus subtask description exceeds the supported bounds.")
+    # Coordinator remains the single authority for DAG, routing, permissions,
+    # idempotency, and persistence validation. No advance/dispatch is called.
     return coordinator.submit(
         actor_id=actor_id,
         idempotency_key=request.idempotency_key,
-        subtasks=request.subtasks,
+        subtasks=contextual,
     )
