@@ -152,6 +152,24 @@ class GeminiCLIProviderTests(unittest.TestCase):
 
         self.assertNotIn("private pipe detail", str(caught.exception))
 
+    def test_stdout_reader_value_error_rejects_partial_response(self):
+        class BrokenStream:
+            def read(self, _size):
+                raise ValueError("private stream detail")
+
+        provider = GeminiCLIProvider()
+        fake_process = MagicMock()
+        fake_process.pid = 12345
+        fake_process.stdout = BrokenStream()
+        fake_process.wait.return_value = 0
+
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
+            with self.assertRaisesRegex(RuntimeError, "could not be read completely") as caught:
+                provider.generate("hello")
+
+        self.assertNotIn("private stream detail", str(caught.exception))
+
     def test_nonzero_exit_does_not_disclose_stderr(self):
         provider = GeminiCLIProvider()
         fake_process = MagicMock()
