@@ -32,8 +32,6 @@ def run_approved_regression_candidate(
         raise TypeError("plan must be a RegressionTestPlan.")
     if not isinstance(runner, ApprovedTestRunner):
         raise TypeError("runner must be an ApprovedTestRunner.")
-    if runner.isolation_level != "sandbox":
-        raise ToolAuthorizationError("host test execution is disabled for regression plans; a verified sandbox runner is required.")
     if not isinstance(principal, ToolPrincipal):
         raise TypeError("principal must be a ToolPrincipal.")
     if plan.tests_executed or not plan.requires_human_review:
@@ -48,6 +46,9 @@ def run_approved_regression_candidate(
     module = test_path[:-3].replace("/", ".")
     if module not in runner.allowed_test_modules:
         raise ToolAuthorizationError("test module is not in the runner's explicit allow-list.")
+
+    if runner.isolation_level != "sandbox":
+        raise ToolAuthorizationError("host test execution is disabled for regression plans; a verified sandbox runner is required.")
 
     result = runner.run(principal=principal, test_module=module)
     return RegressionTestExecution(
