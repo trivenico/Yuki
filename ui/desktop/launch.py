@@ -342,7 +342,7 @@ def run() -> int:
         finished = Signal(object, object)
 
     class WorkerCycleWorker(QRunnable):
-        """Run one owner-approved finite worker cycle away from the Qt thread."""
+        """Run one explicitly requested finite worker cycle away from the Qt thread."""
 
         def __init__(self, service):
             super().__init__()
