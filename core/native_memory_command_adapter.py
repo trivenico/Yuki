@@ -71,7 +71,7 @@ class NativeMemoryCommandAdapter:
         entries = memory.list_memories(limit=200)
         terms = {
             token.casefold()
-            for token in re.findall(r"[^\\W_]{2,}", query, flags=re.UNICODE)
+            for token in re.findall(r"[^\W_]{2,}", query, flags=re.UNICODE)
         }
         ranked = []
         for index, entry in enumerate(entries):
@@ -80,7 +80,7 @@ class NativeMemoryCommandAdapter:
                 continue
             words = {
                 token.casefold()
-                for token in re.findall(r"[^\\W_]{2,}", text, flags=re.UNICODE)
+                for token in re.findall(r"[^\W_]{2,}", text, flags=re.UNICODE)
             }
             overlap = len(terms.intersection(words))
             if overlap:
