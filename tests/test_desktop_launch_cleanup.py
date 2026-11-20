@@ -4,6 +4,7 @@ import unittest
 from ui.desktop.launch import (
     _close_expired_controller, _close_startup_resources,
     _shutdown_desktop_services, _close_voice_session,
+    _cleanup_failed_desktop_initialization,
 )
 
 
@@ -53,6 +54,57 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
 
         _shutdown_desktop_services(Lifecycle(), Controller(), None)
         self.assertEqual(events, ["lifecycle-start", "logout", "resources-close"])
+
+    def test_failed_initialization_revokes_session_before_closing_resources(self):
+        events = []
+
+        class Sessions:
+            def logout(self):
+                events.append("revoke")
+
+        class Resource:
+            def close(self):
+                events.append("close")
+
+        class Lifecycle:
+            def close(self, *, before_close):
+                before_close()
+                Resource().close()
+
+        error = _cleanup_failed_desktop_initialization(Lifecycle(), Sessions())
+        self.assertIsNone(error)
+        self.assertEqual(events, ["revoke", "close"])
+
+    def test_failed_initialization_retains_retryable_cleanup_error(self):
+        error = OSError("credential store unavailable")
+        events = []
+
+        class Sessions:
+            def logout(self):
+                events.append("revoke")
+                raise error
+
+        class Resource:
+            def close(self):
+                events.append("close")
+
+        class Lifecycle:
+            def close(self, *, before_close):
+                try:
+                    before_close()
+                finally:
+                    Resource().close()
+
+        result = _cleanup_failed_desktop_initialization(Lifecycle(), Sessions())
+        self.assertIs(result, error)
+        self.assertEqual(events, ["revoke", "close"])
+
+    def test_missing_lifecycle_does_not_attempt_startup_cleanup(self):
+        class Sessions:
+            def logout(self):
+                raise AssertionError("no services were composed")
+
+        self.assertIsNone(_cleanup_failed_desktop_initialization(None, Sessions()))
 
     def test_shutdown_uses_session_manager_when_no_controller_exists(self):
         events = []
