@@ -116,6 +116,8 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 
 - [x] Add a deterministic, bounded benchmark evaluator for supplied outputs with exact-match, latency, cost, and safety-label metrics; reports store output digests only and remain unverified. See `docs/YUKI_BENCHMARK_EVALUATION.md`.
 - [x] Add case-aligned model comparison reports with exact benchmark case-set checks, per-case regression/improvement counts, and digest-bound human-review-only recommendations; no promotion or significance claims. See `docs/YUKI_MODEL_COMPARISON.md`.
+- [x] Add an immutable, content-addressed benchmark registry with optional SQLite persistence, strict revision sequencing, and digest-verified resolution.
+- [x] Exercise the built-in capability smoke suite through the guarded evaluation service and durable owner-scoped run store, including idempotent replay; provider calls remain server-adapter-only and promotion remains human-gated.
 - [ ] Create benchmark tasks for companion usefulness, developer correctness, and defensive security quality.
 - [ ] Measure completion rate, cost, latency, safety violations, and recovery.
 - [ ] Add regression suites and release gates.
