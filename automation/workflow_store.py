@@ -121,6 +121,13 @@ class WorkflowRunStore:
             for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS revoked_approval_sessions (
+                    session_hash TEXT PRIMARY KEY,
+                    revoked_at TEXT NOT NULL,
+                    actor_id TEXT NOT NULL
+                )
+            """)
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_state_updated "
                 "ON workflow_runs(state, updated_at)"
@@ -267,6 +274,12 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run version changed; reload before approving.")
             if row["state"] != "queued":
                 raise WorkflowTransitionError("only queued workflows can be approved.")
+            revoked = db.execute(
+                "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                (session_hash,),
+            ).fetchone()
+            if revoked:
+                raise WorkflowTransitionError("revoked approval sessions cannot approve workflows.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
                     approval_digest=request_digest, approved_session_hash=?,
@@ -341,6 +354,10 @@ class WorkflowRunStore:
                     and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
                     and (approval_session_hash is None or candidate["approved_session_hash"] == approval_session_hash)
+                    and not db.execute(
+                        "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                        (candidate["approved_session_hash"],),
+                    ).fetchone()
                 )
             ), None)
             if row is None:
@@ -637,6 +654,51 @@ class WorkflowRunStore:
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
+
+    def revoke_approval_session_with_events(
+        self, session_hash: str, *, actor_id: str,
+    ) -> list[WorkflowRun]:
+        """Fence one approval session and cancel its queued/running tasks atomically."""
+        if not isinstance(session_hash, str) or len(session_hash) != 64 or any(
+            char not in "0123456789abcdef" for char in session_hash
+        ):
+            raise ValueError("session_hash must be a lowercase SHA-256 digest.")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or chr(0) in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        now = _now()
+        changed: list[WorkflowRun] = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "INSERT OR IGNORE INTO revoked_approval_sessions(session_hash, revoked_at, actor_id) VALUES (?, ?, ?)",
+                (session_hash, now, actor_id.strip()),
+            )
+            rows = db.execute(
+                """SELECT * FROM workflow_runs
+                   WHERE approved_session_hash=? AND approved_by=?
+                     AND approval_digest=request_digest
+                     AND state IN ('queued', 'running')
+                   ORDER BY created_at, run_id""",
+                (session_hash, actor_id.strip()),
+            ).fetchall()
+            for row in rows:
+                updated = db.execute(
+                    """UPDATE workflow_runs SET state='cancelled', error_code='session_revoked',
+                           updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                       WHERE run_id=? AND version=? AND state IN ('queued', 'running')""",
+                    (now, row["run_id"], row["version"]),
+                )
+                if updated.rowcount != 1:
+                    continue
+                self._append_task_event_in_transaction(
+                    db, row["run_id"], kind="task.cancelled", actor_id=actor_id,
+                    payload={"state_version": row["version"] + 1, "reason": "session_revoked"},
+                    expected_version=row["version"] + 1, now=now,
+                )
+                changed.append(self._row(db.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
+                ).fetchone()))
+        return changed
 
     def recover_expired_with_events(
         self, *, actor_id: str, limit: int = 50,
