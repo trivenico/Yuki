@@ -150,13 +150,19 @@ class GeminiCLIProvider(BaseProvider):
 
             reader = threading.Thread(target=drain_stdout, name="yuki-gemini-output", daemon=True)
             writer = threading.Thread(target=deliver_prompt, name="yuki-gemini-input", daemon=True)
+            reader_started = False
+            writer_started = False
             try:
                 reader.start()
+                reader_started = True
                 writer.start()
+                writer_started = True
             except Exception as exc:
                 self._stop_process(process)
-                reader.join(timeout=5)
-                writer.join(timeout=5)
+                if reader_started:
+                    reader.join(timeout=5)
+                if writer_started:
+                    writer.join(timeout=5)
                 raise RuntimeError("Gemini CLI I/O workers could not be started.") from exc
             try:
                 # Start the deadline immediately; neither a blocked stdin write
