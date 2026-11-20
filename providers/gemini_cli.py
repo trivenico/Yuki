@@ -180,6 +180,7 @@ class GeminiCLIProvider(BaseProvider):
                 self._stop_process(process)
                 raise RuntimeError("Gemini CLI input stream did not close cleanly.")
             if writer_errors:
+                self._stop_process(process)
                 raise RuntimeError("Gemini CLI prompt could not be delivered safely.")
             if reader.is_alive():
                 self._stop_process(process)
