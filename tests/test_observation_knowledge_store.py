@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -133,7 +134,7 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         self.clock[0] += 61
         with self.assertRaises(KeyError):
             store.approve(proposal.proposal_id, reviewer_id="operator-1")
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             count = db.execute(
                 "SELECT COUNT(*) FROM observation_knowledge_proposals WHERE proposal_id=?",
                 (proposal.proposal_id,),
@@ -148,7 +149,7 @@ class SQLiteObservationKnowledgeReviewTests(unittest.TestCase):
         self.assertEqual(len(store.list_review_events(proposal.proposal_id)), 1)
         self.clock[0] += 61
         self.assertEqual(store.list_review_events(proposal.proposal_id), ())
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             proposal_count = db.execute(
                 "SELECT COUNT(*) FROM observation_knowledge_proposals WHERE proposal_id=?",
                 (proposal.proposal_id,),
