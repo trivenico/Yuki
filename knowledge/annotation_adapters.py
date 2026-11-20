@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
@@ -53,6 +54,15 @@ def _label(value: Any) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > MAX_LABEL_CHARS:
         raise AnnotationAdapterError("invalid label")
     return value
+
+
+def _percent(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AnnotationAdapterError("geometry percentages must be numeric")
+    number = float(value)
+    if not math.isfinite(number):
+        raise AnnotationAdapterError("geometry percentages must be finite")
+    return number / 100.0
 
 
 def _normalized_dataset(
@@ -149,7 +159,7 @@ def import_label_studio_export(
                             "task_type": "bbox",
                             "label": _label(label),
                             "asset_id": asset_id,
-                            "geometry": [float(number) / 100.0 for number in geometry],
+                            "geometry": [_percent(number) for number in geometry],
                         })
                 elif result_type == "polygonlabels":
                     labels = value.get("polygonlabels")
@@ -160,7 +170,7 @@ def import_label_studio_export(
                     for point in points:
                         if not isinstance(point, list) or len(point) != 2:
                             raise AnnotationAdapterError("invalid polygon point")
-                        geometry.extend((float(point[0]) / 100.0, float(point[1]) / 100.0))
+                        geometry.extend((_percent(point[0]), _percent(point[1])))
                     for label_index, label in enumerate(labels):
                         rows.append({
                             "annotation_id": f"{base_id}-{label_index}",
@@ -207,12 +217,16 @@ def import_doccano_export(
     """Import doccano JSONL sequence-label exports as text-span annotations."""
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 1 <= max_bytes <= MAX_INPUT_BYTES:
         raise AnnotationAdapterError("invalid max_bytes")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 1 <= max_bytes <= MAX_INPUT_BYTES:
+        raise AnnotationAdapterError("invalid max_bytes")
     if not isinstance(payload, bytes) or len(payload) > max_bytes:
         raise AnnotationAdapterError("export must be bytes within the configured size limit")
     rows: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     try:
         lines = payload.splitlines()
+        if len(lines) > MAX_TASKS:
+            raise AnnotationAdapterError("doccano record count exceeds limit")
         for line_number, raw_line in enumerate(lines, start=1):
             if not raw_line.strip():
                 continue
