@@ -161,7 +161,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:approve", task_id):
             raise PermissionError("task approval is not authorized.")
-        run = self.store.get(task_id)
+        run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
         approved = self.store.approve_with_event(
@@ -227,7 +227,7 @@ class TaskRuntime:
             raise ValueError("message must be non-empty bounded text.")
         if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
             raise ValueError("percent must be an integer from 0 to 100.")
-        run = self.store.get(task_id)
+        run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
         if run.state != "running":
@@ -235,7 +235,7 @@ class TaskRuntime:
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
                                      payload={"message": message.strip(), "percent": percent},
                                      expected_version=expected_version)
-        return self._record(self.store.get(task_id))
+        return self._record(self._owned_run(actor, task_id))
 
     def renew_lease(
         self, *, actor_id: str, task_id: str, worker_id: str,
@@ -268,7 +268,7 @@ class TaskRuntime:
             metadata = {}
         if not isinstance(metadata, dict):
             raise ValueError("metadata must be an object.")
-        run = self.store.get(task_id)
+        run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
         if run.state != "running":
@@ -277,14 +277,14 @@ class TaskRuntime:
                                      payload={"artifact_type": artifact_type, "reference": reference.strip(),
                                               "metadata": metadata},
                                      expected_version=expected_version)
-        return self._record(self.store.get(task_id))
+        return self._record(self._owned_run(actor, task_id))
 
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
                  worker_id: str, result: dict[str, Any] | list[Any]) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:complete", task_id):
             raise PermissionError("task completion is not authorized.")
-        run = self.store.get(task_id)
+        run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
         if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
@@ -303,7 +303,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:fail", task_id):
             raise PermissionError("task failure update is not authorized.")
-        run = self.store.get(task_id)
+        run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
         if run.state != "running" or run.lease_owner != worker_id:
@@ -333,7 +333,7 @@ class TaskRuntime:
             raise ValueError("task_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        original = self.store.get(task_id)
+        original = self._owned_run(actor, task_id)
         if original is None:
             raise KeyError("task not found.")
         if original.version != expected_version:
@@ -374,7 +374,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:cancel", task_id):
             raise PermissionError("task cancellation is not authorized.")
-        run = self.store.get(task_id)
+        run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
         cancelled = self.store.transition_with_event(
