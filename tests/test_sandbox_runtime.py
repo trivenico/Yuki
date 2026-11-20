@@ -4,7 +4,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.sandbox_policy import SandboxPolicy
-from core.sandbox_runtime import (\n    SandboxRuntimeError, SandboxUnavailable, SandboxRuntimeCapabilities,\n    build_docker_argv, validate_runtime_capabilities,\n)
+from core.sandbox_runtime import (
+    SandboxRuntimeError, SandboxUnavailable, SandboxRuntimeCapabilities,
+    build_docker_argv, validate_runtime_capabilities,
+)
 
 
 IMAGE = "python@sha256:" + "a" * 64
