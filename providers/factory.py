@@ -1,4 +1,4 @@
-"""Construct the configured provider without implicit cloud fallback."""
+"""Construct the selected provider; native core is the no-network default."""
 from __future__ import annotations
 
 import os
@@ -6,27 +6,32 @@ import os
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
+from providers.native_core import NativeCoreAdapter
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
 
 def create_provider(config=None, *, environ=None):
-    """Build the configured real provider without implicit fallback.
+    """Build an explicitly selected adapter without implicit cloud fallback.
 
-    OpenAI is the default. Hybrid routing keeps general tasks local and only
-    routes explicitly allow-listed task names to cloud. API keys are read from
-    the process environment, never from YAML or committed files. The mock
-    adapter remains available only to tests that call this factory explicitly.
+    Native core is the default and requires no credentials or network access.
+    External providers are opt-in. API keys are read from the process
+    environment, never from YAML or committed files. The mock adapter remains
+    available only to tests that call this factory explicitly.
     """
     cfg = dict(config or {})
+    selected = str(cfg.get("provider", "native")).strip().lower()
+    if selected in {"native", "none", "native-only"}:
+        return NativeCoreAdapter()
+
     env = os.environ if environ is None else environ
     try:
         timeout = float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", cfg.get("provider_timeout_seconds", 45)))
     except (TypeError, ValueError) as exc:
         raise ValueError("YUKI_PROVIDER_TIMEOUT_SECONDS must be a number from 1 to 120.") from exc
-    if isinstance(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", cfg.get("provider_timeout_seconds", 45)), bool) or not 1 <= timeout <= 120:
+    raw_timeout = env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", cfg.get("provider_timeout_seconds", 45))
+    if isinstance(raw_timeout, bool) or not 1 <= timeout <= 120:
         raise ValueError("Provider Timeout must be between 1 and 120 seconds.")
-    selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
         return MockProvider()
     if selected == "openai":
@@ -45,7 +50,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: native, openai, ollama, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
