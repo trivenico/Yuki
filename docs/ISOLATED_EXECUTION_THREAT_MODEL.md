@@ -185,3 +185,9 @@ Until the acceptance gates are met, Yuki must not execute untrusted generated co
 `core/linux_sandbox_evidence.py` combines the existing process snapshot and cgroup-v2 leaf observations into a frozen schema-version-1 report. It binds the observations to the same reported cgroup membership, records wall-clock start/end and monotonic collection duration, rejects missing or ambiguous membership and unexpected attestation flags, and deduplicates explicit unknown controls.
 
 This is a sequential diagnostic envelope, not an atomic snapshot or trusted host attestation. Both roots are caller-supplied paths; the process may exit, be reused, or migrate cgroups between reads; controller enablement and effective enforcement remain unverified. The report always has `evidence_class="diagnostic_only"`, `attested=False`, and `verified=False`. It must never authorize execution.
+
+### Linux mountinfo diagnostic observer
+
+`core/linux_mount_evidence.py` parses bounded `/proc/<pid>/mountinfo` records and exposes mount IDs, parent IDs, device identifiers, decoded root/mount paths, per-mount options, optional propagation fields, filesystem/source metadata, and the read-only flags reported in mount and superblock options. It rejects malformed field counts, duplicate mount IDs/options, invalid device identifiers, malformed octal escapes, oversized tables, symlinked procfs entries, and non-regular mountinfo files.
+
+These are procfs-reported observations only. A reported `ro` flag does not prove effective write denial; the procfs root is caller-selected, namespace identity is not baseline-compared, and mounts can change after collection. The observer does not authorize execution and always returns `attested=False`.
