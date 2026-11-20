@@ -18,3 +18,7 @@ __all__ += ["TlsClientHello", "TlsFormatError", "parse_tls_client_hello"]
 from defense.network.pcap.tcp_reassembly import TcpReassemblyError, TcpReassemblyResult, TcpStreamReassembler
 
 __all__ += ["TcpReassemblyError", "TcpReassemblyResult", "TcpStreamReassembler"]
+
+from defense.network.pcap.pipeline import AnalyzedPacket, CaptureAnalysis, analyze_capture
+
+__all__ += ["AnalyzedPacket", "CaptureAnalysis", "analyze_capture"]
