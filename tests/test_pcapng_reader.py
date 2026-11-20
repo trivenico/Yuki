@@ -79,7 +79,7 @@ class PcapNgReaderTests(unittest.TestCase):
         with self.assertRaises(PcapNgFormatError):
             parse_pcapng(good, max_file_bytes=len(good) - 1)
         with self.assertRaises(PcapNgFormatError):
-            parse_pcapng(good, max_packets=1) if False else parse_pcapng(
+            parse_pcapng(
                 section() + interface() + enhanced("<", b"x") + enhanced("<", b"y"), max_packets=1)
         with self.assertRaises(PcapNgFormatError):
             parse_pcapng(section() + interface() + interface(), max_interfaces=1)
