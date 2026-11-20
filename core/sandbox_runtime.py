@@ -51,7 +51,7 @@ class SandboxRuntimeCapabilities:
             raise SandboxRuntimeError("runtime_version must be bounded non-empty text")
         if type(self.namespaces) is not frozenset or not self.namespaces <= _REQUIRED_NAMESPACES:
             raise SandboxRuntimeError("namespaces must be a frozenset of recognized namespace names")
-        if self.mandatory_access_control not in _ALLOWED_MAC:
+        if type(self.mandatory_access_control) is not str or self.mandatory_access_control not in _ALLOWED_MAC:
             raise SandboxRuntimeError("mandatory access control must be apparmor or selinux")
         for field in (
             "rootless", "seccomp", "cgroups_v2", "network_isolation",
