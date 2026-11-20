@@ -286,3 +286,134 @@ def export_graphml(graph: OsintGraph, *, max_bytes: int = 4 * 1024 * 1024) -> by
         raise OsintImportError("GraphML output exceeds byte limit")
     return output
 
+def parse_graphml(payload: bytes, *, max_bytes: int = 4 * 1024 * 1024) -> OsintGraph:
+    """Import only Yuki's own bounded GraphML profile, never arbitrary graph XML."""
+    import xml.etree.ElementTree as ET
+
+    if not isinstance(payload, bytes) or type(max_bytes) is not int or not 1 <= max_bytes <= 4 * 1024 * 1024:
+        raise OsintImportError("invalid GraphML input or byte limit")
+    if len(payload) > max_bytes or b"<!DOCTYPE" in payload.upper() or b"<!ENTITY" in payload.upper():
+        raise OsintImportError("GraphML exceeds limits or contains prohibited declarations")
+    try:
+        root = ET.fromstring(payload)
+    except (ET.ParseError, RecursionError) as exc:
+        raise OsintImportError("malformed GraphML") from exc
+
+    ns = "http://graphml.graphdrawing.org/xmlns"
+    q = lambda tag: f"{{{ns}}}{tag}"
+    expected = {
+        "node_type": ("node", "indicator_type"), "node_value": ("node", "value"),
+        "node_evidence": ("node", "evidence_ids"), "evidence_manifest": ("graph", "evidence_manifest"),
+        "edge_relationship": ("edge", "relationship"), "edge_evidence": ("edge", "evidence_ids"),
+        "edge_verified": ("edge", "verified"),
+    }
+    if root.tag != q("graphml") or len(root) != 8:
+        raise OsintImportError("unsupported GraphML document")
+    keys, graphs = {}, []
+    for child in root:
+        if child.tag == q("key"):
+            if set(child.attrib) != {"id", "for", "attr.name", "attr.type"} or child.attrib["attr.type"] != "string":
+                raise OsintImportError("invalid GraphML key")
+            key = child.attrib["id"]
+            if key in keys:
+                raise OsintImportError("duplicate GraphML key")
+            keys[key] = (child.attrib["for"], child.attrib["attr.name"])
+        elif child.tag == q("graph"):
+            graphs.append(child)
+        else:
+            raise OsintImportError("unsupported GraphML root element")
+    if keys != expected or len(graphs) != 1:
+        raise OsintImportError("GraphML profile mismatch")
+    graph = graphs[0]
+    if graph.attrib != {"id": "asset_observations", "edgedefault": "directed"}:
+        raise OsintImportError("unsupported GraphML graph attributes")
+    children = list(graph)
+    if not children or children[0].tag != q("data") or children[0].attrib != {"key": "evidence_manifest"}:
+        raise OsintImportError("missing evidence manifest")
+    manifest_element = children[0]
+    if len(manifest_element) or not manifest_element.text:
+        raise OsintImportError("invalid evidence manifest")
+    try:
+        manifest = json.loads(manifest_element.text, object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, OsintImportError, RecursionError) as exc:
+        raise OsintImportError("invalid evidence manifest") from exc
+    if not isinstance(manifest, list) or len(manifest) > 20_000:
+        raise OsintImportError("evidence manifest exceeds limits")
+    evidence = []
+    for item in manifest:
+        if not isinstance(item, dict) or set(item) != {"evidence_id", "source", "observed_at", "provenance", "verified"}:
+            raise OsintImportError("invalid evidence entry")
+        eid = _text(item["evidence_id"], "evidence id", 64)
+        if not re.fullmatch(r"[a-f0-9]{64}", eid):
+            raise OsintImportError("invalid evidence id")
+        source = _text(item["source"], "source label", 128)
+        observed = item["observed_at"]
+        if observed is not None:
+            observed = _text(observed, "observation timestamp", 80)
+        if item["provenance"] != "owner_supplied_unverified" or item["verified"] is not False:
+            raise OsintImportError("GraphML cannot upgrade evidence provenance")
+        evidence.append(OsintEvidence(eid, source, observed))
+    evidence_map = {item.evidence_id: item for item in evidence}
+    if len(evidence_map) != len(evidence):
+        raise OsintImportError("duplicate evidence id")
+
+    def values(element, allowed):
+        result = {}
+        for child in element:
+            if child.tag != q("data") or set(child.attrib) != {"key"} or len(child):
+                raise OsintImportError("unsupported GraphML data element")
+            key = child.attrib["key"]
+            if key not in allowed or key in result:
+                raise OsintImportError("unexpected or duplicate GraphML data")
+            result[key] = child.text or ""
+        if set(result) != set(allowed):
+            raise OsintImportError("incomplete GraphML data")
+        return result
+
+    node_map, observations, edges, edge_ids = {}, set(), [], set()
+    for element in children[1:]:
+        if element.tag == q("node"):
+            if set(element.attrib) != {"id"} or len(node_map) >= 10_000:
+                raise OsintImportError("invalid or excessive GraphML nodes")
+            node_id = _text(element.attrib["id"], "node id", 32)
+            if node_id in node_map:
+                raise OsintImportError("duplicate node id")
+            row = values(element, {"node_type", "node_value", "node_evidence"})
+            kind = _text(row["node_type"], "indicator type", 16)
+            value = normalize_indicator(kind, row["node_value"])
+            if value != row["node_value"]:
+                raise OsintImportError("non-canonical indicator")
+            node = OsintNode(kind, value)
+            node_map[node_id] = node
+            ids = row["node_evidence"].split(",") if row["node_evidence"] else []
+            if len(ids) != len(set(ids)) or any(eid not in evidence_map for eid in ids):
+                raise OsintImportError("invalid node evidence references")
+            observations.update(OsintObservation(node, eid) for eid in ids)
+        elif element.tag == q("edge"):
+            if set(element.attrib) != {"id", "source", "target"} or len(edges) >= 20_000:
+                raise OsintImportError("invalid or excessive GraphML edges")
+            edge_id = _text(element.attrib["id"], "edge id", 32)
+            if edge_id in edge_ids:
+                raise OsintImportError("duplicate edge id")
+            edge_ids.add(edge_id)
+            row = values(element, {"edge_relationship", "edge_evidence", "edge_verified"})
+            if row["edge_verified"] != "false":
+                raise OsintImportError("edge verification state cannot be upgraded")
+            source, target = element.attrib["source"], element.attrib["target"]
+            if source not in node_map or target not in node_map:
+                raise OsintImportError("edge references unknown node")
+            relation = row["edge_relationship"]
+            if relation not in _RELATIONSHIPS:
+                raise OsintImportError("unsupported relationship")
+            ids = tuple(row["edge_evidence"].split(",")) if row["edge_evidence"] else ()
+            if not ids or len(ids) != len(set(ids)) or any(eid not in evidence_map for eid in ids):
+                raise OsintImportError("invalid edge evidence references")
+            edges.append(OsintEdge(node_map[source], relation, node_map[target], tuple(sorted(ids))))
+        else:
+            raise OsintImportError("unsupported GraphML graph child")
+    ordered_edges = tuple(sorted(edges, key=lambda edge: (edge.source, edge.relationship, edge.target)))
+    if len({(edge.source, edge.relationship, edge.target) for edge in ordered_edges}) != len(ordered_edges):
+        raise OsintImportError("duplicate relationship edge")
+    return OsintGraph(tuple(sorted(set(node_map.values()))), ordered_edges,
+                      tuple(sorted(evidence, key=lambda item: item.evidence_id)),
+                      tuple(sorted(observations, key=lambda item: (item.node, item.evidence_id))))
