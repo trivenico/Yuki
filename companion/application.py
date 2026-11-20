@@ -260,11 +260,15 @@ class CompanionApplicationService:
     def current_role(self) -> dict:
         return self.session.current_role()
 
-    def revoke_session_tasks(self, *, session_id: str) -> list[TaskRecord]:
-        """Cancel durable work whose human approval belongs to this session."""
+    def revoke_session_tasks(
+        self, *, actor_id: str, session_id: str,
+    ) -> list[TaskRecord]:
+        """Cancel durable work approved by this exact live owner session."""
         if self.task_runtime is None:
             return []
-        return self.task_runtime.revoke_session_approvals(session_id)
+        return self.task_runtime.revoke_session_approvals(
+            actor_id=actor_id, session_id=session_id,
+        )
 
     def reset_conversation(self) -> None:
         self.session.reset()
