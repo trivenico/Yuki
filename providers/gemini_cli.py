@@ -106,19 +106,25 @@ class GeminiCLIProvider(BaseProvider):
                 raise RuntimeError("Gemini CLI could not be started.") from exc
 
             captured = bytearray()
+            reader_errors = []
             capture_limit = self.max_output_chars * 4 + 4
 
             def drain_stdout():
                 stream = process.stdout
                 if stream is None:
                     return
-                while True:
-                    chunk = stream.read(8192)
-                    if not chunk:
-                        break
-                    remaining = capture_limit - len(captured)
-                    if remaining > 0:
-                        captured.extend(chunk[:remaining])
+                try:
+                    while True:
+                        chunk = stream.read(8192)
+                        if not chunk:
+                            break
+                        remaining = capture_limit - len(captured)
+                        if remaining > 0:
+                            captured.extend(chunk[:remaining])
+                except OSError:
+                    # A partial response is not trustworthy if pipe draining
+                    # failed; surface a sanitized error on the caller thread.
+                    reader_errors.append(True)
 
             reader = threading.Thread(target=drain_stdout, name="yuki-gemini-output", daemon=True)
             try:
@@ -142,6 +148,8 @@ class GeminiCLIProvider(BaseProvider):
             if reader.is_alive():
                 self._stop_process(process)
                 raise RuntimeError("Gemini CLI output stream did not close cleanly.")
+            if reader_errors:
+                raise RuntimeError("Gemini CLI output could not be read completely.")
             if return_code != 0:
                 raise RuntimeError(f"Gemini CLI failed with exit code {return_code}; check its local authentication and logs.")
             output = bytes(captured).decode("utf-8", errors="replace").strip()
