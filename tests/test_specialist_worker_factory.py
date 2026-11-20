@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec
 from automation.specialist_worker_factory import build_registered_specialist_worker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
@@ -28,7 +28,7 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.runtime = TaskRuntime(
             WorkflowRunStore(db),
-            authorize=lambda actor, action, task: actor == "worker-service",
+            authorize=lambda actor, action, task: actor in {"owner", "worker-service"},
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
@@ -47,7 +47,7 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
                 ),
             ],
             authorize=lambda actor, action, resource: (
-                actor == "owner" and action == "agent:read"
+                actor == "owner" and action in {"agent:read", "agent:plan", "agent:dispatch"}
             ),
         )
 
@@ -78,6 +78,26 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
     def test_rejects_agent_without_stable_catalog_capability(self):
         with self.assertRaises(ValueError):
             self.build({"legacy": "coding"})
+
+    def test_end_to_end_approved_plan_runs_through_registered_worker(self):
+        plan = self.coordinator.submit(
+            actor_id="owner",
+            idempotency_key="factory-e2e",
+            subtasks=(
+                SubtaskSpec(
+                    "review", "Review the supplied patch",
+                    ("code-reviewer",), requires_approval=False,
+                ),
+            ),
+        )
+        dispatched = self.coordinator.advance(actor_id="owner", plan_id=plan.plan_id)
+        self.assertEqual(dispatched.subtasks[0].status, "queued")
+        worker = self.build({"reviewer": "coding"})
+        completed = worker.run_once()
+        self.assertIsNotNone(completed)
+        self.assertEqual(completed.state, "succeeded")
+        self.assertEqual(completed.result["specialist"], "reviewer")
+        self.assertEqual(completed.result["output"], "bounded specialist result")
 
     def test_registry_read_authorization_is_required(self):
         with self.assertRaises(PermissionError):
