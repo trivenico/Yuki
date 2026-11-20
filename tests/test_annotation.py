@@ -33,8 +33,9 @@ class AnnotationImportTests(unittest.TestCase):
 
     def test_rejects_duplicate_ids_unknown_fields_and_duplicate_json_keys(self):
         row = {"annotation_id": "a", "task_type": "classification", "label": "ok", "asset_id": "x"}
+        duplicate_payload = (json.dumps(row) + "\\n" + json.dumps(row)).encode()
         with self.assertRaises(AnnotationImportError):
-            self.parse(row, max_bytes=1000)
+            import_annotation_jsonl(duplicate_payload, source_format="x", source_label="y", imported_at="z")
         with self.assertRaises(AnnotationImportError):
             self.parse({**row, "surprise": True})
         raw = b'{"annotation_id":"a","annotation_id":"b","task_type":"classification","label":"x","asset_id":"i"}'
