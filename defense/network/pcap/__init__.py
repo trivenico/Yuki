@@ -10,3 +10,7 @@ __all__ += ["DissectionError", "PacketMetadata", "dissect_packet"]
 from defense.network.pcap.dns import DnsFormatError, DnsMessage, DnsQuestion, DnsRecord, parse_dns_message
 
 __all__ += ["DnsFormatError", "DnsMessage", "DnsQuestion", "DnsRecord", "parse_dns_message"]
+
+from defense.network.pcap.tls import TlsClientHello, TlsFormatError, parse_tls_client_hello
+
+__all__ += ["TlsClientHello", "TlsFormatError", "parse_tls_client_hello"]
