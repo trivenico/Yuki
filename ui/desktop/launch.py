@@ -1477,17 +1477,26 @@ Version: {version}",
                 session = self.speech_session
                 self.speech_session = None
                 if session is not None:
+                    # Revoke permission and interrupt playback immediately, but
+                    # defer backend close until its worker has left speak_stream().
                     try:
-                        session.close()
+                        session.disable()
                     except Exception as exc:
                         self.voice_status.setText(
-                            "Spoken-reply shutdown failed (" + type(exc).__name__ + ")."
+                            "Spoken-reply interruption failed (" + type(exc).__name__ + ")."
                         )
+                    if self.speech_worker is None:
+                        try:
+                            session.close()
+                        except Exception as exc:
+                            self.voice_status.setText(
+                                "Spoken-reply shutdown failed (" + type(exc).__name__ + ")."
+                            )
                 self.speech_stop_button.setEnabled(False)
                 if self.speech_worker is None and self.controller is not None:
                     self.send_button.setEnabled(not self.busy)
                     self.message.setEnabled(not self.busy)
-                if self.voice_status.text().startswith("Spoken-reply shutdown failed"):
+                if self.voice_status.text().startswith(("Spoken-reply shutdown failed", "Spoken-reply interruption failed")):
                     return
                 self.voice_status.setText("Spoken replies off. Microphone permission is independent.")
                 return
@@ -1562,7 +1571,15 @@ Version: {version}",
                 self.speech_worker = None
             if captured_session is not self.speech_session:
                 # A revoked worker may finish after a later login/session has
-                # started. Never let its callback overwrite a newer worker/UI.
+                # started. Close its backend only after speak_stream() returns,
+                # and never let its callback overwrite a newer worker/UI.
+                try:
+                    captured_session.close()
+                except Exception as exc:
+                    self.chat_status.setText(
+                        "Warning: retired speech backend cleanup failed ("
+                        + type(exc).__name__ + ")."
+                    )
                 if (
                     self.speech_worker is None
                     and self.controller is not None
