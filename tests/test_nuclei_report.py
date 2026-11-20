@@ -73,6 +73,15 @@ class NucleiReportImportTests(unittest.TestCase):
         with self.assertRaises(NucleiReportError):
             parse_nuclei_jsonl(b'{"template-id":"' + b"x" * 17000 + b'"}')
 
+    def test_sanitizes_target_url_and_rejects_target_injection(self):
+        item = row()
+        item["host"] = "https://user:pass@example.test/path?token=secret#frag"
+        finding = parse_nuclei_jsonl(json.dumps(item).encode()).findings[0]
+        self.assertEqual(finding.target, "https://example.test/path")
+        item["host"] = "example.test?token=secret"
+        with self.assertRaises(NucleiReportError):
+            parse_nuclei_jsonl(json.dumps(item).encode())
+
     def test_rejects_bad_extracted_results(self):
         item = row()
         item["extracted-results"] = "not-a-list"
