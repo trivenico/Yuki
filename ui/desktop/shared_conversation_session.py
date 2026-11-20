@@ -25,24 +25,26 @@ class DesktopConversationSession:
     ) -> None:
         self.runtime = runtime
         self.conversation = conversation
-        self._closed = False
+        self._conversation_invalidated = False
+        self._runtime_closed = False
         self._close_lock = RLock()
 
     def close(self) -> None:
         """Invalidate the UI session before closing its durable conversation store."""
         with self._close_lock:
-            if self._closed:
-                return
-            self._closed = True
             errors: list[Exception] = []
-            try:
-                self.conversation.invalidate()
-            except Exception as exc:
-                errors.append(exc)
-            try:
-                self.runtime.close()
-            except Exception as exc:
-                errors.append(exc)
+            if not self._conversation_invalidated:
+                try:
+                    self.conversation.invalidate()
+                    self._conversation_invalidated = True
+                except Exception as exc:
+                    errors.append(exc)
+            if not self._runtime_closed:
+                try:
+                    self.runtime.close()
+                    self._runtime_closed = True
+                except Exception as exc:
+                    errors.append(exc)
             if errors:
                 raise RuntimeError(
                     "Desktop conversation shutdown could not complete every cleanup step."
