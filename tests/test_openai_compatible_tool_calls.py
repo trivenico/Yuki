@@ -191,7 +191,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
                             messages=[{"role": "user", "content": "Find"}], tools=self.tools)
 
         event = {"choices": [[]]}
-        opener = FakeStreamOpener(["data: " + json.dumps(event) + "\\n", "data: [DONE]\\n"], self.requests)
+        opener = FakeStreamOpener(["data: " + json.dumps(event) + "\n", "data: [DONE]\\n"], self.requests)
         with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(RuntimeError, "malformed stream event"):
                 list(self.provider.generate_chat_stream(
