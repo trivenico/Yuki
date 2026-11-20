@@ -216,6 +216,28 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
 
+    def test_sse_tool_choice_none_rejects_returned_tool_calls(self):
+        chunk = {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "call_none", "function": {"name": "lookup", "arguments": "{\"key\":\"x\"}"}}
+        ]}, "finish_reason": "tool_calls"}]}
+        opener = FakeStreamOpener(["data: " + json.dumps(chunk) + "\n", "data: [DONE]\n"], self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "tool_choice was none"):
+                list(self.provider.generate_chat_stream(
+                    messages=[{"role": "user", "content": "Find"}], tools=self.tools, tool_choice="none"))
+
+    def test_sse_tool_choice_required_rejects_text_only_response(self):
+        chunks = [
+            {"choices": [{"delta": {"content": "No tool"}, "finish_reason": None}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        ]
+        lines = ["data: " + json.dumps(item) + "\n" for item in chunks] + ["data: [DONE]\n"]
+        opener = FakeStreamOpener(lines, self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "required tool"):
+                list(self.provider.generate_chat_stream(
+                    messages=[{"role": "user", "content": "Find"}], tools=self.tools, tool_choice="required"))
+
     def test_closing_consumer_closes_underlying_sse_response(self):
         opener = FakeStreamOpener([
             "data: " + json.dumps({"choices": [{"delta": {"content": "first"}, "finish_reason": None}]}) + "\n",
