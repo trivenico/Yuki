@@ -31,6 +31,21 @@ class ProviderConfigLoadingTests(unittest.TestCase):
             self.assertTrue(config.is_file())
             self.assertEqual(config.stat().st_mode & 0o777, 0o600)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics")
+    def test_first_run_config_creates_new_parent_directory_privately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "core"
+            package.mkdir()
+            (package / "default_config.yaml").write_text("workspace: ./workspace\\n", encoding="utf-8")
+            config = root / "private" / "nested" / "config.yaml"
+            with patch("core.config.__file__", str(package / "config.py")):
+                with patch("core.config.resolve_config_path", return_value=config):
+                    with patch.dict(os.environ, {}, clear=True):
+                        load_config()
+            self.assertEqual(config.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(config.parent.parent.stat().st_mode & 0o777, 0o700)
+
     def test_default_configuration_selects_openai_and_exposes_timeout(self):
         config = self._load("workspace: ./workspace\n")
         self.assertEqual(config["provider"], "openai")
