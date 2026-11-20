@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import yaml
 
-from core.portable_paths import REPOSITORY_ROOT, config_path, user_config_path
+from core.portable_paths import REPOSITORY_ROOT, config_path, ensure_private_directory, user_config_path
 
 
 PROVIDERS = {"openai", "ollama", "gemini"}
@@ -47,7 +47,7 @@ def save_provider_preferences(path: str | Path, provider: str, model: str = "") 
             "Provider setup will not modify files inside the source checkout. "
             "Set YUKI_CONFIG to a private user configuration path."
         )
-    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ensure_private_directory(parent)
 
     raw: dict = {}
     if target.exists():
