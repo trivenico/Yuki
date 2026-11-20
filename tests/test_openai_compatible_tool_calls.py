@@ -33,8 +33,11 @@ class FakeOpener:
 class FakeStreamResponse:
     def __init__(self, lines):
         self.lines = [line if isinstance(line, bytes) else line.encode() for line in lines]
+        self.closed = False
     def __enter__(self): return self
-    def __exit__(self, *args): return False
+    def __exit__(self, *args):
+        self.closed = True
+        return False
     def readline(self, limit):
         if not self.lines: return b""
         line = self.lines.pop(0)
@@ -212,6 +215,18 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             with self.assertRaises(RuntimeError):
                 list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
+
+    def test_closing_consumer_closes_underlying_sse_response(self):
+        opener = FakeStreamOpener([
+            "data: " + json.dumps({"choices": [{"delta": {"content": "first"}, "finish_reason": None}]}) + "\\n",
+            "data: " + json.dumps({"choices": [{"delta": {"content": "second"}, "finish_reason": None}]}) + "\\n",
+        ], self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            stream = self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Hi"}], tools=self.tools)
+            self.assertEqual(next(stream), {"type": "text_delta", "text": "first"})
+            stream.close()
+        self.assertTrue(opener.response.closed)
+        self.assertEqual(self.requests[0][1], self.provider.timeout)
 
 if __name__ == "__main__":
     unittest.main()
