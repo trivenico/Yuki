@@ -75,6 +75,24 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
 
+    def test_parallel_workers_preserve_approval_session_scope(self):
+        task_ids = [self.create_task(approval=True), self.create_task(approval=True)]
+        for task_id in task_ids:
+            task = self.runtime.get(actor_id="alice", task_id=task_id)
+            self.runtime.approve(
+                actor_id="alice", task_id=task_id, session_id="test-session",
+                expected_version=task.version,
+            )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="parallel-session-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda request: "reviewed: " + request},
+            approval_session_id="test-session",
+        )
+        results = worker.run_concurrently(max_workers=2, max_tasks=2)
+        self.assertEqual({result.task_id for result in results}, set(task_ids))
+        self.assertTrue(all(result.state == "succeeded" for result in results))
+
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
         self.assertIsNone(self.worker({"code-review": lambda _: "should not run"}).run_once())
