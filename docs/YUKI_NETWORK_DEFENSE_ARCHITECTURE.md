@@ -73,7 +73,7 @@ The classic-PCAP foundation now has a pure byte-oriented metadata dissector for 
 
 ## Offline DNS metadata
 
-The offline packet-analysis layer now includes a bounded DNS message parser for questions and resource records. It validates section counts, label encoding, compression pointers and loops, record lengths, and trailing bytes. A/AAAA records are normalized to addresses; CNAME/NS/PTR values are decoded as names; TXT contents are never retained (only a segment count and byte count are reported). It performs no DNS resolution or network access. The shared offline capture pipeline now invokes this parser for UDP traffic involving port 53. DNS-over-TCP, message correlation, DNS-over-TLS/HTTPS, and broader application-layer decoding remain future work.
+The offline packet-analysis layer now includes a bounded DNS message parser for questions and resource records. It validates section counts, label encoding, compression pointers and loops, record lengths, and trailing bytes. A/AAAA records are normalized to addresses; CNAME/NS/PTR values are decoded as names; TXT contents are never retained (only a segment count and byte count are reported). It performs no DNS resolution or network access. The shared offline capture pipeline now invokes this parser for UDP traffic involving port 53. DNS-over-TCP, DNS-over-TLS/HTTPS, and broader application-layer decoding remain future work.
 
 
 ## Offline TLS ClientHello metadata
@@ -94,3 +94,8 @@ A reusable bounded TCP stream reassembler accepts immutable segment payload byte
 ## Offline PCAPNG support
 
 The offline reader supports Section Header Blocks, Interface Description Blocks, and Enhanced Packet Blocks. It validates block framing and trailing lengths, declared section boundaries, section byte order, version, interface references, captured/original lengths, packet padding, option boundaries, timestamp resolution and timestamp offsets. Per-interface link types and timestamps are preserved in immutable packet records, and the shared offline analysis pipeline accepts both classic PCAP and PCAPNG captures. Unknown block types are skipped only after framing validation; Simple Packet Blocks are rejected because the current evidence model requires timestamps. This is a bounded reader for the supported subset, not full PCAPNG feature coverage. Statistics blocks, name-resolution blocks, decryption secrets, and other packet block variants are not interpreted.
+
+
+## Offline DNS transaction correlation
+
+The shared offline analysis pipeline now correlates parsed UDP DNS queries and responses using transaction ID, opcode, question tuple, and reversed source/destination addresses and ports. Duplicate outstanding IDs are paired FIFO. Pending requests are bounded and stale entries expire; unmatched queries and responses remain explicit evidence. Valid latency is reported only for non-negative timestamp deltas within the configured age bound. The correlator stores packet indices and DNS metadata only—never packet payloads—and performs no DNS resolution or network access. DNS-over-TCP and encrypted DNS remain unsupported.
