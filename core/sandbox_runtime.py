@@ -8,7 +8,7 @@ from typing import Sequence
 
 from core.sandbox_policy import SandboxPolicy, SandboxPolicyError
 
-_IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$")
+_IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,200}@sha256:[0-9a-f]{64}$")
 
 
 class SandboxRuntimeError(RuntimeError):
@@ -34,18 +34,25 @@ def build_docker_argv(
     except (AttributeError, SandboxPolicyError) as exc:
         raise SandboxRuntimeError("invalid sandbox policy") from exc
     if not isinstance(image, str) or not _IMAGE_RE.fullmatch(image):
-        raise SandboxRuntimeError("invalid sandbox image reference")
+        raise SandboxRuntimeError("sandbox image must be pinned by an immutable sha256 digest")
     if (
         not isinstance(command, (list, tuple))
         or not command
-        or any(not isinstance(arg, str) or "\x00" in arg for arg in command)
+        or len(command) > 64
+        or any(not isinstance(arg, str) or not arg or len(arg) > 4096 or "\x00" in arg for arg in command)
     ):
         raise SandboxRuntimeError("command must be a non-empty sequence of NUL-free strings")
     if not isinstance(workspace, str) or not os.path.isabs(workspace):
         raise SandboxRuntimeError("workspace must be an absolute path")
-    path = Path(workspace)
-    if not path.exists() or not path.is_dir():
-        raise SandboxRuntimeError("workspace must be an existing directory")
+    path = Path(workspace).expanduser()
+    if path.is_symlink() or not path.exists() or not path.is_dir():
+        raise SandboxRuntimeError("workspace must be an existing non-symlink directory")
+    try:
+        path = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise SandboxRuntimeError("workspace cannot be resolved safely") from exc
+    if path == Path(path.anchor) or any(char in str(path) for char in (",", "\\n", "\\r")):
+        raise SandboxRuntimeError("workspace path is unsafe for Docker mount syntax")
     if policy.network_mode == "none":
         if network_allowlist:
             raise SandboxRuntimeError("allowlist conflicts with disabled networking")
@@ -60,8 +67,9 @@ def build_docker_argv(
 
     workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
     return [
-        "docker", "run", "--rm", "--interactive", "--read-only",
+        "docker", "run", "--rm", "--interactive", "--pull=never", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
+        "--memory-swap", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",
         "--pids-limit", str(policy.max_processes), "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges:true",
