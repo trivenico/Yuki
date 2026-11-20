@@ -369,6 +369,7 @@ class SpecialistAgentCoordinator:
                 {
                     "agent_id": agent.agent_id,
                     "name": agent.name,
+                    "action": agent.action,
                     "capabilities": tuple(sorted(agent.capabilities)),
                     "enabled": agent.enabled,
                 }
