@@ -74,6 +74,27 @@ class DockerProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(SandboxRuntimeError, "timed out"):
             run_docker_info_probe(plan, timeout_seconds=0.2)
 
+    def test_rejects_group_or_world_writable_executable(self):
+        executable = Path(self.executable("exit 0"))
+        executable.chmod(0o722)
+        with self.assertRaisesRegex(SandboxRuntimeError, "ownership or write permissions"):
+            build_docker_info_probe(str(executable), str(self.endpoint))
+
+    def test_rejects_unsafe_parent_directory(self):
+        unsafe = self.root / "unsafe"
+        unsafe.mkdir()
+        unsafe.chmod(0o777)
+        executable = unsafe / "docker"
+        executable.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+        executable.chmod(0o700)
+        with self.assertRaisesRegex(SandboxRuntimeError, "parent directory"):
+            build_docker_info_probe(str(executable), str(self.endpoint))
+
+    def test_rejects_world_writable_docker_socket(self):
+        self.endpoint.chmod(0o777)
+        with self.assertRaisesRegex(SandboxRuntimeError, "world-writable"):
+            build_docker_info_probe(self.executable("exit 0"), str(self.endpoint))
+
     def test_nonzero_exit_is_rejected(self):
         plan = self.plan("echo failed >&2; exit 2")
         with self.assertRaisesRegex(SandboxRuntimeError, "command failed"):
