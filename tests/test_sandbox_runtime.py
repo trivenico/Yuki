@@ -35,7 +35,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     def test_write_workspace_capability_is_explicit(self, _uid, _gid):
         policy = SandboxPolicy(capabilities=frozenset({"write_workspace"}))
-        argv = build_docker_argv(policy, image="python:3.12",
+        argv = build_docker_argv(policy, image=IMAGE,
             workspace=self.tmp.name, command=["python", "--version"])
         self.assertTrue(argv[argv.index("--mount") + 1].endswith(",rw"))
 
@@ -45,14 +45,14 @@ class DockerSandboxArgvTests(unittest.TestCase):
         policy = SandboxPolicy(network_mode="allowlist",
             capabilities=frozenset({"network_allowlist"}))
         with self.assertRaises(SandboxRuntimeError):
-            build_docker_argv(policy, image="python:3.12",
+            build_docker_argv(policy, image=IMAGE,
                 workspace=self.tmp.name, command=["python", "--version"])
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=0, create=True)
     def test_root_service_is_rejected(self, _uid, _gid):
         with self.assertRaises(SandboxRuntimeError):
-            build_docker_argv(SandboxPolicy(), image="python:3.12",
+            build_docker_argv(SandboxPolicy(), image=IMAGE,
                 workspace=self.tmp.name, command=["python", "--version"])
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
@@ -62,15 +62,15 @@ class DockerSandboxArgvTests(unittest.TestCase):
             build_docker_argv(SandboxPolicy(), image="python; invalid",
                 workspace=self.tmp.name, command=["python", "--version"])
         with self.assertRaises(SandboxRuntimeError):
-            build_docker_argv(SandboxPolicy(), image="python:3.12",
+            build_docker_argv(SandboxPolicy(), image=IMAGE,
                 workspace=self.tmp.name, command="python --version")
         with self.assertRaises(SandboxRuntimeError):
-            build_docker_argv(SandboxPolicy(), image="python:3.12",
+            build_docker_argv(SandboxPolicy(), image=IMAGE,
                 workspace=self.tmp.name, command=["python", "bad\x00arg"])
 
     def test_workspace_must_be_absolute_and_exist(self):
         with self.assertRaises(SandboxRuntimeError):
-            build_docker_argv(SandboxPolicy(), image="python:3.12",
+            build_docker_argv(SandboxPolicy(), image=IMAGE,
                 workspace="relative/path", command=["python", "--version"])
 
 
