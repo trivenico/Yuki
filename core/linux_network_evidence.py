@@ -272,7 +272,6 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
         unknown_controls=(
             "procfs root and process identity are caller supplied and not independently attested",
             "route presence does not prove reachability or permitted egress",
-            "route presence does not prove reachability or permitted egress",
             "absence of IPv4 and IPv6 default routes does not prove absence of other network paths",
             "missing IPv6 route table is recorded as unavailable and is not proof IPv6 is disabled",
             "IPv6 routes are kernel-reported hexadecimal records; policy and reachability are not tested",
