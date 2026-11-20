@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from defense.network.pcap.dissector import DissectionError, PacketMetadata, dissect_packet
 from defense.network.pcap.dns import DnsFormatError, DnsMessage, parse_dns_message
+from defense.network.pcap.dns_correlation import DnsCorrelation, correlate_dns_messages
 from defense.network.pcap.reader import PcapCapture
 from defense.network.pcap.pcapng import PcapNgCapture
 from defense.network.pcap.tcp_reassembly import TcpReassemblyError, TcpStreamReassembler
@@ -29,6 +30,7 @@ class CaptureAnalysis:
     dns_count: int
     tls_client_hello_count: int
     analysis_errors: tuple[str, ...]
+    dns_correlation: DnsCorrelation
 
 
 def analyze_capture(
@@ -144,4 +146,4 @@ def analyze_capture(
                 tls_checked.discard(key)
         analyzed.append(AnalyzedPacket(packet.index, timestamp, meta, dns, tls, tuple(notes)))
 
-    return CaptureAnalysis(tuple(analyzed), len(capture.packets), decoded, dns_count, tls_count, tuple(errors))
+    return CaptureAnalysis(tuple(analyzed), len(capture.packets), decoded, dns_count, tls_count, tuple(errors),\n                          correlate_dns_messages(analyzed))
