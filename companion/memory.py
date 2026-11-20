@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from uuid import uuid4
+
+from core.json_file_store import atomic_write_json, file_lock
 
 
 class MemoryStore:
@@ -36,26 +37,14 @@ class MemoryStore:
         return raw
 
     def _save(self, entries: list[dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(prefix=".yuki-memory-", suffix=".tmp", dir=str(self.path.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(entries[-self.MAX_ENTRIES:], handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, self.path)
-        finally:
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
+        atomic_write_json(self.path, entries[-self.MAX_ENTRIES:])
 
     def add(self, text: str, *, category: str = "note") -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT:
             raise ValueError(f"Memory text must be 1-{self.MAX_TEXT} characters.")
         if category not in {"note", "preference", "lesson"}:
             raise ValueError("category must be note, preference, or lesson.")
-        with self._lock:
+        with self._lock, file_lock(self.path):
             entries = self._load()
             item = {"id": uuid4().hex, "created_at": datetime.now(timezone.utc).isoformat(),
                     "category": category, "text": text.strip()}
