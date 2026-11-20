@@ -29,6 +29,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Add read-only discovery that matches catalog proposals to explicitly registered, enabled runtime agents by exact capability ID.
 - [ ] Connect catalog entries to reviewed runtime handlers; catalog presence must never imply execution readiness.
 - [x] Connect plan preparation, required-tool policy checks, approval requests, and lifecycle events in a non-executing orchestrator.
+- [x] Add a bounded task-intelligence boundary for capability recommendations and explicit, reviewable DAG plan preparation.
 - [ ] Connect the workflow to explicit plans, steps, deadlines, and budgets.
 - [ ] Connect tool schemas, typed outputs, per-tool permissions, and approval gates to the workflow transitions.
 - [ ] Add a separately reviewed execution adapter with cancellation, deadlines, bounded retries, and re-authorization immediately before every tool call.
