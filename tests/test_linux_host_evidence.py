@@ -77,6 +77,22 @@ class LinuxHostEvidenceTests(unittest.TestCase):
         with self.assertRaises(SandboxRuntimeError):
             collect_linux_process_snapshot(4242, proc_root=str(self.root))
 
+    def test_rejects_noncanonical_cgroup_path(self):
+        (self.root / "4242" / "cgroup").write_text("0::/yuki//tasks\n", encoding="ascii")
+        with self.assertRaises(SandboxRuntimeError):
+            collect_linux_process_snapshot(4242, proc_root=str(self.root))
+
+    def test_rejects_duplicate_security_fields(self):
+        status = self.root / "4242" / "status"
+        status.write_text(
+            "Uid:\t1000\t1000\nUid:\t1000\t1000\n"
+            "Gid:\t1001\t1001\nNoNewPrivs:\t1\n"
+            "Seccomp:\t2\nCapEff:\t0\n",
+            encoding="ascii",
+        )
+        with self.assertRaises(SandboxRuntimeError):
+            collect_linux_process_snapshot(4242, proc_root=str(self.root))
+
     def test_rejects_missing_security_fields(self):
         status = self.root / "4242" / "status"
         status.write_text("Uid:\t1000\t1000\n", encoding="ascii")
