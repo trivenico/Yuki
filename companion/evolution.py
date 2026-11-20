@@ -91,7 +91,7 @@ class DailyEvolutionCycle:
             raise ValueError("lookback_days must be between 1 and 30.")
         current = current.astimezone(timezone.utc)
         cutoff = current - timedelta(days=lookback_days)
-        with self._lock, file_lock(self.path):
+        with self._lock, file_lock(self.workspace / ".yuki-evolution-state"):
             observations = self._read_list(self.observations_path, self.MAX_OBSERVATIONS)
             recent = []
             for item in observations:
@@ -154,7 +154,7 @@ class DailyEvolutionCycle:
             return report
 
     def status(self) -> dict:
-        with self._lock, file_lock(self.path):
+        with self._lock, file_lock(self.workspace / ".yuki-evolution-state"):
             observations = self._read_list(self.observations_path, self.MAX_OBSERVATIONS)
             try:
                 report = json.loads(self.report_path.read_text(encoding="utf-8"))
@@ -171,7 +171,7 @@ class DailyEvolutionCycle:
             raise ValueError("proposal_id is required.")
         if decision not in {"accepted_for_manual_followup", "rejected"}:
             raise ValueError("decision must be accepted_for_manual_followup or rejected.")
-        with self._lock, file_lock(self.path):
+        with self._lock, file_lock(self.workspace / ".yuki-evolution-state"):
             try:
                 report = json.loads(self.report_path.read_text(encoding="utf-8"))
             except FileNotFoundError:
