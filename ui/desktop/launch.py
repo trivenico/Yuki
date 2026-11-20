@@ -87,12 +87,14 @@ def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -
         revoke_active_session()
 
 
-def _cleanup_failed_desktop_initialization(lifecycle: Any, sessions: Any) -> Exception | None:
-    """Revoke any persisted session and close composed services after startup failure."""
+def _cleanup_failed_desktop_initialization(
+    lifecycle: Any, sessions: Any, controller: Any = None,
+) -> Exception | None:
+    """Revoke the active controller/session and close services after startup failure."""
     if lifecycle is None:
         return None
     try:
-        _shutdown_desktop_services(lifecycle, None, sessions)
+        _shutdown_desktop_services(lifecycle, controller, sessions)
     except Exception as exc:
         # Lifecycle retains failed revocation/resource hooks for closeEvent retry.
         return exc
@@ -1000,7 +1002,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     self._open_session(identity)
             except Exception as exc:
                 cleanup_error = _cleanup_failed_desktop_initialization(
-                    self.lifecycle, self.sessions,
+                    self.lifecycle, self.sessions, self.controller,
                 )
                 self.login_button.setEnabled(False)
                 from core.sqlite_recovery import (
