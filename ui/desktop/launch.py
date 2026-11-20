@@ -1010,6 +1010,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 if identity is not None:
                     self._open_session(identity)
             except Exception as exc:
+                startup_cleanup_failures = getattr(
+                    exc, "yuki_cleanup_failures", (),
+                )
                 cleanup_error = _cleanup_failed_desktop_initialization(
                     self.lifecycle, self.sessions, self.controller,
                 )
@@ -1028,6 +1031,12 @@ MIGRATION COMPLETE — verified manifest written to destination."
                         message += (
                             " Cleanup is incomplete (" + type(cleanup_error).__name__
                             + "); close Yuki to retry safe shutdown."
+                        )
+                    if startup_cleanup_failures:
+                        message += (
+                            " Startup resource cleanup is incomplete ("
+                            + str(len(startup_cleanup_failures))
+                            + " resource(s)); restart after resolving the local resource error."
                         )
                     self.login_status.setText(message)
 
