@@ -77,6 +77,8 @@ class DnsCorrelationTests(unittest.TestCase):
             correlate_dns_messages([], max_pending=0)
         with self.assertRaises(ValueError):
             correlate_dns_messages([], max_age_seconds=0)
+        with self.assertRaises(ValueError):
+            correlate_dns_messages([packet(0, float("nan"))])
 
 
 if __name__ == "__main__":
