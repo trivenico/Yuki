@@ -4,7 +4,7 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import (AuthenticationError, BuiltInAuthService, observation_review_authorizer, workflow_principal_resolver)
+from core.auth import (AuthenticationError, BuiltInAuthService, observation_review_authorizer, task_session_verifier, workflow_principal_resolver)
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -88,6 +88,24 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         with self.assertRaises(AuthenticationError):
             service.approve(run.run_id, request_context="forged-user-token", expected_version=approved.version)
 
+    def test_task_session_verifier_binds_exact_live_token_and_owner(self):
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        first = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        second = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        current = [first.token]
+        verify = task_session_verifier(self.auth, lambda: current[0])
+        self.assertTrue(verify(admin.user_id, first.token))
+        self.assertFalse(verify(admin.user_id, second.token))
+        self.assertFalse(verify("forged-owner", first.token))
+        current[0] = second.token
+        self.assertTrue(verify(admin.user_id, second.token))
+        self.auth.revoke_session(second.token)
+        self.assertFalse(verify(admin.user_id, second.token))
+        current[0] = first.token
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_sessions SET expires_at=? WHERE token_hash=?",
+                       ("2000-01-01T00:00:00+00:00", __import__("hashlib").sha256(first.token.encode("utf-8")).hexdigest()))
+        self.assertFalse(verify(admin.user_id, first.token))
     def test_observation_review_authorization_is_bound_to_live_session_and_actor(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
