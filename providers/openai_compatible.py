@@ -171,7 +171,10 @@ class OpenAICompatibleProvider:
             raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
         try:
             body = json.loads(raw.decode("utf-8"))
-            choice = body["choices"][0]
+            choices = body.get("choices") if isinstance(body, dict) else None
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                raise RuntimeError("Cloud provider returned an unsupported chat response.")
+            choice = choices[0]
             message = choice["message"]
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise RuntimeError("Cloud provider returned an unsupported chat response.") from exc
@@ -292,7 +295,10 @@ class OpenAICompatibleProvider:
                         break
                     try:
                         chunk = json.loads(data.decode("utf-8"))
-                        choice = chunk["choices"][0]
+                        choices = chunk.get("choices") if isinstance(chunk, dict) else None
+                        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                            raise RuntimeError("Cloud provider returned a malformed stream event.")
+                        choice = choices[0]
                         delta = choice.get("delta", {})
                     except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
                         raise RuntimeError("Cloud provider returned a malformed stream event.") from exc
@@ -434,7 +440,11 @@ class OpenAICompatibleProvider:
             raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
         try:
             body = json.loads(raw.decode("utf-8"))
-            message = body["choices"][0]["message"]
+            choices = body.get("choices") if isinstance(body, dict) else None
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                raise RuntimeError("Cloud provider returned an unsupported tool-call response.")
+            choice = choices[0]
+            message = choice["message"]
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise RuntimeError("Cloud provider returned an unsupported tool-call response.") from exc
         if not isinstance(message, dict):
@@ -469,5 +479,5 @@ class OpenAICompatibleProvider:
         return {
             "tool_calls": envelope,
             "text": message.get("content") if isinstance(message.get("content"), str) else "",
-            "finish_reason": body["choices"][0].get("finish_reason"),
+            "finish_reason": choice.get("finish_reason"),
         }
