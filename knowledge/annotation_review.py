@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 import hashlib
 import json
-import re
 from typing import Iterable
 
 from knowledge.annotation import Annotation
@@ -96,7 +95,7 @@ def create_annotation_review(
     """Create a digest-bound review; reviewer_label is not authenticated identity."""
     if not isinstance(reviewer_label, str) or not reviewer_label.strip() or len(reviewer_label) > MAX_REVIEWER_CHARS:
         raise AnnotationReviewError("invalid reviewer_label")
-    if decision not in DECISIONS:
+    if not isinstance(decision, str) or decision not in DECISIONS:
         raise AnnotationReviewError("unsupported review decision")
     if isinstance(confidence, bool) or not isinstance(confidence, int) or not 0 <= confidence <= 100:
         raise AnnotationReviewError("confidence must be an integer from 0 to 100")
@@ -137,7 +136,7 @@ def create_annotation_adjudication(
     adjudicated_at: str,
 ) -> AnnotationAdjudication:
     """Record an explicit human resolution without modifying source reviews."""
-    if decision not in DECISIONS:
+    if not isinstance(decision, str) or decision not in DECISIONS:
         raise AnnotationReviewError("unsupported adjudication decision")
     if not isinstance(adjudicator_label, str) or not adjudicator_label.strip() or len(adjudicator_label) > MAX_REVIEWER_CHARS:
         raise AnnotationReviewError("invalid adjudicator_label")
@@ -157,7 +156,7 @@ def create_annotation_adjudication(
     for item in items:
         if item.annotation_id != annotation.annotation_id or item.annotation_sha256 != annotation_sha:
             raise AnnotationReviewError("source review does not match the adjudicated annotation")
-        if item.decision not in DECISIONS or item.verified:
+        if not _valid_review(item) or item.annotation_sha256 != annotation_sha:
             raise AnnotationReviewError("invalid or improperly verified source review")
     review_digests = tuple(sorted(item.review_sha256 for item in items))
     payload = {
@@ -204,8 +203,10 @@ def calculate_annotation_agreement(
         annotation = by_id[review.annotation_id]
         if review.annotation_sha256 != annotation_digest(annotation):
             raise AnnotationReviewError("review digest does not match current annotation")
-        if review.decision not in DECISIONS or review.verified:
+        if not _valid_review(review):
             raise AnnotationReviewError("invalid or improperly verified review")
+        if any(existing.reviewer_label == review.reviewer_label for existing in grouped[review.annotation_id]):
+            raise AnnotationReviewError("only one review per reviewer label and annotation is allowed")
         grouped[review.annotation_id].append(review)
     if len(review_items) != len({item.review_sha256 for item in review_items}):
         raise AnnotationReviewError("duplicate review digest")
@@ -214,7 +215,7 @@ def calculate_annotation_agreement(
         if not isinstance(record, AnnotationAdjudication) or record.annotation_id not in by_id:
             raise AnnotationReviewError("adjudication references an unknown annotation")
         annotation = by_id[record.annotation_id]
-        if record.annotation_sha256 != annotation_digest(annotation) or record.decision not in DECISIONS or record.verified:
+        if record.annotation_sha256 != annotation_digest(annotation) or record.decision not in DECISIONS or record.verified or not _valid_adjudication(record):
             raise AnnotationReviewError("invalid adjudication binding")
         known = {item.review_sha256 for item in grouped[record.annotation_id]}
         if not set(record.source_review_sha256) <= known or not record.source_review_sha256:
@@ -236,3 +237,48 @@ def calculate_annotation_agreement(
         exact_agreement_ratio=ratio,
         unresolved_disagreement_count=unresolved,
     )
+
+def _valid_review(item: AnnotationReview) -> bool:
+    if item.provenance != "reviewer_supplied_unverified" or item.verified or item.decision not in DECISIONS:
+        return False
+    if not isinstance(item.confidence, int) or isinstance(item.confidence, bool) or not 0 <= item.confidence <= 100:
+        return False
+    if not isinstance(item.reviewer_label, str) or not item.reviewer_label.strip() or len(item.reviewer_label) > MAX_REVIEWER_CHARS:
+        return False
+    if not isinstance(item.rationale, str) or not item.rationale.strip() or len(item.rationale) > MAX_RATIONALE_CHARS:
+        return False
+    try:
+        _timestamp(item.reviewed_at, "reviewed_at")
+    except AnnotationReviewError:
+        return False
+    payload = {
+        "annotation_id": item.annotation_id, "annotation_sha256": item.annotation_sha256,
+        "reviewer_label": item.reviewer_label, "decision": item.decision,
+        "confidence": item.confidence, "rationale": item.rationale,
+        "reviewed_at": item.reviewed_at, "provenance": item.provenance, "verified": False,
+    }
+    return item.review_sha256 == _canonical_digest(payload)
+
+
+def _valid_adjudication(item: AnnotationAdjudication) -> bool:
+    if item.provenance != "human_adjudication_unverified" or item.verified:
+        return False
+    if not isinstance(item.decision, str) or item.decision not in DECISIONS:
+        return False
+    if not isinstance(item.adjudicator_label, str) or not item.adjudicator_label.strip() or len(item.adjudicator_label) > MAX_REVIEWER_CHARS:
+        return False
+    if not isinstance(item.rationale, str) or not item.rationale.strip() or len(item.rationale) > MAX_RATIONALE_CHARS:
+        return False
+    try:
+        _timestamp(item.adjudicated_at, "adjudicated_at")
+    except AnnotationReviewError:
+        return False
+    if not item.source_review_sha256 or tuple(sorted(set(item.source_review_sha256))) != item.source_review_sha256:
+        return False
+    payload = {
+        "annotation_id": item.annotation_id, "annotation_sha256": item.annotation_sha256,
+        "source_review_sha256": item.source_review_sha256, "decision": item.decision,
+        "adjudicator_label": item.adjudicator_label, "rationale": item.rationale,
+        "adjudicated_at": item.adjudicated_at, "provenance": item.provenance, "verified": False,
+    }
+    return item.adjudication_sha256 == _canonical_digest(payload)
