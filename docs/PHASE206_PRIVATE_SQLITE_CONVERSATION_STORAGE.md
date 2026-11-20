@@ -41,8 +41,11 @@ running as the same OS account.
   created with owner-only mode where the platform honors POSIX modes.
 - Backup archives, copied databases, WAL checkpoints, retention, deletion,
   key management and restore drills remain separate acceptance requirements.
-- This does not resolve the older authentication-database follow-up issue
-  (#269); that issue needs current-path reconciliation before implementation.
+- Issue #269's current source paths are now reconciled: the CLI and desktop
+  create the auth database beneath the private desktop data root, the SQLite
+  helper tightens the database file, and .gitignore excludes SQLite databases,
+  WAL/SHM sidecars and transaction lock files. Cross-platform CI and backup/
+  recovery review are still required before closing the issue.
 
 ## Tests
 
