@@ -55,7 +55,7 @@ def _parse_start_time(stat_text: str) -> int:
     if close < 0:
         raise SandboxRuntimeError("malformed procfs stat record")
     fields = stat_text[close + 1 :].strip().split()
-    if len(fields) < 20 or not _UINT_RE.fullmatch(fields[19]):
+    if len(fields) < 20 or len(fields[19]) > 20 or not _UINT_RE.fullmatch(fields[19]):
         raise SandboxRuntimeError("procfs stat record has invalid start time")
     return int(fields[19])
 
