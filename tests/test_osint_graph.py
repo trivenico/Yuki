@@ -36,6 +36,8 @@ class OsintGraphTests(unittest.TestCase):
         self.assertEqual(graph.edges[0].source.value, "example.test")
         self.assertEqual(graph.edges[0].target.value, "192.0.2.10")
         self.assertEqual(len(graph.edges[0].evidence_ids), 1)
+        self.assertEqual(len(graph.observations), 2)
+        self.assertEqual({item.evidence_id for item in graph.observations}, set(graph.edges[0].evidence_ids))
         self.assertEqual(graph.evidence[0].source_label, "owner_inventory.csv")
         self.assertFalse(graph.evidence[0].verified)
 
@@ -69,6 +71,8 @@ class OsintGraphTests(unittest.TestCase):
     def test_rejects_malformed_json_and_oversized_input(self):
         with self.assertRaises(OsintImportError):
             parse_osint_jsonl(b"{bad}")
+        with self.assertRaises(OsintImportError):
+            parse_osint_jsonl(b'{"evidence_id":"x","evidence_id":"y"}')
         with self.assertRaises(OsintImportError):
             parse_osint_jsonl(b" " * 100, max_bytes=10)
 
