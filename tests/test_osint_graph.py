@@ -78,7 +78,7 @@ class OsintGraphTests(unittest.TestCase):
 
 
     def test_exports_deterministic_graphml_with_evidence_and_unverified_state(self):
-        graph = parse_osint_jsonl((json.dumps(record(value="a&b.example")) + "\n").encode())
+        graph = parse_osint_jsonl((json.dumps(record(indicator_type="url", value="https://a.example/a&b")) + "\n").encode())
         first = export_graphml(graph)
         second = export_graphml(graph)
         self.assertEqual(first, second)
@@ -87,7 +87,7 @@ class OsintGraphTests(unittest.TestCase):
         ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
         self.assertEqual(len(root.findall(".//g:node", ns)), 2)
         values = [item.text for item in root.findall(".//g:data[@key='node_value']", ns)]
-        self.assertIn("a&b.example", values)
+        self.assertIn("https://a.example/a&b", values)
         self.assertIn("false", [item.text for item in root.findall(".//g:data[@key='edge_verified']", ns)])
         self.assertIn(graph.evidence[0].evidence_id, first.decode())
         self.assertTrue(all(item.text for item in root.findall(".//g:data[@key='node_evidence']", ns)))
