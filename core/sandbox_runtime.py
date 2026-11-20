@@ -26,9 +26,10 @@ _ALLOWED_MAC = frozenset({"apparmor", "selinux"})
 
 @dataclass(frozen=True)
 class SandboxRuntimeCapabilities:
-    """Runtime claims supplied by a trusted, reviewed backend adapter.
+    """Untrusted capability declarations, never proof of enforcement.
 
-    This record is not a host probe and cannot independently prove enforcement.
+    These values are diagnostic metadata only. A trusted host-side verifier
+    is not implemented, so callers cannot promote these claims into attestation.
     """
     runtime_name: str
     runtime_version: str
@@ -42,7 +43,6 @@ class SandboxRuntimeCapabilities:
     host_secret_exclusion: bool
     resource_limits: bool
     ephemeral_cleanup: bool
-    verified_backend: bool = False
 
     def __post_init__(self) -> None:
         if type(self.runtime_name) is not str or not self.runtime_name.strip() or len(self.runtime_name) > 80:
@@ -56,7 +56,7 @@ class SandboxRuntimeCapabilities:
         for field in (
             "rootless", "seccomp", "cgroups_v2", "network_isolation",
             "read_only_mounts", "host_secret_exclusion", "resource_limits",
-            "ephemeral_cleanup", "verified_backend",
+            "ephemeral_cleanup",
         ):
             if type(getattr(self, field)) is not bool:
                 raise SandboxRuntimeError(f"{field} must be a boolean")
@@ -66,15 +66,16 @@ def validate_runtime_capabilities(
     policy: SandboxPolicy,
     capabilities: SandboxRuntimeCapabilities,
 ) -> None:
-    """Fail closed unless a reviewed backend reports all required controls."""
+    """Reject declarations until a trusted host-side verifier exists.
+
+    A set of booleans is not evidence that the host runtime enforces isolation.
+    """
     if not isinstance(policy, SandboxPolicy):
         raise TypeError("policy must be a SandboxPolicy")
     policy.validate()
     if not isinstance(capabilities, SandboxRuntimeCapabilities):
         raise TypeError("capabilities must be SandboxRuntimeCapabilities")
-    missing = []
-    if not capabilities.verified_backend:
-        missing.append("trusted reviewed backend adapter")
+    missing = ["trusted host-side runtime probe/attestation (not implemented)"]
     if not capabilities.rootless:
         missing.append("rootless runtime")
     if not _REQUIRED_NAMESPACES <= capabilities.namespaces:
