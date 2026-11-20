@@ -87,6 +87,20 @@ def _safe_location(value):
         return None
 
 
+def _safe_target(value):
+    raw = _bounded_text(value, "target", 512, required=True)
+    if raw.lower().startswith(("http://", "https://")):
+        safe = _safe_location(raw)
+        if safe is None:
+            raise NucleiReportError("invalid target URL")
+        return safe
+    if any(char in raw for char in ("/", "?", "#", "@", chr(92))) or any(ord(char) < 33 for char in raw):
+        raise NucleiReportError("target must be a host or sanitized URL")
+    if not re.fullmatch(r"[A-Za-z0-9.:[\\]-]{1,512}", raw):
+        raise NucleiReportError("invalid target host")
+    return raw
+
+
 def _finding(record):
     if not isinstance(record, dict):
         raise NucleiReportError("each report line must be a JSON object")
@@ -103,7 +117,7 @@ def _finding(record):
     protocol = _bounded_text(record.get("type", "unknown"), "protocol", 32).lower()
     if not re.fullmatch(r"[a-z0-9_-]{1,32}", protocol):
         protocol = "unknown"
-    target = _bounded_text(record.get("host"), "target", 512, required=True)
+    target = _safe_target(record.get("host"))
     # Never preserve URL credentials, query parameters, fragments, or raw payloads.
     safe_location = _safe_location(record.get("matched-at"))
     matcher = _bounded_text(record.get("matcher-name"), "matcher-name", 128)
