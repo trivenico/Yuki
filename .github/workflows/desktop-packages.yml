@@ -121,4 +121,4 @@ jobs:
       - name: Attest native desktop artifacts and metadata
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: ${{ runner.temp }}/desktop-artifacts/**/*
+          subject-path: ${{ runner.temp }}/desktop-artifacts/**/SHA256SUMS.txt
