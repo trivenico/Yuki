@@ -93,9 +93,9 @@ class GeminiCLIProvider(BaseProvider):
                 kwargs["start_new_session"] = True
             try:
                 process = subprocess.Popen(
-                    [executable, "--prompt", prompt, "--sandbox", "--approval-mode", "plan"],
+                    [executable, "--sandbox", "--approval-mode", "plan"],
                     cwd=workdir,
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     shell=False,
@@ -104,6 +104,15 @@ class GeminiCLIProvider(BaseProvider):
                 )
             except OSError as exc:
                 raise RuntimeError("Gemini CLI could not be started.") from exc
+
+            try:
+                if process.stdin is None:
+                    raise OSError("Gemini CLI input pipe was unavailable.")
+                process.stdin.write(prompt.encode("utf-8"))
+                process.stdin.close()
+            except (OSError, ValueError) as exc:
+                self._stop_process(process)
+                raise RuntimeError("Gemini CLI prompt could not be delivered safely.") from exc
 
             captured = bytearray()
             reader_errors = []
