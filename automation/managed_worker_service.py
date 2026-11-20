@@ -109,7 +109,11 @@ class ManagedWorkerService:
 
     def wait_until_idle(self, timeout: float | None = None) -> bool:
         """Wait for the active finite cycle to finish; no work is cancelled."""
-        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0):
+        if timeout is not None and (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or timeout < 0
+        ):
             raise ValueError("timeout must be a non-negative number or None.")
         deadline = None if timeout is None else monotonic() + timeout
         with self._condition:
