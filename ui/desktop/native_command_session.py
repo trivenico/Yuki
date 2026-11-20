@@ -6,6 +6,10 @@ from typing import Any
 from core.native_command_runtime import NativeCommandRuntime
 
 
+class AuthenticatedNativeSessionExpired(PermissionError):
+    """Raised only when the desktop identity/session is no longer current."""
+
+
 class AuthenticatedNativeCommandSession:
     """Revalidate the live desktop session before every native command."""
 
@@ -18,14 +22,14 @@ class AuthenticatedNativeCommandSession:
         if not callable(getattr(sessions, "current_identity", None)):
             raise TypeError("sessions must provide current_identity().")
         if sessions.current_identity() != identity:
-            raise PermissionError("The desktop session is no longer authenticated.")
+            raise AuthenticatedNativeSessionExpired("The desktop session is no longer authenticated.")
         self._runtime = runtime
         self._identity = identity
         self._sessions = sessions
 
     def dispatch(self, text: str, *, confirmed: bool = False):
         if self._sessions.current_identity() != self._identity:
-            raise PermissionError("The desktop session expired. Sign in again.")
+            raise AuthenticatedNativeSessionExpired("The desktop session expired. Sign in again.")
         return self._runtime.dispatch(
             authenticated_actor_id=self._identity.actor_id,
             text=text,
@@ -33,4 +37,4 @@ class AuthenticatedNativeCommandSession:
         )
 
 
-__all__ = ["AuthenticatedNativeCommandSession"]
+__all__ = ["AuthenticatedNativeCommandSession", "AuthenticatedNativeSessionExpired"]
