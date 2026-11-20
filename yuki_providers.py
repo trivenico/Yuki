@@ -26,10 +26,13 @@ class ProviderManager:
         configured_provider = self._config.get("provider")
         if configured_provider is None:
             configured_provider = self._environ.get("YUKI_PROVIDER")
-        self._selected: Optional[str] = (
+        selected_name = (
             str(configured_provider).strip().lower()
             if isinstance(configured_provider, str) and configured_provider.strip()
             else None
+        )
+        self._selected: Optional[str] = (
+            None if selected_name in {"none", "native", "native-only"} else selected_name
         )
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
