@@ -31,7 +31,7 @@ The runtime now supports:
 - `YUKI_CONFIG`: optional config file path. If not set, the repository's `config.yaml` is used.
 - `workspace` in the YAML config: relative workspace paths resolve under `YUKI_HOME` when configured; absolute paths remain absolute.
 
-The Windows launcher defaults `YUKI_HOME` to `YukiData` beside the repository. The Unix launcher uses `YukiData` beside the repository unless `YUKI_HOME` is already set. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
+Both launchers default `YUKI_HOME` to `YukiData` beside the repository only when it is not already set, so an explicit data location is preserved consistently across Windows, Linux and macOS. Both launchers require Python 3.10 or newer and the PyYAML dependency; they do not install software or elevate privileges. Put private memory, health/habit records, reminders, evolution reports, downloaded models, and tokens only in this data area or another deliberate private location. The data directory is ignored by Git.
 
 ## Recommended SSD layout
 
@@ -58,4 +58,4 @@ The launcher scripts are starter launchers, not a portable Python runtime and no
 
 ## Portability acceptance checklist
 
-Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. This commit adds path-resolution tests and launch scripts; it does not yet provide that complete cross-platform test matrix.
+Before describing a release as portable, CI should verify path resolution on Windows and Linux, launch smoke tests, workspace persistence when the drive path contains spaces, backup/restore, and safe behavior when the SSD is absent or read-only. The launchers enforce the declared Python 3.10 minimum and preserve explicit data-root overrides. Regression tests check these launcher contracts, but they do not execute the Windows batch file or prove the full cross-platform portability matrix.
