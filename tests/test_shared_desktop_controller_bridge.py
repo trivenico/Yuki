@@ -102,9 +102,39 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
         self.assertEqual(chat.close_count, 1)
         specialists.fail_logout = False
         self.assertTrue(bridge.logout())
-        self.assertEqual(chat.close_count, 2)
+        self.assertEqual(chat.close_count, 1)
         self.assertEqual(
             [call[0] for call in specialists.calls].count("logout"), 2,
+        )
+
+    def test_successful_specialist_logout_is_not_repeated_when_chat_close_retries(self):
+        class FlakyChat(Chat):
+            def __init__(self):
+                super().__init__()
+                self.fail_close = True
+
+            def logout(self):
+                self.close_count += 1
+                if self.fail_close:
+                    raise OSError("temporary chat close failure")
+
+        chat = FlakyChat()
+        specialists = Specialists()
+        add_methods(specialists)
+        bridge = SharedDesktopControllerBridge(chat, specialists)
+
+        with self.assertRaisesRegex(RuntimeError, "logout"):
+            bridge.logout()
+        self.assertEqual(chat.close_count, 1)
+        self.assertEqual(
+            [call[0] for call in specialists.calls].count("logout"), 1,
+        )
+
+        chat.fail_close = False
+        self.assertFalse(bridge.logout())
+        self.assertEqual(chat.close_count, 2)
+        self.assertEqual(
+            [call[0] for call in specialists.calls].count("logout"), 1,
         )
 
     def test_chat_authorization_failure_closes_both_session_surfaces(self):
