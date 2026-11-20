@@ -69,10 +69,13 @@ def config_path() -> Path:
         if not path.is_absolute():
             path = (REPOSITORY_ROOT / path).resolve()
         return path.resolve()
+    user_config = _user_config_root() / "config.yaml"
+    if user_config.is_file():
+        return user_config.resolve()
     source_config = REPOSITORY_ROOT / "config.yaml"
     if source_config.is_file():
         return source_config.resolve()
-    return (_user_config_root() / "config.yaml").resolve()
+    return user_config.resolve()
 
 
 def workspace_path(configured_workspace: str) -> Path:
