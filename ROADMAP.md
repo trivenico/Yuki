@@ -35,6 +35,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Add a versioned specialist result envelope with strict provenance boundaries and explicit unverified-output limitations.
 - [x] Add read-only plan synthesis that preserves specialist/task provenance, reports incomplete work, and leaves conflict adjudication to human review.
 - [x] Add deterministic structural quality checks for synthesis coverage, source traceability, duplicate references, and provenance labels without claiming semantic correctness.
+- [x] Add explicit, bounded specialist disagreement records that require distinct source tasks and preserve unresolved positions for human review.
 - [ ] Connect tool schemas, typed outputs, per-tool permissions, and approval gates to the workflow transitions.
 - [ ] Add a separately reviewed execution adapter with cancellation, deadlines, bounded retries, and re-authorization immediately before every tool call.
 - [ ] Add retry limits, idempotency, cancellation, and recovery from partial failure.
