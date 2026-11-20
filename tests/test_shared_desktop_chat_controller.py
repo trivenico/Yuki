@@ -142,6 +142,45 @@ class SharedDesktopChatControllerTests(unittest.TestCase):
         self.assertEqual(session.close_count, 1)
         self.assertTrue(worker_errors)
 
+    def test_logout_waits_for_in_flight_history_read_before_closing_store(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingReadConversation(Conversation):
+            def list_conversations(self, *, limit=50):
+                entered.set()
+                release.wait(timeout=2)
+                return []
+
+        session = Session()
+        session.conversation = BlockingReadConversation()
+        controller = SharedDesktopChatController(session)
+        read_errors = []
+        reader = threading.Thread(
+            target=lambda: self._capture_error(
+                read_errors, controller.list_conversations
+            )
+        )
+        reader.start()
+        self.assertTrue(entered.wait(timeout=1))
+
+        logout_done = threading.Event()
+        logout = threading.Thread(
+            target=lambda: (controller.logout(), logout_done.set())
+        )
+        logout.start()
+        self.assertFalse(logout_done.wait(timeout=0.05))
+        self.assertEqual(session.close_count, 0)
+
+        release.set()
+        reader.join(timeout=1)
+        logout.join(timeout=1)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(logout.is_alive())
+        self.assertTrue(logout_done.is_set())
+        self.assertEqual(read_errors, [])
+        self.assertEqual(session.close_count, 1)
+
     def test_non_completed_turn_is_not_presented_as_success(self):
         class FailedConversation(Conversation):
             def send(self, message, **kwargs):
