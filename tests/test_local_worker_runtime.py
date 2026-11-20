@@ -100,6 +100,26 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             self.assertNotEqual(first.approval_session_id, second.approval_session_id)
             self.assertGreaterEqual(len(first.approval_session_id), 32)
 
+    def test_task_approval_requires_exact_ephemeral_local_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="local-session-approval",
+                subtasks=[SubtaskSpec("research", "Collect public sources", ("research",))],
+            )
+            plan = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            task_id = plan.subtasks[0].task_id
+            task = built.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id)
+            with self.assertRaises(PermissionError):
+                built.runtime.approve(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id,
+                                      session_id="caller-forged-session", expected_version=task.version)
+            approved = built.runtime.approve(
+                actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id,
+                session_id=built.approval_session_id, expected_version=task.version,
+            )
+            self.assertEqual(approved.state, "queued")
+            self.assertEqual(approved.version, task.version + 1)
     def test_local_operator_can_cancel_a_plan_through_authorized_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider())
