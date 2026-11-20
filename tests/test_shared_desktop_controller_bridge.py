@@ -14,6 +14,12 @@ class Chat:
         if self.fail_authorization:
             raise PermissionError("session expired")
         return "shared chat reply"
+    def list_conversations(self, *, limit=50):
+        return []
+    def select_conversation(self, conversation_id):
+        return conversation_id
+    def history(self, *, limit=100):
+        return []
     def set_memory_context(self, enabled):
         self.calls.append(("memory", enabled))
     def memory_context_enabled(self):
