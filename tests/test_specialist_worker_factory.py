@@ -99,6 +99,26 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
         self.assertEqual(completed.result["specialist"], "reviewer")
         self.assertEqual(completed.result["output"], "bounded specialist result")
 
+    def test_rejects_non_emit_agent_actions(self):
+        with self.assertRaises(ValueError):
+            self.build({"legacy": "coding"})
+
+    def test_requires_exact_same_task_runtime_as_coordinator(self):
+        other = TaskRuntime(
+            WorkflowRunStore(str(Path(self.tmp.name) / "other.sqlite3")),
+            authorize=lambda actor, action, task: actor == "worker-service",
+        )
+        with self.assertRaises(ValueError):
+            build_registered_specialist_worker(
+                coordinator=self.coordinator,
+                runtime=other,
+                actor_id="owner",
+                worker_id="worker-1",
+                service_actor_id="worker-service",
+                provider_manager=FakeProviderManager(),
+                agent_roles={"reviewer": "coding"},
+            )
+
     def test_registry_read_authorization_is_required(self):
         with self.assertRaises(PermissionError):
             build_registered_specialist_worker(
