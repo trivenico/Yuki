@@ -30,6 +30,12 @@ class OsintNode:
 
 
 @dataclass(frozen=True)
+class OsintObservation:
+    node: OsintNode
+    evidence_id: str
+
+
+@dataclass(frozen=True)
 class OsintEdge:
     source: OsintNode
     relationship: str
@@ -51,6 +57,7 @@ class OsintGraph:
     nodes: tuple[OsintNode, ...]
     edges: tuple[OsintEdge, ...]
     evidence: tuple[OsintEvidence, ...]
+    observations: tuple[OsintObservation, ...]
     skipped_records: int = 0
 
 
@@ -132,6 +139,7 @@ def parse_osint_jsonl(payload: bytes, *, max_bytes: int = _MAX_BYTES,
 
     nodes: set[OsintNode] = set()
     edge_evidence: dict[tuple[OsintNode, str, OsintNode], set[str]] = {}
+    observations: set[OsintObservation] = set()
     evidence: dict[str, OsintEvidence] = {}
     skipped = 0
     count = 0
@@ -166,16 +174,18 @@ def parse_osint_jsonl(payload: bytes, *, max_bytes: int = _MAX_BYTES,
         value = normalize_indicator(kind, _text(row.get("value"), "indicator value", 2048))
         left = OsintNode(kind, value)
         nodes.add(left)
+        observations.add(OsintObservation(left, digest))
         relationship = row.get("relationship")
         if relationship is None:
             skipped += 1
             continue
-        if relationship not in _RELATIONSHIPS:
+        if not isinstance(relationship, str) or relationship not in _RELATIONSHIPS:
             raise OsintImportError("unsupported relationship")
         right_kind = _text(row.get("related_type"), "related indicator type", 16).lower()
         right_value = normalize_indicator(right_kind, _text(row.get("related_value"), "related indicator value", 2048))
         right = OsintNode(right_kind, right_value)
         nodes.add(right)
+        observations.add(OsintObservation(right, digest))
         key = (left, relationship, right)
         edge_evidence.setdefault(key, set()).add(digest)
 
@@ -185,4 +195,5 @@ def parse_osint_jsonl(payload: bytes, *, max_bytes: int = _MAX_BYTES,
             edge_evidence.items(), key=lambda item: (item[0][0], item[0][1], item[0][2])
         )
     )
-    return OsintGraph(tuple(sorted(nodes)), edges, tuple(evidence[key] for key in sorted(evidence)), skipped)
+    ordered_observations = tuple(sorted(observations, key=lambda item: (item.node, item.evidence_id)))
+    return OsintGraph(tuple(sorted(nodes)), edges, tuple(evidence[key] for key in sorted(evidence)),\n                      ordered_observations, skipped)
