@@ -6,7 +6,7 @@
 - `TaskRuntime.approve()` now requires the verifier to return the literal boolean `True` before it calls the durable approval store. A missing verifier, invalid session input, verifier exception, expired/revoked session, mismatched owner, or alternate session fails closed.
 - `core.auth.task_session_verifier()` binds the supplied session identifier to a trusted current-token provider, resolves that token through `BuiltInAuthService.resolve_session()`, and checks the resolved account ID using constant-time comparisons.
 - The local specialist-worker composition creates one cryptographically random process-scoped approval capability and injects a verifier that accepts only that exact capability for `LOCAL_OPERATOR_ACTOR`. It is generated before runtime construction and returned through the existing local runtime object for the interactive local operator surface.
-- The specialist worker hashes that exact capability and supplies the digest to the store claim transaction. Protected tasks approved under another session remain queued and cannot be claimed by the new process after restart; the owner must explicitly approve them again in the current process.
+- The specialist worker hashes that exact capability and supplies the digest to the store claim transaction. Parallel worker instances inherit the same process capability and cannot accidentally widen the approval scope. Protected tasks approved under another session remain queued and cannot be claimed by the new process after restart; the owner must explicitly approve them again in the current process.
 - Tests now cover missing verifier, invalid session, verifier exception, exact token matching, same-owner alternate sessions, forged actor IDs, revocation, expiry, and local runtime approval binding.
 
 ## Security properties
@@ -15,6 +15,7 @@
 - Caller-supplied actor and session identifiers are not trusted without an independently injected verifier.
 - The durable store continues to persist only a SHA-256 digest of the approval session identifier.
 - A rejected approval does not update the workflow state or append an approval event.
+- Phase 111 adds a durable revoked-session fence: approval and worker claim transactions reject session hashes recorded as revoked, and revocation atomically cancels queued and running work approved by that owner/session.
 - The local worker's random approval capability is process-scoped, not a replacement for OS account authentication or a hosted bearer-session implementation.
 
 ## Scope and limitations
