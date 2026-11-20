@@ -187,9 +187,9 @@ class GeminiCLIProviderTests(unittest.TestCase):
                 raise RuntimeError("thread unavailable")
             return real_thread.start(thread)
 
-        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
-             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \\
-             patch("providers.gemini_cli.threading.Thread.start", autospec=True, side_effect=fail_second_start), \\
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \
+             patch("providers.gemini_cli.threading.Thread.start", autospec=True, side_effect=fail_second_start), \
              patch.object(provider, "_stop_process") as stop_process:
             with self.assertRaisesRegex(RuntimeError, "I/O workers could not be started"):
                 provider.generate("hello")
