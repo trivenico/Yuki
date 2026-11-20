@@ -108,7 +108,7 @@ def analyze_workspace_change_impact(
     for change in proposal.changes:
         if not isinstance(change.path, str) or not isinstance(change.content, str):
             raise ValueError("proposal changes must contain valid path and text content.")
-        if "\\x00" in change.content:
+        if "\x00" in change.content:
             raise ValueError("proposed source content must not contain NUL bytes.")
         digest_items.append({
             "path": change.path,
