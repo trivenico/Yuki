@@ -50,6 +50,27 @@ class DatasetManifestTests(unittest.TestCase):
                 split_assignments={"img-1": "train", "img-2": ["test"], "img-3": "test"},
             )
 
+    def test_identical_asset_fingerprints_cannot_cross_splits(self):
+        digest = "b" * 64
+        rows = [
+            {"annotation_id": "dup-1", "task_type": "classification", "label": "cat", "asset_id": "copy-a", "asset_sha256": digest},
+            {"annotation_id": "dup-2", "task_type": "classification", "label": "cat", "asset_id": "copy-b", "asset_sha256": digest},
+        ]
+        dataset = import_annotation_jsonl(
+            b"\n".join(json.dumps(row).encode() for row in rows),
+            source_format="normalized", source_label="duplicate-test", imported_at="now",
+        )
+        with self.assertRaises(DatasetManifestError):
+            create_dataset_manifest(
+                dataset, dataset_id="duplicates-v1",
+                split_assignments={"copy-a": "train", "copy-b": "test"},
+            )
+        manifest = create_dataset_manifest(
+            dataset, dataset_id="duplicates-v1",
+            split_assignments={"copy-a": "train", "copy-b": "train"},
+        )
+        self.assertEqual(len(manifest.asset_splits), 2)
+
     def test_rejects_unknown_groups_and_empty_datasets(self):
         dataset = self.dataset()
         with self.assertRaises(DatasetManifestError):
