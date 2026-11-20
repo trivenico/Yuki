@@ -32,7 +32,7 @@ The Windows and macOS/Linux installer scripts create a virtual environment, inst
 
 ## Guided provider setup
 
-Run `yuki setup` to choose OpenAI, Ollama, or Gemini and save non-secret provider preferences. OpenAI and Ollama ask for a model name; Gemini uses the installed CLI's own model/authentication configuration. Setup never asks for, reads, or stores API keys.
+Run `yuki setup` to choose OpenAI, Ollama, or Gemini and save non-secret provider preferences. OpenAI and Ollama ask for a model name; Gemini uses the installed CLI's own model/authentication configuration. Setup never requests or stores API keys. It checks existing YAML for credential-like field names before rewriting it and refuses to modify a configuration containing such fields; move credentials to environment variables or an OS secret manager first.
 
 The setup command writes configuration atomically to the selected user configuration path and applies owner-only permissions on POSIX systems. From a source checkout, setup writes to the OS user configuration directory by default and deliberately refuses to modify repository files. Set `YUKI_CONFIG` only when you want a different configuration path. For OpenAI, set `OPENAI_API_KEY` separately in your shell or secret manager. After setup, run `yuki provider-status`; run `yuki provider-test` only when you consent to sending its fixed probe to the selected provider.
 
