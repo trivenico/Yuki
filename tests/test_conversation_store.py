@@ -271,5 +271,49 @@ class ConversationStoreTests(unittest.TestCase):
                 366.0,
             )
 
+
+    def test_assistant_persistence_requires_current_live_lease_when_fenced(self):
+        from unittest.mock import patch
+
+        conversation_id = self.conversation["conversation_id"]
+        with patch("core.conversation_store.time.time", return_value=400.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="current-worker", ttl_seconds=10,
+            )
+            with self.assertRaisesRegex(ConversationConflict, "lease is no longer owned"):
+                self.store.append_message(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    role="assistant", content="Stale response",
+                    idempotency_key="assistant:stale", expected_version=0,
+                    lease_token="stale-worker",
+                )
+            accepted = self.store.append_message(
+                owner_id=self.owner, conversation_id=conversation_id,
+                role="assistant", content="Current response",
+                idempotency_key="assistant:current", expected_version=0,
+                lease_token="current-worker",
+            )
+            self.assertTrue(accepted["created"])
+            self.assertEqual(accepted["message"]["content"], "Current response")
+
+    def test_expired_lease_cannot_persist_assistant_even_before_reclaim(self):
+        from unittest.mock import patch
+
+        conversation_id = self.conversation["conversation_id"]
+        with patch("core.conversation_store.time.time", return_value=500.0):
+            self.store.acquire_generation_lease(
+                owner_id=self.owner, conversation_id=conversation_id,
+                lease_token="expired-worker", ttl_seconds=5,
+            )
+        with patch("core.conversation_store.time.time", return_value=506.0):
+            with self.assertRaisesRegex(ConversationConflict, "lease is no longer owned"):
+                self.store.append_message(
+                    owner_id=self.owner, conversation_id=conversation_id,
+                    role="assistant", content="Expired response",
+                    idempotency_key="assistant:expired", expected_version=0,
+                    lease_token="expired-worker",
+                )
+
 if __name__ == "__main__":
     unittest.main()
