@@ -183,6 +183,7 @@ class SpecialistTaskWorker:
             or len(approval_session_id) > 512 or chr(0) in approval_session_id
         ):
             raise ValueError("approval_session_id must be bounded non-empty text.")
+        self.approval_session_id = approval_session_id
         self.approval_session_hash = hashlib.sha256(approval_session_id.encode("utf-8")).hexdigest()
         if compute_scheduler is not None and not isinstance(compute_scheduler, ComputeScheduler):
             raise TypeError("compute_scheduler must be a ComputeScheduler.")
@@ -222,6 +223,7 @@ class SpecialistTaskWorker:
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
                 compute_scheduler=self.compute_scheduler, compute_request=self.compute_request,
+                approval_session_id=self.approval_session_id,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
