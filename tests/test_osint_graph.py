@@ -78,7 +78,7 @@ class OsintGraphTests(unittest.TestCase):
 
 
     def test_exports_deterministic_graphml_with_evidence_and_unverified_state(self):
-        graph = parse_osint_jsonl((json.dumps(record(value="a&b.example")) + "\\n").encode())
+        graph = parse_osint_jsonl((json.dumps(record(value="a&b.example")) + "\n").encode())
         first = export_graphml(graph)
         second = export_graphml(graph)
         self.assertEqual(first, second)
@@ -92,7 +92,7 @@ class OsintGraphTests(unittest.TestCase):
         self.assertIn(graph.evidence[0].evidence_id, first.decode())
 
     def test_graphml_export_rejects_invalid_limits_and_graphs(self):
-        graph = parse_osint_jsonl((json.dumps(record()) + "\\n").encode())
+        graph = parse_osint_jsonl((json.dumps(record()) + "\n").encode())
         with self.assertRaises(OsintImportError):
             export_graphml(graph, max_bytes=0)
         with self.assertRaises(OsintImportError):
