@@ -76,7 +76,7 @@ def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -
 
 def _build_services():
     import os
-    from core.auth import BuiltInAuthService, task_permission_authorizer
+    from core.auth import BuiltInAuthService, task_permission_authorizer, task_session_verifier
     from core.config import load_config
     from core.portable_paths import desktop_data_root
     from providers.factory import create_provider
@@ -127,15 +127,21 @@ def _build_services():
     provider = None
     try:
         provider = create_provider(config)
+        def session_token_provider():
+            identity = sessions.current_identity()
+            return identity.session_id if identity is not None else ""
+
         permission_check = task_permission_authorizer(
-            auth,
-            session_token_provider=lambda: (
-                sessions.current_identity().session_id
-                if sessions.current_identity() is not None else ""
-            ),
+            auth, session_token_provider=session_token_provider,
+        )
+        verify_task_session = task_session_verifier(
+            auth, session_token_provider=session_token_provider,
         )
         task_db = str(root / "tasks.sqlite3")
-        runtime = TaskRuntime(WorkflowRunStore(task_db), authorize=permission_check)
+        runtime = TaskRuntime(
+            WorkflowRunStore(task_db), authorize=permission_check,
+            verify_session=verify_task_session,
+        )
         built_in_agents = (
             SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
             SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
