@@ -269,6 +269,33 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
 
+    def test_tool_call_paths_reject_non_text_tool_names(self):
+        body = self.response([{
+            "id": "call_bad_name", "type": "function",
+            "function": {"name": ["lookup"], "arguments": "{}"},
+        }])
+        for method in ("generate_with_tools", "generate_chat"):
+            opener = FakeOpener(body, self.requests)
+            with self.subTest(method=method), patch(
+                "providers.openai_compatible.urllib.request.build_opener", return_value=opener
+            ), self.assertRaises(RuntimeError):
+                if method == "generate_with_tools":
+                    self.provider.generate_with_tools("Find", self.tools)
+                else:
+                    self.provider.generate_chat(
+                        messages=[{"role": "user", "content": "Find"}], tools=self.tools)
+
+        chunk = {"choices": [{"delta": {"tool_calls": [{
+            "index": 0, "id": "call_bad_stream", "function": {
+                "name": ["lookup"], "arguments": "{}",
+            },
+        }]}, "finish_reason": "tool_calls"}]}
+        opener = FakeStreamOpener(["data: " + json.dumps(chunk) + "\\n", "data: [DONE]\\n"], self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "invalid tool name"):
+                list(self.provider.generate_chat_stream(
+                    messages=[{"role": "user", "content": "Find"}], tools=self.tools))
+
     def test_sse_tool_choice_none_rejects_returned_tool_calls(self):
         chunk = {"choices": [{"delta": {"tool_calls": [
             {"index": 0, "id": "call_none", "function": {"name": "lookup", "arguments": "{\"key\":\"x\"}"}}
