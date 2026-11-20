@@ -92,7 +92,7 @@ class OllamaProvider:
             normalized_messages.append({"role": role, "content": content})
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
-        if tool_choice not in ("auto", "none", "required"): 
+        if tool_choice not in ("auto", "none", "required"):
             raise ValueError("tool_choice is invalid.")
         if tool_choice == "required" and not tools:
             raise ValueError("At least one tool is required.")
