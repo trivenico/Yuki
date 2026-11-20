@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from unittest.mock import Mock
 
 from core.native_intents import IntentKind
+from automation.task_runtime import TaskRuntime
 from core.native_task_command_adapter import NativeTaskCommandAdapter
 
 
@@ -34,7 +35,7 @@ class Record:
 
 class NativeTaskCommandAdapterTests(unittest.TestCase):
     def setUp(self):
-        self.runtime = Mock()
+        self.runtime = Mock(spec=TaskRuntime)
         self.runtime.list_task_summaries.return_value = [Summary()]
         self.runtime.get.return_value = Record(steps=[{"secret": "do not expose"}], result={"token": "do not expose"})
         self.capability_checks = []
