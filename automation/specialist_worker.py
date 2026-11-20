@@ -285,7 +285,17 @@ class SpecialistTaskWorker:
         heartbeat = Thread(
             target=renew_lease, name="yuki-task-lease-heartbeat", daemon=True,
         )
-        heartbeat.start()
+        try:
+            heartbeat.start()
+        except Exception:
+            # Do not strand a claimed task in running state when its lease
+            # heartbeat cannot be started; fail it while the original lease
+            # and version still prove this worker's ownership.
+            return self.runtime.fail(
+                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                expected_version=claimed.version, worker_id=self.worker_id,
+                error_code="lease_heartbeat_unavailable",
+            )
         output = None
         handler_failed = False
         try:
