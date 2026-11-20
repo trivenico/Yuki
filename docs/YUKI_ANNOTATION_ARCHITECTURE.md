@@ -26,13 +26,13 @@ The knowledge.annotation module currently supports bounded JSONL records for:
 - Normalized polygons.
 - Text spans with source-text offsets.
 
-The importer rejects unknown fields, duplicate JSON keys and IDs, malformed geometry, non-finite/out-of-range coordinates, invalid text offsets, oversized lines, excessive record counts, and oversized input. It records a SHA-256 digest and source label as owner-supplied provenance.
+The importer rejects unknown fields, duplicate JSON keys and IDs, malformed geometry, non-finite/out-of-range coordinates, invalid text offsets, malformed optional asset SHA-256 fingerprints, oversized lines, excessive record counts, and oversized input. It records a SHA-256 digest and source label as owner-supplied provenance. Optional `asset_sha256` values are normalized to lowercase and allow downstream exact-duplicate grouping; the importer does not read asset files or verify that the supplied digest matches their bytes.
 
 ## Dataset manifests and split integrity
 
 The `knowledge.dataset_manifest` module creates deterministic schema-v1 manifests from an imported annotation dataset. It records the source dataset digest, sorted asset-to-split assignments, leakage-group identifiers, per-split counts, and a digest over the manifest content. Every asset must be assigned exactly once to `train`, `validation`, or `test`; assets sharing an explicitly supplied leakage group must remain in the same split. Empty datasets and unknown assets/groups are rejected.
 
-Manifests preserve `owner_supplied_unverified` provenance. Hashes provide integrity/change detection, not source authenticity, annotation correctness, reviewer identity, or proof that a split is statistically representative. Grouping must be supplied by the dataset owner when assets share a subject, capture session, source document, near-duplicate family, or other leakage risk; the current module cannot infer those relationships.
+Manifests preserve `owner_supplied_unverified` provenance. Hashes provide integrity/change detection, not source authenticity, annotation correctness, reviewer identity, or proof that a split is statistically representative. Explicit grouping must still be supplied by the dataset owner when assets share a subject, capture session, source document, near-duplicate family, or other leakage risk. When multiple asset IDs carry the same supplied SHA-256 fingerprint, the manifest automatically enforces a shared split. It cannot discover visual near-duplicates, and it does not independently verify supplied fingerprints against asset bytes.
 
 ## Trust and privacy rules
 
@@ -48,7 +48,7 @@ Manifests preserve `owner_supplied_unverified` provenance. Hashes provide integr
 ## Delivery sequence
 
 1. Canonical schema and bounded normalized JSONL importer (implemented).
-2. Schema-versioned dataset manifests, explicit asset splits, and owner-supplied leakage-group checks (implemented); automatic leakage discovery remains outstanding.
+2. Schema-versioned dataset manifests, explicit asset splits, owner-supplied leakage groups, and exact-duplicate grouping from supplied SHA-256 fingerprints (implemented); fingerprint verification and near-duplicate discovery remain outstanding.
 3. Read-only adapters for CVAT, Label Studio, doccano, VIA, LabelMe, and Argilla exports.
 4. Preference/RLHF record format, disagreement and adjudication workflow, quality metrics.
 5. Optional connectors for commercial platforms only after per-service consent, secure secret handling, retention review, and explicit network permissions.
