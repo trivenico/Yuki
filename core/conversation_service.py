@@ -15,6 +15,48 @@ from companion.persona import DEFAULT_PERSONA, Persona
 from core.role_engine import RoleEngine
 
 
+class _GenerationLeaseLost(ConversationConflict):
+    """Raised when this worker can no longer prove exclusive generation ownership."""
+
+
+class _GenerationLeaseHeartbeat:
+    """Renew a live conversation lease while synchronous model work is running."""
+
+    def __init__(self, store, *, owner_id, conversation_id, lease_token,
+                 ttl_seconds: int, interval_seconds: float):
+        self.store = store
+        self.owner_id = owner_id
+        self.conversation_id = conversation_id
+        self.lease_token = lease_token
+        self.ttl_seconds = ttl_seconds
+        self.interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self.lost = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="yuki-lease-heartbeat", daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                renewed = self.store.renew_generation_lease(
+                    owner_id=self.owner_id, conversation_id=self.conversation_id,
+                    lease_token=self.lease_token, ttl_seconds=self.ttl_seconds,
+                )
+            except Exception:
+                self.lost.set()
+                return
+            if renewed is None:
+                self.lost.set()
+                return
+
+    def stop(self):
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join()
+
+
 class ConversationService:
     """Synchronous conversation orchestration for a single application worker.
 
@@ -22,7 +64,7 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None, persona: Persona = DEFAULT_PERSONA, role_engine: RoleEngine | None = None):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None, persona: Persona = DEFAULT_PERSONA, role_engine: RoleEngine | None = None, lease_ttl_seconds: int = 180, lease_renew_interval_seconds: float = 60.0):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
@@ -38,6 +80,14 @@ class ConversationService:
         self.agent_loop_for_owner = agent_loop_for_owner
         self.persona = persona
         self.role_engine = role_engine or RoleEngine()
+        if type(lease_ttl_seconds) is not int or not 5 <= lease_ttl_seconds <= 3600:
+            raise ValueError("lease_ttl_seconds must be an integer from 5 to 3600.")
+        if (isinstance(lease_renew_interval_seconds, bool)
+                or not isinstance(lease_renew_interval_seconds, (int, float))
+                or not 0.01 <= lease_renew_interval_seconds < lease_ttl_seconds):
+            raise ValueError("lease_renew_interval_seconds must be positive and less than the lease TTL.")
+        self.lease_ttl_seconds = lease_ttl_seconds
+        self.lease_renew_interval_seconds = float(lease_renew_interval_seconds)
         self._lock = threading.RLock()
 
     def set_role(self, name: str) -> dict[str, Any]:
@@ -78,11 +128,36 @@ class ConversationService:
     def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
         system_text = self._system_guidance(system_text)
         token = str(uuid.uuid4())
-        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
+        self.store.acquire_generation_lease(
+            owner_id=owner_id, conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=self.lease_ttl_seconds,
+        )
+        heartbeat = _GenerationLeaseHeartbeat(
+            self.store, owner_id=owner_id, conversation_id=conversation_id,
+            lease_token=token, ttl_seconds=self.lease_ttl_seconds,
+            interval_seconds=self.lease_renew_interval_seconds,
+        )
+        heartbeat.start()
         try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
+            def cancellation_check():
+                return heartbeat.lost.is_set() or (
+                    cancellation_requested is not None and cancellation_requested()
+                )
+
+            result = self._reply_unleased(
+                owner_id=owner_id, conversation_id=conversation_id,
+                user_text=user_text, request_id=request_id,
+                expected_version=expected_version, tools=tools,
+                system_text=system_text, on_text_delta=on_text_delta,
+                cancellation_requested=cancellation_check,
+                lease_lost=heartbeat.lost,
+            )
+            return result
         finally:
-            self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
+            heartbeat.stop()
+            self.store.release_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id, lease_token=token
+            )
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
@@ -210,6 +285,8 @@ class ConversationService:
                 if system_text is not None:
                     kwargs["system_text"] = system_text
                 result = agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                if lease_lost is not None and lease_lost.is_set():
+                    raise _GenerationLeaseLost("conversation generation lease was lost; result was not persisted.")
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
@@ -222,6 +299,8 @@ class ConversationService:
                         "I couldn't complete that request within the current execution limits. "
                         "Please try a smaller or more specific request."
                     )
+            except _GenerationLeaseLost:
+                raise
             except Exception:
                 status = "failed"
                 answer = "I couldn't complete that request because the AI service or a guarded operation failed."
