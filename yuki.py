@@ -109,7 +109,7 @@ Yuki commands:
   /audit                          Show recent metadata-only audit events
   /quit                           Exit Yuki
 
-The runtime defaults to the real OpenAI API. The mock adapter is reserved for automated tests and is not available in the runtime provider registry.
+Yuki starts in native-only mode unless YUKI_PROVIDER is explicitly configured or a provider is selected with /provider. External model adapters are optional. The mock adapter is reserved for automated tests and is not available in the runtime provider registry.
 """)
 
 
@@ -136,8 +136,6 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if result.startswith("Selected provider:"):
             try:
                 adapter = providers.create_selected_adapter()
-                if adapter is None:
-                    return "Provider selection failed: no adapter is available."
                 agent.set_provider(adapter)
             except Exception:
                 return "Provider selection failed. The previous provider remains active."
