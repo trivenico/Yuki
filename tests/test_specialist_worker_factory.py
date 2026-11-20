@@ -43,7 +43,7 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
                 ),
                 SpecialistAgent(
                     "legacy", "Legacy specialist",
-                    frozenset({"code-reviewer"}), "shell",
+                    frozenset({"legacy-capability"}), "emit",
                 ),
             ],
             authorize=lambda actor, action, resource: (
@@ -102,9 +102,17 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
         self.assertFalse(completed.result["provenance"]["verified_externally"])
         self.assertEqual(completed.result["output"], "bounded specialist result")
 
-    def test_rejects_non_emit_agent_actions(self):
+    def test_rejects_non_emit_agent_actions_at_registry_boundary(self):
         with self.assertRaises(ValueError):
-            self.build({"legacy": "coding"})
+            SpecialistAgentCoordinator(
+                self.runtime,
+                str(Path(self.tmp.name) / "unsafe.sqlite3"),
+                [SpecialistAgent(
+                    "shell-reviewer", "Shell-mode specialist",
+                    frozenset({"code-reviewer"}), "shell",
+                )],
+                authorize=lambda actor, action, resource: actor == "owner",
+            )
 
     def test_requires_exact_same_task_runtime_as_coordinator(self):
         other = TaskRuntime(
