@@ -42,6 +42,16 @@ The `knowledge.annotation_adapters` module currently provides bounded, read-only
 
 Both adapters normalize into the canonical annotation model and attach source-format/source-label provenance. Unsupported Label Studio result types are counted in `skipped_records`; malformed supported results reject the import. Neither adapter executes vendor code, contacts a service, uploads data, or authenticates annotators. Asset references are represented by export task/record identifiers rather than fetching external URLs. Direct adapters for CVAT, VIA, LabelMe, Argilla, and commercial platforms remain outstanding.
 
+## Vendor export adapters
+
+The `knowledge.annotation_adapters` module provides bounded, read-only import adapters for:
+- Label Studio JSON task exports: classification choices, normalized rectangle boxes, polygons, and text spans.
+- doccano JSONL sequence-label exports: text spans with source-text offsets.
+- CVAT image-task XML: rectangle boxes and polygons. Video tracks, masks, skeletons, and other unsupported shape types are skipped and counted.
+- VIA v2 project JSON: rectangle boxes and polygons.
+
+All supported imports normalize through the canonical annotation JSONL contract and retain source-format/source-label evidence with unverified provenance. Unsupported shapes are counted; malformed supported shapes reject the import. CVAT DTD/entity declarations are rejected before XML parsing. The adapters do not fetch image paths, execute vendor code, contact vendor services, upload data, or authenticate annotators. CVAT video interpolation, masks, skeletons, VIA polyline/point/ellipse/circle, and direct service APIs remain unsupported.
+
 ## Human review, adjudication, and agreement
 
 The `knowledge.annotation_review` module adds immutable review records bound to the canonical digest of the exact annotation reviewed. Each review stores a bounded reviewer label, decision (`accept`, `reject`, or `needs_context`), confidence, rationale, and timezone-aware timestamp. Reviewer labels are display labels, not authenticated identities; review provenance remains unverified.
@@ -63,11 +73,11 @@ Adjudication is a separate immutable record that binds an explicit human decisio
 
 1. Canonical schema and bounded normalized JSONL importer (implemented).
 2. Schema-versioned dataset manifests, explicit asset splits, owner-supplied leakage groups, and exact-duplicate grouping from supplied SHA-256 fingerprints (implemented); fingerprint verification and near-duplicate discovery remain outstanding.
-3. Read-only Label Studio and doccano export adapters (implemented); CVAT, VIA, LabelMe, and Argilla adapters remain outstanding.
+3. Read-only Label Studio, doccano, CVAT image-task XML, and VIA v2 JSON adapters (implemented); LabelMe and Argilla adapters remain outstanding.
 4. Immutable annotation reviews, digest-bound human adjudication, and basic exact-agreement metrics (implemented); authenticated reviewer identity, rubric versioning, inter-rater statistics, and preference/RLHF record formats remain outstanding.
 5. Optional connectors for commercial platforms only after per-service consent, secure secret handling, retention review, and explicit network permissions.
 6. Evaluation harness that compares models against held-out, reviewed datasets; training/fine-tuning stays a separate approved workflow.
 
 ## Current limitations
 
-The initial importer is not yet a direct parser for any listed vendor export. It supports a normalized Yuki JSONL interchange format only. It does not render annotation interfaces, upload datasets, invoke vendors, train models, or claim annotation quality.
+The canonical importer uses normalized Yuki JSONL internally; the read-only vendor adapters translate supported export profiles into that contract. The adapters do not render annotation interfaces, upload datasets, invoke vendors, train models, or claim annotation quality.
