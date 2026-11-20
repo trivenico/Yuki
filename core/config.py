@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 import yaml
 
-from core.portable_paths import config_path as resolve_config_path, workspace_path
+from core.portable_paths import config_path as resolve_config_path, ensure_private_directory, workspace_path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -72,7 +72,7 @@ def load_config(path=None):
         # config atomically without overwriting a file created by another process.
         template = Path(__file__).with_name("default_config.yaml")
         try:
-            selected_config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            ensure_private_directory(selected_config_path.parent)
             # Exclusive creation prevents concurrent first-run processes from
             # replacing one another's config. Restrict the file even when the
             # user's umask is permissive; preserve permissions on an existing
