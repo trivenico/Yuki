@@ -150,7 +150,7 @@ class ConversationService:
                 expected_version=expected_version, tools=tools,
                 system_text=system_text, on_text_delta=on_text_delta,
                 cancellation_requested=cancellation_check,
-                lease_lost=heartbeat.lost,
+                lease_lost=heartbeat.lost, lease_token=token,
             )
             return result
         finally:
@@ -163,7 +163,7 @@ class ConversationService:
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
-        on_text_delta=None, cancellation_requested=None, lease_lost=None,
+        on_text_delta=None, cancellation_requested=None, lease_lost=None, lease_token=None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
@@ -309,7 +309,7 @@ class ConversationService:
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="assistant", content=answer,
                 idempotency_key=f"assistant:{request_id}",
-                expected_version=user_result["version"],
+                expected_version=user_result["version"], lease_token=lease_token,
             )
             self.store.finish_generation(
                 owner_id=owner_id, conversation_id=conversation_id,
