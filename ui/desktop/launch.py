@@ -42,6 +42,23 @@ def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
 
 
 
+def _retire_voice_session(session: Any, status_label: Any) -> bool:
+    """Revoke microphone capture and close the session without losing cleanup errors."""
+    if session is None:
+        return False
+    failed = False
+    try:
+        session.disable()
+    except Exception as exc:
+        failed = True
+        status_label.setText(
+            "Warning: microphone interruption failed (" + type(exc).__name__ + ")."
+        )
+    if _close_voice_session(session, status_label) is not None:
+        failed = True
+    return failed
+
+
 def _close_retired_speech_session(session: Any, status_label: Any) -> Exception | None:
     """Close a revoked speech backend only after its playback worker has exited."""
     if session is None:
@@ -1486,11 +1503,11 @@ Version: {version}",
             if not enabled:
                 session = self.voice_session
                 self.voice_session = None
-                if session is not None:
-                    session.disable()
+                cleanup_failed = _retire_voice_session(session, self.voice_status)
                 self.voice_button.setEnabled(False)
                 self.voice_stop_button.setEnabled(False)
-                self.voice_status.setText("Microphone off. No background listening.")
+                if not cleanup_failed:
+                    self.voice_status.setText("Microphone off. No background listening.")
                 return
             answer = QMessageBox.question(
                 self, "Enable microphone for this session",
