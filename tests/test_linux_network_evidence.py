@@ -122,6 +122,16 @@ class LinuxNetworkEvidenceTests(unittest.TestCase):
         with self.assertRaises(SandboxRuntimeError):
             self.collect()
 
+    def test_rejects_malformed_ipv6_socket_endpoint(self):
+        (self.process / "net" / "tcp6").write_text(TCP_HEADER + "0: bad 0 0A 0 0 0 0 0 0\n", encoding="ascii")
+        with self.assertRaises(SandboxRuntimeError):
+            self.collect()
+
+    def test_rejects_malformed_unix_socket_record(self):
+        (self.process / "net" / "unix").write_text("Num RefCount Protocol Flags Type St Inode Path\nnot-a-record\n", encoding="ascii")
+        with self.assertRaises(SandboxRuntimeError):
+            self.collect()
+
     def test_rejects_malformed_interface_counters(self):
         (self.process / "net" / "dev").write_text("header\nheader\neth0: 1 2 nope\n", encoding="ascii")
         with self.assertRaises(SandboxRuntimeError):
