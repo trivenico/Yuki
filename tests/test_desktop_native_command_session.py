@@ -101,12 +101,13 @@ class AuthenticatedNativeCommandSessionTests(unittest.TestCase):
     def test_desktop_composition_exposes_session_bound_native_dispatch(self, build):
         identity = Identity()
         sessions = Sessions(identity)
-        runtime = Runtime()
+        native_runtime = Mock(spec=NativeCommandRuntime)
+        native_runtime.dispatch.return_value = "ok"
         build.return_value = FakeSession()
         bridge = build_shared_desktop_controller(
             {}, provider=object(), identity=identity, sessions=sessions,
             specialist_controller=specialist_contract(),
-            native_command_runtime=Mock(spec=NativeCommandRuntime),
+            native_command_runtime=native_runtime,
         )
         result = bridge.dispatch_native_command("/help")
         self.assertEqual(result, "ok")  # supplied runtime is the mocked contract
