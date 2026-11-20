@@ -221,3 +221,7 @@ This is a snapshot of kernel-reported tables, not a connectivity test or egress 
 The Linux network observer now reads `/proc/<pid>/net/ipv6_route` when available. It validates the fixed-width hexadecimal destination/source/next-hop fields, prefix lengths (0–128), metrics, flags, interface names, and route count. It records raw kernel hexadecimal addresses rather than guessing their byte-order presentation. The snapshot exposes IPv6 routes and whether an UP-flagged default route is reported.
 
 A missing IPv6 route file is recorded as unavailable; it is not interpreted as proof IPv6 is disabled. An IPv6 default route is not proof of reachability, and absence of one is not proof of isolation. IPv6 listeners, neighbor discovery, firewall rules, policy routing, sockets, and actual egress behavior remain separate checks. The collector remains diagnostic-only, never attested or verified.
+
+### Expanded Linux socket-table diagnostics
+
+The Linux network observer additionally reads available `tcp6`, `udp`, `udp6`, and `unix` procfs tables. It reports TCP6 listeners, UDP local endpoints, and Unix socket type/state/inode/path metadata with bounded parsing. IPv6 addresses remain in raw kernel hexadecimal form; normalization is deferred until byte-order handling is validated against supported Linux architectures. Missing optional tables are not interpreted as proof that a protocol is disabled. Socket metadata is diagnostic only and does not prove cross-namespace reachability or isolation.
