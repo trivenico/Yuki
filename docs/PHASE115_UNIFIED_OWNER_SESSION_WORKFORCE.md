@@ -8,7 +8,9 @@
 - The worker, desktop coordinator, and owner-facing task APIs now share the same
   `WorkflowRunStore` instance and therefore the same `tasks.sqlite3` task queue.
 - Worker claims are restricted to the SHA-256 hash of the exact owner session that
-  approved the task.
+  approved the task. Expired-lease recovery is scoped to that same approval hash
+  (plus explicitly non-approval-required work), so one session's worker cannot
+  interrupt another owner's approved task.
 - Added a separate `TaskRuntime.internal_authorize` callback for the private worker
   principal. It permits only completion, failure, and expired-lease recovery while
   the exact owner session remains live. It does not grant task listing, creation,
@@ -52,8 +54,8 @@
 ## Verification
 
 - Added tests for same-store composition, owner-session validation, worker-only
-  authorization, session loss, lifecycle late-bound resource ordering, and worker
-  drain before task-session/auth revocation.
+  authorization, cross-session recovery isolation, session loss, lifecycle
+  late-bound resource ordering, and worker drain before task-session/auth revocation.
 - No local test runner was available; tests have not been executed in this session.
 - CI status must be checked against the final PR head.
 - No worker was started, no merge was performed, and no deployment was made.
