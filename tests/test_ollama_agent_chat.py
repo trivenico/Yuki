@@ -33,8 +33,11 @@ class FakeOpener:
 class FakeNDJSONResponse:
     def __init__(self, lines):
         self.lines = [line if isinstance(line, bytes) else line.encode() for line in lines]
+        self.closed = False
     def __enter__(self): return self
-    def __exit__(self, *_): return False
+    def __exit__(self, *_):
+        self.closed = True
+        return False
     def readline(self, limit):
         if not self.lines: return b""
         line = self.lines.pop(0)
@@ -177,6 +180,18 @@ class OllamaAgentChatTests(unittest.TestCase):
         with patch("providers.ollama.urllib.request.build_opener", return_value=bad):
             with self.assertRaisesRegex(RuntimeError, "unrecognized"):
                 list(self.provider.generate_chat_stream(messages=self.messages, tools=self.tools))
+
+    def test_closing_consumer_closes_underlying_ndjson_response(self):
+        opener = FakeNDJSONOpener([
+            json.dumps({"message": {"content": "first"}, "done": False}) + "\\n",
+            json.dumps({"message": {"content": "second"}, "done": False}) + "\\n",
+        ], self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=opener):
+            stream = self.provider.generate_chat_stream(messages=self.messages, tools=self.tools)
+            self.assertEqual(next(stream), {"type": "text_delta", "text": "first"})
+            stream.close()
+        self.assertTrue(opener.response.closed)
+        self.assertEqual(self.requests[0][1], self.provider.timeout)
 
 if __name__ == "__main__":
     unittest.main()
