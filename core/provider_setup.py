@@ -47,9 +47,7 @@ def save_provider_preferences(path: str | Path, provider: str, model: str = "") 
             "Provider setup will not modify files inside the source checkout. "
             "Set YUKI_CONFIG to a private user configuration path."
         )
-    parent.mkdir(parents=True, exist_ok=True)
-    if os.name == "posix":
-        parent.chmod(0o700)
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     raw: dict = {}
     if target.exists():
