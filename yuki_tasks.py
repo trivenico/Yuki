@@ -1,55 +1,86 @@
-"""Local task list stored as JSON beside the application."""
+"""Local task list stored as JSON beside the application.
+
+Mutations use an inter-process lock and compare the caller's snapshot with the
+latest persisted list. A stale caller is rejected rather than overwriting a
+concurrent update.
+"""
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.json_file_store import atomic_write_json, file_lock
+
 TASKS_FILE = Path(__file__).with_name("yuki_tasks.json")
 
 
-def load_tasks():
-    if not TASKS_FILE.exists():
-        return []
+def _load_tasks_unlocked():
     try:
         data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
-        if not isinstance(data, list):
-            return []
-        return [x for x in data if isinstance(x, dict) and isinstance(x.get("id"), int)
-                and isinstance(x.get("description"), str) and isinstance(x.get("completed"), bool)]
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return []
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Task store is unreadable; no data was overwritten.") from exc
+    if not isinstance(data, list):
+        raise RuntimeError("Task store has an invalid structure.")
+    return [
+        item for item in data
+        if isinstance(item, dict) and type(item.get("id")) is int
+        and isinstance(item.get("description"), str)
+        and isinstance(item.get("completed"), bool)
+    ]
+
+
+def load_tasks():
+    with file_lock(TASKS_FILE):
+        return _load_tasks_unlocked()
 
 
 def save_tasks(tasks):
-    temp = TASKS_FILE.with_suffix(".tmp")
-    try:
-        temp.write_text(json.dumps(tasks, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(TASKS_FILE)
-        return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+    if not isinstance(tasks, list):
         return False
+    with file_lock(TASKS_FILE):
+        try:
+            atomic_write_json(TASKS_FILE, tasks)
+            return True
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+
+def _matches_current_snapshot(tasks, current):
+    return isinstance(tasks, list) and tasks == current
 
 
 def add_task(tasks, description):
     if not isinstance(description, str) or not description.strip():
         return "Please provide a task description."
-    next_id = max((x["id"] for x in tasks), default=0) + 1
-    tasks.append({"id": next_id, "description": description.strip()[:500], "completed": False,
-                  "created_at": datetime.now(timezone.utc).isoformat()})
-    if save_tasks(tasks):
-        return "Task added."
-    tasks.pop()
-    return "Could not save the task."
+    with file_lock(TASKS_FILE):
+        try:
+            current = _load_tasks_unlocked()
+            if not _matches_current_snapshot(tasks, current):
+                return "Task list changed; reload it before applying this update."
+            next_id = max((item["id"] for item in current), default=0) + 1
+            item = {
+                "id": next_id,
+                "description": description.strip()[:500],
+                "completed": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            updated = [*current, item]
+            atomic_write_json(TASKS_FILE, updated)
+            tasks[:] = updated
+            return "Task added."
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return "Could not save the task."
 
 
 def list_tasks(tasks):
     if not tasks:
         return "No tasks yet. Add one with /task add <description>."
-    return "\n".join(f'{x["id"]}. [{"x" if x["completed"] else " "}] {x["description"]}' for x in tasks)
+    return "\n".join(
+        f'{item["id"]}. [{"x" if item["completed"] else " "}] {item["description"]}'
+        for item in tasks
+    )
 
 
 def complete_task(tasks, task_id):
@@ -57,15 +88,20 @@ def complete_task(tasks, task_id):
         task_id = int(task_id)
     except (TypeError, ValueError):
         return "Provide a numeric task ID."
-    for item in tasks:
-        if item["id"] == task_id:
-            old = item["completed"]
+    with file_lock(TASKS_FILE):
+        try:
+            current = _load_tasks_unlocked()
+            if not _matches_current_snapshot(tasks, current):
+                return "Task list changed; reload it before applying this update."
+            item = next((entry for entry in current if entry["id"] == task_id), None)
+            if item is None:
+                return "Task ID not found."
             item["completed"] = True
-            if save_tasks(tasks):
-                return "Task completed."
-            item["completed"] = old
+            atomic_write_json(TASKS_FILE, current)
+            tasks[:] = current
+            return "Task completed."
+        except (OSError, RuntimeError, TypeError, ValueError):
             return "Could not save the task."
-    return "Task ID not found."
 
 
 def delete_task(tasks, task_id):
@@ -73,11 +109,16 @@ def delete_task(tasks, task_id):
         task_id = int(task_id)
     except (TypeError, ValueError):
         return "Provide a numeric task ID."
-    index = next((i for i, x in enumerate(tasks) if x["id"] == task_id), None)
-    if index is None:
-        return "Task ID not found."
-    removed = tasks.pop(index)
-    if save_tasks(tasks):
-        return "Task deleted."
-    tasks.insert(index, removed)
-    return "Could not save the task list."
+    with file_lock(TASKS_FILE):
+        try:
+            current = _load_tasks_unlocked()
+            if not _matches_current_snapshot(tasks, current):
+                return "Task list changed; reload it before applying this update."
+            updated = [item for item in current if item["id"] != task_id]
+            if len(updated) == len(current):
+                return "Task ID not found."
+            atomic_write_json(TASKS_FILE, updated)
+            tasks[:] = updated
+            return "Task deleted."
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return "Could not save the task list."
