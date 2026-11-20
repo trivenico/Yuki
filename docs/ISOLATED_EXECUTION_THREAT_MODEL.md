@@ -115,7 +115,52 @@ A backend is not eligible for regression workflow integration until all gates pa
 11. **Operational review:** supported OS/runtime matrix, patch cadence, image update process, incident response, and rollback are documented.
 12. **Independent review:** security review of runtime configuration and adversarial tests is completed before production enablement.
 
-## 7. Residual risks and release decision
+## 7. Docker diagnostics probe: evidence limits and host-verification design
+
+The bounded `core.docker_probe` command is an operator diagnostic, not an attestation mechanism.
+
+### What the probe establishes
+
+- A fixed Docker CLI argument vector was launched from an explicitly supplied executable path.
+- The executable and its path components passed the current ownership, mode, symlink, and canonical-path checks immediately before process creation.
+- The selected endpoint was a non-symlink Unix socket and was not world-writable at the time it was inspected.
+- The CLI returned bounded UTF-8 JSON within the configured deadline and exit-status requirements.
+- Parsed Docker daemon fields are **daemon-reported claims** only.
+
+These observations do not establish that the executable remained unchanged between validation and execution, that the socket endpoint remained unchanged, that the daemon is uncompromised, or that any isolation control is active. The endpoint can be replaced after inspection; the executable path can also be subject to filesystem races. The current probe does not pin an executable file descriptor or verify a signed binary identity. Do not use this diagnostic as an authorization input.
+
+### Evidence classes
+
+A future verifier must keep three classes separate:
+
+1. **Self-reported metadata:** Docker CLI/daemon output, runtime configuration, version strings, and declared capabilities. Useful for diagnostics; never sufficient for trust.
+2. **Host-observed state:** observations collected by a narrowly privileged host verifier independent of the daemon response, bound to the exact runtime/container process identity and lifecycle. Examples include kernel namespace identities, cgroup membership and limits, mount-table state, active LSM profile/enforcement state, and process credentials.
+3. **Behavioral acceptance tests:** controlled canary workloads that attempt prohibited reads/writes, namespace access, network egress, privilege changes, resource exhaustion, and persistence. Results must be tied to the exact image digest, policy digest, runtime instance, and test suite revision.
+
+No single class is sufficient. Host-observed state can be incomplete or misinterpreted; behavioral tests sample behavior and cannot prove absence of every escape; self-reported metadata remains untrusted.
+
+### Required host-verifier protocol
+
+Before implementation can authorize execution, define a separate host-side verifier with these properties:
+
+- It runs outside the workload and outside the model/provider process, under a dedicated least-privilege service identity.
+- It accepts a one-time unpredictable nonce and a canonical execution manifest digest; it does not accept free-form claims from a specialist or container.
+- It obtains the exact container/runtime ID from the trusted launch supervisor, then independently resolves the host PID and verifies process start time to prevent PID-reuse confusion.
+- It collects kernel-backed namespace, UID/GID mapping, cgroup v2, mount, network, seccomp, LSM, capability, and runtime-socket exposure evidence from host interfaces. Unsupported or inaccessible observations are reported as unknown, never inferred as safe.
+- It verifies the actual cgroup controls and effective mount/network policy, not merely requested CLI flags or daemon configuration.
+- It binds every observation to nonce, manifest digest, runtime/container ID, process start identity, verifier version, host boot identity, and observation time.
+- It emits a bounded, versioned evidence envelope with explicit source, collection method, observed value, limitations, and failure status. No caller-provided boolean may set `verified`, `attested`, or equivalent trust state.
+- It fails closed on stale, partial, contradictory, replayed, or unverifiable evidence. Evidence expires when the container identity, policy, manifest, host boot, or relevant runtime state changes.
+- It does not itself launch workloads, approve plans, grant permissions, or import artifacts. Those remain separate authorization and lifecycle responsibilities.
+
+### Acceptance test protocol
+
+The canary suite must run only on a dedicated disposable test host with no owner secrets and no production credentials. Each test records its exact policy/image/runtime digests and expected denial. At minimum, test host sentinel access, source write attempts, symlink traversal, host socket/device access, host/loopback/link-local/metadata egress, namespace entry, capability escalation, seccomp-denied syscalls, LSM denials, cgroup CPU/memory/PID limits, disk/output quotas, cancellation, daemon restart, and complete cleanup. A test that cannot run is inconclusive, not a pass.
+
+The verifier implementation and canary suite require independent security review. Until then, all capability declarations remain untrusted and `validate_runtime_capabilities` must continue rejecting execution.
+
+## 8. Residual risks and release decision
+
 
 Containers share a host kernel; kernel vulnerabilities and runtime escapes remain possible. Rootless operation and defense-in-depth reduce risk but do not eliminate it. A microVM may provide a stronger boundary at additional operational cost, but it too requires hardening and validation.
 
