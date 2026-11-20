@@ -60,6 +60,24 @@ class LinuxHostEvidenceTests(unittest.TestCase):
         with self.assertRaises(SandboxRuntimeError):
             collect_linux_process_snapshot(4242, proc_root=str(link))
 
+    def test_rejects_symlinked_procfs_record(self):
+        stat_file = self.root / "4242" / "stat"
+        original = stat_file.read_text(encoding="ascii")
+        stat_file.unlink()
+        target = self.root / "stat-target"
+        target.write_text(original, encoding="ascii")
+        stat_file.symlink_to(target)
+        with self.assertRaises(SandboxRuntimeError):
+            collect_linux_process_snapshot(4242, proc_root=str(self.root))
+
+    def test_rejects_symlinked_process_directory(self):
+        process = self.root / "4242"
+        moved = self.root / "process-real"
+        process.rename(moved)
+        process.symlink_to(moved)
+        with self.assertRaises(SandboxRuntimeError):
+            collect_linux_process_snapshot(4242, proc_root=str(self.root))
+
     def test_rejects_missing_namespace_observation(self):
         (self.root / "4242" / "ns" / "net").unlink()
         with self.assertRaises(SandboxRuntimeError):
