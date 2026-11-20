@@ -63,7 +63,7 @@ class ProviderManager:
             self._factories[key] = factory
         elif not provider.implemented:
             self._factories.pop(key, None)
-        elif key not in self._factories and key not in {"ollama", "hybrid"}:
+        elif key not in self._factories and key not in {"native", "ollama", "hybrid"}:
             raise ValueError("An implemented provider must have an adapter factory.")
         self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
         if key == self._selected:
