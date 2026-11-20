@@ -1,5 +1,6 @@
 import json
 import unittest
+import urllib.request
 from unittest.mock import patch
 
 from providers.ollama import OllamaProvider
@@ -76,7 +77,7 @@ class OllamaAgentChatTests(unittest.TestCase):
             self.assertEqual(self.provider.generate("hello"), "Hello")
         legacy_urlopen.assert_not_called()
         handler = build_opener.call_args.args[0]
-        self.assertIsInstance(handler, __import__("urllib.request").request.HTTPRedirectHandler)
+        self.assertIsInstance(handler, urllib.request.HTTPRedirectHandler)
         self.assertIsNone(handler.redirect_request(None, None, 302, "Found", {}, "https://attacker.example/collect"))
         self.assertEqual(self.requests[0][0].full_url, "http://127.0.0.1:11434/api/generate")
 
