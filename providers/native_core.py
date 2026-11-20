@@ -16,6 +16,9 @@ class NativeCoreAdapter(BaseProvider):
 
     availability_scope = "native_core"
     name = "native"
+    MAX_MESSAGES = 128
+    MAX_TRANSCRIPT_CHARS = 100_000
+    MAX_TOOLS = 32
 
     _HELP = (
         "Yuki's native core is active. It can start without an external model "
@@ -50,19 +53,37 @@ class NativeCoreAdapter(BaseProvider):
         tools: Sequence[dict] = (),
         tool_choice: str = "auto",
     ) -> dict:
-        """Satisfy the structured chat contract while always declining tool calls."""
-        if not isinstance(messages, (list, tuple)) or not messages:
-            raise ValueError("messages must be a non-empty sequence.")
-        if not isinstance(tools, (list, tuple)) or len(tools) > 32:
-            raise ValueError("tools must contain at most 32 definitions.")
+        """Validate the public chat boundary and always decline tool execution."""
+        if (not isinstance(messages, (list, tuple)) or not messages
+                or len(messages) > self.MAX_MESSAGES):
+            raise ValueError(
+                f"messages must be a non-empty sequence of at most {self.MAX_MESSAGES} entries."
+            )
+        if not isinstance(tools, (list, tuple)) or len(tools) > self.MAX_TOOLS:
+            raise ValueError(f"tools must contain at most {self.MAX_TOOLS} definitions.")
+        if any(not isinstance(item, Mapping) for item in tools):
+            raise ValueError("each tool definition must be a mapping.")
         if tool_choice not in {"auto", "none", "required"}:
             raise ValueError("tool_choice is invalid.")
-        user_messages = [
-            item for item in messages
-            if isinstance(item, Mapping) and item.get("role") == "user"
-            and isinstance(item.get("content"), str)
-        ]
+
+        user_messages: list[Mapping[str, str]] = []
+        total_chars = 0
+        for item in messages:
+            if not isinstance(item, Mapping) or set(item) != {"role", "content"}:
+                raise ValueError("each message must contain only role and content.")
+            role, content = item["role"], item["content"]
+            if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+                raise ValueError("message role or content is invalid.")
+            total_chars += len(content)
+            if total_chars > self.MAX_TRANSCRIPT_CHARS:
+                raise ValueError("message transcript exceeds the character limit.")
+            if role == "user":
+                user_messages.append(item)
+
         if not user_messages:
             raise ValueError("messages must contain a user message.")
+
+        # Even tool_choice="required" cannot override the native core's
+        # deliberate no-tool-execution contract.
         answer = self.generate(user_messages[-1]["content"])
         return {"text": answer, "tool_calls": {"tool_calls": []}}
