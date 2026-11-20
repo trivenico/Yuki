@@ -1035,14 +1035,16 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self._open_session(identity)
             except Exception as exc:
                 if identity is not None:
-                    try:
-                        self.sessions.logout()
-                    except Exception:
-                        pass
-                self.login_status.setText(
-                    "Sign-in failed (" + type(exc).__name__ + "). Check your credentials "
-                    "and the operating-system credential store."
-                )
+                    # _open_session can fail after the durable chat controller
+                    # has been composed. Revoke through that controller first
+                    # so its conversation store and specialist bridge are not
+                    # orphaned by a direct session-manager logout.
+                    self._return_to_login()
+                if self.controller is None:
+                    self.login_status.setText(
+                        "Sign-in failed (" + type(exc).__name__ + "). Check your credentials "
+                        "and the operating-system credential store."
+                    )
             finally:
                 self.login_button.setEnabled(True)
 
