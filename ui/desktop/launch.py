@@ -446,6 +446,7 @@ def run() -> int:
             self._shutdown_started = False
             self._shutdown_complete = False
             self._shutdown_worker = None
+            self._startup_cleanup_failures = ()
             self.current_plan = None
             self.migration_preview = None
             self._build_ui()
@@ -1013,6 +1014,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 startup_cleanup_failures = getattr(
                     exc, "yuki_cleanup_failures", (),
                 )
+                self._startup_cleanup_failures = startup_cleanup_failures
                 cleanup_error = _cleanup_failed_desktop_initialization(
                     self.lifecycle, self.sessions, self.controller,
                 )
@@ -1862,6 +1864,18 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            if self.lifecycle is None and self._startup_cleanup_failures:
+                remaining = _close_startup_resources(
+                    self._startup_cleanup_failures,
+                )
+                self._startup_cleanup_failures = remaining
+                if remaining:
+                    self._shutdown_started = False
+                    self.setEnabled(True)
+                    self.login_status.setText(
+                        "Startup cleanup remains incomplete. Close Yuki again to retry."
+                    )
+                    return
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             if self.speech_session is not None:
