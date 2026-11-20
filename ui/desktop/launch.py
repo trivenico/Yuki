@@ -142,8 +142,10 @@ def _build_services():
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, keyring)
     provider = None
+    startup_resources = [auth, sessions]
     try:
         provider = create_provider(config)
+        startup_resources.append(provider)
         permission_check = task_permission_authorizer(
             auth,
             session_token_provider=lambda: (
@@ -152,7 +154,10 @@ def _build_services():
             ),
         )
         task_db = str(root / "tasks.sqlite3")
-        runtime = TaskRuntime(WorkflowRunStore(task_db), authorize=permission_check)
+        workflow_store = WorkflowRunStore(task_db)
+        startup_resources.append(workflow_store)
+        runtime = TaskRuntime(workflow_store, authorize=permission_check)
+        startup_resources.append(runtime)
         built_in_agents = (
             SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
             SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
@@ -162,14 +167,14 @@ def _build_services():
         coordinator = SpecialistAgentCoordinator(
             runtime, task_db, built_in_agents, authorize=permission_check,
         )
+        startup_resources.append(coordinator)
         lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
         return auth, sessions, provider, coordinator, runtime, lifecycle
     except Exception:
-        # Provider construction is the first potentially long-lived external
-        # resource. If any later service fails, release it before propagating
-        # the original startup error. Auth/session adapters currently expose no
-        # persistent close handle; close any future closeable resource too.
-        _close_startup_resources((auth, sessions, provider))
+        # Release every successfully constructed resource in reverse order.
+        # This includes the workflow store/runtime if coordinator or lifecycle
+        # construction fails after the provider has already been created.
+        _close_startup_resources(startup_resources)
         raise
 
 
