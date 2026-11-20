@@ -87,6 +87,18 @@ def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -
         revoke_active_session()
 
 
+def _cleanup_failed_desktop_initialization(lifecycle: Any, sessions: Any) -> Exception | None:
+    """Revoke any persisted session and close composed services after startup failure."""
+    if lifecycle is None:
+        return None
+    try:
+        _shutdown_desktop_services(lifecycle, None, sessions)
+    except Exception as exc:
+        # Lifecycle retains failed revocation/resource hooks for closeEvent retry.
+        return exc
+    return None
+
+
 def _build_services():
     from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
@@ -987,6 +999,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 if identity is not None:
                     self._open_session(identity)
             except Exception as exc:
+                cleanup_error = _cleanup_failed_desktop_initialization(
+                    self.lifecycle, self.sessions,
+                )
                 self.login_button.setEnabled(False)
                 from core.sqlite_recovery import (
                     SQLiteRecoveryRequired, format_sqlite_recovery_report,
@@ -994,10 +1009,16 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 if isinstance(exc, SQLiteRecoveryRequired):
                     self.login_status.setText(format_sqlite_recovery_report(exc.report))
                 else:
-                    self.login_status.setText(
+                    message = (
                         "Desktop setup is unavailable (" + type(exc).__name__ + "). "
                         "Check the OS credential store and local configuration."
                     )
+                    if cleanup_error is not None:
+                        message += (
+                            " Cleanup is incomplete (" + type(cleanup_error).__name__
+                            + "); close Yuki to retry safe shutdown."
+                        )
+                    self.login_status.setText(message)
 
         def _login(self):
             if self.sessions is None:
