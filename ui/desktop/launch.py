@@ -1021,7 +1021,13 @@ MIGRATION COMPLETE — verified manifest written to destination."
             ):
                 widget.setEnabled(True)
             if self.voice_session is not None:
-                self.voice_session.close()
+                try:
+                    self.voice_session.close()
+                except Exception as exc:
+                    # Audio capture teardown must never strand logout or shutdown.
+                    self.voice_status.setText(
+                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
+                    )
             self.voice_session = None
             self.voice_checkbox.blockSignals(True)
             self.voice_checkbox.setChecked(False)
@@ -1632,7 +1638,13 @@ Version: {version}",
 
         def _clear_authenticated_session_ui(self):
             if self.voice_session is not None:
-                self.voice_session.close()
+                try:
+                    self.voice_session.close()
+                except Exception as exc:
+                    # Audio capture teardown must never strand logout or shutdown.
+                    self.voice_status.setText(
+                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
+                    )
             self.voice_session = None
             if self.speech_session is not None:
                 try:
@@ -1752,7 +1764,13 @@ Version: {version}",
                 return
             self._logout_started = True
             if self.voice_session is not None:
-                self.voice_session.close()
+                try:
+                    self.voice_session.close()
+                except Exception as exc:
+                    # Audio capture teardown must never strand logout or shutdown.
+                    self.voice_status.setText(
+                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
+                    )
             if self.speech_session is not None:
                 try:
                     self.speech_session.close()
@@ -1806,7 +1824,13 @@ Version: {version}",
                 return
             self._shutdown_started = True
             if self.voice_session is not None:
-                self.voice_session.close()
+                try:
+                    self.voice_session.close()
+                except Exception as exc:
+                    # Audio capture teardown must never strand logout or shutdown.
+                    self.voice_status.setText(
+                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
+                    )
             if self.speech_session is not None:
                 try:
                     self.speech_session.close()
