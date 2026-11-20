@@ -34,6 +34,12 @@ The `knowledge.dataset_manifest` module creates deterministic schema-v1 manifest
 
 Manifests preserve `owner_supplied_unverified` provenance. Hashes provide integrity/change detection, not source authenticity, annotation correctness, reviewer identity, or proof that a split is statistically representative. Explicit grouping must still be supplied by the dataset owner when assets share a subject, capture session, source document, near-duplicate family, or other leakage risk. When multiple asset IDs carry the same supplied SHA-256 fingerprint, the manifest automatically enforces a shared split. It cannot discover visual near-duplicates, and it does not independently verify supplied fingerprints against asset bytes.
 
+## Human review, adjudication, and agreement
+
+The `knowledge.annotation_review` module adds immutable review records bound to the canonical digest of the exact annotation reviewed. Each review stores a bounded reviewer label, decision (`accept`, `reject`, or `needs_context`), confidence, rationale, and timezone-aware timestamp. Reviewer labels are display labels, not authenticated identities; review provenance remains unverified.
+
+Adjudication is a separate immutable record that binds an explicit human decision and rationale to the annotation digest and the exact set of source review digests. It never overwrites or deletes reviewer opinions. Agreement metrics report the number of multiply reviewed annotations, unanimous decisions, disagreements, exact agreement ratio, and unresolved disagreements. Only one review per reviewer label is counted for an annotation. The ratio is unweighted exact decision agreement, not Cohen's/Fleiss' kappa or a claim of statistical reliability. An adjudication marks a disagreement as resolved for workflow reporting but does not erase the disagreement or make the resulting label independently verified.
+
 ## Trust and privacy rules
 
 - Imported annotations are unverified; a vendor export or annotator label is not proof of correctness.
@@ -50,7 +56,7 @@ Manifests preserve `owner_supplied_unverified` provenance. Hashes provide integr
 1. Canonical schema and bounded normalized JSONL importer (implemented).
 2. Schema-versioned dataset manifests, explicit asset splits, owner-supplied leakage groups, and exact-duplicate grouping from supplied SHA-256 fingerprints (implemented); fingerprint verification and near-duplicate discovery remain outstanding.
 3. Read-only adapters for CVAT, Label Studio, doccano, VIA, LabelMe, and Argilla exports.
-4. Preference/RLHF record format, disagreement and adjudication workflow, quality metrics.
+4. Immutable annotation reviews, digest-bound human adjudication, and basic exact-agreement metrics (implemented); authenticated reviewer identity, rubric versioning, inter-rater statistics, and preference/RLHF record formats remain outstanding.
 5. Optional connectors for commercial platforms only after per-service consent, secure secret handling, retention review, and explicit network permissions.
 6. Evaluation harness that compares models against held-out, reviewed datasets; training/fine-tuning stays a separate approved workflow.
 
