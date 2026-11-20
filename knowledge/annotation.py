@@ -121,7 +121,11 @@ def _parse_record(record: Any) -> Annotation:
             raise AnnotationImportError("text offsets must be integers")
         if not 0 <= start < end <= len(text_value):
             raise AnnotationImportError("text offsets are outside the supplied text")
-    return Annotation(\n        annotation_id=annotation_id, task_type=task_type, label=label, asset_id=asset_id,\n        geometry=geometry, text_start=start, text_end=end, text_value=text_value,\n        asset_sha256=asset_sha256,\n    )
+    return Annotation(
+        annotation_id=annotation_id, task_type=task_type, label=label, asset_id=asset_id,
+        geometry=geometry, text_start=start, text_end=end, text_value=text_value,
+        asset_sha256=asset_sha256,
+    )
 
 
 def import_annotation_jsonl(
