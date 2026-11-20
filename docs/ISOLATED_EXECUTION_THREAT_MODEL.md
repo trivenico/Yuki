@@ -215,3 +215,9 @@ These observations do not prove that the reported policy is complete, loaded cor
 `core/linux_network_evidence.py` reads bounded `/proc/<pid>/net` interface counters, IPv4 routes, and IPv4 TCP listener tables. It validates interface names and counters, route masks/metrics, socket endpoints and table shape, enforces count/size limits, rejects symlinked records, and checks process start time before and after collection.
 
 This is a snapshot of kernel-reported tables, not a connectivity test or egress policy verifier. It does not inspect IPv6 routes/listeners, UDP, Unix sockets, raw sockets, firewall rules, DNS/proxy behavior, loopback reachability, or host-service access. An absent IPv4 default route does not prove network isolation. Caller-selected procfs roots and non-atomic observations remain untrusted; the result is always diagnostic-only with `attested=False` and `verified=False`.
+
+### IPv6 route-table diagnostics
+
+The Linux network observer now reads `/proc/<pid>/net/ipv6_route` when available. It validates the fixed-width hexadecimal destination/source/next-hop fields, prefix lengths (0–128), metrics, flags, interface names, and route count. It records raw kernel hexadecimal addresses rather than guessing their byte-order presentation. The snapshot exposes IPv6 routes and whether an UP-flagged default route is reported.
+
+A missing IPv6 route file is recorded as unavailable; it is not interpreted as proof IPv6 is disabled. An IPv6 default route is not proof of reachability, and absence of one is not proof of isolation. IPv6 listeners, neighbor discovery, firewall rules, policy routing, sockets, and actual egress behavior remain separate checks. The collector remains diagnostic-only, never attested or verified.
