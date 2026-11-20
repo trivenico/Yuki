@@ -114,6 +114,26 @@ class AuthenticatedNativeCommandSessionTests(unittest.TestCase):
         bridge.logout()
 
     @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
+    def test_command_permission_denial_does_not_revoke_valid_desktop_session(self, build):
+        identity = Identity()
+        sessions = Sessions(identity)
+        native_runtime = Mock(spec=NativeCommandRuntime)
+        native_runtime.dispatch.side_effect = PermissionError("capability denied")
+        build.return_value = FakeSession()
+        specialists = specialist_contract()
+        specialists.logout = Mock(return_value=True)
+        bridge = build_shared_desktop_controller(
+            {}, provider=object(), identity=identity, sessions=sessions,
+            specialist_controller=specialists,
+            native_command_runtime=native_runtime,
+        )
+        with self.assertRaises(PermissionError):
+            bridge.dispatch_native_command("/memory search private")
+        self.assertIs(sessions.current_identity(), identity)
+        specialists.logout.assert_not_called()
+        bridge.logout()
+
+    @patch("ui.desktop.shared_desktop_composition.build_authenticated_desktop_conversation")
     def test_native_dispatch_is_unavailable_when_not_composed(self, build):
         build.return_value = FakeSession()
         bridge = build_shared_desktop_controller(
