@@ -1497,6 +1497,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.chat_status.setText(
                     "Workforce cycle failed (" + type(error).__name__ + ")."
                 )
+                if isinstance(error, PermissionError):
+                    self._return_to_login()
+                    return
             else:
                 self.chat_status.setText(
                     f"Workforce cycle finished: {report.processed_count} processed, "
@@ -2688,6 +2691,15 @@ Version: {version}",
             self.backup_status.setText("Sign in to use backup and restore.")
             self.task_approve_button.setEnabled(False)
             self.task_cancel_button.setEnabled(False)
+            for control in (
+                self.workforce_start_button, self.workforce_pause_button,
+                self.workforce_resume_button, self.workforce_cycle_button,
+                self.workforce_stop_button,
+            ):
+                control.setEnabled(False)
+            self.workforce_specialists.clear()
+            self.workforce_tasks.setText("Task queue: unavailable")
+            self.workforce_status.setText("Workforce session closed.")
             self.current_plan = None
             self.plan_goal.clear()
             self.plan_details.clear()
