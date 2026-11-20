@@ -45,6 +45,18 @@ class ProviderSmokeCLITests(unittest.TestCase):
         self.assertEqual(report["provider"], "gemini")
         self.assertGreater(report["response_characters"], 0)
 
+    def test_native_core_does_not_send_a_live_provider_request(self):
+        stdout = io.StringIO()
+        with patch("core.config.load_config", return_value={"provider": "native"}), \\
+             patch("providers.factory.create_provider") as factory, \\
+             contextlib.redirect_stdout(stdout):
+            result = provider_smoke_test.main(["--confirm-live-request", "--json"])
+        self.assertEqual(result, 1)
+        factory.assert_called_once()
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["status"], "not_applicable")
+        self.assertEqual(report["response_characters"], 0)
+
     def test_confirmed_cli_returns_nonzero_for_unavailable_provider(self):
         provider = FakeProvider(available=False)
         stdout = io.StringIO()
