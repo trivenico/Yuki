@@ -230,8 +230,12 @@ def export_graphml(graph: OsintGraph, *, max_bytes: int = 4 * 1024 * 1024) -> by
     if any(edge.source not in node_set or edge.target not in node_set for edge in graph.edges):
         raise OsintImportError("edge references an unknown node")
     evidence_ids = {item.evidence_id for item in graph.evidence}
+    if len(evidence_ids) != len(graph.evidence):
+        raise OsintImportError("duplicate evidence identifiers")
     if any(not set(edge.evidence_ids).issubset(evidence_ids) for edge in graph.edges):
         raise OsintImportError("edge references unknown evidence")
+    if any(item.node not in node_set or item.evidence_id not in evidence_ids for item in graph.observations):
+        raise OsintImportError("observation references unknown node or evidence")
 
     namespace = "http://graphml.graphdrawing.org/xmlns"
     ET.register_namespace("", namespace)
