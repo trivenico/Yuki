@@ -15,6 +15,8 @@ import tempfile
 from threading import RLock
 from typing import Any
 
+from core.portable_paths import ensure_private_directory
+
 _THREAD_LOCKS: dict[str, RLock] = {}
 _THREAD_LOCKS_GUARD = RLock()
 
@@ -35,7 +37,7 @@ def file_lock(path: str | Path):
     """
     target = Path(path).expanduser()
     parent = target.parent.resolve()
-    parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_directory(parent)
     lock_path = parent / (target.name + ".lock")
     thread_lock = _thread_lock(lock_path)
     with thread_lock:
@@ -82,7 +84,7 @@ def file_lock(path: str | Path):
 def atomic_write_json(path: str | Path, value: Any, *, indent: int = 2) -> None:
     """Durably replace a JSON file without exposing a partial write."""
     target = Path(path).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_directory(target.parent)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix="." + target.name + "-", suffix=".tmp", dir=str(target.parent)
     )
