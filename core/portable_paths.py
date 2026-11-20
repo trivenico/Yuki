@@ -57,6 +57,11 @@ def desktop_data_root() -> Path:
     return (data_root() / ".yuki").resolve()
 
 
+def user_config_path() -> Path:
+    """Return the per-user configuration path, independent of checkout files."""
+    return (_user_config_root() / "config.yaml").resolve()
+
+
 def config_path() -> Path:
     configured = os.environ.get("YUKI_CONFIG", "").strip()
     if configured:
