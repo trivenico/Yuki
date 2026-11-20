@@ -198,6 +198,51 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result["version"], 2)
 
 
+    def test_keyboard_interrupt_releases_lease_and_recovers_without_replay(self):
+        calls = []
+
+        def interrupted_model(*, messages, tools, tool_choice):
+            calls.append(messages)
+            if len(calls) == 1:
+                raise KeyboardInterrupt()
+            return {"text": "Recovered with a fresh request", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            interrupted_model,
+            StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+        )
+        service = ConversationService(self.store, loop)
+
+        with self.assertRaises(KeyboardInterrupt):
+            service.reply(
+                owner_id="owner-a",
+                conversation_id=self.conversation["conversation_id"],
+                user_text="Original request",
+                request_id="interrupted-request",
+                expected_version=0,
+                tools=[],
+            )
+
+        # The finally block releases the lease; the next turn reconciles the
+        # durable running generation instead of replaying its model/tool work.
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="A new request after interruption",
+            request_id="fresh-request",
+            expected_version=1,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["version"], 4)
+        self.assertEqual(len(calls), 2)
+        history = service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual([item["role"] for item in history],
+                         ["user", "assistant", "user", "assistant"])
+        self.assertIn("interrupted", history[1]["content"])
+
     def test_interrupted_generation_is_reconciled_without_replaying_model(self):
         self.store.append_message(
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
