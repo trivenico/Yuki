@@ -60,6 +60,10 @@ class TcpStreamReassembler:
         self._flows: dict[tuple[str, int, str, int], _Flow] = {}
         self._buffered_bytes = 0
 
+    @property
+    def buffered_bytes(self) -> int:
+        return self._buffered_bytes
+
     @staticmethod
     def _validate_key(key: tuple[str, int, str, int]) -> None:
         if (not isinstance(key, tuple) or len(key) != 4 or
