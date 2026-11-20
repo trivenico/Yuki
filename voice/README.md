@@ -36,3 +36,10 @@ auditioning on supported desktop operating systems.
 - `voice/desktop_output.py` validates local backend prerequisites before reporting spoken replies as enabled. Piper requires an existing local model file, the Piper executable, and optional `sounddevice` / `soundfile` packages. pyttsx3 requires its optional package.
 - The desktop chat exposes a separate **Enable spoken replies** control and **Stop speaking** action. It does not grant microphone permission. Speech runs on a background worker and permission is revoked on sign-out and shutdown.
 - Text chat remains available when local speech dependencies or model files are missing. No wake-word listener, always-on microphone capture, or camera monitoring is enabled by this feature.
+
+## Optional Kokoro offline voice
+
+- `voice/kokoro_tts.py` is an optional sherpa-onnx Kokoro adapter. Install its runtime with `python -m pip install -r requirements-kokoro.txt`; model weights and lexicon assets are obtained and verified separately.
+- Follow [`voice/KOKORO_SETUP.md`](KOKORO_SETUP.md) to install the English model package, configure its local model directory and explicit lexicon, and audition the available speaker presets. Yuki never downloads model assets automatically.
+- The adapter currently supports `af_bella`, `af_nicole`, `af_sarah`, `af_sky`, `bf_emma`, and `bf_isabella`. Preset labels do not guarantee the requested anime-inspired acting style; a real-device audition is required before choosing a final voice.
+- Kokoro is not yet exposed through a dedicated desktop settings panel. Text chat remains usable if optional runtime/model assets are absent.
