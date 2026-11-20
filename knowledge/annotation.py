@@ -126,10 +126,10 @@ def import_annotation_jsonl(
     max_bytes: int = MAX_INPUT_BYTES,
 ) -> AnnotationDataset:
     """Import normalized JSONL; vendor exports need explicit adapters first."""
-    if not isinstance(payload, bytes) or len(payload) > min(max_bytes, MAX_INPUT_BYTES):
-        raise AnnotationImportError("input must be bytes within the configured size limit")
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 1 <= max_bytes <= MAX_INPUT_BYTES:
         raise AnnotationImportError("invalid max_bytes")
+    if not isinstance(payload, bytes) or len(payload) > max_bytes:
+        raise AnnotationImportError("input must be bytes within the configured size limit")
     source_format = _text(source_format, "source_format", 64)
     source_label = _text(source_label, "source_label", 256)
     imported_at = _text(imported_at, "imported_at", 64)
