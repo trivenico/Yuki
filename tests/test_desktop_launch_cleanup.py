@@ -218,6 +218,50 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         self.assertTrue(logout.enabled)
         self.assertTrue(status.enabled)
 
+    def test_disabling_microphone_revokes_and_closes_the_session(self):
+        from ui.desktop.launch import _retire_voice_session
+
+        events = []
+
+        class VoiceSession:
+            def disable(self):
+                events.append("disable")
+            def close(self):
+                events.append("close")
+
+        class Status:
+            def setText(self, value):
+                raise AssertionError("successful cleanup must not show a warning")
+
+        failed = _retire_voice_session(VoiceSession(), Status())
+        self.assertFalse(failed)
+        self.assertEqual(events, ["disable", "close"])
+
+    def test_microphone_close_is_attempted_when_revocation_fails(self):
+        from ui.desktop.launch import _retire_voice_session
+
+        events = []
+
+        class VoiceSession:
+            def disable(self):
+                events.append("disable")
+                raise PermissionError("capture interruption failed")
+            def close(self):
+                events.append("close")
+
+        class Status:
+            value = None
+            def setText(self, value):
+                self.value = value
+
+        status = Status()
+        failed = _retire_voice_session(VoiceSession(), status)
+        self.assertTrue(failed)
+        self.assertEqual(events, ["disable", "close"])
+        self.assertEqual(
+            status.value, "Warning: microphone cleanup failed (PermissionError).",
+        )
+
     def test_microphone_close_failure_is_reported_and_does_not_escape(self):
         class VoiceSession:
             def close(self):
