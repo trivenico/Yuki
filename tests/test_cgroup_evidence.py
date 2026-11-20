@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ def make_cgroup(root: Path, membership: str = "/yuki/task-1"):
     return leaf
 
 
+@unittest.skipUnless(os.name == "posix", "Linux diagnostic fixture requires POSIX filesystem semantics")
 class CgroupV2EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
