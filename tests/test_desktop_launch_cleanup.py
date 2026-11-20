@@ -40,6 +40,30 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         self.assertEqual(events, ["first", "last", "broken"])
         self.assertEqual(failed, (broken,))
 
+    def test_partial_startup_cleanup_can_retry_only_failed_resources(self):
+        events = []
+
+        class Resource:
+            def __init__(self, name, failures=0):
+                self.name = name
+                self.failures = failures
+
+            def close(self):
+                events.append(self.name)
+                if self.failures:
+                    self.failures -= 1
+                    raise OSError("temporary close failure")
+
+        first = Resource("first")
+        flaky = Resource("flaky", failures=1)
+        remaining = _close_startup_resources((first, flaky))
+        self.assertEqual(remaining, (flaky,))
+        self.assertEqual(events, ["flaky", "first"])
+
+        remaining = _close_startup_resources(remaining)
+        self.assertEqual(remaining, ())
+        self.assertEqual(events, ["flaky", "first", "flaky"])
+
     def test_shutdown_revokes_session_before_closing_lifecycle(self):
         events = []
 
