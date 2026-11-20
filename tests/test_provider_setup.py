@@ -31,7 +31,7 @@ class ProviderSetupTests(unittest.TestCase):
     def test_refuses_to_rewrite_existing_yaml_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
-            original = "provider: openai\\nopenai_api_key: do-not-touch\\n"
+            original = "provider: openai\nopenai_api_key: do-not-touch\n"
             path.write_text(original, encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "credential-like fields"):
                 save_provider_preferences(path, "ollama", "local-model")
