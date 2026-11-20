@@ -334,12 +334,18 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             store = WorkflowRunStore(str(Path(directory) / "tasks.sqlite3"))
-            runtime = TaskRuntime(store, authorize=lambda *_: True)
+            runtime = TaskRuntime(
+                store, authorize=lambda *_: True,
+                verify_session=lambda actor, token: (
+                    actor == "owner-1" and token == "real-session"
+                ),
+            )
             with self.assertRaises(ValueError):
                 build_session_worker_runtime(
                     runtime, FakeProvider(), owner_actor_id="owner-1",
                     approval_session_id="forged-session",
                 )
+            self.assertIsNone(runtime.internal_authorize)
 
 
 if __name__ == "__main__":
