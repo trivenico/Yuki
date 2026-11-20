@@ -26,6 +26,20 @@ def _close_expired_controller(controller: Any) -> Exception | None:
     return None
 
 
+def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
+    """Best-effort microphone teardown that cannot block session revocation."""
+    if session is None:
+        return None
+    try:
+        session.close()
+    except Exception as exc:
+        status_label.setText(
+            "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
+        )
+        return exc
+    return None
+
+
 def _close_startup_resources(resources) -> None:
     """Best-effort reverse-order cleanup for partially composed desktop startup."""
     seen: set[int] = set()
@@ -1021,13 +1035,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             ):
                 widget.setEnabled(True)
             if self.voice_session is not None:
-                try:
-                    self.voice_session.close()
-                except Exception as exc:
-                    # Audio capture teardown must never strand logout or shutdown.
-                    self.voice_status.setText(
-                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
-                    )
+                _close_voice_session(self.voice_session, self.voice_status)
             self.voice_session = None
             self.voice_checkbox.blockSignals(True)
             self.voice_checkbox.setChecked(False)
@@ -1638,13 +1646,7 @@ Version: {version}",
 
         def _clear_authenticated_session_ui(self):
             if self.voice_session is not None:
-                try:
-                    self.voice_session.close()
-                except Exception as exc:
-                    # Audio capture teardown must never strand logout or shutdown.
-                    self.voice_status.setText(
-                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
-                    )
+                _close_voice_session(self.voice_session, self.voice_status)
             self.voice_session = None
             if self.speech_session is not None:
                 try:
@@ -1764,13 +1766,7 @@ Version: {version}",
                 return
             self._logout_started = True
             if self.voice_session is not None:
-                try:
-                    self.voice_session.close()
-                except Exception as exc:
-                    # Audio capture teardown must never strand logout or shutdown.
-                    self.voice_status.setText(
-                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
-                    )
+                _close_voice_session(self.voice_session, self.voice_status)
             if self.speech_session is not None:
                 try:
                     self.speech_session.close()
@@ -1824,13 +1820,7 @@ Version: {version}",
                 return
             self._shutdown_started = True
             if self.voice_session is not None:
-                try:
-                    self.voice_session.close()
-                except Exception as exc:
-                    # Audio capture teardown must never strand logout or shutdown.
-                    self.voice_status.setText(
-                        "Warning: microphone cleanup failed (" + type(exc).__name__ + ")."
-                    )
+                _close_voice_session(self.voice_session, self.voice_status)
             if self.speech_session is not None:
                 try:
                     self.speech_session.close()
