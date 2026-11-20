@@ -23,7 +23,14 @@ class ProviderManager:
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
         }
-        self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
+        configured_provider = self._config.get("provider")
+        if configured_provider is None:
+            configured_provider = self._environ.get("YUKI_PROVIDER")
+        self._selected: Optional[str] = (
+            str(configured_provider).strip().lower()
+            if isinstance(configured_provider, str) and configured_provider.strip()
+            else None
+        )
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
@@ -80,6 +87,10 @@ class ProviderManager:
         if not isinstance(name, str) or not name.strip():
             return "Provide a provider name."
         key = name.strip().lower()
+        if key in {"none", "native", "native-only"}:
+            self._selected = None
+            self._selected_adapter = None
+            return "Selected native-only mode; no external model provider is configured."
         info = self._providers.get(key)
         if info is None:
             return f"Unknown provider: {key}"
