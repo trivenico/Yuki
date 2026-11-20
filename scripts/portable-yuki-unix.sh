@@ -8,7 +8,11 @@ if [ ! -x "$YUKI_PYTHON" ]; then
   YUKI_PYTHON="$(command -v python3 || true)"
 fi
 if [ -z "$YUKI_PYTHON" ]; then
-  echo "Python 3 is not installed. This launcher does not install software." >&2
+  echo "Python 3.10 or newer is not installed. This launcher does not install software." >&2
+  exit 1
+fi
+if ! "$YUKI_PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
+  echo "Yuki requires Python 3.10 or newer." >&2
   exit 1
 fi
 if ! "$YUKI_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
