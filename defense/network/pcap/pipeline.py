@@ -54,6 +54,7 @@ def analyze_capture(
         max_flows=max_tcp_flows,
         max_buffered_bytes=max_tcp_buffer_bytes,
         max_flow_bytes=min(256 * 1024, max_tcp_buffer_bytes),
+        max_segment_bytes=min(65_535, max_tcp_buffer_bytes),
     )
     active_syn: set[tuple[str, int, str, int]] = set()
     stream_prefixes: dict[tuple[str, int, str, int], bytearray] = {}
