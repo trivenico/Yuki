@@ -79,3 +79,8 @@ The offline packet-analysis layer now includes a bounded DNS message parser for 
 ## Offline TLS ClientHello metadata
 
 A bounded TLS record/ClientHello parser now extracts legacy and supported protocol versions, cipher-suite identifiers, SNI hostname, ALPN identifiers, session-ID length, and compression methods. It validates record, handshake, vector, and extension lengths; rejects duplicate extensions and malformed SNI/ALPN values; and does not retain raw handshake bytes. SNI is potentially identifying metadata and must be redacted in default exports/logs. The parser is currently a standalone primitive: TCP stream reassembly, multi-record ClientHello handling, and integration into packet dissection remain outstanding. It does not decrypt TLS or inspect application data.
+
+
+## Offline TCP stream reassembly
+
+A reusable bounded TCP stream reassembler accepts immutable segment payload bytes and an explicit four-tuple flow key. The caller initializes each flow with its expected payload sequence (normally SYN sequence + 1). It handles modular sequence wraparound, out-of-order buffering, contiguous delivery, duplicate retransmissions, idle expiry, and strict per-flow/global memory and segment-count limits. Ambiguous overlaps and partial overlap with already delivered bytes are rejected rather than guessed. This is a primitive only: the packet dissector does not yet expose TCP sequence numbers/flags or feed the assembler, and PCAP timestamp/flow orchestration is still future work. It performs no capture, socket I/O, or network transmission.
