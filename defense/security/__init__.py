@@ -1,4 +1,4 @@
-""""Defensive security report importers; no active testing is provided."""
+"""Defensive security report importers; no active testing is provided."""
 from defense.security.nuclei_report import (
     NucleiFinding, NucleiReport, NucleiReportError, parse_nuclei_jsonl,
 )
@@ -23,4 +23,3 @@ __all__ += [
     "OsintAuditError", "OsintAuditEvent", "append_review_event", "verify_audit_history",
     "OsintReportError", "build_investigation_report",
 ]
-"
