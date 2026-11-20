@@ -52,7 +52,7 @@ class ReminderQueue:
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now must be timezone-aware.")
-        with self._lock:
+        with self._lock, file_lock(self.path):
             items = self._load()
             ready = []
             for item in items:
@@ -64,7 +64,7 @@ class ReminderQueue:
             return ready
 
     def list(self) -> list[dict]:
-        with self._lock:
+        with self._lock, file_lock(self.path):
             return [dict(item) for item in self._load()]
 
 
