@@ -1,3 +1,5 @@
+import hashlib
+import json
 import tempfile
 import unittest
 from threading import Barrier, Event, Lock, Thread
@@ -41,7 +43,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
-            [SpecialistAgent("code-review", "Code review", frozenset({"coding"}), "emit")],
+            [SpecialistAgent(
+                "code-review", "Code review", frozenset({"coding"}), "emit",
+                approval_class="read_only",
+            )],
             authorize=lambda actor, action, _plan: actor == "alice" and action in {
                 "agent:plan", "agent:dispatch", "agent:read"
             },
@@ -60,6 +65,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers=handlers,
+            manifest_validator=self.coordinator.validate_task_manifest,
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
@@ -283,6 +289,170 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.worker({})
         with self.assertRaises(ValueError):
             self.worker({"not valid": lambda _: "no"})
+
+
+    def test_claim_fails_closed_when_role_manifest_changes_after_enqueue(self):
+        task_id = self.create_task()
+        invoked = []
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE specialist_agents SET role_version=role_version+1 WHERE agent_id='code-review'"
+            )
+        result = self.worker({
+            "code-review": lambda _text: invoked.append(True) or "must not run",
+        }).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+        self.assertEqual(invoked, [])
+
+    def test_manifest_bound_task_requires_worker_validator(self):
+        task_id = self.create_task()
+        result = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-without-manifest-guard",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda _text: "must not run"},
+        ).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+
+    def test_manifest_validator_accepts_unchanged_active_role(self):
+        task_id = self.create_task()
+        claimed = self.store.claim_next(worker_id="manifest-validation-test")
+        self.assertEqual(claimed.run_id, task_id)
+        self.assertTrue(self.coordinator.validate_task_manifest(
+            task_id=task_id, agent_id="code-review",
+        ))
+
+
+    def test_claim_can_bind_task_created_before_coordinator_records_task_id(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="claim-before-plan-bind",
+            subtasks=[SubtaskSpec(
+                "implement", "Propose a safe patch", ("coding",),
+                requires_approval=False,
+            )],
+        )
+        steps = [{
+            "name": "implement", "action": "emit",
+            "argument": "Propose a safe patch", "requires_approval": False,
+        }]
+        task_key = f"agent-plan:{plan.plan_id}:implement"
+        task_name = "agent-code-review--manifest-v1"
+        digest = hashlib.sha256(json.dumps(
+            steps, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        self.coordinator._set_dispatch_intent(
+            plan.plan_id, "implement", task_key, task_name, digest,
+        )
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key=task_key, name=task_name, steps=steps,
+        )
+
+        # Simulate the worker winning the race before advance() persists task_id.
+        result = self.worker({"code-review": lambda text: "completed: " + text}).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        # A delayed coordinator response must not overwrite the worker's terminal state.
+        self.coordinator._set_subtask(
+            plan.plan_id, "implement", task_id=task.task_id, status="queued",
+        )
+        with self.coordinator._connect() as db:
+            row = db.execute(
+                "SELECT task_id, status FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan.plan_id, "implement"),
+            ).fetchone()
+        self.assertEqual(row["task_id"], task.task_id)
+        self.assertEqual(row["status"], "succeeded")
+
+
+    def test_manifest_change_during_handler_prevents_result_acceptance(self):
+        task_id = self.create_task()
+
+        def change_manifest(_text):
+            with self.coordinator._connect() as db:
+                db.execute(
+                    "UPDATE specialist_agents SET role_version=role_version+1 WHERE agent_id='code-review'"
+                )
+            return "result from stale role"
+
+        result = self.worker({"code-review": change_manifest}).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+        self.assertIsNone(result.result)
+
+
+    def test_dispatch_bounds_maximum_agent_subtask_and_idempotency_keys(self):
+        long_agent_id = "a" * 80
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "yuki.sqlite3"),
+            [SpecialistAgent(
+                long_agent_id, "Long ID specialist", frozenset({"long_task"}), "emit",
+                approval_class="read_only",
+            )],
+            authorize=lambda actor, action, _plan: actor == "alice" and action in {
+                "agent:plan", "agent:dispatch", "agent:read"
+            },
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="k" * 200,
+            subtasks=[SubtaskSpec(
+                "s" * 80, "Bounded long identifier task", ("long_task",),
+                requires_approval=False,
+            )],
+        )
+        dispatched = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task = self.store.get(dispatched.subtasks[0].task_id)
+        self.assertEqual(len(task.workflow_name), 99)
+        self.assertLessEqual(len(task.idempotency_key), 200)
+
+
+    def test_task_definition_tampering_fails_before_handler_execution(self):
+        task_id = self.create_task()
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT definition_json FROM workflow_runs WHERE run_id=?", (task_id,),
+            ).fetchone()
+            definition = json.loads(row["definition_json"])
+            definition[0]["argument"] = "tampered task input"
+            db.execute(
+                "UPDATE workflow_runs SET definition_json=? WHERE run_id=?",
+                (json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")), task_id),
+            )
+        called = []
+        result = self.worker({"code-review": lambda request: called.append(request) or "unsafe"}).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_manifest_invalid")
+        self.assertEqual(called, [])
+
+
+    def test_stale_status_refresh_cannot_regress_terminal_subtask_state(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="monotonic-subtask-status",
+            subtasks=[SubtaskSpec(
+                "implement", "Propose a safe patch", ("coding",),
+                requires_approval=False,
+            )],
+        )
+        plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = plan.subtasks[0].task_id
+        result = self.worker({"code-review": lambda _request: "review complete"}).run_once()
+        self.assertEqual(result.state, "succeeded")
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.coordinator._set_subtask(
+            plan.plan_id, "implement", status="queued",
+        )
+        with self.coordinator._connect() as db:
+            row = db.execute(
+                "SELECT status FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan.plan_id, "implement"),
+            ).fetchone()
+        self.assertEqual(row["status"], "succeeded")
+        self.assertEqual(self.store.get(task_id).state, "succeeded")
 
 
 if __name__ == "__main__":

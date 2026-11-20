@@ -155,6 +155,7 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        manifest_validator: Callable[[str, str], bool] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -164,6 +165,8 @@ class SpecialistTaskWorker:
             raise ValueError("service_actor_id must be bounded non-empty text.")
         if not isinstance(handlers, Mapping) or not handlers:
             raise ValueError("at least one explicit specialist handler is required.")
+        if manifest_validator is not None and not callable(manifest_validator):
+            raise TypeError("manifest_validator must be callable when provided.")
         validated = {}
         for agent_id, handler in handlers.items():
             if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
@@ -175,6 +178,7 @@ class SpecialistTaskWorker:
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        self.manifest_validator = manifest_validator
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -203,6 +207,7 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                manifest_validator=self.manifest_validator,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -233,6 +238,25 @@ class SpecialistTaskWorker:
                 error_code="unknown_specialist",
             )
 
+        # New coordinator-created tasks carry an explicit manifest marker. Legacy
+        # task names remain compatible, but marked tasks require a live registry
+        # check at claim time; a missing or failing validator never runs the handler.
+        if claimed.workflow_name.endswith("--manifest-v1"):
+            valid_manifest = False
+            if self.manifest_validator is not None:
+                try:
+                    valid_manifest = (
+                        self.manifest_validator(task_id=claimed.run_id, agent_id=agent_id) is True
+                    )
+                except Exception:
+                    valid_manifest = False
+            if not valid_manifest:
+                return self.runtime.fail(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    error_code="specialist_manifest_invalid",
+                )
+
         try:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
@@ -248,6 +272,21 @@ class SpecialistTaskWorker:
                 return self.runtime._record(current)
             if current.state != "running" or current.lease_owner != self.worker_id:
                 raise RuntimeError("task is no longer owned by this worker.")
+            if claimed.workflow_name.endswith("--manifest-v1"):
+                valid_manifest = False
+                if self.manifest_validator is not None:
+                    try:
+                        valid_manifest = (
+                            self.manifest_validator(task_id=claimed.run_id, agent_id=agent_id) is True
+                        )
+                    except Exception:
+                        valid_manifest = False
+                if not valid_manifest:
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=current.version, worker_id=self.worker_id,
+                        error_code="specialist_manifest_invalid",
+                    )
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]

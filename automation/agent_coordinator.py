@@ -38,6 +38,14 @@ class SpecialistAgent:
     action: str
     permissions: frozenset[str] = frozenset()
     enabled: bool = True
+    department: str = "Unassigned"
+    role_version: int = 1
+    owner: str = "Yuki"
+    handler_id: str | None = "emit"
+    handler_ready: bool = True
+    max_steps: int = 5
+    max_tokens: int = 4000
+    approval_class: str = "review_required"
 
 
 @dataclass(frozen=True)
@@ -61,6 +69,10 @@ class PlannedSubtask:
     requires_approval: bool
     task_id: str | None
     status: str
+    agent_role_version: int = 1
+    handler_id: str | None = None
+    agent_action: str | None = None
+    agent_approval_class: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +137,13 @@ class SpecialistAgentCoordinator:
                     requires_approval INTEGER NOT NULL,
                     task_id TEXT,
                     status TEXT NOT NULL,
+                    agent_role_version INTEGER NOT NULL DEFAULT 1,
+                    handler_id TEXT,
+                    agent_action TEXT,
+                    agent_approval_class TEXT,
+                    task_idempotency_key TEXT,
+                    task_name TEXT,
+                    task_definition_digest TEXT,
                     PRIMARY KEY(plan_id, subtask_id),
                     FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
                 )
@@ -132,6 +151,20 @@ class SpecialistAgentCoordinator:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_subtasks)")}
             if "permissions_json" not in columns:
                 db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT "[]"')
+            if "agent_role_version" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN agent_role_version INTEGER NOT NULL DEFAULT 1")
+            if "handler_id" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN handler_id TEXT")
+            if "agent_action" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN agent_action TEXT")
+            if "agent_approval_class" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN agent_approval_class TEXT")
+            if "task_idempotency_key" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN task_idempotency_key TEXT")
+            if "task_name" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN task_name TEXT")
+            if "task_definition_digest" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN task_definition_digest TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS specialist_agents (
@@ -142,20 +175,51 @@ class SpecialistAgentCoordinator:
                     permissions_json TEXT NOT NULL,
                     enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    department TEXT NOT NULL DEFAULT 'Unassigned',
+                    role_version INTEGER NOT NULL DEFAULT 1,
+                    owner TEXT NOT NULL DEFAULT 'Yuki',
+                    handler_id TEXT,
+                    handler_ready INTEGER NOT NULL DEFAULT 1 CHECK(handler_ready IN (0, 1)),
+                    max_steps INTEGER NOT NULL DEFAULT 5,
+                    max_tokens INTEGER NOT NULL DEFAULT 4000,
+                    approval_class TEXT NOT NULL DEFAULT 'review_required'
                 )
             """)
+            agent_columns = {row["name"] for row in db.execute("PRAGMA table_info(specialist_agents)")}
+            migrations = {
+                "department": "TEXT NOT NULL DEFAULT 'Unassigned'",
+                "role_version": "INTEGER NOT NULL DEFAULT 1",
+                "owner": "TEXT NOT NULL DEFAULT 'Yuki'",
+                "handler_id": "TEXT",
+                "handler_ready": "INTEGER NOT NULL DEFAULT 1",
+                "max_steps": "INTEGER NOT NULL DEFAULT 5",
+                "max_tokens": "INTEGER NOT NULL DEFAULT 4000",
+                "approval_class": "TEXT NOT NULL DEFAULT 'review_required'",
+            }
+            for column, definition in migrations.items():
+                if column not in agent_columns:
+                    db.execute(f"ALTER TABLE specialist_agents ADD COLUMN {column} {definition}")
+            # Existing rows predate explicit handler metadata and all use the
+            # coordinator's sole supported action, "emit".
+            db.execute(
+                "UPDATE specialist_agents SET handler_id='emit' "
+                "WHERE handler_ready=1 AND handler_id IS NULL"
+            )
             now = datetime.now(timezone.utc).isoformat()
             for agent in agent_map.values():
                 db.execute("""
                     INSERT OR IGNORE INTO specialist_agents(
                         agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        enabled, created_at, updated_at, department, role_version,
+                        owner, handler_id, handler_ready, max_steps, max_tokens, approval_class
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     agent.agent_id, agent.name,
                     json.dumps(sorted(agent.capabilities)), agent.action,
                     json.dumps(sorted(agent.permissions)), int(agent.enabled), now, now,
+                    agent.department, agent.role_version, agent.owner, agent.handler_id,
+                    int(agent.handler_ready), agent.max_steps, agent.max_tokens, agent.approval_class,
                 ))
         self._refresh_agent_registry()
 
@@ -190,8 +254,24 @@ class SpecialistAgentCoordinator:
             or any(not isinstance(item, str) or not _PERMISSION.fullmatch(item) for item in agent.permissions)
         ):
             raise ValueError("permissions must contain at most 32 bounded identifiers.")
-        if type(agent.enabled) is not bool:
-            raise ValueError("enabled must be a boolean.")
+        if type(agent.enabled) is not bool or type(agent.handler_ready) is not bool:
+            raise ValueError("enabled and handler_ready must be booleans.")
+        if not isinstance(agent.department, str) or not agent.department.strip() or len(agent.department) > 80:
+            raise ValueError("department must be bounded non-empty text.")
+        if type(agent.role_version) is not int or not 1 <= agent.role_version <= 1000000:
+            raise ValueError("role_version must be a positive bounded integer.")
+        if not isinstance(agent.owner, str) or not agent.owner.strip() or len(agent.owner) > 100:
+            raise ValueError("owner must be bounded non-empty text.")
+        if agent.handler_id is not None and (not isinstance(agent.handler_id, str) or not _ID.fullmatch(agent.handler_id)):
+            raise ValueError("handler_id must be a bounded identifier when provided.")
+        if type(agent.max_steps) is not int or not 1 <= agent.max_steps <= 20:
+            raise ValueError("max_steps must be between 1 and 20.")
+        if type(agent.max_tokens) is not int or not 1 <= agent.max_tokens <= 100000:
+            raise ValueError("max_tokens must be between 1 and 100000.")
+        if agent.approval_class not in {"read_only", "review_required", "human_approval"}:
+            raise ValueError("approval_class is not supported.")
+        if agent.handler_ready and not agent.handler_id:
+            raise ValueError("a handler-ready specialist must declare a handler_id.")
 
     def _allowed(self, actor_id: str, action: str, resource_id: str) -> bool:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
@@ -292,10 +372,18 @@ class SpecialistAgentCoordinator:
                 action=row["action"],
                 permissions=frozenset(permissions),
                 enabled=bool(row["enabled"]),
+                department=row["department"],
+                role_version=row["role_version"],
+                owner=row["owner"],
+                handler_id=row["handler_id"],
+                handler_ready=bool(row["handler_ready"]),
+                max_steps=row["max_steps"],
+                max_tokens=row["max_tokens"],
+                approval_class=row["approval_class"],
             )
             SpecialistAgentCoordinator._validate_agent(agent)
-            if row["enabled"] not in (0, 1):
-                raise ValueError("enabled state must be 0 or 1")
+            if row["enabled"] not in (0, 1) or row["handler_ready"] not in (0, 1):
+                raise ValueError("enabled and handler readiness must be 0 or 1")
             return agent
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
@@ -324,12 +412,14 @@ class SpecialistAgentCoordinator:
                     db.execute("""
                         INSERT INTO specialist_agents(
                             agent_id, name, capabilities_json, action, permissions_json,
-                            enabled, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            enabled, created_at, updated_at, department, role_version,
+                            owner, handler_id, handler_ready, max_steps, max_tokens, approval_class
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
                         agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                        now, now,
+                        now, now, agent.department, agent.role_version, agent.owner, agent.handler_id,
+                        int(agent.handler_ready), agent.max_steps, agent.max_tokens, agent.approval_class,
                     ))
             except sqlite3.IntegrityError as exc:
                 raise AgentPlanError("agent ID is already registered.") from exc
@@ -372,6 +462,14 @@ class SpecialistAgentCoordinator:
                     "action": agent.action,
                     "capabilities": tuple(sorted(agent.capabilities)),
                     "enabled": agent.enabled,
+                    "department": agent.department,
+                    "role_version": agent.role_version,
+                    "owner": agent.owner,
+                    "handler_id": agent.handler_id,
+                    "handler_ready": agent.handler_ready,
+                    "max_steps": agent.max_steps,
+                    "max_tokens": agent.max_tokens,
+                    "approval_class": agent.approval_class,
                 }
                 for agent in sorted(self.agents.values(), key=lambda item: item.agent_id)
             )
@@ -382,7 +480,7 @@ class SpecialistAgentCoordinator:
         with self._agent_lock:
             candidates = [
                 agent for agent in self.agents.values()
-                if agent.enabled and needed <= agent.capabilities
+                if agent.enabled and agent.handler_ready and needed <= agent.capabilities
                 and needed_permissions <= agent.permissions
             ]
             if not candidates:
@@ -399,12 +497,30 @@ class SpecialistAgentCoordinator:
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
         assignments = {item.subtask_id: self._route(item) for item in items}
+        assigned_steps: dict[str, int] = {}
+        for agent in assignments.values():
+            assigned_steps[agent.agent_id] = assigned_steps.get(agent.agent_id, 0) + 1
+            if assigned_steps[agent.agent_id] > agent.max_steps:
+                raise AgentPlanError(
+                    f"specialist {agent.agent_id} exceeds its per-plan step budget."
+                )
+        approval_requirements = {
+            item.subtask_id: (
+                item.requires_approval
+                or assignments[item.subtask_id].approval_class in {"review_required", "human_approval"}
+            )
+            for item in items
+        }
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
              "required_permissions": sorted(i.required_permissions),
-             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval,
+             "depends_on": sorted(i.depends_on), "requires_approval": approval_requirements[i.subtask_id],
              "agent_id": assignments[i.subtask_id].agent_id,
+             "agent_role_version": assignments[i.subtask_id].role_version,
+             "handler_id": assignments[i.subtask_id].handler_id,
+             "agent_action": assignments[i.subtask_id].action,
+             "agent_approval_class": assignments[i.subtask_id].approval_class,
              "action": assignments[i.subtask_id].action}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
@@ -427,12 +543,14 @@ class SpecialistAgentCoordinator:
                 db.execute("""
                     INSERT INTO agent_plan_subtasks(
                         plan_id, subtask_id, agent_id, description, capabilities_json, permissions_json,
-                        dependencies_json, requires_approval, task_id, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending')
+                        dependencies_json, requires_approval, task_id, status,
+                        agent_role_version, handler_id, agent_action, agent_approval_class
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', ?, ?, ?, ?)
                 """, (plan_id, item.subtask_id, agent.agent_id, item.description.strip(),
                       json.dumps(sorted(item.required_capabilities)),
                       json.dumps(sorted(item.required_permissions)),
-                      json.dumps(list(item.depends_on)), int(item.requires_approval)))
+                      json.dumps(list(item.depends_on)), int(approval_requirements[item.subtask_id]),
+                      agent.role_version, agent.handler_id, agent.action, agent.approval_class))
             return self._read_plan(db, plan_id)
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
@@ -449,7 +567,6 @@ class SpecialistAgentCoordinator:
             plan = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
             if plan is None:
                 raise KeyError("agent plan not found.")
-            plan_key = plan["idempotency_key"]
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
             ).fetchall()]
@@ -490,7 +607,20 @@ class SpecialistAgentCoordinator:
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
+            # A plan is bound to the exact manifest revision selected at submit.
+            # If the role changed while waiting for dependencies, fail closed
+            # rather than silently dispatching under a different handler/policy.
+            manifest_matches = (
+                agent is not None
+                and agent.role_version == row["agent_role_version"]
+                and agent.handler_id == row["handler_id"]
+                and agent.action == row["agent_action"]
+                and agent.approval_class == row["agent_approval_class"]
+            )
+            if (
+                not manifest_matches or agent is None
+                or not agent.enabled or not agent.handler_ready
+            ):
                 self._set_subtask(plan_id, row["subtask_id"], status="failed")
                 row["status"] = "failed"
                 continue
@@ -514,15 +644,29 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
+            # Persist a verifiable dispatch intent before enqueueing. A worker
+            # may claim immediately after TaskRuntime creates the run, before this
+            # coordinator records task_id; the claim-time validator can safely bind
+            # that run from this intent. The plan ID keeps runtime idempotency keys
+            # bounded even when the caller supplied a 200-character key.
+            task_key = f"agent-plan:{plan_id}:{row['subtask_id']}"
+            task_name = f"agent-{agent.agent_id}--manifest-v1"
+            task_steps = [{
+                "name": row["subtask_id"], "action": agent.action,
+                "argument": argument,
+                "requires_approval": bool(row["requires_approval"]),
+            }]
+            task_digest = hashlib.sha256(json.dumps(
+                task_steps, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
+            self._set_dispatch_intent(
+                plan_id, row["subtask_id"], task_key, task_name, task_digest,
+            )
             task = self.runtime.enqueue(
                 actor_id=actor_id,
-                idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                steps=[{
-                    "name": row["subtask_id"], "action": agent.action,
-                    "argument": argument,
-                    "requires_approval": bool(row["requires_approval"]),
-                }],
+                idempotency_key=task_key,
+                name=task_name,
+                steps=task_steps,
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
@@ -600,17 +744,144 @@ class SpecialistAgentCoordinator:
 
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
+    def _set_dispatch_intent(
+        self, plan_id: str, subtask_id: str, task_key: str,
+        task_name: str, task_digest: str,
+    ) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """
+                SELECT task_id, task_idempotency_key, task_name, task_definition_digest
+                FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?
+                """,
+                (plan_id, subtask_id),
+            ).fetchone()
+            if row is None or row["task_id"] is not None:
+                raise AgentPlanError("specialist dispatch intent is no longer writable.")
+            existing = (
+                row["task_idempotency_key"], row["task_name"],
+                row["task_definition_digest"],
+            )
+            proposed = (task_key, task_name, task_digest)
+            if any(value is not None for value in existing) and existing != proposed:
+                raise AgentPlanError("specialist dispatch intent changed; refusing to enqueue.")
+            db.execute(
+                """
+                UPDATE agent_plan_subtasks
+                SET task_idempotency_key=?, task_name=?, task_definition_digest=?
+                WHERE plan_id=? AND subtask_id=? AND task_id IS NULL
+                """,
+                (task_key, task_name, task_digest, plan_id, subtask_id),
+            )
+
+    def validate_task_manifest(self, *, task_id: str, agent_id: str) -> bool:
+        """Validate a queued specialist task against its persisted and live role snapshot.
+
+        Intended for the worker's claim-time guard. A missing plan binding, inactive
+        role, or any changed manifest field fails closed.
+        """
+        if (
+            not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200
+            or not isinstance(agent_id, str) or not _ID.fullmatch(agent_id)
+        ):
+            return False
+        run = self.runtime.store.get(task_id)
+        if run is None or run.state != "running" or len(run.definition) != 1:
+            return False
+        run_digest = hashlib.sha256(json.dumps(
+            run.definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """
+                SELECT
+                    s.plan_id, s.subtask_id, s.task_id, s.task_idempotency_key,
+                    s.task_name, s.task_definition_digest,
+                    s.agent_id, s.agent_role_version, s.handler_id,
+                    s.agent_action, s.agent_approval_class, s.requires_approval,
+                    a.role_version, a.handler_id AS current_handler_id,
+                    a.action AS current_action, a.approval_class AS current_approval_class,
+                    a.enabled, a.handler_ready
+                FROM agent_plan_subtasks AS s
+                JOIN specialist_agents AS a ON a.agent_id = s.agent_id
+                WHERE s.agent_id=? AND s.task_idempotency_key=?
+                """,
+                (agent_id, run.idempotency_key),
+            ).fetchone()
+            if (
+                row is None
+                or row["task_idempotency_key"] != run.idempotency_key
+                or row["task_name"] != run.workflow_name
+                or row["task_definition_digest"] != run_digest
+                or run.workflow_name != f"agent-{agent_id}--manifest-v1"
+                or run.idempotency_key != f"agent-plan:{row['plan_id']}:{row['subtask_id']}"
+                or run.definition[0].get("name") != row["subtask_id"]
+                or run.definition[0].get("action") != row["agent_action"]
+                or run.definition[0].get("requires_approval") is not bool(row["requires_approval"])
+            ):
+                return False
+            if row["task_id"] is None:
+                db.execute(
+                    """
+                    UPDATE agent_plan_subtasks SET task_id=?, status='running'
+                    WHERE plan_id=? AND subtask_id=? AND task_id IS NULL
+                    """,
+                    (task_id, row["plan_id"], row["subtask_id"]),
+                )
+                bound = db.execute(
+                    "SELECT task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                    (row["plan_id"], row["subtask_id"]),
+                ).fetchone()
+                if bound is None or bound["task_id"] != task_id:
+                    return False
+            elif row["task_id"] != task_id:
+                return False
+            return bool(
+                row["enabled"] == 1
+                and row["handler_ready"] == 1
+                and row["agent_role_version"] == row["role_version"]
+                and row["handler_id"] is not None
+                and row["handler_id"] == row["current_handler_id"]
+                and row["agent_action"] == row["current_action"]
+                and row["agent_approval_class"] == row["current_approval_class"]
+            )
+
     def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
         with self._connect() as db:
             if task_id is None:
                 db.execute(
-                    "UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
-                    (status, plan_id, subtask_id),
+                    """
+                    UPDATE agent_plan_subtasks
+                    SET status=CASE
+                        WHEN status IN (
+                            'succeeded', 'failed', 'cancelled', 'interrupted', 'blocked'
+                        ) THEN status
+                        WHEN status='running' AND ? NOT IN (
+                            'succeeded', 'failed', 'cancelled', 'interrupted', 'blocked'
+                        ) THEN status
+                        ELSE ?
+                    END
+                    WHERE plan_id=? AND subtask_id=?
+                    """,
+                    (status, status, plan_id, subtask_id),
                 )
             else:
                 db.execute(
-                    "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
-                    (task_id, status, plan_id, subtask_id),
+                    """
+                    UPDATE agent_plan_subtasks
+                    SET task_id=COALESCE(task_id, ?),
+                        status=CASE
+                            WHEN status IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'blocked')
+                            THEN status
+                            WHEN status='running' AND ? NOT IN (
+                                'succeeded', 'failed', 'cancelled', 'interrupted', 'blocked'
+                            ) THEN status
+                            ELSE ? END
+                    WHERE plan_id=? AND subtask_id=? AND (task_id IS NULL OR task_id=?)
+                    """,
+                    (task_id, status, status, plan_id, subtask_id, task_id),
                 )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
@@ -634,6 +905,8 @@ class SpecialistAgentCoordinator:
                 required_permissions=tuple(json.loads(s["permissions_json"])),
                 depends_on=tuple(json.loads(s["dependencies_json"])),
                 requires_approval=bool(s["requires_approval"]), task_id=s["task_id"], status=s["status"],
+                agent_role_version=s["agent_role_version"], handler_id=s["handler_id"],
+                agent_action=s["agent_action"], agent_approval_class=s["agent_approval_class"],
             ) for s in subtasks),
         )
 

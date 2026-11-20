@@ -27,9 +27,9 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         }
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
-                            "emit", frozenset({"web:read"})),
+                            "emit", frozenset({"web:read"}), approval_class="read_only"),
             SpecialistAgent("writer", "Writing specialist", frozenset({"write", "summarize"}),
-                            "emit", frozenset({"artifact:write"})),
+                            "emit", frozenset({"artifact:write"}), approval_class="read_only"),
             SpecialistAgent("general", "Generalist", frozenset({"research", "summarize", "write"}),
                             "emit"),
             SpecialistAgent("disabled", "Disabled specialist", frozenset({"research"}),
@@ -277,6 +277,256 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                         [SpecialistAgent("unsafe", "Unsafe", frozenset({"research"}), action)],
                         authorize=self.agent_auth,
                     )
+
+
+    def test_role_manifest_metadata_persists_and_unready_roles_cannot_route(self):
+        from automation.agent_roles import build_initial_role_slots, register_initial_role_slots
+
+        slots = build_initial_role_slots()
+        self.assertEqual(len(slots), 6)
+        self.assertTrue(all(not item.enabled for item in slots))
+        self.assertTrue(all(not item.handler_ready for item in slots))
+        self.assertTrue(all(item.handler_id is None for item in slots))
+        registered = register_initial_role_slots(self.coordinator, actor_id="alice")
+        self.assertEqual(registered, tuple(item.agent_id for item in slots))
+
+        listed = {item["agent_id"]: item for item in self.coordinator.list_agents(actor_id="alice")}
+        chief = listed["EXEC-01"]
+        self.assertEqual(chief["department"], "Executive Office")
+        self.assertEqual(chief["role_version"], 1)
+        self.assertEqual(chief["owner"], "Yuki CEO")
+        self.assertFalse(chief["handler_ready"])
+        self.assertFalse(chief["enabled"])
+        self.assertEqual(chief["max_steps"], 5)
+        self.assertEqual(chief["max_tokens"], 4000)
+
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(actor_id="alice", idempotency_key="unready-role", subtasks=[
+                SubtaskSpec("coordinate", "Coordinate approved work", ("operating_plan",)),
+            ])
+
+    def test_role_manifest_metadata_survives_restart_and_legacy_agents_still_route(self):
+        from automation.agent_roles import register_initial_role_slots
+
+        register_initial_role_slots(self.coordinator, actor_id="alice")
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        roles = {item["agent_id"]: item for item in restarted.list_agents(actor_id="alice")}
+        self.assertEqual(roles["SEC-02"]["department"], "Security, Safety & Privacy")
+        self.assertEqual(roles["SEC-02"]["approval_class"], "read_only")
+        self.assertFalse(roles["SEC-02"]["handler_ready"])
+
+        # Existing registered emit specialists retain their prior dispatch behavior.
+        plan = restarted.submit(actor_id="alice", idempotency_key="legacy-agent-after-migration", subtasks=[
+            SubtaskSpec("collect", "Collect approved sources", ("research",)),
+        ])
+        dispatched = restarted.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertIsNotNone(dispatched.subtasks[0].task_id)
+
+    def test_specialist_resource_and_role_metadata_are_validated(self):
+        invalid = [
+            {"department": "", "role_version": 1, "owner": "Yuki", "max_steps": 5, "max_tokens": 1000, "approval_class": "read_only"},
+            {"department": "Research", "role_version": 0, "owner": "Yuki", "max_steps": 5, "max_tokens": 1000, "approval_class": "read_only"},
+            {"department": "Research", "role_version": 1, "owner": "Yuki", "max_steps": 21, "max_tokens": 1000, "approval_class": "read_only"},
+            {"department": "Research", "role_version": 1, "owner": "Yuki", "max_steps": 5, "max_tokens": 100001, "approval_class": "read_only"},
+            {"department": "Research", "role_version": 1, "owner": "Yuki", "max_steps": 5, "max_tokens": 1000, "approval_class": "unrestricted"},
+        ]
+        for index, fields in enumerate(invalid):
+            with self.subTest(fields=fields):
+                specialist = SpecialistAgent(
+                    f"invalid-{index}", "Invalid metadata", frozenset({"research"}), "emit",
+                    **fields,
+                )
+                with self.assertRaises(ValueError):
+                    SpecialistAgentCoordinator(
+                        self.runtime, str(Path(self.tmp.name) / f"invalid-{index}.sqlite3"),
+                        [specialist], authorize=self.agent_auth,
+                    )
+
+    def test_handler_not_ready_cannot_be_routed_even_if_enabled(self):
+        specialist = SpecialistAgent(
+            "pending-handler", "Pending handler", frozenset({"special_task"}), "emit",
+            enabled=True, handler_id=None, handler_ready=False,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "pending-handler.sqlite3"),
+            [specialist], authorize=self.agent_auth,
+        )
+        with self.assertRaises(AgentPlanError):
+            coordinator.submit(actor_id="alice", idempotency_key="pending-handler", subtasks=[
+                SubtaskSpec("run", "Run a specialist task", ("special_task",)),
+            ])
+
+
+    def test_initial_role_handlers_reuse_existing_provider_backed_worker(self):
+        from automation.agent_roles import (
+            INITIAL_PROVIDER_ROLE_MAP, build_initial_role_handlers,
+            build_initial_role_worker, register_initial_role_slots,
+        )
+
+        class Provider:
+            def is_available(self):
+                return True
+
+            def generate(self, prompt):
+                self.prompt = prompt
+                return "bounded specialist output"
+
+        class Manager:
+            def __init__(self):
+                self.provider = Provider()
+
+            def create_selected_adapter(self):
+                return self.provider
+
+        manager = Manager()
+        handlers = build_initial_role_handlers(manager)
+        worker = build_initial_role_worker(
+            self.runtime, self.coordinator, manager,
+            worker_id="initial-role-worker", service_actor_id="worker-service",
+        )
+        self.assertIs(worker.runtime, self.runtime)
+        self.assertIs(worker.manifest_validator.__self__, self.coordinator)
+        self.assertEqual(set(worker.handlers), set(INITIAL_PROVIDER_ROLE_MAP))
+        self.assertEqual(set(handlers), set(INITIAL_PROVIDER_ROLE_MAP))
+        self.assertEqual(handlers["RES-12"]("Research supplied evidence"), "bounded specialist output")
+        self.assertIn("Specialist role: research", manager.provider.prompt)
+
+        # Building executable adapters is not permission to activate role records.
+        register_initial_role_slots(self.coordinator, actor_id="alice")
+        records = {item["agent_id"]: item for item in self.coordinator.list_agents(actor_id="alice")}
+        self.assertTrue(all(not records[agent_id]["handler_ready"] for agent_id in handlers))
+        self.assertTrue(all(not records[agent_id]["enabled"] for agent_id in handlers))
+        with self.assertRaises(ValueError):
+            build_initial_role_worker(
+                self.runtime, SpecialistAgentCoordinator(
+                    TaskRuntime(self.store, authorize=lambda *_: True),
+                    str(Path(self.tmp.name) / "other-coordinator.sqlite3"),
+                    [], authorize=self.agent_auth,
+                ),
+                manager, worker_id="mismatch", service_actor_id="worker-service",
+            )
+
+
+    def test_plan_persists_the_exact_specialist_manifest_version_and_handler(self):
+        specialist = SpecialistAgent(
+            "versioned-research", "Versioned Research", frozenset({"versioned_research"}),
+            "emit", enabled=True, role_version=7, handler_id="research-v2",
+            handler_ready=True, department="Research", owner="Research Lead",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="role-version-snapshot",
+            subtasks=[SubtaskSpec("analyze", "Analyze supplied evidence", ("versioned_research",))],
+        )
+        item = plan.subtasks[0]
+        self.assertEqual(item.agent_role_version, 7)
+        self.assertEqual(item.handler_id, "research-v2")
+
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        persisted = restarted.get_plan(actor_id="alice", plan_id=plan.plan_id).subtasks[0]
+        self.assertEqual(persisted.agent_role_version, 7)
+        self.assertEqual(persisted.handler_id, "research-v2")
+
+
+    def test_dispatch_fails_closed_if_role_revision_changes_after_plan_creation(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="stale-role-revision",
+            subtasks=[SubtaskSpec("collect", "Collect approved research", ("research",))],
+        )
+        original = self.coordinator.agents["research"]
+        updated = SpecialistAgent(
+            original.agent_id, original.name, original.capabilities, original.action,
+            original.permissions, original.enabled,
+            department=original.department, role_version=original.role_version + 1,
+            owner=original.owner, handler_id="research-v2", handler_ready=True,
+            max_steps=original.max_steps, max_tokens=original.max_tokens,
+            approval_class=original.approval_class,
+        )
+        # Re-registering is intentionally not an update API; simulate an authorized
+        # manifest revision written by the registry's administrative migration.
+        with self.coordinator._connect() as db:
+            db.execute(
+                "UPDATE specialist_agents SET role_version=?, handler_id=? WHERE agent_id=?",
+                (updated.role_version, updated.handler_id, updated.agent_id),
+            )
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(advanced.subtasks[0].status, "failed")
+        self.assertIsNone(advanced.subtasks[0].task_id)
+
+    def test_plan_action_snapshot_is_persisted(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="role-action-snapshot",
+            subtasks=[SubtaskSpec("collect", "Collect approved research", ("research",))],
+        )
+        self.assertEqual(plan.subtasks[0].agent_action, "emit")
+
+
+    def test_review_required_role_cannot_be_planned_without_approval(self):
+        specialist = SpecialistAgent(
+            "review-gated", "Review gated specialist", frozenset({"review_gated"}), "emit",
+            approval_class="review_required",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="enforced-review-policy",
+            subtasks=[SubtaskSpec(
+                "draft", "Draft a proposed change", ("review_gated",),
+                requires_approval=False,
+            )],
+        )
+        self.assertTrue(plan.subtasks[0].requires_approval)
+
+    def test_read_only_role_can_use_explicit_no_approval_policy(self):
+        specialist = SpecialistAgent(
+            "read-only-agent", "Read only specialist", frozenset({"read_only_task"}), "emit",
+            approval_class="read_only",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="read-only-no-approval",
+            subtasks=[SubtaskSpec(
+                "summarize", "Summarize supplied content", ("read_only_task",),
+                requires_approval=False,
+            )],
+        )
+        self.assertFalse(plan.subtasks[0].requires_approval)
+
+
+    def test_per_specialist_step_budget_is_enforced_before_plan_persistence(self):
+        specialist = SpecialistAgent(
+            "single-step", "Single step specialist", frozenset({"single_step"}), "emit",
+            max_steps=1, approval_class="read_only",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        with self.assertRaisesRegex(AgentPlanError, "step budget"):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="step-budget-exceeded",
+                subtasks=[
+                    SubtaskSpec("one", "First item", ("single_step",), requires_approval=False),
+                    SubtaskSpec("two", "Second item", ("single_step",), requires_approval=False),
+                ],
+            )
+
+
+    def test_dispatch_fails_closed_if_approval_class_changes_without_revision_bump(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="stale-approval-class",
+            subtasks=[SubtaskSpec(
+                "collect", "Collect approved research", ("research",),
+                requires_approval=False,
+            )],
+        )
+        with self.coordinator._connect() as db:
+            db.execute(
+                "UPDATE specialist_agents SET approval_class='human_approval' WHERE agent_id='research'"
+            )
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(advanced.subtasks[0].status, "failed")
+        self.assertIsNone(advanced.subtasks[0].task_id)
 
 
 if __name__ == "__main__":
