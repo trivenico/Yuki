@@ -99,7 +99,8 @@ class OsintGraphTests(unittest.TestCase):
             export_graphml(object())
         with self.assertRaises(OsintImportError):
             export_graphml(graph, max_bytes=10)
-\n    def test_rejects_non_bytes_and_invalid_limits(self):
+
+    def test_rejects_non_bytes_and_invalid_limits(self):
         with self.assertRaises(OsintImportError):
             parse_osint_jsonl(bytearray(b"{}"))
         with self.assertRaises(OsintImportError):
