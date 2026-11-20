@@ -2,7 +2,7 @@ import unittest
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
-from yuki_providers import ProviderManager
+from yuki_providers import ProviderInfo, ProviderManager
 
 class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_registry_reports_only_factory_supported_integrations(self):
@@ -64,7 +64,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
-        manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
+        manager.register(ProviderInfo("custom", (), True), factory=lambda: object())
         with self.assertRaisesRegex(TypeError, "generate"):
             manager._build_adapter("custom")
 
