@@ -69,3 +69,8 @@ No live capture ships until explicit consent UX, visible status, stop behavior, 
 ## Offline packet metadata dissector
 
 The classic-PCAP foundation now has a pure byte-oriented metadata dissector for Ethernet, up to two VLAN tags, ARP, IPv4, IPv6 base headers, TCP, and UDP. It reports bounded addresses, ports, header metadata, and payload lengths only; it never returns payload bytes. Non-initial IPv4 fragments and IPv6 extension/ESP chains are marked undecoded rather than guessed. Unsupported link types remain metadata-only. DNS/TLS application metadata, PCAPNG, and evidence correlation remain future work. The dissector does not open files, capture traffic, resolve names, or contact remote systems.
+
+
+## Offline DNS metadata
+
+The offline packet-analysis layer now includes a bounded DNS message parser for questions and resource records. It validates section counts, label encoding, compression pointers and loops, record lengths, and trailing bytes. A/AAAA records are normalized to addresses; CNAME/NS/PTR values are decoded as names; TXT contents are never retained (only a segment count and byte count are reported). It performs no DNS resolution or network access. DNS parsing is not yet wired into the packet dissection pipeline; UDP/TCP framing, message correlation, DNS-over-TLS/HTTPS, and broader application-layer decoding remain future work.
