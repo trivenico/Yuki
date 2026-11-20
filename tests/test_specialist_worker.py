@@ -39,6 +39,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
+            verify_session=lambda actor, session: actor == "alice" and session == "test-session",
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
