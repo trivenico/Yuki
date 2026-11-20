@@ -79,7 +79,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
              patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process) as popen:
             result = provider.generate("hello")
 
-        self.assertEqual(result, "xxxxx\\n[Response truncated by Yuki.]")
+        self.assertEqual(result, "xxxxx\n[Response truncated by Yuki.]")
         self.assertIs(popen.call_args.kwargs["stdout"], subprocess.PIPE)
         self.assertIs(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
