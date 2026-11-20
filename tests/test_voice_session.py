@@ -6,12 +6,15 @@ from voice.session import VoiceSession, VoiceSessionError
 
 
 class FakeSTT:
-    def __init__(self, *, block=False):
+    def __init__(self, *, block=False, block_transcription=False):
         self.enabled = True
         self.block = block
+        self.block_transcription = block_transcription
         self.audio_path = None
         self.transcribed_path = None
         self.started = threading.Event()
+        self.transcription_started = threading.Event()
+        self.finish_transcription = threading.Event()
 
     def record_wav(self, path, *, seconds, sample_rate, cancellation_event):
         self.audio_path = Path(path)
@@ -25,6 +28,9 @@ class FakeSTT:
     def transcribe_file(self, path, *, language=None, cancellation_event=None):
         self.transcribed_path = Path(path)
         self.assert_exists_during_transcription = self.transcribed_path.is_file()
+        self.transcription_started.set()
+        if self.block_transcription and not self.finish_transcription.wait(2):
+            raise RuntimeError("test transcription timed out")
         return {"text": "  Hello Yuki.  ", "language": "en"}
 
 
@@ -69,6 +75,33 @@ class VoiceSessionTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertFalse(session.enabled)
         self.assertTrue(errors)
+        self.assertFalse(stt.audio_path.exists())
+
+    def test_disable_discards_result_when_transcription_is_already_running(self):
+        stt = FakeSTT(block_transcription=True)
+        session = VoiceSession(enabled=True, stt=stt)
+        results = []
+        errors = []
+
+        def capture():
+            try:
+                results.append(session.capture_and_transcribe())
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=capture)
+        worker.start()
+        self.assertTrue(stt.transcription_started.wait(2))
+        session.disable()
+        stt.finish_transcription.set()
+        worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(session.enabled)
+        self.assertEqual(results, [])
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], VoiceSessionError)
+        self.assertIn("stopped", str(errors[0]).lower())
         self.assertFalse(stt.audio_path.exists())
 
     def test_close_prevents_reactivation(self):
