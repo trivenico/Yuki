@@ -34,7 +34,8 @@ class NativeMemoryCommandAdapterTests(unittest.TestCase):
         })
 
     def test_search_returns_ranked_bounded_matches(self):
-        self.memory.remember("Yuki native architecture", category="note") if self.memory.enable() else None
+        self.memory.enable()
+        self.memory.remember("Yuki native architecture", category="note")
         self.memory.remember("native task runtime architecture")
         self.memory.remember("unrelated gardening note")
         output = json.loads(self.adapter.handlers[IntentKind.MEMORY_SEARCH](
