@@ -17,6 +17,8 @@ from providers.base import BaseProvider
 class GeminiCLIProvider(BaseProvider):
     """Invoke Gemini CLI with bounded I/O and a minimal child-process environment."""
 
+    availability_scope = "executable_installed_only"
+
     # Keep only variables required to locate the executable, resolve the user's
     # CLI auth/config files, use temporary directories, and validate TLS. In
     # particular, do not forward arbitrary application secrets to child tools.
