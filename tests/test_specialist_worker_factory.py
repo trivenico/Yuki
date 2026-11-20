@@ -43,7 +43,7 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
                 ),
                 SpecialistAgent(
                     "legacy", "Legacy specialist",
-                    frozenset({"coding"}), "emit",
+                    frozenset({"code-reviewer"}), "shell",
                 ),
             ],
             authorize=lambda actor, action, resource: (
