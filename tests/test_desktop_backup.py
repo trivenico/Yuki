@@ -88,6 +88,19 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertTrue((source / "memory.json").exists())
 
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
+    def test_encrypted_backup_file_is_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            (source / "private.json").write_text('{"private": true}', encoding="utf-8")
+            backup = root / "private.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+            )
+            self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o600)
+
     def test_restore_applies_private_permissions_to_profile_files_and_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
