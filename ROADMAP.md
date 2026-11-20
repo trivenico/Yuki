@@ -46,7 +46,9 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Add bounded, read-only AST impact hints for changed Python modules, direct/transitive importers, likely test candidates, configuration/dependency files, and security-sensitive paths; validate proposal integrity and surface syntax failures without executing code or tests.
 - [x] Prepare deterministic regression-test selection hints with direct/transitive priorities and conservative full-suite recommendations for configuration, dependency, security-sensitive, or incomplete-analysis cases; planning never executes tests.
 - [x] Add a regression-plan adapter that validates a single planned candidate and its runner allow-list; host execution is explicitly classified and blocked from this workflow until a genuine isolated runner is implemented.
-- [ ] Implement a genuine isolated test runner (container/VM boundary, resource limits, no secrets, network disabled by default); the current allow-listed host runner remains for trusted-code-only use and is not a sandbox.
+- [x] Harden the existing Docker argv builder with digest-pinned images, pull-never behavior, bounded arguments, safe mount-path validation, no network, capability dropping, no-new-privileges, and bounded memory/swap/CPU/PIDs; add a fail-closed runtime capability declaration contract.
+- [ ] Implement trusted runtime probing/attestation and verify rootless daemon, namespaces, seccomp, mandatory access control, cgroups, mount, network, and cleanup enforcement; current capability declarations are metadata, not proof.
+- [ ] Integrate a verified isolated backend with the regression-plan adapter; the host runner remains trusted-code-only and is not a sandbox. The separate opt-in hackback Docker runner is not accepted as the regression backend.
 - [ ] Add sandboxed developer tasks and human-reviewable patches; the existing approval-gated test runner is not a sandbox and must not be treated as one.
 - [ ] Treat external content as untrusted; defend against prompt injection.
 
