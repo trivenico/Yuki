@@ -30,7 +30,7 @@ def run_approved_regression_candidate(
     """Run exactly one planned test after the runner's own trusted approval check."""
     if not isinstance(plan, RegressionTestPlan):
         raise TypeError("plan must be a RegressionTestPlan.")
-    if not isinstance(runner, ApprovedTestRunner):
+    if type(runner) is not ApprovedTestRunner:
         raise TypeError("runner must be an ApprovedTestRunner.")
     if not isinstance(principal, ToolPrincipal):
         raise TypeError("principal must be a ToolPrincipal.")
