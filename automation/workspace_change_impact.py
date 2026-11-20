@@ -54,8 +54,6 @@ def _module_name(path: str) -> str | None:
     if not path.endswith(".py"):
         return None
     parts = path[:-3].split("/")
-    if parts and parts[0] == "src":
-        parts = parts[1:]
     if parts[-1] == "__init__":
         parts = parts[:-1]
     if not parts or any(not part.isidentifier() for part in parts):
@@ -142,10 +140,15 @@ def analyze_workspace_change_impact(
         if total_bytes > _MAX_TOTAL_SOURCE_BYTES:
             raise ValueError("combined source snapshot exceeds the size limit.")
 
-    module_to_path = {
-        module: path for path in sources
-        if (module := _module_name(path)) is not None
-    }
+    module_to_path: dict[str, str] = {}
+    for path in sources:
+        module = _module_name(path)
+        if module is None:
+            continue
+        module_to_path[module] = path
+        # Support both repository-root packages and conventional src-layout imports.
+        if module.startswith("src."):
+            module_to_path.setdefault(module[4:], path)
     imports_by_path: dict[str, set[str]] = {}
     parse_errors: list[str] = []
     for path, source in sources.items():
