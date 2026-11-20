@@ -48,9 +48,9 @@ class SpecialistWorkerTests(unittest.TestCase):
             },
         )
 
-    def create_task(self, *, approval=False):
+    def create_task(self, *, approval=False, key=None):
         plan = self.coordinator.submit(
-            actor_id="alice", idempotency_key="worker-task-" + str(approval),
+            actor_id="alice", idempotency_key=key or ("worker-task-" + str(approval)),
             subtasks=[SubtaskSpec("implement", "Propose a safe patch", ("coding",),
                                   requires_approval=approval)],
         )
@@ -76,7 +76,8 @@ class SpecialistWorkerTests(unittest.TestCase):
                          "task.completed")
 
     def test_parallel_workers_preserve_approval_session_scope(self):
-        task_ids = [self.create_task(approval=True), self.create_task(approval=True)]
+        task_ids = [self.create_task(approval=True, key="parallel-approved-a"),
+                    self.create_task(approval=True, key="parallel-approved-b")]
         for task_id in task_ids:
             task = self.runtime.get(actor_id="alice", task_id=task_id)
             self.runtime.approve(
