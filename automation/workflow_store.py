@@ -282,6 +282,7 @@ class WorkflowRunStore:
     def claim_next(
         self, *, worker_id: str, lease_seconds: int = 60,
         workflow_name_prefixes: tuple[str, ...] | None = None,
+        approval_session_hash: str | None = None,
     ) -> WorkflowRun | None:
         """Atomically claim the oldest eligible queued run.
 
@@ -293,6 +294,11 @@ class WorkflowRunStore:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if approval_session_hash is not None and (
+            not isinstance(approval_session_hash, str) or len(approval_session_hash) != 64
+            or any(char not in "0123456789abcdef" for char in approval_session_hash)
+        ):
+            raise ValueError("approval_session_hash must be a lowercase SHA-256 digest.")
         if workflow_name_prefixes is not None:
             if (
                 not isinstance(workflow_name_prefixes, tuple)
@@ -334,6 +340,7 @@ class WorkflowRunStore:
                     candidate["approved_by"] and candidate["approved_at"]
                     and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
+                    and (approval_session_hash is None or candidate["approved_session_hash"] == approval_session_hash)
                 )
             ), None)
             if row is None:
