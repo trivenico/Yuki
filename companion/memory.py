@@ -5,7 +5,6 @@ Memory is opt-in at the call site. No network, embeddings, or model training occ
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
