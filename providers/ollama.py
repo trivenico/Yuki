@@ -47,8 +47,12 @@ class OllamaProvider:
             headers={"Accept": "application/json"},
             method="GET",
         )
+        class RejectRedirects(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout, 5)) as response:
+            opener = urllib.request.build_opener(RejectRedirects())
+            with opener.open(request, timeout=min(self.timeout, 5)) as response:
                 raw = response.read(500_001)
         except (urllib.error.URLError, TimeoutError, OSError):
             return False
