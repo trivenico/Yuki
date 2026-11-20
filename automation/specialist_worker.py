@@ -217,6 +217,8 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                lease_seconds=self.lease_seconds,
+                heartbeat_interval_seconds=self.heartbeat_interval_seconds,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
