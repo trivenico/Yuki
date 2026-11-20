@@ -42,6 +42,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [ ] Add retry limits, idempotency, cancellation, and recovery from partial failure.
 - [x] Prepare inert, digest-bound workspace change proposals only after a completed review and explicit human decision; application remains behind the existing trusted-principal and approval gate.
 - [x] Render deterministic unified diffs for workspace proposals after verifying exact base-file SHA-256 digests and proposal content integrity; diff review remains read-only.
+- [x] Add bounded, read-only AST impact hints for changed Python modules, direct/transitive importers, likely test candidates, configuration/dependency files, and security-sensitive paths; syntax failures are surfaced and no code or tests are executed.
 - [ ] Add sandboxed developer tasks and human-reviewable patches.
 - [ ] Treat external content as untrusted; defend against prompt injection.
 
