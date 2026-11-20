@@ -96,7 +96,7 @@ def _safe_target(value):
         return safe
     if any(char in raw for char in ("/", "?", "#", "@", chr(92))) or any(ord(char) < 33 for char in raw):
         raise NucleiReportError("target must be a host or sanitized URL")
-    if not re.fullmatch(r"[A-Za-z0-9.:[\\]-]{1,512}", raw):
+    if not raw or len(raw) > 512 or not all(char.isalnum() or char in ".:-[]" for char in raw):
         raise NucleiReportError("invalid target host")
     return raw
 
