@@ -122,7 +122,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 session_id=built.approval_session_id, expected_version=task.version,
             )
             self.assertEqual(approved.state, "queued")
-            self.assertEqual(approved.version, task.version + 1)
+            self.assertEqual(approved.version, task.version + 2)
     def test_approval_from_previous_process_cannot_be_claimed_after_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             first = build_local_worker_runtime(directory, FakeProvider())
@@ -146,7 +146,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             )
             self.assertIsNotNone(second.supervisor.worker.run_once())
             self.assertEqual(second.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id).state, "succeeded")
-            self.assertEqual(reapproved.version, queued.version + 1)
+            self.assertEqual(reapproved.version, queued.version + 2)
     def test_local_operator_can_cancel_a_plan_through_authorized_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider())
