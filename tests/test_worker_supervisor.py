@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock, Thread
 from pathlib import Path
 
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec
@@ -8,6 +8,7 @@ from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from automation.worker_supervisor import WorkerSupervisor
+from automation.managed_worker_service import ManagedWorkerService
 
 
 class WorkerSupervisorTests(unittest.TestCase):
@@ -122,6 +123,87 @@ class WorkerSupervisorTests(unittest.TestCase):
         report = WorkerSupervisor(self.runtime, self.worker).run_cycle()
         self.assertTrue(report.idle)
         self.assertEqual(report.processed_count, 0)
+
+
+    def test_managed_service_requires_explicit_start_and_supports_pause_resume(self):
+        service = ManagedWorkerService(
+            WorkerSupervisor(self.runtime, self.worker, max_tasks_per_cycle=1),
+        )
+        self.assertEqual(service.status.state, "stopped")
+        with self.assertRaises(RuntimeError):
+            service.run_cycle()
+
+        service.start()
+        self.assertEqual(service.status.state, "running")
+        service.pause()
+        self.assertEqual(service.status.state, "paused")
+        with self.assertRaises(RuntimeError):
+            service.run_cycle()
+        service.resume()
+        report = service.run_cycle()
+        self.assertEqual(report.processed_count, 0)
+        self.assertEqual(service.status.completed_cycles, 1)
+        self.assertTrue(service.stop())
+        self.assertEqual(service.status.state, "stopped")
+        with self.assertRaises(RuntimeError):
+            service.run_cycle()
+
+    def test_stop_closes_admission_and_drains_active_cycle(self):
+        task_id = self.create_task("managed-drain")
+        entered = Event()
+        release = Event()
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="managed-drain-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": lambda request: (
+                entered.set(), release.wait(timeout=5), "done"
+            )[-1]},
+            approval_session_id="supervisor-test-session",
+        )
+        service = ManagedWorkerService(WorkerSupervisor(self.runtime, worker))
+        service.start()
+        cycle_errors = []
+
+        def execute():
+            try:
+                service.run_cycle()
+            except Exception as exc:
+                cycle_errors.append(exc)
+
+        cycle_thread = Thread(target=execute)
+        cycle_thread.start()
+        self.assertTrue(entered.wait(timeout=2))
+
+        self.assertFalse(service.stop(timeout=0))
+        self.assertEqual(service.status.state, "stopping")
+        with self.assertRaises(RuntimeError):
+            service.run_cycle()
+
+        release.set()
+        cycle_thread.join(timeout=3)
+        self.assertFalse(cycle_thread.is_alive())
+        self.assertEqual(cycle_errors, [])
+        self.assertTrue(service.stop(timeout=1))
+        self.assertEqual(service.status.state, "stopped")
+        self.assertEqual(self.store.get(task_id).state, "succeeded")
+
+    def test_managed_service_records_failure_without_hiding_exception(self):
+        task_id = self.create_task("managed-failure")
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="managed-failure-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": lambda _request: (_ for _ in ()).throw(ValueError("provider failed"))},
+            approval_session_id="supervisor-test-session",
+        )
+        service = ManagedWorkerService(WorkerSupervisor(self.runtime, worker))
+        service.start()
+        with self.assertRaises(Exception):
+            service.run_cycle()
+        self.assertEqual(service.status.state, "running")
+        self.assertEqual(service.status.failed_cycles, 1)
+        self.assertEqual(service.status.last_error, "ExceptionGroup")
+        self.assertEqual(self.store.get(task_id).state, "failed")
+        self.assertTrue(service.stop())
 
 
 if __name__ == "__main__":
