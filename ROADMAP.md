@@ -32,6 +32,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Connect plan preparation, required-tool policy checks, approval requests, and lifecycle events in a non-executing orchestrator.
 - [x] Add a bounded task-intelligence boundary for capability recommendations and explicit, reviewable DAG plan preparation.
 - [ ] Connect the workflow to explicit plans, steps, deadlines, and budgets.
+- [x] Add a versioned specialist result envelope with strict provenance boundaries and explicit unverified-output limitations.
 - [ ] Connect tool schemas, typed outputs, per-tool permissions, and approval gates to the workflow transitions.
 - [ ] Add a separately reviewed execution adapter with cancellation, deadlines, bounded retries, and re-authorization immediately before every tool call.
 - [ ] Add retry limits, idempotency, cancellation, and recovery from partial failure.
