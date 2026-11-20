@@ -72,7 +72,7 @@ class DesktopOnboarding:
             "schema_version", "completed_steps", "provider_choice"
         }:
             raise OnboardingStateError("onboarding state has an unsupported schema.")
-        if value["schema_version"] != cls.SCHEMA_VERSION:
+        if type(value["schema_version"]) is not int or value["schema_version"] != cls.SCHEMA_VERSION:
             raise OnboardingStateError("onboarding state version is unsupported.")
         completed = value["completed_steps"]
         if not isinstance(completed, list) or len(completed) > len(cls.STEPS):
@@ -80,7 +80,7 @@ class DesktopOnboarding:
         if completed != list(cls.STEPS[:len(completed)]):
             raise OnboardingStateError("onboarding progress is not a valid sequential prefix.")
         provider = value["provider_choice"]
-        if provider is not None and provider not in cls.PROVIDERS:
+        if provider is not None and (not isinstance(provider, str) or provider not in cls.PROVIDERS):
             raise OnboardingStateError("onboarding provider choice is invalid.")
         provider_step_done = "provider" in completed
         if provider_step_done != (provider is not None):
