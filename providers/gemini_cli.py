@@ -126,6 +126,11 @@ class GeminiCLIProvider(BaseProvider):
                     # failed for any ordinary I/O/stream reason; surface a
                     # sanitized error on the caller thread.
                     reader_errors.append(True)
+                finally:
+                    try:
+                        stream.close()
+                    except Exception:
+                        reader_errors.append(True)
 
             reader = threading.Thread(target=drain_stdout, name="yuki-gemini-output", daemon=True)
             try:
