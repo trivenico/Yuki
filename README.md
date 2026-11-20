@@ -244,7 +244,7 @@ Yuki is still under active engineering. Passing CI verifies tested code paths, n
 
 ## Real provider and approved task-loop milestone
 
-The provider layer now defaults to the real OpenAI API and includes a local Ollama adapter, official Gemini CLI adapter, and explicit hybrid router. The mock adapter is retained only for automated tests and is not exposed by the runtime provider registry.
+The provider layer includes OpenAI-compatible, local Ollama, official Gemini CLI, and explicit hybrid adapters. The legacy `yuki.py` terminal entry point starts in native-only mode unless `YUKI_PROVIDER` is explicitly set or a provider is selected with `/provider`; the mock adapter is retained only for automated tests and is not exposed by the runtime provider registry. The installed persistent-chat CLI and other application entry points still use their configured provider path, so provider-independent startup across every entry point remains an active core-engineering task.
 
 - Set `OPENAI_API_KEY` in the process environment; the default model is `gpt-4.1-mini` and can be overridden with `YUKI_OPENAI_MODEL`.
 - Set `YUKI_PROVIDER=ollama` and configure `YUKI_OLLAMA_MODEL` to use a locally running Ollama instance.
