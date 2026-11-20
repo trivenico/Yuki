@@ -22,7 +22,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
-        self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
+        self.agent_auth = lambda actor, action, plan: actor in {"alice", "bob"} and action in {
             "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
         }
         self.agents = [
@@ -239,6 +239,51 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.submit(actor_id="alice", idempotency_key="no-route", subtasks=[
                 SubtaskSpec("a", "A", ("unknown-capability",)),
             ])
+
+    def test_agent_plans_are_account_scoped_and_idempotency_isolated(self):
+        alice_plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="shared-key",
+            subtasks=[SubtaskSpec("a", "Alice private plan", ("research",))],
+        )
+        bob_plan = self.coordinator.submit(
+            actor_id="bob", idempotency_key="shared-key",
+            subtasks=[SubtaskSpec("a", "Bob private plan", ("research",))],
+        )
+        self.assertNotEqual(alice_plan.plan_id, bob_plan.plan_id)
+        self.assertEqual(alice_plan.idempotency_key, "shared-key")
+        self.assertEqual(bob_plan.idempotency_key, "shared-key")
+
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice", plan_id=bob_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.advance(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.cancel_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="alice", plan_id=alice_plan.plan_id),
+            alice_plan,
+        )
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="bob", plan_id=bob_plan.plan_id),
+            bob_plan,
+        )
+
+    def test_legacy_agent_plans_without_owner_are_quarantined(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="legacy-source",
+            subtasks=[SubtaskSpec("a", "Private legacy candidate", ("research",))],
+        )
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE agent_plans SET owner_id=NULL WHERE plan_id=?", (plan.plan_id,))
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
 
     def test_idempotency_and_payload_conflict(self):
         items = [SubtaskSpec("a", "A", ("research",))]
