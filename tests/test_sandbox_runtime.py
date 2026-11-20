@@ -6,6 +6,9 @@ from core.sandbox_policy import SandboxPolicy
 from core.sandbox_runtime import SandboxRuntimeError, build_docker_argv
 
 
+IMAGE = "python@sha256:" + "a" * 64
+
+
 class DockerSandboxArgvTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -15,13 +18,15 @@ class DockerSandboxArgvTests(unittest.TestCase):
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     def test_restrictive_flags_and_read_only_workspace_default(self, _uid, _gid):
         command = ["python", "--version"]
-        argv = build_docker_argv(SandboxPolicy(), image="python:3.12",
+        argv = build_docker_argv(SandboxPolicy(), image=IMAGE,
             workspace=self.tmp.name, command=command)
         self.assertEqual(argv[argv.index("--network") + 1], "none")
         self.assertIn("--read-only", argv)
         self.assertIn("--cap-drop", argv)
         self.assertIn("ALL", argv)
         self.assertIn("--pids-limit", argv)
+        self.assertIn("--pull=never", argv)
+        self.assertEqual(argv[argv.index("--memory-swap") + 1], argv[argv.index("--memory") + 1])
         mount = argv[argv.index("--mount") + 1]
         self.assertTrue(mount.endswith(",ro"))
         self.assertEqual(argv[-2:], command)
@@ -67,6 +72,35 @@ class DockerSandboxArgvTests(unittest.TestCase):
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
                 workspace="relative/path", command=["python", "--version"])
+
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_mutable_image_tag_is_rejected(self, _uid, _gid):
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(SandboxPolicy(), image="python:3.12",
+                workspace=self.tmp.name, command=["python", "--version"])
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_symlink_workspace_is_rejected(self, _uid, _gid):
+        link = Path(self.tmp.name).parent / (Path(self.tmp.name).name + "-link")
+        try:
+            link.symlink_to(self.tmp.name, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        self.addCleanup(lambda: link.unlink(missing_ok=True))
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(SandboxPolicy(), image=IMAGE,
+                workspace=str(link), command=["python", "--version"])
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_comma_in_workspace_path_is_rejected(self, _uid, _gid):
+        with tempfile.TemporaryDirectory(prefix="yuki,unsafe-") as unsafe:
+            with self.assertRaises(SandboxRuntimeError):
+                build_docker_argv(SandboxPolicy(), image=IMAGE,
+                    workspace=unsafe, command=["python", "--version"])
 
 
 if __name__ == "__main__":
