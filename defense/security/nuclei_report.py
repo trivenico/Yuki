@@ -111,10 +111,12 @@ def _finding(record):
     if not isinstance(info, dict):
         raise NucleiReportError("finding info must be an object")
     name = _bounded_text(info.get("name"), "finding name", 300, required=True)
-    severity = _bounded_text(info.get("severity", "unknown"), "severity", 32).lower()
+    severity_raw = info.get("severity", "unknown")
+    severity = severity_raw.strip().lower() if isinstance(severity_raw, str) and len(severity_raw) <= 32 else "unknown"
     if severity not in _SEVERITIES:
         severity = "unknown"
-    protocol = _bounded_text(record.get("type", "unknown"), "protocol", 32).lower()
+    protocol_raw = record.get("type", "unknown")
+    protocol = protocol_raw.strip().lower() if isinstance(protocol_raw, str) and len(protocol_raw) <= 32 else "unknown"
     if not re.fullmatch(r"[a-z0-9_-]{1,32}", protocol):
         protocol = "unknown"
     target = _safe_target(record.get("host"))
