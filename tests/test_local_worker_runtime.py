@@ -280,7 +280,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 store,
                 authorize=lambda actor, action, _task: (
                     actor == "owner-1" and action in owner_actions
-                ),
+                ) or actor == WORKER_SERVICE_ACTOR,
                 verify_session=lambda actor, token: (
                     actor == "owner-1" and session_state["live"]
                     and token == session_state["token"]
