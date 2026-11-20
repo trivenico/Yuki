@@ -22,3 +22,7 @@ __all__ += ["TcpReassemblyError", "TcpReassemblyResult", "TcpStreamReassembler"]
 from defense.network.pcap.pipeline import AnalyzedPacket, CaptureAnalysis, analyze_capture
 
 __all__ += ["AnalyzedPacket", "CaptureAnalysis", "analyze_capture"]
+
+from defense.network.pcap.pcapng import PcapNgCapture, PcapNgFormatError, PcapNgPacket, parse_pcapng
+
+__all__ += ["PcapNgCapture", "PcapNgFormatError", "PcapNgPacket", "parse_pcapng"]
