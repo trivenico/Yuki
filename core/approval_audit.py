@@ -16,7 +16,7 @@ from typing import Any
 
 _ALLOWED_EVENTS = frozenset({
     "requested", "approved", "denied", "executed", "execution_failed",
-    "execution_started", "outcome_unknown",
+    "execution_started", "outcome_unknown", "native_intent_dispatched",
 })
 _ZERO_HASH = "0" * 64
 

@@ -67,6 +67,13 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertNotIn(b"secret-actor-123", handle.read())
 
+    def test_native_intent_dispatch_event_is_supported_and_hash_chained(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            audit.append(event_type="native_intent_dispatched", pending_id="correlation-1", actor="owner", skill_id="native:task.list")
+            self.assertEqual(audit.list_events()[0]["event_type"], "native_intent_dispatched")
+            self.assertTrue(audit.verify_chain())
+
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
