@@ -75,7 +75,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
         fake_process.wait.return_value = 0
         fake_process.stdout = io.BytesIO(b"x" * 100_000)
 
-        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
              patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process) as popen:
             result = provider.generate("hello")
 
