@@ -45,6 +45,7 @@ class SharedDesktopControllerBridge:
         self._closed = False
         self._logout_complete = False
         self._logout_in_progress = False
+        self._active_specialist_operations = 0
         self._logout_condition = Condition(RLock())
 
     def respond(self, message: str, **kwargs: Any) -> str:
@@ -96,14 +97,26 @@ class SharedDesktopControllerBridge:
             raise
 
     def _specialist_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        self._ensure_open()
         if name not in self._SPECIALIST_METHODS:
             raise AttributeError(name)
+        with self._logout_condition:
+            if self._closed:
+                raise RuntimeError("desktop controller bridge is closed.")
+            self._active_specialist_operations += 1
+        authorization_error: PermissionError | None = None
         try:
             return getattr(self._specialists, name)(*args, **kwargs)
-        except PermissionError:
+        except PermissionError as exc:
+            authorization_error = exc
+        finally:
+            with self._logout_condition:
+                self._active_specialist_operations -= 1
+                self._logout_condition.notify_all()
+        # Do not invoke logout until this operation has left the active set;
+        # otherwise logout would wait for the very call that is invoking it.
+        if authorization_error is not None:
             self._close_after_authorization_failure()
-            raise
+            raise authorization_error
 
     def _close_after_authorization_failure(self) -> None:
         """Fail closed when either authenticated surface reports revoked access."""
@@ -171,6 +184,8 @@ class SharedDesktopControllerBridge:
             # for the active cleanup; after a failed attempt, a later caller may
             # retry instead of being blocked by a permanently closed bridge.
             self._closed = True
+            while self._active_specialist_operations:
+                self._logout_condition.wait()
             while self._logout_in_progress:
                 self._logout_condition.wait()
             if self._logout_complete:
