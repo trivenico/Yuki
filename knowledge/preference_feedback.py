@@ -66,7 +66,7 @@ def create_preference_feedback(
         raise PreferenceFeedbackError("invalid comparison_id")
     if not validate_annotation_rubric(rubric):
         raise PreferenceFeedbackError("rubric is invalid or its digest does not match")
-    if preference not in PREFERENCES:
+    if not isinstance(preference, str) or preference not in PREFERENCES:
         raise PreferenceFeedbackError("preference must be a, b, tie, or neither")
     if not isinstance(reviewer_label, str) or not reviewer_label.strip() or len(reviewer_label) > MAX_REVIEWER_CHARS:
         raise PreferenceFeedbackError("invalid reviewer_label")
