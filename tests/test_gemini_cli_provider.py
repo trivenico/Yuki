@@ -1,3 +1,4 @@
+import io
 import os
 import subprocess
 import unittest
@@ -52,7 +53,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
         fake_process.wait.return_value = 0
 
         def fake_popen(args, **kwargs):
-            kwargs["stdout"].write(b"abcdefgh")
+            fake_process.stdout = io.BytesIO(b"abcdefgh")
             return fake_process
 
         with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
@@ -66,6 +67,21 @@ class GeminiCLIProviderTests(unittest.TestCase):
         self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
         self.assertIs(kwargs["shell"], False)
         self.assertNotIn("capture_output", kwargs)
+
+    def test_subprocess_output_is_drained_but_only_bounded_prefix_is_retained(self):
+        provider = GeminiCLIProvider(max_output_chars=5)
+        fake_process = MagicMock()
+        fake_process.pid = 12345
+        fake_process.wait.return_value = 0
+        fake_process.stdout = io.BytesIO(b"x" * 100_000)
+
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process) as popen:
+            result = provider.generate("hello")
+
+        self.assertEqual(result, "xxxxx\\n[Response truncated by Yuki.]")
+        self.assertIs(popen.call_args.kwargs["stdout"], subprocess.PIPE)
+        self.assertIs(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
     def test_timeout_kills_process_and_returns_sanitized_error(self):
         provider = GeminiCLIProvider(timeout=1)
@@ -93,7 +109,8 @@ class GeminiCLIProviderTests(unittest.TestCase):
         fake_process.wait.return_value = 2
 
         def fake_popen(args, **kwargs):
-            kwargs["stderr"].write(b"secret-token /private/path")
+            fake_process.stdout = io.BytesIO(b"")
+            self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
             return fake_process
 
         with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
