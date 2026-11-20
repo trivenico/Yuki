@@ -1,7 +1,7 @@
 """Qt-independent bridge for the durable authenticated desktop chat session."""
 from __future__ import annotations
 
-from threading import Event, RLock
+from threading import Condition, Event, RLock
 from typing import Any, Callable
 
 
@@ -22,7 +22,10 @@ class SharedDesktopChatController:
         self._conversation = conversation
         self._closed = False
         self._lock = RLock()
+        self._condition = Condition(self._lock)
         self._active_cancellations: set[Event] = set()
+        self._session_close_started = False
+        self._session_close_complete = False
 
     def respond(
         self,
@@ -59,8 +62,9 @@ class SharedDesktopChatController:
             )
             self._ensure_open()
         finally:
-            with self._lock:
+            with self._condition:
                 self._active_cancellations.discard(cancellation)
+                self._condition.notify_all()
         if not isinstance(result, dict) or result.get("status") != "completed":
             status = result.get("status", "unknown") if isinstance(result, dict) else "invalid"
             raise RuntimeError(f"Yuki conversation did not complete (status: {status}).")
@@ -91,13 +95,34 @@ class SharedDesktopChatController:
 
     def logout(self) -> None:
         """Invalidate the authenticated facade and close its runtime exactly once."""
-        with self._lock:
-            if self._closed:
+        with self._condition:
+            if self._session_close_complete:
                 return
-            self._closed = True
-            for cancellation in tuple(self._active_cancellations):
-                cancellation.set()
-        self._session.close()
+            if not self._closed:
+                self._closed = True
+                for cancellation in tuple(self._active_cancellations):
+                    cancellation.set()
+            # Never close the durable store underneath a provider call that may
+            # still persist its interrupted-generation state. The active worker
+            # observes cancellation and signals this condition in its finally.
+            while self._active_cancellations:
+                self._condition.wait()
+            while self._session_close_started:
+                self._condition.wait()
+                if self._session_close_complete:
+                    return
+            self._session_close_started = True
+        try:
+            self._session.close()
+        except Exception:
+            with self._condition:
+                self._session_close_started = False
+                self._condition.notify_all()
+            raise
+        with self._condition:
+            self._session_close_started = False
+            self._session_close_complete = True
+            self._condition.notify_all()
 
     close = logout
 
