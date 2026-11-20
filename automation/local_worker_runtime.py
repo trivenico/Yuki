@@ -74,6 +74,13 @@ def build_session_worker_runtime(
         raise ValueError("approval_session_id must be bounded non-empty text.")
     if not callable(runtime.authorize) or not callable(runtime.verify_session):
         raise ValueError("the existing task runtime must have authorization and session verification.")
+    try:
+        if runtime.verify_session(owner_actor_id, approval_session_id) is not True:
+            raise ValueError("approval_session_id is not the current live owner session.")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("the current owner session could not be verified.") from exc
     if type(max_tasks_per_cycle) is not int or not 1 <= max_tasks_per_cycle <= 10:
         raise ValueError("max_tasks_per_cycle must be between 1 and 10.")
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
