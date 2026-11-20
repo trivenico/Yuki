@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from core.linux_host_evidence import LinuxProcessSnapshot
