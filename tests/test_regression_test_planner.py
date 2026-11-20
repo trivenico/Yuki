@@ -63,6 +63,17 @@ class RegressionTestPlannerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             prepare_regression_test_plan(impact(), ("tests/test_core.py", "tests/test_core.py"))
 
+    def test_rejects_paths_outside_tests_directory_and_traversal(self):
+        for path in ("automation/secret.py", "../tests/test_core.py", "tests/../x.py", "tests\\\\test_core.py", "/tests/test_core.py"):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    prepare_regression_test_plan(impact(), (path,))
+
+    def test_rejects_malformed_impact_path_metadata(self):
+        malformed = impact(test_candidates=("../escape.py",))
+        with self.assertRaises(ValueError):
+            prepare_regression_test_plan(malformed, ("tests/test_core.py",))
+
     def test_rejects_mutable_path_collection(self):
         with self.assertRaises(TypeError):
             prepare_regression_test_plan(impact(), ["tests/test_core.py"])
