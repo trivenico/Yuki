@@ -124,5 +124,30 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         self.assertTrue(lifecycle.closed)
 
 
+    def test_lifecycle_accepts_late_bound_resource_and_closes_it_first(self):
+        events = []
+
+        class Resource:
+            def __init__(self, name):
+                self.name = name
+            def close(self):
+                events.append(self.name)
+
+        original = Resource("original")
+        late = Resource("late")
+        lifecycle = DesktopServiceLifecycle((original,))
+        lifecycle.add_resource(late)
+        lifecycle.add_resource(late)
+        lifecycle.close()
+        self.assertEqual(events, ["late", "original"])
+        self.assertTrue(lifecycle.closed)
+
+    def test_lifecycle_rejects_resource_registration_after_shutdown_begins(self):
+        lifecycle = DesktopServiceLifecycle(())
+        lifecycle.close()
+        with self.assertRaises(RuntimeError):
+            lifecycle.add_resource(object())
+
+
 if __name__ == "__main__":
     unittest.main()
