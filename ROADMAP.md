@@ -25,6 +25,8 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 ## Phase 3 — Agent execution engine
 
 - [x] Add a bounded workflow state machine for perception-to-report lifecycle tracking.
+- [x] Add a machine-readable catalog for 100 planned specialist capabilities with stable IDs and safe discovery.
+- [ ] Connect catalog entries to reviewed runtime handlers; catalog presence must never imply execution readiness.
 - [x] Connect plan preparation, required-tool policy checks, approval requests, and lifecycle events in a non-executing orchestrator.
 - [ ] Connect the workflow to explicit plans, steps, deadlines, and budgets.
 - [ ] Connect tool schemas, typed outputs, per-tool permissions, and approval gates to the workflow transitions.
