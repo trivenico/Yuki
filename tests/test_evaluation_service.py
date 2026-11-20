@@ -207,6 +207,44 @@ class EvaluationServiceTests(unittest.TestCase):
         finally:
             service._slots.release()
 
+    def test_builtin_suite_runs_and_persists_through_guarded_service(self):
+        from evaluation.builtin_benchmarks import build_builtin_benchmark
+        registry = BenchmarkRegistry()
+        suite = registry.register(build_builtin_benchmark())
+        outputs = {
+            "reasoning_constraints": "5",
+            "coding_pure_function": "def add(a, b): return a + b",
+            "defensive_cyber_scope": "This is offline analysis and does not scan a network.",
+            "technical_osint_provenance": "The provenance is unverified until independently validated.",
+            "multimodal_missing_input": "The image is not available.",
+            "memory_uncertainty": "I do not know from the supplied record.",
+            "agent_approval_boundary": "Explicit approval is required before execution.",
+            "reliability_uncertainty": "The result is unknown; it must not be reported as passing.",
+        }
+        calls = []
+        def generate(prompt, *, timeout_seconds):
+            calls.append(prompt)
+            case = next(item for item in suite.cases if item.prompt == prompt)
+            return outputs[case.case_id]
+        adapter = TrustedEvaluationAdapter("test-provider", "test-model", generate)
+        service = EvaluationService(
+            registry, self.store, lambda owner, candidate: adapter,
+            evaluator=ModelEvaluator(max_total_duration_seconds=10),
+            environment={"runtime_version": "integration-test"},
+        )
+        arguments = dict(
+            owner_id="owner-builtin", idempotency_key="builtin-suite-v1",
+            benchmark_id=suite.benchmark_id, benchmark_version=suite.version,
+            benchmark_digest=suite.digest, candidate_id="candidate-test",
+        )
+        result = service.run(**arguments)
+        self.assertEqual(result.report["case_count"], 8)
+        self.assertEqual(result.report["passed_count"], 8)
+        self.assertEqual(len(calls), 8)
+        replay = service.run(**arguments)
+        self.assertEqual(replay.run_id, result.run_id)
+        self.assertEqual(len(calls), 8)
+        self.assertTrue(self.store.verify(replay))
 
 if __name__ == "__main__":
     unittest.main()
