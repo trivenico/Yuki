@@ -1,7 +1,7 @@
 # Safe defaults; all privileged/integration features remain disabled.
 name: Yuki
 workspace: ./yuki_workspace
-provider: openai
+provider: native
 openai_model: gpt-4.1-mini
 ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
