@@ -61,6 +61,18 @@ class ProviderSetupTests(unittest.TestCase):
                 save_provider_preferences(path, "unknown", "model")
             self.assertFalse(path.exists())
 
+    def test_native_setup_is_default_and_needs_no_model_or_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            answers = iter([""])
+            output = []
+            result = run_provider_setup(
+                input_fn=lambda prompt: next(answers), output_fn=output.append, path=path,
+            )
+            self.assertEqual(result, 0)
+            self.assertEqual(yaml.safe_load(path.read_text())["provider"], "native")
+            self.assertTrue(any("No API key" in line for line in output))
+
     def test_setup_prompts_for_provider_and_model_without_secret(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"

@@ -30,6 +30,11 @@ def run_smoke_test(*, config_loader: Callable, provider_factory: Callable, promp
         if provider_name == "mock":
             return SmokeReport(provider_name, "fail", None, 0, "Mock provider is not a real language model.")
         provider = provider_factory(config)
+        if getattr(provider, "availability_scope", None) == "native_core":
+            return SmokeReport(
+                provider_name, "not_applicable", None, 0,
+                "Native core is not a language model; no live inference request was sent.",
+            )
         if not callable(getattr(provider, "is_available", None)) or not callable(getattr(provider, "generate", None)):
             return SmokeReport(provider_name, "fail", None, 0, "Configured provider does not satisfy the provider contract.")
         if provider.is_available() is not True:

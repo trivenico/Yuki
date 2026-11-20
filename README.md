@@ -8,7 +8,9 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 ## Native intelligence direction
 
-Yuki owns its identity, memory, planning, permissions, task execution, and local workflows. External model providers are optional adapters rather than the authority for core behavior. See [Native intelligence architecture](docs/NATIVE_INTELLIGENCE_ARCHITECTURE.md) for the decision, degraded-operation requirements, and acceptance criteria. This is an architectural direction; Yuki does not yet claim to contain a trained foundation model.
+Yuki owns its identity, memory, planning, permissions, task execution, and local workflows. External model providers are optional adapters rather than the authority for core behavior. New installations default to the built-in **native core** and do not require an API key, model download, or network connection to start. Native mode provides deterministic local behavior and explicitly reports that general free-form language generation is not available until Yuki's own language model exists. OpenAI, Gemini, and Ollama remain explicit optional adapters.
+
+See [Native intelligence architecture](docs/NATIVE_INTELLIGENCE_ARCHITECTURE.md) for the ownership boundaries, degraded-operation requirements, and acceptance criteria. Yuki does not yet claim to contain a trained foundation model.
 
 ## Release readiness and progress
 

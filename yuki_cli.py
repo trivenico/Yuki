@@ -211,6 +211,14 @@ def run_cli(
         return 2
 
     if args.command == "provider-test":
+        if getattr(provider, "availability_scope", None) == "native_core":
+            _write_json({
+                "provider": "native",
+                "status": "not_applicable_native_core",
+                "verified": False,
+                "detail": "No external model connection is configured or required in native mode.",
+            }, output_fn)
+            return 3
         try:
             if not provider.is_available():
                 _write_json({
@@ -247,7 +255,9 @@ def run_cli(
         except Exception:
             pass
         availability_scope = getattr(provider, "availability_scope", "provider_defined")
-        if not available:
+        if availability_scope == "native_core":
+            status = "native_core_active"
+        elif not available:
             status = "unavailable"
         elif availability_scope == "executable_installed_only":
             status = "installed_authentication_unverified"
@@ -262,7 +272,7 @@ def run_cli(
             "status": status,
         }, output_fn)
         # Exit zero only when the provider's own check establishes readiness.
-        return 0 if status == "ready" else 3
+        return 0 if status in {"ready", "native_core_active"} else 3
 
     if args.command == "ask":
         answer, status = _safe_ask(provider, args.prompt)

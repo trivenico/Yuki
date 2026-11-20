@@ -183,12 +183,12 @@ def load_config(path=None):
         raise RuntimeError("kokoro_speed must be between 0.5 and 2.0.")
     spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
     if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
-    provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "openai"))).strip().lower()
-    if provider not in {"openai", "ollama", "gemini", "hybrid"}:
-        raise RuntimeError("provider must be one of: openai, ollama, gemini, hybrid.")
+    provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "native"))).strip().lower()
+    if provider not in {"native", "openai", "ollama", "gemini", "hybrid"}:
+        raise RuntimeError("provider must be one of: native, openai, ollama, gemini, hybrid.")
     openai_model = os.environ.get("YUKI_OPENAI_MODEL", str(raw.get("openai_model", "gpt-4.1-mini"))).strip()
-    if not openai_model or len(openai_model) > 120:
-        raise RuntimeError("openai_model must be non-empty and at most 120 characters.")
+    if len(openai_model) > 120 or (provider == "openai" and not openai_model):
+        raise RuntimeError("openai_model must be non-empty for OpenAI and at most 120 characters.")
     raw_timeout = os.environ.get("YUKI_PROVIDER_TIMEOUT_SECONDS", raw.get("provider_timeout_seconds", 45))
     try:
         provider_timeout = float(raw_timeout)

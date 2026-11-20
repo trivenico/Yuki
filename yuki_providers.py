@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
+from providers.native_core import NativeCoreAdapter
 
 @dataclass(frozen=True)
 class ProviderInfo:
@@ -36,6 +37,7 @@ class ProviderManager:
         )
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
+            ProviderInfo("native", ("built_in_deterministic_core",), True),
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
@@ -61,7 +63,7 @@ class ProviderManager:
             self._factories[key] = factory
         elif not provider.implemented:
             self._factories.pop(key, None)
-        elif key not in self._factories and key not in {"ollama", "hybrid"}:
+        elif key not in self._factories and key not in {"native", "ollama", "hybrid"}:
             raise ValueError("An implemented provider must have an adapter factory.")
         self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
         if key == self._selected:
@@ -70,11 +72,13 @@ class ProviderManager:
     def list_providers(self):
         return [{
             "name": p.name, "auth_methods": list(p.auth_methods),
-            "implemented": p.implemented and (p.name in self._factories or p.name in {"ollama", "hybrid"}),
-            "selected": name == self._selected,
+            "implemented": p.implemented and (p.name in self._factories or p.name in {"native", "ollama", "hybrid"}),
+            "selected": name == self._selected or (name == "native" and self._selected is None),
         } for name, p in sorted(self._providers.items())]
 
     def _build_adapter(self, name: str):
+        if name == "native":
+            return NativeCoreAdapter()
         if name in {"ollama", "hybrid"}:
             adapter = create_provider({**self._config, "provider": name}, environ=self._environ)
         else:
@@ -125,6 +129,8 @@ class ProviderManager:
         from providers.agent_adapter import ProviderAgentAdapter
 
         provider = self.create_selected_adapter()
+        if provider is None and self._selected is None:
+            provider = NativeCoreAdapter()
         if provider is None:
             raise RuntimeError("No provider is selected.")
         if not callable(getattr(provider, "generate_chat", None)):

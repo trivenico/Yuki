@@ -127,7 +127,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         return ""
     if command == "/status":
         current = providers.current()
-        return f"Agent status: {agent.status()} Selected provider: {current.name if current else 'none'}."
+        return f"Agent status: {agent.status()} Selected provider: {current.name if current else 'native'}."
     if command == "/provider" or command.startswith("/provider "):
         parts = command.split(maxsplit=2)
         if len(parts) != 3 or parts[1] != "select":
@@ -148,7 +148,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         tasks_open = sum(1 for item in tasks if isinstance(item, dict) and not item.get("completed", False))
         return (
             "Yuki dashboard\n"
-            f"Provider: {current.name if current else 'none'} ({agent.status()})\n"
+            f"Provider: {current.name if current else 'native'} ({agent.status()})\n"
             f"Allowed tools: {available_tools or 'none'}\n"
             f"Open tasks: {tasks_open}\n"
             f"Saved notes: {len(memory)}\n"

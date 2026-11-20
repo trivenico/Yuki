@@ -70,9 +70,10 @@ class ProviderTests(unittest.TestCase):
 
 
 class ProviderManagerTests(unittest.TestCase):
-    def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
+    def test_native_core_is_default_and_external_provider_is_explicit(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
+        self.assertIsNone(manager.current())
+        self.assertTrue(next(item for item in manager.list_providers() if item["name"] == "native")["selected"])
         self.assertEqual(manager.select("openai"), "Selected provider: openai")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
@@ -80,7 +81,7 @@ class ProviderManagerTests(unittest.TestCase):
 
     def test_selected_adapter_is_created(self):
         from providers.openai_compatible import OpenAICompatibleProvider
-        manager = ProviderManager(environ={})
+        manager = ProviderManager(environ={"YUKI_PROVIDER": "openai"})
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertFalse(adapter.is_available())
@@ -115,8 +116,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("not implemented", result)
-        from providers.openai_compatible import OpenAICompatibleProvider
-        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        self.assertIsNone(agent.provider)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
@@ -124,7 +124,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
-        self.assertIn("Provider: openai", result)
+        self.assertIn("Provider: native", result)
 
 
 class ToolTests(unittest.TestCase):
@@ -213,8 +213,8 @@ class LearningTests(unittest.TestCase):
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("\nProvider: openai", result)
-        self.assertNotIn("\\nProvider: openai", result)
+        self.assertIn("\nProvider: native", result)
+        self.assertNotIn("\\nProvider: native", result)
 
     def test_skill_list_uses_real_line_breaks(self):
         manager = ProviderManager()
