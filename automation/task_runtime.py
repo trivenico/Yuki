@@ -60,16 +60,24 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None, verify_session: Callable[[str, str], bool] | None = None):
+    def __init__(
+        self, store: WorkflowRunStore, *,
+        authorize: Callable[[str, str, str], bool] | None = None,
+        verify_session: Callable[[str, str], bool] | None = None,
+        internal_authorize: Callable[[str, str, str], bool] | None = None,
+    ):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
         if verify_session is not None and not callable(verify_session):
             raise TypeError("verify_session must be callable.")
+        if internal_authorize is not None and not callable(internal_authorize):
+            raise TypeError("internal_authorize must be callable.")
         self.store = store
         self.authorize = authorize
         self.verify_session = verify_session
+        self.internal_authorize = internal_authorize
 
     @staticmethod
     def _actor(actor_id: str) -> str:
@@ -78,6 +86,16 @@ class TaskRuntime:
         return actor_id.strip()
 
     def _allowed(self, actor: str, action: str, task_id: str) -> bool:
+        # Internal principals are composed by trusted local runtime wiring and
+        # remain separate from owner-facing permissions. Any callback failure
+        # is fail-closed; a denied internal principal falls through to the
+        # ordinary authorizer, never to implicit allow.
+        if self.internal_authorize is not None:
+            try:
+                if self.internal_authorize(actor, action, task_id) is True:
+                    return True
+            except Exception:
+                return False
         if self.authorize is None:
             return False
         try:
